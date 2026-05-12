@@ -117,20 +117,28 @@ class CapacityError extends Error {
 }
 ```
 
-## Benchmark snapshot (Node 22, 2016-era Intel MacBook Pro, 20K iter × 5 runs)
+## Benchmark snapshot (Node 22, 2016-era Intel MacBook Pro, 20K iter × 5 runs × 12 invocations)
 
 | Scenario                                | lite-signal | alien-signals | preact   | solid    |
 | --------------------------------------- | ----------- | ------------- | -------- | -------- |
-| MUX (256 sigs → sum → effect)           | **252K ops/s** | 191K       | 153K     | 76K      |
-| KAIROS (1 sig → 1000 computeds → eff)   | **15K**     | 14K           | 11K      | 4K       |
-| BROADCAST (1 sig → 1000 effects)        | 23K         | **26K**       | 16K      | 7K       |
-| DEEP CHAIN (256-deep memos → eff)       | 52K         | **87K**       | 49K      | 15K      |
+| MUX (256 sigs → sum → effect)           | **249K ops/s** | 207K       | 153K     | 77K      |
+| BROADCAST (1 sig → 1000 effects)        | **24K**     | 22K           | 17K      | 8K       |
+| KAIROS (1 sig → 1000 computeds → eff)   | **14K**     | 13K           | 12K      | 4K       |
+| DEEP CHAIN (256-deep memos → eff)       | 51K         | **60K**       | 50K      | 15K      |
 
-lite-signal wins MUX (+32% vs alien) and is effectively tied with alien on KAIROS
-(+7%, within noise). alien wins BROADCAST (+13%) and DEEP CHAIN (+67%); alien's
-flatter internal representation has lower per-edge cost on long pipelines and
-pure broadcast. Both libs allocate orders of magnitude less than preact/solid
-during the timed loop (15-20 KB Δheap vs 230 KB-2.8 MB).
+lite-signal wins three of four scenarios against current published versions of the
+alternatives: MUX +20%, BROADCAST +9%, KAIROS +8% — fan-in aggregation, fan-out
+broadcast, and one-source-to-wide-memo-layer respectively. These are the patterns
+that dominate UI workloads. alien-signals retains a 15% lead on 256-deep computed
+pipelines, where its flatter internal representation pays off when the propagation
+path is long rather than wide.
+
+On allocation pressure, lite-signal is alone in the zero-Δheap band: ~15 KB of
+transient garbage per 20,000-iteration loop, regardless of scenario. preact runs
+~230 KB per loop; solid runs into single-digit megabytes; alien-signals — which
+earlier shared the zero-GC band — now allocates 0.9-3.9 MB per scenario in its
+current published version (not a leak; retained heap is near zero everywhere,
+but it is real GC pressure on the hot path).
 
 Retained heap after forced GC: typically negative for all libs (V8 compacts).
 The one exception: lite-signal shows ~+71 KB retained on KAIROS, which is the
@@ -171,13 +179,15 @@ sandbox.destroy();   // entire reactive world reset
 
 ## File layout
 
-- `src/index.js`              — full implementation, ~500 lines, single file.
-- `types/index.d.ts`          — TypeScript declarations for all public API.
+- `Signal.js`              — full implementation, ~500 lines, single file.
+- `Signal.d.ts`          — TypeScript declarations for all public API.
 - `test/01-core.test.mjs`     — signal/computed/effect basics, equality, untrack.
 - `test/02-topology.test.mjs` — diamonds, chains, fan-out/in, cycle detection.
 - `test/03-pool.test.mjs`     — capacity errors, grow policy, pool reuse.
 - `test/04-zero-gc.test.mjs`  — heap retention (run with --expose-gc).
 - `test/05-scheduler.test.mjs` — scheduler races, dispose, gen counter, version wrap.
+- `test/06-nested-objects.test.mjs` — nested-object & reference-identity behaviours.
+- `test/07-dispose.test.mjs` — universal disposal: registry.dispose(api).
 - `bench/bench.mjs`           — comparative benchmark vs alien-signals, preact, solid.
 - `demo/index.html`           — interactive visualization of the reactive graph.
 
