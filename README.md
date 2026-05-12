@@ -7,7 +7,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/@zakkster/lite-signale?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Types-informational)
-![Dependencies](https://img.shields.io/badge/dependencies-1-brightgreen)
+![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 [![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE.txt)
 
 ```bash
