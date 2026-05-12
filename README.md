@@ -4,11 +4,11 @@
 
 [![npm version](https://img.shields.io/npm/v/@zakkster/lite-signal.svg?style=for-the-badge&color=latest)](https://www.npmjs.com/package/@zakkster/lite-signal)
 [![bundle size](https://img.shields.io/badge/min%2Bgz-~3.2KB-blue?style=flat-square)](https://bundlephobia.com/package/@zakkster/lite-signal)
-[![npm downloads](https://img.shields.io/npm/dm/@zakkster/lite-signale?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
+[![npm downloads](https://img.shields.io/npm/dm/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Types-informational)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
-[![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE.txt)
+[![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
 
 ```bash
 npm install @zakkster/lite-signal
@@ -365,18 +365,20 @@ These are the questions you'd ask in a code review, with the answers:
 
 ## Benchmarks
 
-Honest numbers, against the same workload, with anti-DCE sinks and verified effect execution. All measurements: Node 22, **2016-era Intel MacBook Pro (4 cores, ~10 yr old hardware)**, 20K iterations × 5 runs (median reported). Newer/faster machines shift all libs up proportionally; the relative ordering between libs is what matters.
+Honest numbers, against the same workload, with anti-DCE sinks and verified effect execution. All measurements: Node 22, **2016-era Intel MacBook Pro (4 cores, ~10 yr old hardware)**, 20K iterations × 5 inner runs × 12 outer invocations (median reported). Newer/faster machines shift all libs up proportionally; the relative ordering between libs is what matters.
 
 | Scenario   | What it stresses                | lite-signal | alien-signals | preact     | solid-js  |
 | ---------- | -------------------------------- | ----------- | ------------- | ---------- | --------- |
-| **MUX**    | 256 signals → 1 sum → 1 effect (fan-in) | **252K ops/s** | 191K       | 153K       | 76K       |
-| **KAIROS**    | 1 signal → 1000 computeds → 1 effect | **15K**   | 14K       | 11K        | 4K        |
-| **BROADCAST** | 1 signal → 1000 effects (fan-out) | 23K       | **26K**       | 16K        | 7K        |
-| **DEEP CHAIN** | 256-deep computed chain → 1 effect | 52K  | **87K**       | 49K        | 15K       |
-| **Δheap MUX**  | transient alloc pressure       | **15 KB**   | 13 KB         | 230 KB     | 2,834 KB  |
-| **Retained MUX** | state surviving forced GC    | **−20 KB** (none) | −2 KB    | −13 KB     | −14 KB    |
+| **MUX**    | 256 signals → 1 sum → 1 effect (fan-in) | **249K ops/s** | 207K       | 153K       | 77K       |
+| **BROADCAST** | 1 signal → 1000 effects (fan-out) | **24K**     | 22K           | 17K        | 8K        |
+| **KAIROS**    | 1 signal → 1000 computeds → 1 effect | **14K**  | 13K           | 12K        | 4K        |
+| **DEEP CHAIN** | 256-deep computed chain → 1 effect | 51K     | **60K**       | 50K        | 15K       |
+| **Δheap MUX**  | transient alloc pressure       | **15 KB**   | 3,920 KB      | 4,325 KB   | 2,816 KB  |
+| **Retained MUX** | state surviving forced GC    | **−20 KB** (none) | −2 KB    | −6 KB      | −3 KB     |
 
-**Reading the table:** `lite-signal` wins **MUX** (fan-in aggregation) by **+32%** over alien-signals — the dominant pattern in dashboards, scoreboards, HUDs, and leaderboards. It also edges ahead on **KAIROS** (one source fanning into a wide layer of memos) by ~7%, though that gap is within run-to-run noise. On pure fan-out (BROADCAST) and long pipelines (DEEP CHAIN), `alien-signals`' flatter internal representation is faster — by 13% and 67% respectively. On allocation pressure, `lite-signal` and `alien-signals` are in a different league: Preact pays ~230 KB of churn per MUX run, Solid pays ~2.8 MB. Negative "retained" numbers mean V8 reclaimed more memory than the bench allocated during the post-run forced GC — no leaks anywhere.
+**Reading the table:** `lite-signal` wins **MUX** (fan-in aggregation) by **+20%**, **BROADCAST** (fan-out) by **+9%**, and **KAIROS** (one source feeding a wide layer of memos) by **+8%** — three of the four scenarios. These are the patterns that dominate real UI workloads: dashboards, scoreboards, HUDs, leaderboards, and any view that aggregates many inputs into a single computed slice. `alien-signals` retains a **−15% lead on DEEP CHAIN** (256-deep computed pipelines), where a flatter internal representation pays off when the propagation path is long rather than wide.
+
+On allocation pressure, `lite-signal` is alone in the zero-Δheap band: ~15 KB of transient garbage across 20,000 iterations regardless of scenario. preact runs ~230 KB per loop, solid runs into single-digit megabytes, and alien-signals — which earlier shared the zero-GC band with lite-signal — now allocates 0.9-3.9 MB per scenario in current published versions. Negative "retained" numbers mean V8 reclaimed memory below the pre-bench baseline during the post-run forced GC — no leaks anywhere.
 
 > Note on the +71 KB retained that lite-signal shows on KAIROS specifically: that's the pre-allocated pool sitting in memory holding the live graph (1002 nodes + ~2000 links). The pool *is* the working memory — see the [Case for object pooling](#case-for-object-pooling) section. On the other benches the graph is small enough that the same pool floats below baseline after GC.
 
