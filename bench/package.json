@@ -1,0 +1,13 @@
+{
+  "name": "lite-signal-bench",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "bench": "node --expose-gc benchmark.mjs"
+  },
+  "dependencies": {
+    "@preact/signals-core": "^1.14.1",
+    "alien-signals": "^3.1.2",
+    "solid-js": "^1.9.12"
+  }
+}

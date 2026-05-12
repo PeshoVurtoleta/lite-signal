@@ -1,0 +1,58 @@
+{
+  "name": "@zakkster/lite-signal",
+  "version": "1.0.0",
+  "description": "Zero-GC reactive graph. Monomorphic object pool, versioned push-pull propagation, 32-bit modular versioning. Built for hot paths and long-running processes.",
+  "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "Signal.js",
+  "module": "Signal.js",
+  "types": "Signal.d.ts",
+  "exports": {
+    ".": {
+      "types": "Signal.d.ts",
+      "import": "Signal.js",
+      "default": "Signal.js"
+    }
+  },
+  "files": [
+    "Signal.js",
+    "Signal.d.ts",
+    "README.md",
+    "llms.txt",
+    "LICENSE.txt"
+  ],
+  "scripts": {
+    "test": "node --test --test-reporter=spec",
+    "test:gc": "node --expose-gc --test --test-reporter=spec",
+    "bench": "node --expose-gc bench/benchmark.mjs",
+    "verify": "npm test && npm run bench"
+  },
+  "keywords": [
+    "signal",
+    "signals",
+    "reactive",
+    "reactivity",
+    "computed",
+    "effect",
+    "zero-gc",
+    "zero-allocation",
+    "object-pool",
+    "fine-grained",
+    "twitch-extension",
+    "performance"
+  ],
+  "homepage": "https://github.com/PeshoVurtoleta/lite-signal#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PeshoVurtoleta/lite-signal.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PeshoVurtoleta/lite-signal/issues",
+    "email": "shinikchiev@yahoo.com"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false
+}

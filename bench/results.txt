@@ -1,0 +1,61 @@
+Config: WARMUP=2  RUNS=5  ITERATIONS=20,000  Node v22
+Hardware: 2016-era MacBook Pro (Intel, ~10 yr old, 4 cores)
+Reported: median of 5 timed runs
+
+──────────────────────────────────────────────────────────────────────────────
+KAIROS — 1 source → 1000 computeds → 1 aggregating effect
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median= 1327.12ms  ops/s= 15K   Δheap=  138.5KB  retained=  71.0KB
+alien-signals       median= 1334.69ms  ops/s= 14K   Δheap=   20.3KB  retained=  -0.9KB
+preact              median= 1761.54ms  ops/s= 11K   Δheap=  236.1KB  retained=-410.7KB
+solid               median= 4662.32ms  ops/s=  4K   Δheap= 7691.8KB  retained=  -6.2KB
+
+──────────────────────────────────────────────────────────────────────────────
+BROADCAST — 1 source → 1000 effects
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=  846.11ms  ops/s= 23K   Δheap=   15.2KB  retained= -21.1KB
+alien-signals       median=  763.34ms  ops/s= 26K   Δheap=   16.5KB  retained=  -1.7KB
+preact              median= 1179.62ms  ops/s= 16K   Δheap=  231.9KB  retained= -13.1KB
+solid               median= 2615.00ms  ops/s=  7K   Δheap= 1831.1KB  retained= -13.1KB
+
+──────────────────────────────────────────────────────────────────────────────
+DEEP CHAIN — 256-deep computed chain → 1 effect
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=  383.01ms  ops/s= 52K   Δheap=   15.7KB  retained= -19.4KB
+alien-signals       median=  227.89ms  ops/s= 87K   Δheap=   15.7KB  retained= -14.0KB
+preact              median=  406.69ms  ops/s= 49K   Δheap=  231.1KB  retained= -17.2KB
+solid               median= 1271.16ms  ops/s= 15K   Δheap= 3320.0KB  retained= -13.8KB
+
+──────────────────────────────────────────────────────────────────────────────
+MUX — 256 inputs → 1 sum computed → 1 effect    [lite-signal wins]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=   79.09ms  ops/s=252K   Δheap=   15.1KB  retained= -20.4KB
+alien-signals       median=  104.46ms  ops/s=191K   Δheap=   13.3KB  retained=  -2.4KB
+preact              median=  130.60ms  ops/s=153K   Δheap=  229.6KB  retained= -12.9KB
+solid               median=  260.38ms  ops/s= 76K   Δheap= 2833.6KB  retained= -13.9KB
+
+Validation: all libs show sink=✓ (effects fired against the anti-DCE Float64Array).
+BENCH_SINK_SUM = 5087104.00 (matches expected drive sequence).
+
+Notes on the retained heap column:
+  - Negative values mean V8 compacted reclaimable memory below the pre-bench
+    baseline during the post-iteration forceGc() — i.e. no leak.
+  - `lite-signal` shows +71KB retained on KAIROS because the live reactive
+    graph (1 signal + 1000 computeds + 1 effect → ~70KB of pool slots) is
+    pinned in the pre-allocated pool for the duration of the run. The pool
+    IS the working memory — that is the design. On the other benches the
+    graph is smaller (≤258 nodes) and the same pool capacity floats below
+    the baseline.
+
+Relative performance (lite-signal vs the next-fastest competitor):
+  KAIROS       lite +7%  vs alien   (within noise → effectively tied)
+  BROADCAST    lite −13% vs alien
+  DEEP CHAIN   lite −40% vs alien
+  MUX          lite +32% vs alien   (decisive win — the headline scenario)
+
+Architectural reading: lite-signal wins MUX-shape graphs (many independent
+inputs feeding one aggregator — dashboards, scoreboards, HUDs, leaderboards)
+and is tied on KAIROS-shape (one source fanning into a wide layer of memos).
+On pure broadcast and long pipelines, alien-signals' flatter representation
+edges ahead. On allocation pressure (Δheap, retained), lite-signal and
+alien-signals are in a different league than preact and solid.

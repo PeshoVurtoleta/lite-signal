@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>@zakkster/lite-signal — quickstart</title>
+    <style>
+        :root {
+            --bg: #0e0e11;
+            --panel: #18181b;
+            --panel-2: #1f1f23;
+            --border: #27272a;
+            --border-soft: #1c1c1f;
+            --text: #e4e4e7;
+            --muted: #71717a;
+            --muted-bright: #a1a1aa;
+            --accent: #5fe39f;
+            --accent-dim: rgba(95, 227, 159, 0.18);
+            --accent-glow: rgba(95, 227, 159, 0.30);
+            --batch: #7dd3fc;
+            --batch-dim: rgba(125, 211, 252, 0.20);
+            --batch-glow: rgba(125, 211, 252, 0.32);
+            --warn: #f5b942;
+            --danger: #f87171;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: ui-sans-serif, system-ui, -apple-system, "Inter", sans-serif;
+            margin: 0;
+            padding: 40px 20px 80px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-feature-settings: "ss01", "cv11";
+        }
+
+        .container {
+            width: 100%;
+            max-width: 880px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* ── Header ─────────────────────────────────────────────── */
+        .header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-soft);
+        }
+
+        .header .title {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        .header .title .dot {
+            color: var(--accent);
+            margin-right: 6px;
+        }
+
+        .header .topology {
+            font-family: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .header .topology em {
+            color: var(--accent);
+            font-style: normal;
+        }
+
+        /* ── Telemetry strip ────────────────────────────────────── */
+        .telemetry {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+            gap: 1px;
+            background: var(--border-soft);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .tele-cell {
+            background: var(--panel);
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .tele-cell .k {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+        }
+
+        .tele-cell .v {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .tele-cell .v.accent {
+            color: var(--accent);
+        }
+
+        .tele-cell .v.batch {
+            color: var(--batch);
+        }
+
+        .tele-cell .v.warn {
+            color: var(--warn);
+        }
+
+        /* ── Controls ───────────────────────────────────────────── */
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .control-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            flex-wrap: wrap;
+        }
+
+        .control-row .label {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-right: 6px;
+            min-width: 70px;
+        }
+
+        .control-row .note {
+            font-size: 12px;
+            color: var(--muted);
+            margin-left: auto;
+            font-style: italic;
+        }
+
+        .counter-display {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 22px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            min-width: 64px;
+            text-align: center;
+            color: var(--accent);
+        }
+
+        button {
+            background: var(--panel-2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 7px 14px;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+
+        button:hover:not(:disabled) {
+            background: #2a2a2f;
+            border-color: #3a3a40;
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(1px);
+        }
+
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #0a0a0c;
+            font-weight: 600;
+        }
+
+        button.primary:hover:not(:disabled) {
+            background: #6deeac;
+            border-color: #6deeac;
+        }
+
+        button.batch {
+            background: transparent;
+            border-color: var(--batch);
+            color: var(--batch);
+            font-weight: 600;
+        }
+
+        button.batch:hover:not(:disabled) {
+            background: var(--batch-dim);
+        }
+
+        button.warn {
+            background: transparent;
+            border-color: var(--warn);
+            color: var(--warn);
+        }
+
+        button.warn:hover:not(:disabled) {
+            background: rgba(245, 185, 66, 0.18);
+        }
+
+        button.danger {
+            background: transparent;
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        button.danger:hover:not(:disabled) {
+            background: rgba(248, 113, 113, 0.18);
+        }
+
+        /* ── Grid ───────────────────────────────────────────────── */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+            gap: 8px;
+        }
+
+        .box {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 10px;
+            text-align: center;
+            transition: border-color 120ms, box-shadow 120ms, background 120ms;
+        }
+
+        .box .k {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+
+        .box .v {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 15px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+        }
+
+        .box.flash {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px var(--accent-dim), 0 0 16px var(--accent-glow);
+        }
+
+        .box.flash-batch {
+            border-color: var(--batch);
+            box-shadow: 0 0 0 1px var(--batch-dim), 0 0 16px var(--batch-glow);
+        }
+
+        .box.dead {
+            opacity: 0.32;
+            border-style: dashed;
+        }
+
+        .box.dead .v {
+            color: var(--muted);
+        }
+
+        /* ── End states ─────────────────────────────────────────── */
+        .destroyed {
+            display: none;
+            padding: 28px 20px;
+            text-align: center;
+            border: 1px dashed var(--danger);
+            border-radius: 10px;
+            color: var(--danger);
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 13px;
+            letter-spacing: 0.04em;
+        }
+
+        .destroyed.active {
+            display: block;
+        }
+
+        .destroyed strong {
+            display: block;
+            font-size: 14px;
+            margin-bottom: 6px;
+            letter-spacing: 0.06em;
+        }
+
+        .destroyed em {
+            color: var(--muted);
+            font-style: normal;
+            font-size: 11px;
+        }
+
+        /* ── Footer note ────────────────────────────────────────── */
+        .footnote {
+            font-size: 11px;
+            color: var(--muted);
+            text-align: center;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            letter-spacing: 0.04em;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <!-- Header -->
+    <div class="header">
+        <div class="title"><span class="dot">◐</span>@zakkster/lite-signal — quickstart</div>
+        <div class="topology">
+            <em id="topo-sig">11</em> signals · <em id="topo-comp">30</em> computeds · <em id="topo-eff">11</em> effects
+        </div>
+    </div>
+
+    <!-- Telemetry -->
+    <div class="telemetry" role="status" aria-live="polite">
+        <div class="tele-cell">
+            <div class="k">active nodes</div>
+            <div class="v accent" id="t-nodes">0</div>
+        </div>
+        <div class="tele-cell">
+            <div class="k">active links</div>
+            <div class="v accent" id="t-links">0</div>
+        </div>
+        <div class="tele-cell">
+            <div class="k">signals</div>
+            <div class="v" id="t-sig">0</div>
+        </div>
+        <div class="tele-cell">
+            <div class="k">computeds</div>
+            <div class="v" id="t-comp">0</div>
+        </div>
+        <div class="tele-cell">
+            <div class="k">effects</div>
+            <div class="v" id="t-eff">0</div>
+        </div>
+        <div class="tele-cell">
+            <div class="k">effect runs</div>
+            <div class="v batch" id="t-ops">0</div>
+        </div>
+        <div class="tele-cell">
+            <div class="k">last batch</div>
+            <div class="v warn" id="t-bench">— ms</div>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+        <div class="control-row">
+            <div class="label">drive</div>
+            <button id="btn-dec" aria-label="decrement">−1</button>
+            <div class="counter-display" id="main-counter" aria-live="polite">0</div>
+            <button id="btn-inc" class="primary" aria-label="increment">+1</button>
+            <button id="btn-batch" class="batch">batch ×10</button>
+            <div class="note">+1 → 11 effect runs · batch ×10 → 10 runs (one flush, counter effect untouched)</div>
+        </div>
+
+        <div class="control-row">
+            <div class="label">lifecycle</div>
+            <button id="btn-dispose-first" class="warn">dispose first effect</button>
+            <button id="btn-recreate">recreate</button>
+            <button id="btn-destroy" class="danger">destroy registry</button>
+            <div class="note">dispose() returns a node to the pool; destroy() resets everything</div>
+        </div>
+    </div>
+
+    <!-- End-state overlay -->
+    <div class="destroyed" id="destroyed-msg">
+        <strong>REGISTRY DESTROYED</strong>
+        <em>all pool slots returned · stats zeroed · press "recreate" to rebuild</em>
+    </div>
+
+    <!-- Grid -->
+    <div class="grid" id="grid" aria-label="reactive output grid"></div>
+
+    <div class="footnote">v1.0.0 · zero-GC reactive graph · MIT</div>
+
+</div>
+
+<script type="module">
+    import {createRegistry} from '../Signal.js';
+
+    // ─── DOM scaffolding (build once, reuse forever) ──────────────────────
+    const $ = (id) => document.getElementById(id);
+    const grid = $('grid');
+    const counterEl = $('main-counter');
+    const destroyedMsg = $('destroyed-msg');
+
+    /** @type {{el: HTMLElement, parent: HTMLElement}[]} */
+    const boxes = [];
+    for (let i = 0; i < 30; i++) {
+        const parent = document.createElement('div');
+        parent.className = 'box';
+        parent.innerHTML = `<div class="k">comp ${i + 1}</div><div class="v">0</div>`;
+        grid.appendChild(parent);
+        boxes.push({el: parent.querySelector('.v'), parent});
+    }
+
+    // ─── Reactive graph (rebuildable) ─────────────────────────────────────
+    /** @type {ReturnType<typeof createRegistry>|null} */
+    let r = null;
+    let counter, batchSigs, computeds, effectHandles;
+
+    /** Track effect re-runs across the whole graph. Plain counter — visualised
+     *  via the rAF telemetry loop so we never feed it back into the graph.   */
+    let effectRuns = 0;
+    /** Wall-clock time for the most recent r.batch() call, in milliseconds. */
+    let lastBatchMs = 0;
+    /** Plain flag, not a signal. It's only ever peeked at by effects for the
+     *  flash colour — making it reactive would just burn a pool slot for no
+     *  observable benefit. The library encourages making everything reactive;
+     *  this demo opts out of that for state that nothing tracks.            */
+    let batching = false;
+
+    function build() {
+        r = createRegistry();
+
+        // 11 signals: 1 counter + 10 fan-in inputs
+        counter = r.signal(0);
+        batchSigs = Array.from({length: 10}, () => r.signal(1));
+
+        // 30 computeds — each depends on counter + one of the 10 batch signals
+        computeds = Array.from({length: 30}, (_, i) =>
+            r.computed(() => counter() * (i + 1) + batchSigs[i % 10]())
+        );
+
+        // 10 effects, each driving 3 grid boxes
+        effectHandles = [];
+        for (let i = 0; i < 10; i++) {
+            const base = i * 3;
+            effectHandles.push(r.effect(() => {
+                effectRuns++;
+                const v1 = computeds[base]();
+                const v2 = computeds[base + 1]();
+                const v3 = computeds[base + 2]();
+                boxes[base].el.textContent = v1;
+                boxes[base + 1].el.textContent = v2;
+                boxes[base + 2].el.textContent = v3;
+                flashTriplet(base, batching);
+            }));
+        }
+
+        // 11th effect: the live counter readout. Trivial, but it's a real
+        // effect and the topology counter at the top reflects that honestly.
+        effectHandles.push(r.effect(() => {
+            effectRuns++;
+            counterEl.textContent = counter();
+        }));
+
+        // Reset visual state of any disposed boxes from a prior cycle.
+        for (const {parent} of boxes) parent.classList.remove('dead');
+        destroyedMsg.classList.remove('active');
+        grid.style.display = '';
+        setControlsEnabled(true);
+    }
+
+    /** Schedule a colour-coded flash without leaking timers across rebuilds. */
+    function flashTriplet(base, batchFlash) {
+        const cls = batchFlash ? 'flash-batch' : 'flash';
+        for (let j = 0; j < 3; j++) {
+            const p = boxes[base + j].parent;
+            p.classList.add(cls);
+            setTimeout(() => p.classList.remove(cls), 180);
+        }
+    }
+
+    // ─── Controls ─────────────────────────────────────────────────────────
+    $('btn-inc').addEventListener('click', () => {
+        if (!r) return;
+        counter.update(c => c + 1);
+    });
+
+    $('btn-dec').addEventListener('click', () => {
+        if (!r) return;
+        counter.update(c => c - 1);
+    });
+
+    $('btn-batch').addEventListener('click', () => {
+        if (!r) return;
+        // Flag the upcoming flush as a batch so effects pick the blue tint.
+        batching = true;
+        const t0 = performance.now();
+        r.batch(() => {
+            for (let i = 0; i < 10; i++) batchSigs[i].update(v => v + 1000);
+        });
+        lastBatchMs = performance.now() - t0;
+        batching = false;
+    });
+
+    // The v1.0.0 headline: one universal dispose() that handles signals,
+    // computeds, and effect dispose handles uniformly. Here we use it to
+    // surgically retire the effect driving the first three boxes — the
+    // boxes freeze, the pool slot is returned, and stats decrement.
+    $('btn-dispose-first').addEventListener('click', () => {
+        if (!r || !effectHandles[0]) return;
+        r.dispose(effectHandles[0]);
+        effectHandles[0] = null;
+        boxes[0].parent.classList.add('dead');
+        boxes[1].parent.classList.add('dead');
+        boxes[2].parent.classList.add('dead');
+    });
+
+    // Rebuild from scratch — same topology, fresh pool. The previous
+    // registry's slots are eligible for GC; the new one allocates its own.
+    $('btn-recreate').addEventListener('click', () => {
+        // No need to destroy() if it's already gone — but it's safe either way.
+        if (r) r.destroy();
+        effectRuns = 0;
+        lastBatchMs = 0;
+        build();
+    });
+
+    // The nuclear option: every node and link returned to the pool, every
+    // outstanding closure becomes a safe no-op (guarded by NODE_GEN stamps).
+    $('btn-destroy').addEventListener('click', () => {
+        if (!r) return;
+        r.destroy();
+        r = null;
+        grid.style.display = 'none';
+        destroyedMsg.classList.add('active');
+        setControlsEnabled(false);
+        // One more telemetry tick happens via rAF — it will read zeros from
+        // the next built registry, so we update inline once to reflect "gone".
+        updateTelemetry(true);
+    });
+
+    function setControlsEnabled(on) {
+        const ids = ['btn-inc', 'btn-dec', 'btn-batch', 'btn-dispose-first', 'btn-destroy'];
+        for (const id of ids) $(id).disabled = !on;
+        $('btn-recreate').disabled = false; // always available
+    }
+
+    // ─── Telemetry loop ───────────────────────────────────────────────────
+    function updateTelemetry(forceZero = false) {
+        const st = (r && !forceZero) ? r.stats() : {
+            activeNodes: 0, activeLinks: 0, signals: 0, computeds: 0, effects: 0,
+        };
+        $('t-nodes').textContent = st.activeNodes;
+        $('t-links').textContent = st.activeLinks;
+        $('t-sig').textContent = st.signals;
+        $('t-comp').textContent = st.computeds;
+        $('t-eff').textContent = st.effects;
+        $('t-ops').textContent = effectRuns;
+        $('t-bench').textContent = lastBatchMs > 0 ? lastBatchMs.toFixed(2) + ' ms' : '— ms';
+
+        // FIX: The loop runs infinitely. If `r` is null, it just safely prints zeros!
+        // Note: Keeping the `() =>` is crucial so the rAF timestamp doesn't get passed as `forceZero`.
+        requestAnimationFrame(() => updateTelemetry());
+    }
+
+    // ─── Boot ─────────────────────────────────────────────────────────────
+    build();
+    requestAnimationFrame(() => updateTelemetry());
+</script>
+</body>
+</html>

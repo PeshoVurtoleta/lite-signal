@@ -1,0 +1,192 @@
+# @zakkster/lite-signal
+
+> Zero-GC reactive graph library. Object-pooled nodes and links, versioned
+> push-pull propagation, 32-bit modular epoch counters. Synchronous flush, no
+> microtask scheduler, no allocations in hot path after warm-up. ESM-only.
+> ~3.2 KB min+gz, zero dependencies, MIT licensed.
+
+The library exposes a small reactive primitives API (signal, computed, effect,
+batch, untrack, onCleanup) backed by pre-allocated pools. Built for animation
+loops, Twitch Extensions, game HUDs, and other contexts where GC pauses break
+the frame budget. Effects flush synchronously in the same call stack as the
+triggering write — no `queueMicrotask`, no promises, no scheduler ticks.
+
+## Core concepts
+
+- **Signal**: root reactive cell. `signal(initial, { equals? })` returns a function. Call it to read (tracked), use `.peek()` to read without tracking, `.set(v)` to notify downstream, `.update(fn)` for read-modify-write, `.subscribe(fn)` for an effect-backed listener.
+- **Computed**: lazy memoized derivation. `computed(fn, { equals? })`. Cache hits return in O(deps) (version comparison only). Cache misses re-run the body and refresh `evalVersion`. Errors are cached via `FLAG_HAS_ERROR` and re-thrown on every read until a dep changes.
+- **Effect**: side-effect runner. `effect(fn, { scheduler? })`. Runs immediately on creation, then on any tracked dep change. Returns a dispose function. Optional scheduler defers execution (e.g., to rAF, microtask, custom frame loop).
+- **dispose(api)**: universal disposal. Accepts a signal, computed, or effect dispose handle; idempotent; cross-registry calls are silent no-ops (per-registry `Symbol("node_ptr")` keys the node-identity slot on the returned API function, foreign signals fail the lookup and fall through). Passing an unrelated value is also safe; passing an arbitrary function invokes it (effect-handle contract).
+- **Batch**: `batch(fn)` defers effect flush until the outermost batch closes. Nestable.
+- **Untrack**: `untrack(fn)` reads without subscribing.
+- **onCleanup**: registers teardown for the current computation; fires before each re-run and once on dispose. Works in effects and computeds.
+- **Registry**: `createRegistry({ maxNodes, maxLinks, onCapacityExceeded, maxFlushPasses })` creates an isolated reactive world with its own pools. Useful for tests, plugins, multi-tenant sandboxes. Top-level helpers use a default registry created at module load.
+- **CapacityError**: thrown when a fixed-size pool is exhausted under the `"throw"` policy, or when a `"grow"` policy hits the 16× starting-capacity ceiling on links.
+
+## Architecture invariants
+
+- **Two object pools**: nodes (default 1024) and links (default 4×nodes). Singly-linked via `nextFree`, O(1) allocate/free.
+- **Doubly-linked edge lists**: each link is in both a dep-list (on the target/observer) and a sub-list (on the source/dependency). O(1) unlink during cursor reconciliation.
+- **Cursor reconciliation**: at the start of each computed/effect run, `activeObserverCurrentDep` points at the head of the existing dep list. As the body reads deps, matching links advance the cursor (zero alloc); non-matching links insert before the cursor and the displaced tail is severed at the end of the run.
+- **Iterative mark phase**: `markDownstream` uses a pre-allocated `markStack` array for DFS — no recursion, no call stack growth on wide fan-out.
+- **Recursive computed pull**: `pullComputed` is call-stack recursive; deep chains beyond ~10,000 nodes will throw `RangeError`. Effects don't have this limit.
+- **Double-buffered effect queue**: `effectQueueA` / `effectQueueB` alternate each flush pass. An effect that writes during its own re-run gets re-queued into the alternate buffer.
+- **maxFlushPasses ceiling**: default 100. Exceeding this throws `CycleError`. Prevents runaway effect loops.
+- **32-bit modular versioning**: `globalVersion` and `node.version` are `(value + 1) | 0`, wrapping signed. Comparison via `((dep.version - evalVer) | 0) > 0` is wrap-safe and works in modular distance, not raw integer ordering. The engine never overflows.
+- **Generation counter**: each node has a `gen` field incremented on dispose and destroy. Scheduler trampolines capture the current gen and no-op if it changes — prevents stale callbacks from re-firing after dispose.
+- **destroy()**: resets all pools, rebuilds free lists, bumps every node's gen, resets globalVersion to 1. Safe to call mid-flight (in-flight effects finish their current invocation, scheduled ones become no-ops).
+
+## Performance characteristics
+
+- `signal.set(v)` — O(downstream observers), zero alloc after warm-up.
+- `signal.peek()` — O(1), zero alloc.
+- `computed()` cache hit — O(deps), zero alloc.
+- `computed()` cache miss — O(deps + body), zero alloc if dep structure is stable.
+- Effect re-run with stable dep order — zero alloc.
+- Stable read order: O(1) per dep via cursor reuse.
+- Chaotic/randomized read order: degrades to O(N) per dep due to list re-insertion.
+
+## When to use
+
+- Animation loops, game HUDs, scoreboards, telemetry overlays.
+- Twitch Extensions (1 MB bundle / 3 s cold start budget).
+- Long-running browser sessions (millions of writes per session).
+- Multi-tenant SDKs where each tenant needs an isolated reactive world.
+- Any context where a GC pause breaks the frame budget.
+
+## When NOT to use
+
+- Server-side rendering — no SSR story.
+- Workloads with mostly chaotic read order — `alien-signals` performs better here.
+- If you want time-travel, devtools, or serialization — build those on top.
+
+## API summary
+
+```ts
+// Default registry helpers
+function signal<T>(initial: T, opts?: { equals?: (a: T, b: T) => boolean }): Signal<T>;
+function computed<T>(fn: () => T, opts?: { equals?: (a: T, b: T) => boolean }): Computed<T>;
+function effect(fn: () => void, opts?: { scheduler?: (run: () => void) => void }): Dispose;
+function dispose(api: Signal<any> | Computed<any> | Dispose): void;
+function batch<T>(fn: () => T): T;
+function untrack<T>(fn: () => T): T;
+function onCleanup(fn: () => void): void;
+function stats(): RegistryStats;
+
+// Registry construction
+function createRegistry(config?: RegistryConfig): Registry;
+function setDefaultRegistry(r: Registry): void;
+
+interface Signal<T> {
+  (): T;                             // tracked read
+  peek(): T;                         // untracked read
+  set(value: T): void;
+  update(fn: (prev: T) => T): void;
+  subscribe(fn: (value: T) => void): Dispose;
+}
+
+interface Computed<T> {
+  (): T;                             // tracked read
+  peek(): T;                         // untracked read
+  subscribe(fn: (value: T) => void): Dispose;
+}
+
+type Dispose = () => void;
+
+interface RegistryConfig {
+  maxNodes?: number;                 // default 1024
+  maxLinks?: number;                 // default maxNodes * 4
+  maxFlushPasses?: number;           // default 100
+  onCapacityExceeded?: "throw" | "grow";  // default "throw"
+}
+
+interface RegistryStats {
+  signals: number;
+  computeds: number;
+  effects: number;
+  activeLinks: number;
+  pooledLinks: number;
+  linkPoolCapacity: number;
+  nodePoolCapacity?: number;
+  activeNodes?: number;
+}
+
+class CapacityError extends Error {
+  kind: "nodes" | "links";
+  capacity: number;
+}
+```
+
+## Benchmark snapshot (Node 22, 2016-era Intel MacBook Pro, 20K iter × 5 runs)
+
+| Scenario                                | lite-signal | alien-signals | preact   | solid    |
+| --------------------------------------- | ----------- | ------------- | -------- | -------- |
+| MUX (256 sigs → sum → effect)           | **252K ops/s** | 191K       | 153K     | 76K      |
+| KAIROS (1 sig → 1000 computeds → eff)   | **15K**     | 14K           | 11K      | 4K       |
+| BROADCAST (1 sig → 1000 effects)        | 23K         | **26K**       | 16K      | 7K       |
+| DEEP CHAIN (256-deep memos → eff)       | 52K         | **87K**       | 49K      | 15K      |
+
+lite-signal wins MUX (+32% vs alien) and is effectively tied with alien on KAIROS
+(+7%, within noise). alien wins BROADCAST (+13%) and DEEP CHAIN (+67%); alien's
+flatter internal representation has lower per-edge cost on long pipelines and
+pure broadcast. Both libs allocate orders of magnitude less than preact/solid
+during the timed loop (15-20 KB Δheap vs 230 KB-2.8 MB).
+
+Retained heap after forced GC: typically negative for all libs (V8 compacts).
+The one exception: lite-signal shows ~+71 KB retained on KAIROS, which is the
+pre-allocated pool holding the live 1002-node graph in steady state. This is
+the design: the pool IS the working memory. Not a leak.
+
+## Common idioms
+
+```js
+// Glitch-free diamond
+const a = signal(1);
+const b = computed(() => a() + 1);
+const c = computed(() => a() * 2);
+const d = computed(() => b() + c());   // re-evaluates exactly once per a.set
+
+// Conditional subscription (b only tracked when flag is true)
+const flag = signal(true);
+const a = signal(1);
+const b = signal(2);
+const sum = computed(() => flag() ? a() + b() : a());
+
+// Scheduler integration (rAF batching)
+let queued = false;
+effect(() => render(state()), {
+  scheduler: run => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; run(); });
+  }
+});
+
+// Sandboxed plugin
+const sandbox = createRegistry({ maxNodes: 256, onCapacityExceeded: "throw" });
+plugin(sandbox.signal, sandbox.computed, sandbox.effect);
+// later:
+sandbox.destroy();   // entire reactive world reset
+```
+
+## File layout
+
+- `src/index.js`              — full implementation, ~500 lines, single file.
+- `types/index.d.ts`          — TypeScript declarations for all public API.
+- `test/01-core.test.mjs`     — signal/computed/effect basics, equality, untrack.
+- `test/02-topology.test.mjs` — diamonds, chains, fan-out/in, cycle detection.
+- `test/03-pool.test.mjs`     — capacity errors, grow policy, pool reuse.
+- `test/04-zero-gc.test.mjs`  — heap retention (run with --expose-gc).
+- `test/05-scheduler.test.mjs` — scheduler races, dispose, gen counter, version wrap.
+- `bench/bench.mjs`           — comparative benchmark vs alien-signals, preact, solid.
+- `demo/index.html`           — interactive visualization of the reactive graph.
+
+## Install
+
+```bash
+npm install @zakkster/lite-signal
+```
+
+## License
+
+MIT
