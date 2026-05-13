@@ -382,7 +382,7 @@ On allocation pressure, `lite-signal` is alone in the zero-Δheap band: ~15 KB o
 
 > Note on the +71 KB retained that lite-signal shows on KAIROS specifically: that's the pre-allocated pool sitting in memory holding the live graph (1002 nodes + ~2000 links). The pool *is* the working memory — see the [Case for object pooling](#case-for-object-pooling) section. On the other benches the graph is small enough that the same pool floats below baseline after GC.
 
-The benchmark harness is in [`bench/bench.mjs`](./bench/bench.mjs). It:
+The benchmark harness is in [`bench/benchmark.mjs`](./bench/benchmark.mjs). It:
 
 1. Writes every effect's output to a shared `Float64Array(4096)` exposed on `globalThis` — V8 cannot prove these writes are dead.
 2. Uses the **client** Solid runtime (`solid-js/dist/solid.js`), not the SSR stub Node resolves to by default. The default Node resolution silently no-ops effects, which is how earlier benchmarks across the ecosystem have reported Solid at ~50 GHz throughput.
