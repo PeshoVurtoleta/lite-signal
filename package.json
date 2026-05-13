@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-signal",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Zero-GC reactive graph. Monomorphic object pool, versioned push-pull propagation, 32-bit modular versioning. Built for hot paths and long-running processes.",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
   "license": "MIT",
