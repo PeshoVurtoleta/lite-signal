@@ -1,6 +1,6 @@
 Config: WARMUP=2  RUNS=5  ITERATIONS=20,000  Node v22
 Hardware: 2016-era MacBook Pro (Intel, ~10 yr old, 4 cores)
-Reported: median of 12 timed benchmark invocations (5 inner runs each)
+Reported: median of 50+ timed benchmark invocations (5 inner runs each)
 Run date: post-1.0.1 release; dependency versions as currently published.
 
 ──────────────────────────────────────────────────────────────────────────────
