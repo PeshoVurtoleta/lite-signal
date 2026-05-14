@@ -1,18 +1,18 @@
 {
   "name": "@zakkster/lite-signal",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Zero-GC reactive graph. Monomorphic object pool, versioned push-pull propagation, 32-bit modular versioning. Built for hot paths and long-running processes.",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
   "license": "MIT",
   "type": "module",
-  "main": "Signal.js",
-  "module": "Signal.js",
-  "types": "Signal.d.ts",
+  "main": "./Signal.js",
+  "module": "./Signal.js",
+  "types": "./Signal.d.ts",
   "exports": {
     ".": {
-      "types": "Signal.d.ts",
-      "import": "Signal.js",
-      "default": "Signal.js"
+      "types": "./Signal.d.ts",
+      "import": "./Signal.js",
+      "default": "./Signal.js"
     }
   },
   "files": [

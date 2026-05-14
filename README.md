@@ -366,7 +366,7 @@ These are the questions you'd ask in a code review, with the answers:
 
 ## Benchmarks
 
-Honest numbers, against the same workload, with anti-DCE sinks and verified effect execution. All measurements: Node 22, **2016-era Intel MacBook Pro (4 cores, ~10 yr old hardware)**, 20K iterations × 5 inner runs × 12 outer invocations (median reported). Newer/faster machines shift all libs up proportionally; the relative ordering between libs is what matters.
+Honest numbers, against the same workload, with anti-DCE sinks and verified effect execution. All measurements: Node 22, **2016-era Intel MacBook Pro (4 cores, ~10 yr old hardware)**, 20K iterations × 5 inner runs × 50+ outer invocations (median reported). Newer/faster machines shift all libs up proportionally; the relative ordering between libs is what matters.
 
 | Scenario   | What it stresses                | lite-signal | alien-signals | preact     | solid-js  |
 | ---------- | -------------------------------- | ----------- | ------------- | ---------- | --------- |
@@ -383,7 +383,7 @@ On allocation pressure, `lite-signal` is alone in the zero-Δheap band: ~15 KB o
 
 > Note on the +71 KB retained that lite-signal shows on KAIROS specifically: that's the pre-allocated pool sitting in memory holding the live graph (1002 nodes + ~2000 links). The pool *is* the working memory — see the [Case for object pooling](#case-for-object-pooling) section. On the other benches the graph is small enough that the same pool floats below baseline after GC.
 
-The benchmark harness is in [`bench/benchmark.mjs`](./bench/benchmark.mjs). It:
+The benchmark harness is in [`bench/benchmark.mjs`](./bench/benchmark.mjs); a full methodology write-up — including the anti-DCE design, workload diagrams, variance discipline, reproducibility recipe, and a self-validation procedure for the harness itself — lives in [`bench/README.md`](./bench/README.md). It:
 
 1. Writes every effect's output to a shared `Float64Array(4096)` exposed on `globalThis` — V8 cannot prove these writes are dead.
 2. Uses the **client** Solid runtime (`solid-js/dist/solid.js`), not the SSR stub Node resolves to by default. The default Node resolution silently no-ops effects, which is how earlier benchmarks across the ecosystem have reported Solid at ~50 GHz throughput.
