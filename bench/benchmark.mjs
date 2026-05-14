@@ -456,7 +456,7 @@ for (const sc of SCENARIOS) {
             " retained=" + pad(fmtKB(retained), 9) +
             " sink=" + sinkOk
         );
-        sinkSlot = (sinkSlot + 64) % SINK_SIZE;
+        sinkSlot = (sinkSlot + 64) & (SINK_SIZE - 1);
     }
     console.log("");
 }
