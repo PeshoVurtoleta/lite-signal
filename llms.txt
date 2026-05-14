@@ -117,7 +117,7 @@ class CapacityError extends Error {
 }
 ```
 
-## Benchmark snapshot (Node 22, 2016-era Intel MacBook Pro, 20K iter × 5 runs × 12 invocations)
+## Benchmark snapshot (Node 22, 2016-era Intel MacBook Pro, 20K iter × 5 runs × 50 invocations)
 
 | Scenario                                | lite-signal | alien-signals | preact   | solid    |
 | --------------------------------------- | ----------- | ------------- | -------- | -------- |
