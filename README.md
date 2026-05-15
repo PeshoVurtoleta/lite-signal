@@ -448,6 +448,34 @@ npm run verify   # test + test:gc + a sanity bench
 
 ---
 
+## Performance Trade-offs & Topology Scaling
+
+`lite-signal` was built with a strict mandate: **absolute zero garbage collection**. By packing the dependency graph into a flat, pre-allocated memory arena, we eliminate the Scavenger GC pauses that plague 120fps Canvas/WebGL loops.
+
+However, flat arrays come with a mathematical trade-off. While memory allocation is $O(1)$, modifying a flat array during dynamic dependency churn requires $O(N)$ linear scans. 
+
+**Andrii Volynets** (author of the phenomenal [Alien Signals](https://github.com/stackblitz/alien-signals)) generously ran `lite-signal` through his advanced topology matrix. The results clearly highlight where the zero-GC flat-array architecture excels, and where pointer-based graphs (like Alien/Reflex) take the lead:
+
+#### 1. Stable Topologies (Fan-in / Fan-out / Broadcast)
+In stable environments (typical of game engines, particle systems, and visualizers), `lite-signal` is blisteringly fast and maintains a near-zero allocation profile, keeping frame times perfectly flat.
+
+#### 2. Dynamic Topologies (Web Apps / Layered DAGs)
+In highly chaotic graphs with branch switching, selective reads, and wide dense churn (typical of large DOM-based web frameworks like Vue or React), the $O(N)$ edge traversal cost of flat arrays becomes the dominant bottleneck.
+
+*Andrii's benchmark results for dynamic topologies:*
+| Scenario | alien-signals | reflex | lite-signal |
+| :--- | :--- | :--- | :--- |
+| **1000x12 (4 sources, dynamic)** | 184ms | 194ms | 2031ms |
+| **1000x5 (25 sources, wide/dense)** | 304ms | 303ms | 1746ms |
+| **64x6 (selective dynamic DAG)** | 181ms | 196ms | 559ms |
+
+**The Takeaway:** "Zero-GC" and "topology scalability" are orthogonal dimensions. If you are building a DOM framework with massive dynamic `v-if` churn, use Alien Signals. If you are building a 120fps Canvas game with a stable scene graph where any GC pause is a dropped frame, use `lite-signal`.
+
+### Roadmap: v1.1
+We are actively working on a v1.1 architectural update to address this topology degradation while maintaining the zero-GC contract. By moving to a version-stamped dependency reconciliation pass (`lastSeenInEval`) with a pre-allocated scratch buffer, we expect to drop dynamic read costs to $O(1)$ unconditionally.
+
+---
+
 ## What this is not
 
 - **A virtual DOM, JSX runtime, or rendering library.** It's the substrate. Plug it under whatever rendering layer you like.
