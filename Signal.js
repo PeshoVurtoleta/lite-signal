@@ -1005,3 +1005,9 @@ export function onCleanup(fn) {
 export function stats() {
     return defaultRegistry.stats();
 }
+
+/**
+ * Re-export of the user-land watch utility.
+ * @see {@link watch} in Watch.js for full implementation details.
+ */
+export {watch} from "./Watch.js"

@@ -165,3 +165,37 @@ export function batch<T>(fn: () => T): T;
 export function untrack<T>(fn: () => T): T;
 export function onCleanup(fn: () => void): void;
 export function stats(): RegistryStats;
+
+
+/**
+ * Configuration options for the watch utility.
+ */
+export interface WatchOptions {
+    /** * If true, fires the callback immediately upon registration
+     * with `oldValue` set to `undefined`.
+     */
+    immediate?: boolean;
+}
+
+/**
+ * Track a reactive source and run a callback whenever its evaluated value changes.
+ *
+ * Models Vue's `watch(source, callback)` and MobX's `reaction(predicate, effect)`.
+ * Internal reads inside the callback are untracked — they do not create reactive
+ * dependencies.
+ *
+ * @example
+ * const count = signal(0);
+ * const stop = watch(() => count() * 2, (next, prev) => {
+ * console.log(`Doubled count changed: ${prev} -> ${next}`);
+ * });
+ * * @param source    A function that reads reactive values (e.g., a signal/computed getter).
+ * @param callback  Fired when the source's value changes. Receives the new and previous values.
+ * @param options   Optional configuration (e.g., `{ immediate: true }`).
+ * @returns         Dispose function — call to stop watching and release the effect.
+ */
+export function watch<T>(
+    source: () => T,
+    callback: (newValue: T, oldValue: T | undefined) => void,
+    options?: WatchOptions
+): () => void;
