@@ -117,6 +117,59 @@ class CapacityError extends Error {
 }
 ```
 
+## Watchers (added in v1.1)
+
+Three composable watcher primitives, all built from `effect` + `untrack`. Tree-shakeable.
+
+### watch(source, callback, options?)
+
+Fires callback on every change of the projected source value.
+
+- **Signature**: `watch<T>(source: () => T, callback: (newValue: T, oldValue: T | undefined, stop: () => void) => void, options?: { immediate?: boolean }): () => void`
+- **Returns**: dispose function. Idempotent. Safe to call synchronously inside the callback.
+- **options.immediate**: when `true`, callback fires once on registration with `oldValue = undefined`. Default `false`.
+- **Equality guard**: uses `Object.is(newValue, oldValue)` internally to avoid firing when the projected value is unchanged across dep mutations. Critical for raw getter sources like `() => health() <= 0` — many dep changes can produce the same boolean. Wrapping the source in `computed()` would achieve the same via the computed's own equality check.
+- **UNINITIALIZED sentinel**: uses `Symbol("watch.uninitialized")` instead of `undefined` to detect first-run. This means `signal(undefined)` is correctly distinguished from "watcher hasn't fired yet".
+- **Callback reads are untracked**: the callback can read other signals without registering them as dependencies.
+- **Stop in callback**: third callback argument is a stop handle. Safe to call at any point including synchronously during the immediate fire (the `wantsStopEarly` flag defers dispose until after the effect is registered).
+- **Allocation profile**: 3 closures at registration (stop, effect body, hoisted untrack body). **Zero allocations per fire** — the untrack body is hoisted with `currentNewValue` as shared mutable state. Hot-path safe at 120fps.
+
+### when(predicate, callback)
+
+Fires callback exactly once when predicate first returns truthy, then auto-disposes.
+
+- **Signature**: `when(predicate: () => unknown, callback: () => void): () => void`
+- **Returns**: dispose function. Useful for cancelling before predicate fires; idempotent; no-op after callback has fired.
+- **Synchronous fire**: if predicate is already truthy at registration, callback fires synchronously and watcher disposes immediately (same `wantsStopEarly` pattern as `watch`).
+- **One-shot guarantee**: internal `fired` flag protects against double-fire even if dispose timing lets one more evaluation through.
+- **Callback reads are untracked.**
+- **Truthy/falsy semantics**: standard JS truthy check. `0`, `""`, `null`, `undefined`, `false`, `NaN` do not trigger; everything else does.
+- **Allocation profile**: 2 closures at registration (stop, effect body). **Zero allocations per check** — `untrack(callback)` passes the user's callback directly without wrapping. Hot-path safe at 120fps.
+
+### whenAsync(predicate)
+
+Promise variant of `when`.
+
+- **Signature**: `whenAsync(predicate: () => unknown): Promise<void>`
+- **Returns**: Promise that resolves when predicate first becomes truthy.
+- **Implementation**: `return new Promise((resolve) => when(predicate, resolve))`.
+- **Foot-gun**: promise never rejects. If predicate never becomes truthy, promise never settles. Use `Promise.race` for timeout: `Promise.race([whenAsync(p), timeoutPromise])`.
+- **⚠️ HOT-PATH WARNING**: `new Promise(...)` is a heap allocation. Each call allocates 1 Promise + 1 executor closure + Promise infrastructure (resolve fn, microtask state) + 2 closures from internal `when` call. This is unavoidable — Promises require heap allocation by spec. **Do NOT call per frame.** Use for high-level orchestration (boot sequences, scene transitions, awaiting user input). For 60/120fps logic, use `when(predicate, callback)` directly — it's zero-GC.
+
+### Architecture note
+
+None of these touch the reactive engine — no `FLAG_WATCHER` on `ReactiveNode`, no extension to the object pool, no new internal primitive. They compose entirely from public API. This is the test that the core engine is structurally complete: when a higher-level pattern can be built without extending the engine, the engine has enough.
+
+### Allocation profile summary
+
+| Primitive | At registration | Per fire / check |
+|---|---|---|
+| `watch` | 3 closures | 0 |
+| `when` | 2 closures | 0 |
+| `whenAsync` | 1 Promise + executor + Promise internals + 2 closures (from `when`) | 0 |
+
+The deliberate engineering for `watch`'s "0 per fire" is the hoisted `untrackedFire` closure with `currentNewValue` shared mutable state — see source comment in `watch.js`. Inline arrow function inside the effect body would allocate per fire and break the zero-GC contract.
+
 ## Benchmark snapshot (Node 22, 2016-era Intel MacBook Pro, 20K iter × 5 runs × 50+ invocations)
 
 | Scenario                                | lite-signal | alien-signals | preact   | solid    |
@@ -188,6 +241,8 @@ sandbox.destroy();   // entire reactive world reset
 - `test/05-scheduler.test.mjs` — scheduler races, dispose, gen counter, version wrap.
 - `test/06-nested-objects.test.mjs` — nested-object & reference-identity behaviours.
 - `test/07-dispose.test.mjs` — universal disposal: registry.dispose(api).
+- `test/08-watch.test.mjs` — new watch reactivity tests.
+- `test/09-conformance.test.mjs` — johnsoncodehk/reactive-framework-test-suite conformance fixes tests.
 - `bench/bench.mjs`           — comparative benchmark vs alien-signals, preact, solid.
 - `demo/index.html`           — interactive visualization of the reactive graph.
 

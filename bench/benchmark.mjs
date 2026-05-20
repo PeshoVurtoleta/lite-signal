@@ -56,22 +56,16 @@ function sinkSum() {
     return s;
 }
 
-function resetSink() {
-    for (let i = 0; i < SINK.length; i++) SINK[i] = 0;
-}
+function resetSink() { for (let i = 0; i < SINK.length; i++) SINK[i] = 0; }
 
 // ─── Memory helpers ──────────────────────────────────────────────────────────
 const hasGC = typeof globalThis.gc === "function";
-
 function forceGC() {
     if (!hasGC) return;
     globalThis.gc();
     globalThis.gc();
 }
-
-function heapKB() {
-    return process.memoryUsage().heapUsed / 1024;
-}
+function heapKB() { return process.memoryUsage().heapUsed / 1024; }
 
 // ─── Stats ───────────────────────────────────────────────────────────────────
 function statSummary(samples) {
@@ -81,17 +75,10 @@ function statSummary(samples) {
     const ops = (ITERATIONS / (median / 1000)) | 0;
     return {min, median, ops};
 }
-
-function fmtMs(n) {
-    return n.toFixed(2).padStart(8) + "ms";
-}
-
-function fmtOps(n) {
-    return (n < 1_000_000_000
-        ? (n / 1_000) | 0
-        : (n / 1_000_000) | 0) + (n < 1_000_000_000 ? "K" : "M");
-}
-
+function fmtMs(n) { return n.toFixed(2).padStart(8) + "ms"; }
+function fmtOps(n) { return (n < 1_000_000_000
+    ? (n / 1_000) | 0
+    : (n / 1_000_000) | 0) + (n < 1_000_000_000 ? "K" : "M"); }
 function fmtKB(n) {
     const v = n.toFixed(1);
     return (n >= 0 ? " " : "") + v + "KB";
@@ -125,9 +112,7 @@ const ADAPTERS = {
             const src = r.signal(0);
             for (let i = 0; i < N; i++) {
                 const k = i;
-                r.effect(() => {
-                    SINK[sinkSlot + (k & 31)] = src() + k;
-                });
+                r.effect(() => { SINK[sinkSlot + (k & 31)] = src() + k; });
             }
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
@@ -140,9 +125,7 @@ const ADAPTERS = {
                 prev = r.computed(() => p() + 1);
             }
             const tip = prev;
-            r.effect(() => {
-                SINK[sinkSlot] = tip();
-            });
+            r.effect(() => { SINK[sinkSlot] = tip(); });
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
         mux(N, sinkSlot) {
@@ -150,17 +133,170 @@ const ADAPTERS = {
             const sigs = new Array(N);
             for (let i = 0; i < N; i++) sigs[i] = r.signal(0);
             const sum = r.computed(() => {
-                let s = 0;
-                for (let i = 0; i < N; i++) s += sigs[i]();
-                return s;
+                let s = 0; for (let i = 0; i < N; i++) s += sigs[i](); return s;
             });
-            r.effect(() => {
-                SINK[sinkSlot] = sum();
-            });
+            r.effect(() => { SINK[sinkSlot] = sum(); });
             return {
                 drive: (i) => sigs[i % N].set(i),
                 teardown: () => r.destroy()
             };
+        },
+        // DYNAMIC_DAG: 12-layer DAG, ~80 wide, FAN=6 deps per node. Each computed
+        // reads its FAN deps in either forward or reverse order depending on the
+        // parity of the source signal. This deliberately defeats stable read order
+        // and exercises the dependency-retracking path on every iteration. It's
+        // the worst-case for cursor-based dep matching and a fair model for
+        // component trees with conditional rendering or selective subscriptions.
+        dynamicDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const FAN = 6;
+            const r = createRegistry({maxNodes: W * L + 32, maxLinks: W * L * FAN * 2, onCapacityExceeded: "grow"});
+            const src = r.signal(0);
+            let prevLayer = [src];
+            for (let layer = 0; layer < L; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const deps = new Array(FAN);
+                    for (let k = 0; k < FAN; k++) deps[k] = prevLayer[(w * 7 + k * 11) % prevLayer.length];
+                    newLayer.push(r.computed(() => {
+                        let s = 0;
+                        if (src() & 1) {
+                            for (let k = 0; k < FAN; k++) s += deps[k]();
+                        } else {
+                            for (let k = FAN - 1; k >= 0; k--) s += deps[k]();
+                        }
+                        return s;
+                    }));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            r.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => src.set(i), teardown: () => r.destroy()};
+        },
+        // SELECTIVE_DAG: every computed has 4 candidate deps but reads only 2.
+        // Which two depends on (src() & 3), so the dep SET changes each iteration
+        // — drops one link, allocates another. This is the dep-churn pathology
+        // that exposes retracking cost most cleanly.
+        selectiveDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const POOL = 4;   // 4 candidate deps per computed
+            const r = createRegistry({maxNodes: W * L + 32, maxLinks: W * L * POOL * 2, onCapacityExceeded: "grow"});
+            const src = r.signal(0);
+            let prevLayer = [src];
+            // Four (a, b) subsets of indices 0..3 — chosen so consecutive iterations
+            // always differ by at least one element (real set churn each step).
+            const PAIRS = [[0, 1], [0, 2], [1, 3], [2, 3]];
+            for (let layer = 0; layer < L; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const cand = new Array(POOL);
+                    for (let k = 0; k < POOL; k++) cand[k] = prevLayer[(w * 7 + k * 13) % prevLayer.length];
+                    newLayer.push(r.computed(() => {
+                        const which = src() & 3;
+                        const a = PAIRS[which][0], b = PAIRS[which][1];
+                        return cand[a]() + cand[b]();
+                    }));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            r.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => src.set(i), teardown: () => r.destroy()};
+        },
+        // 1000x12-style: 12 layers × ~80 wide, 4 source signals, conditional read pattern.
+        // Approximates js-reactivity-benchmark "1000x12 dynamic large web app" shape.
+        largeWebApp(N, sinkSlot) {
+            const LAYERS = 12;
+            const W = Math.max(4, Math.ceil(N / LAYERS));
+            const SOURCES = 4;
+            const r = createRegistry({maxNodes: W * LAYERS + SOURCES + 16, maxLinks: W * LAYERS * 4, onCapacityExceeded: "grow"});
+            const sources = new Array(SOURCES);
+            for (let s = 0; s < SOURCES; s++) sources[s] = r.signal(0);
+            let prevLayer = sources;
+            for (let layer = 0; layer < LAYERS; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const a = prevLayer[(w * 7) % prevLayer.length];
+                    const b = prevLayer[(w * 11 + 3) % prevLayer.length];
+                    const c = prevLayer[(w * 13 + 5) % prevLayer.length];
+                    newLayer.push(r.computed(() => (sources[0]() & 1) ? (a() + b()) : (a() + c())));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            r.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => sources[i % SOURCES].set(i), teardown: () => r.destroy()};
+        },
+        // 1000x5-style: 5 layers × ~200 wide, 25 source signals, dense static reads (FAN=5).
+        wideDense(N, sinkSlot) {
+            const LAYERS = 5;
+            const W = Math.max(4, Math.ceil(N / LAYERS));
+            const SOURCES = 25;
+            const FAN = 5;
+            const r = createRegistry({maxNodes: W * LAYERS + SOURCES + 16, maxLinks: W * LAYERS * FAN * 2, onCapacityExceeded: "grow"});
+            const sources = new Array(SOURCES);
+            for (let s = 0; s < SOURCES; s++) sources[s] = r.signal(0);
+            let prevLayer = sources;
+            for (let layer = 0; layer < LAYERS; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const deps = new Array(FAN);
+                    for (let k = 0; k < FAN; k++) deps[k] = prevLayer[(w * (k * 2 + 3)) % prevLayer.length];
+                    newLayer.push(r.computed(() => deps[0]() + deps[1]() + deps[2]() + deps[3]() + deps[4]()));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            r.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => sources[i % SOURCES].set(i), teardown: () => r.destroy()};
+        },
+        // 64x6 selective DAG: smaller graph (~384 nodes), each compute selectively reads
+        // 3 of 6 candidate deps based on source value.
+        smallSelective(N, sinkSlot) {
+            const LAYERS = 6;
+            const W = Math.max(4, Math.ceil(N / LAYERS));
+            const POOL = 6;
+            const r = createRegistry({maxNodes: W * LAYERS + 16, maxLinks: W * LAYERS * POOL, onCapacityExceeded: "grow"});
+            const src = r.signal(0);
+            let prevLayer = [src];
+            for (let layer = 0; layer < LAYERS; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const cand = new Array(POOL);
+                    for (let k = 0; k < POOL; k++) cand[k] = prevLayer[(w * 7 + k * 5) % prevLayer.length];
+                    newLayer.push(r.computed(() => {
+                        const m = src() & 7;
+                        let s = 0;
+                        if (m & 1) s += cand[0]();
+                        if (m & 2) s += cand[1]();
+                        if (m & 4) s += cand[2]();
+                        s += cand[3]();
+                        return s;
+                    }));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            r.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         }
     },
 
@@ -173,27 +309,18 @@ const ADAPTERS = {
                 cs[i] = alien.computed(() => src() * (k + 1));
             }
             alien.effect(() => {
-                let s = 0;
-                for (let i = 0; i < N; i++) s += cs[i]();
+                let s = 0; for (let i = 0; i < N; i++) s += cs[i]();
                 SINK[sinkSlot] = s;
             });
-            return {
-                drive: (i) => src(i), teardown: () => {
-                }
-            };
+            return {drive: (i) => src(i), teardown: () => {}};
         },
         broadcast(N, sinkSlot) {
             const src = alien.signal(0);
             for (let i = 0; i < N; i++) {
                 const k = i;
-                alien.effect(() => {
-                    SINK[sinkSlot + (k & 31)] = src() + k;
-                });
+                alien.effect(() => { SINK[sinkSlot + (k & 31)] = src() + k; });
             }
-            return {
-                drive: (i) => src(i), teardown: () => {
-                }
-            };
+            return {drive: (i) => src(i), teardown: () => {}};
         },
         deepChain(N, sinkSlot) {
             const src = alien.signal(0);
@@ -203,29 +330,152 @@ const ADAPTERS = {
                 prev = alien.computed(() => p() + 1);
             }
             const tip = prev;
-            alien.effect(() => {
-                SINK[sinkSlot] = tip();
-            });
-            return {
-                drive: (i) => src(i), teardown: () => {
-                }
-            };
+            alien.effect(() => { SINK[sinkSlot] = tip(); });
+            return {drive: (i) => src(i), teardown: () => {}};
         },
         mux(N, sinkSlot) {
             const sigs = new Array(N);
             for (let i = 0; i < N; i++) sigs[i] = alien.signal(0);
             const sum = alien.computed(() => {
-                let s = 0;
-                for (let i = 0; i < N; i++) s += sigs[i]();
-                return s;
+                let s = 0; for (let i = 0; i < N; i++) s += sigs[i](); return s;
             });
-            alien.effect(() => {
-                SINK[sinkSlot] = sum();
-            });
-            return {
-                drive: (i) => sigs[i % N](i), teardown: () => {
+            alien.effect(() => { SINK[sinkSlot] = sum(); });
+            return {drive: (i) => sigs[i % N](i), teardown: () => {}};
+        },
+        dynamicDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const FAN = 6;
+            const src = alien.signal(0);
+            let prevLayer = [src];
+            for (let layer = 0; layer < L; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const deps = new Array(FAN);
+                    for (let k = 0; k < FAN; k++) deps[k] = prevLayer[(w * 7 + k * 11) % prevLayer.length];
+                    newLayer.push(alien.computed(() => {
+                        let s = 0;
+                        if (src() & 1) {
+                            for (let k = 0; k < FAN; k++) s += deps[k]();
+                        } else {
+                            for (let k = FAN - 1; k >= 0; k--) s += deps[k]();
+                        }
+                        return s;
+                    }));
                 }
-            };
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            alien.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => src(i), teardown: () => {}};
+        },
+        selectiveDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const POOL = 4;
+            const src = alien.signal(0);
+            const PAIRS = [[0, 1], [0, 2], [1, 3], [2, 3]];
+            let prevLayer = [src];
+            for (let layer = 0; layer < L; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const cand = new Array(POOL);
+                    for (let k = 0; k < POOL; k++) cand[k] = prevLayer[(w * 7 + k * 13) % prevLayer.length];
+                    newLayer.push(alien.computed(() => {
+                        const which = src() & 3;
+                        const a = PAIRS[which][0], b = PAIRS[which][1];
+                        return cand[a]() + cand[b]();
+                    }));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            alien.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => src(i), teardown: () => {}};
+        },
+        largeWebApp(N, sinkSlot) {
+            const LAYERS = 12;
+            const W = Math.max(4, Math.ceil(N / LAYERS));
+            const SOURCES = 4;
+            const sources = new Array(SOURCES);
+            for (let s = 0; s < SOURCES; s++) sources[s] = alien.signal(0);
+            let prevLayer = sources;
+            for (let layer = 0; layer < LAYERS; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const a = prevLayer[(w * 7) % prevLayer.length];
+                    const b = prevLayer[(w * 11 + 3) % prevLayer.length];
+                    const c = prevLayer[(w * 13 + 5) % prevLayer.length];
+                    newLayer.push(alien.computed(() => (sources[0]() & 1) ? (a() + b()) : (a() + c())));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            alien.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => sources[i % SOURCES](i), teardown: () => {}};
+        },
+        wideDense(N, sinkSlot) {
+            const LAYERS = 5;
+            const W = Math.max(4, Math.ceil(N / LAYERS));
+            const SOURCES = 25;
+            const FAN = 5;
+            const sources = new Array(SOURCES);
+            for (let s = 0; s < SOURCES; s++) sources[s] = alien.signal(0);
+            let prevLayer = sources;
+            for (let layer = 0; layer < LAYERS; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const deps = new Array(FAN);
+                    for (let k = 0; k < FAN; k++) deps[k] = prevLayer[(w * (k * 2 + 3)) % prevLayer.length];
+                    newLayer.push(alien.computed(() => deps[0]() + deps[1]() + deps[2]() + deps[3]() + deps[4]()));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            alien.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => sources[i % SOURCES](i), teardown: () => {}};
+        },
+        smallSelective(N, sinkSlot) {
+            const LAYERS = 6;
+            const W = Math.max(4, Math.ceil(N / LAYERS));
+            const POOL = 6;
+            const src = alien.signal(0);
+            let prevLayer = [src];
+            for (let layer = 0; layer < LAYERS; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const cand = new Array(POOL);
+                    for (let k = 0; k < POOL; k++) cand[k] = prevLayer[(w * 7 + k * 5) % prevLayer.length];
+                    newLayer.push(alien.computed(() => {
+                        const m = src() & 7;
+                        let s = 0;
+                        if (m & 1) s += cand[0]();
+                        if (m & 2) s += cand[1]();
+                        if (m & 4) s += cand[2]();
+                        s += cand[3]();
+                        return s;
+                    }));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            alien.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => src(i), teardown: () => {}};
         }
     },
 
@@ -238,31 +488,18 @@ const ADAPTERS = {
                 cs[i] = preact.computed(() => src.value * (k + 1));
             }
             preact.effect(() => {
-                let s = 0;
-                for (let i = 0; i < N; i++) s += cs[i].value;
+                let s = 0; for (let i = 0; i < N; i++) s += cs[i].value;
                 SINK[sinkSlot] = s;
             });
-            return {
-                drive: (i) => {
-                    src.value = i;
-                }, teardown: () => {
-                }
-            };
+            return {drive: (i) => { src.value = i; }, teardown: () => {}};
         },
         broadcast(N, sinkSlot) {
             const src = preact.signal(0);
             for (let i = 0; i < N; i++) {
                 const k = i;
-                preact.effect(() => {
-                    SINK[sinkSlot + (k & 31)] = src.value + k;
-                });
+                preact.effect(() => { SINK[sinkSlot + (k & 31)] = src.value + k; });
             }
-            return {
-                drive: (i) => {
-                    src.value = i;
-                }, teardown: () => {
-                }
-            };
+            return {drive: (i) => { src.value = i; }, teardown: () => {}};
         },
         deepChain(N, sinkSlot) {
             const src = preact.signal(0);
@@ -272,33 +509,74 @@ const ADAPTERS = {
                 prev = preact.computed(() => p.value + 1);
             }
             const tip = prev;
-            preact.effect(() => {
-                SINK[sinkSlot] = tip.value;
-            });
-            return {
-                drive: (i) => {
-                    src.value = i;
-                }, teardown: () => {
-                }
-            };
+            preact.effect(() => { SINK[sinkSlot] = tip.value; });
+            return {drive: (i) => { src.value = i; }, teardown: () => {}};
         },
         mux(N, sinkSlot) {
             const sigs = new Array(N);
             for (let i = 0; i < N; i++) sigs[i] = preact.signal(0);
             const sum = preact.computed(() => {
-                let s = 0;
-                for (let i = 0; i < N; i++) s += sigs[i].value;
-                return s;
+                let s = 0; for (let i = 0; i < N; i++) s += sigs[i].value; return s;
             });
-            preact.effect(() => {
-                SINK[sinkSlot] = sum.value;
-            });
-            return {
-                drive: (i) => {
-                    sigs[i % N].value = i;
-                }, teardown: () => {
+            preact.effect(() => { SINK[sinkSlot] = sum.value; });
+            return {drive: (i) => { sigs[i % N].value = i; }, teardown: () => {}};
+        },
+        dynamicDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const FAN = 6;
+            const src = preact.signal(0);
+            let prevLayer = [src];
+            for (let layer = 0; layer < L; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const deps = new Array(FAN);
+                    for (let k = 0; k < FAN; k++) deps[k] = prevLayer[(w * 7 + k * 11) % prevLayer.length];
+                    newLayer.push(preact.computed(() => {
+                        let s = 0;
+                        if (src.value & 1) {
+                            for (let k = 0; k < FAN; k++) s += deps[k].value;
+                        } else {
+                            for (let k = FAN - 1; k >= 0; k--) s += deps[k].value;
+                        }
+                        return s;
+                    }));
                 }
-            };
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            preact.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i].value;
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => { src.value = i; }, teardown: () => {}};
+        },
+        selectiveDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const POOL = 4;
+            const src = preact.signal(0);
+            const PAIRS = [[0, 1], [0, 2], [1, 3], [2, 3]];
+            let prevLayer = [src];
+            for (let layer = 0; layer < L; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const cand = new Array(POOL);
+                    for (let k = 0; k < POOL; k++) cand[k] = prevLayer[(w * 7 + k * 13) % prevLayer.length];
+                    newLayer.push(preact.computed(() => {
+                        const which = src.value & 3;
+                        const a = PAIRS[which][0], b = PAIRS[which][1];
+                        return cand[a].value + cand[b].value;
+                    }));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            preact.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i].value;
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => { src.value = i; }, teardown: () => {}};
         }
     },
 
@@ -323,8 +601,7 @@ const ADAPTERS = {
                     cs[i] = solid.createMemo(() => get() * (k + 1));
                 }
                 solid.createComputed(() => {
-                    let s = 0;
-                    for (let i = 0; i < N; i++) s += cs[i]();
+                    let s = 0; for (let i = 0; i < N; i++) s += cs[i]();
                     SINK[sinkSlot] = s;
                 });
                 return {get, set};
@@ -338,9 +615,7 @@ const ADAPTERS = {
                 const [get, set] = solid.createSignal(0, {equals: false});
                 for (let i = 0; i < N; i++) {
                     const k = i;
-                    solid.createComputed(() => {
-                        SINK[sinkSlot + (k & 31)] = get() + k;
-                    });
+                    solid.createComputed(() => { SINK[sinkSlot + (k & 31)] = get() + k; });
                 }
                 return {get, set};
             });
@@ -357,9 +632,7 @@ const ADAPTERS = {
                     prev = solid.createMemo(() => p() + 1);
                 }
                 const tip = prev;
-                solid.createComputed(() => {
-                    SINK[sinkSlot] = tip();
-                });
+                solid.createComputed(() => { SINK[sinkSlot] = tip(); });
                 return {get, set};
             });
             return {drive: (i) => result.set(i), teardown: () => dispose()};
@@ -372,30 +645,101 @@ const ADAPTERS = {
                 const setters = new Array(N);
                 for (let i = 0; i < N; i++) {
                     const [g, s] = solid.createSignal(0, {equals: false});
-                    sigs[i] = g;
-                    setters[i] = s;
+                    sigs[i] = g; setters[i] = s;
                 }
                 const sum = solid.createMemo(() => {
-                    let s = 0;
-                    for (let i = 0; i < N; i++) s += sigs[i]();
-                    return s;
+                    let s = 0; for (let i = 0; i < N; i++) s += sigs[i](); return s;
                 });
-                solid.createComputed(() => {
-                    SINK[sinkSlot] = sum();
-                });
+                solid.createComputed(() => { SINK[sinkSlot] = sum(); });
                 return {setters};
             });
             return {drive: (i) => result.setters[i % N](i), teardown: () => dispose()};
+        },
+        dynamicDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const FAN = 6;
+            let dispose, setter;
+            solid.createRoot(d => {
+                dispose = d;
+                const [srcGet, srcSet] = solid.createSignal(0, {equals: false});
+                setter = srcSet;
+                let prevLayer = [srcGet];
+                for (let layer = 0; layer < L; layer++) {
+                    const newLayer = [];
+                    for (let w = 0; w < W; w++) {
+                        const deps = new Array(FAN);
+                        for (let k = 0; k < FAN; k++) deps[k] = prevLayer[(w * 7 + k * 11) % prevLayer.length];
+                        newLayer.push(solid.createMemo(() => {
+                            let s = 0;
+                            if (srcGet() & 1) {
+                                for (let k = 0; k < FAN; k++) s += deps[k]();
+                            } else {
+                                for (let k = FAN - 1; k >= 0; k--) s += deps[k]();
+                            }
+                            return s;
+                        }));
+                    }
+                    prevLayer = newLayer;
+                }
+                const tip = prevLayer;
+                solid.createComputed(() => {
+                    let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                    SINK[sinkSlot] = s;
+                });
+            });
+            return {drive: (i) => setter(i), teardown: () => dispose()};
+        },
+        selectiveDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const POOL = 4;
+            const PAIRS = [[0, 1], [0, 2], [1, 3], [2, 3]];
+            let dispose, setter;
+            solid.createRoot(d => {
+                dispose = d;
+                const [srcGet, srcSet] = solid.createSignal(0, {equals: false});
+                setter = srcSet;
+                let prevLayer = [srcGet];
+                for (let layer = 0; layer < L; layer++) {
+                    const newLayer = [];
+                    for (let w = 0; w < W; w++) {
+                        const cand = new Array(POOL);
+                        for (let k = 0; k < POOL; k++) cand[k] = prevLayer[(w * 7 + k * 13) % prevLayer.length];
+                        newLayer.push(solid.createMemo(() => {
+                            const which = srcGet() & 3;
+                            const a = PAIRS[which][0], b = PAIRS[which][1];
+                            return cand[a]() + cand[b]();
+                        }));
+                    }
+                    prevLayer = newLayer;
+                }
+                const tip = prevLayer;
+                solid.createComputed(() => {
+                    let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
+                    SINK[sinkSlot] = s;
+                });
+            });
+            return {drive: (i) => setter(i), teardown: () => dispose()};
         }
     }
 };
 
 // ─── Bench scenarios ─────────────────────────────────────────────────────────
 const SCENARIOS = [
-    {key: "kairos", title: "KAIROS — 1 source → 1000 computeds → 1 aggregating effect", N: 1000},
-    {key: "broadcast", title: "BROADCAST — 1 source → 1000 effects", N: 1000},
-    {key: "deepChain", title: "DEEP CHAIN — 256-deep computed chain → 1 effect", N: 256},
-    {key: "mux", title: "MUX — 256 inputs → 1 sum computed → 1 effect", N: 256}
+    {key: "kairos",         title: "KAIROS — 1 source → 1000 computeds → 1 aggregating effect", N: 1000},
+    {key: "broadcast",      title: "BROADCAST — 1 source → 1000 effects",                       N: 1000},
+    {key: "deepChain",      title: "DEEP CHAIN — 256-deep computed chain → 1 effect",           N: 256},
+    {key: "mux",            title: "MUX — 256 inputs → 1 sum computed → 1 effect",              N: 256},
+    {key: "dynamicDag",     title: "DYNAMIC DAG — sqrt-layered, FAN=6 deps, read order flips each iter",   N: 960},
+    {key: "selectiveDag",   title: "SELECTIVE DAG — sqrt-layered, 4 candidates, 2 read per iter (set churn)", N: 960},
+    // Approximations of js-reactivity-benchmark "cellx" workloads. The structural shapes match
+    // (layer count × width × source count, dynamic/dense/selective semantics) but precise
+    // conditional-read patterns and drive sequencing may differ — these aren't 1:1 ports.
+    // Not implemented for preact/solid; harness skips libs that don't define a scenario.
+    {key: "largeWebApp",    title: "LARGE WEB APP — 12 layers × ~80 wide, 4 sources, conditional reads (≈ Andrii 1000x12 dynamic)", N: 960},
+    {key: "wideDense",      title: "WIDE DENSE — 5 layers × ~200 wide, 25 sources, FAN=5 dense (≈ Andrii 1000x5 wide dense)",       N: 1000},
+    {key: "smallSelective", title: "SMALL SELECTIVE — 6 layers × 64 wide, 6 candidates 3 read (≈ Andrii 64x6 dynamic selective)",   N: 384}
 ];
 
 const LIBS = ["lite-signal", "alien-signals", "preact", "solid"];
@@ -403,6 +747,7 @@ const LIBS = ["lite-signal", "alien-signals", "preact", "solid"];
 // ─── Runner ──────────────────────────────────────────────────────────────────
 function runOne(lib, scenarioKey, N, sinkSlot) {
     const adapter = ADAPTERS[lib][scenarioKey];
+    if (!adapter) return null; // Lib doesn't implement this scenario — caller prints "n/a".
     const {drive, teardown} = adapter(N, sinkSlot);
     try {
         // Warmup
@@ -426,10 +771,7 @@ function runOne(lib, scenarioKey, N, sinkSlot) {
     }
 }
 
-function pad(s, n) {
-    s = String(s);
-    return s + " ".repeat(Math.max(0, n - s.length));
-}
+function pad(s, n) { s = String(s); return s + " ".repeat(Math.max(0, n - s.length)); }
 
 console.log(`Config: WARMUP=${WARMUP}  RUNS=${RUNS}  ITERATIONS=${ITERATIONS.toLocaleString()}`);
 if (!hasGC) console.log("⚠️  Run with --expose-gc for accurate heap numbers.");
@@ -442,7 +784,12 @@ for (const sc of SCENARIOS) {
     console.log("─".repeat(98));
     for (const lib of LIBS) {
         resetSink();
-        const {samples, deltaHeap, retained} = runOne(lib, sc.key, sc.N, sinkSlot);
+        const result = runOne(lib, sc.key, sc.N, sinkSlot);
+        if (result === null) {
+            console.log(pad(lib, 20) + "(not implemented for this scenario)");
+            continue;
+        }
+        const {samples, deltaHeap, retained} = result;
         const {min, median, ops} = statSummary(samples);
         // SINK sanity: must be non-zero if effects ran with non-zero iteration values
         const sinkValue = SINK[sinkSlot];

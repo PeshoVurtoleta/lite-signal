@@ -4,7 +4,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@zakkster/lite-signal.svg?style=for-the-badge&color=latest)](https://www.npmjs.com/package/@zakkster/lite-signal)
 ![Zero-GC](https://img.shields.io/badge/Zero--GC-Engine-00C853?style=for-the-badge&logo=leaf&logoColor=white)
-[![bundle size](https://img.shields.io/badge/min%2Bgz-~3.2KB-blue?style=flat-square)](https://bundlephobia.com/package/@zakkster/lite-signal)
+[![npm bundle size](https://img.shields.io/bundlephobia/minzip/@zakkster/lite-signa?style=for-the-badge)](https://bundlephobia.com/result?p=@zakkster/lite-signal)
 [![npm downloads](https://img.shields.io/npm/dm/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Types-informational)
@@ -40,6 +40,7 @@ Synchronous, glitch-free, push-pull. No microtask queue, no allocations after wa
 - [Architecture in one diagram](#architecture-in-one-diagram)
 - [How a write propagates](#how-a-write-propagates)
 - [API reference](#api-reference)
+- [Watchers](#watchers)
 - [Capacity, growth, and the link ceiling](#capacity-growth-and-the-link-ceiling)
 - [Edge cases pinned down](#edge-cases-pinned-down)
 - [Benchmarks](#benchmarks)
@@ -47,6 +48,7 @@ Synchronous, glitch-free, push-pull. No microtask queue, no allocations after wa
 - [What this is not](#what-this-is-not)
 - [Browser and runtime support](#browser-and-runtime-support)
 - [Integration recipes](#integration-recipes)
+- [Conformance](#conformance)
 - [FAQ](#faq)
 - [npm scripts](#npm-scripts)
 
@@ -347,6 +349,137 @@ Default sizing for a Twitch-extension-style budget:
 
 ---
 
+## Watchers
+
+`@zakkster/lite-signal` ships three composable watcher primitives, all built from `effect` + `untrack` — no engine extensions, no per-watcher flag in `ReactiveNode`. The core stays small; the surface stays useful.
+
+| API | Use case | Lifecycle | Hot-path safe? |
+|---|---|---|---|
+| `watch(source, cb)` | observe value changes over time | manual `stop()` | ✅ zero-GC per fire |
+| `watch(source, (v, p, stop) => …)` | observe until a condition | self-dispose via callback arg | ✅ zero-GC per fire |
+| `when(predicate, cb)` | one-shot trigger when condition first true | auto-dispose | ✅ zero-GC per check |
+| `whenAsync(predicate)` | await a condition | auto-dispose | ⚠️ allocates Promise — see below |
+
+### `watch(source, callback, options?)`
+
+Fires the callback whenever the source's projected value changes. The callback receives `(newValue, oldValue, stop)` — calling `stop()` from inside the callback disposes the watcher.
+
+```js
+import { signal, watch } from "@zakkster/lite-signal";
+
+const count = signal(0);
+
+// Basic — observe forever
+const stop = watch(count, (next, prev) => {
+    console.log(`${prev} → ${next}`);
+});
+
+count.set(1);  // logs: 0 → 1
+stop();        // manual dispose
+```
+
+**Self-disposing watcher** — declarative termination from inside the callback:
+
+```js
+watch(status, (next, prev, stop) => {
+    if (next === "ready") {
+        initialize();
+        stop();  // detach after first "ready"
+    }
+});
+```
+
+**Immediate option** — fires once on registration with `oldValue = undefined`:
+
+```js
+watch(theme, (v) => applyTheme(v), { immediate: true });
+```
+
+**Raw getter equality** — `watch` uses `Object.is` internally to avoid spurious fires when a dep mutation produces the same projected value:
+
+```js
+const health = signal(10);
+let deathLog = 0;
+watch(() => health() <= 0, (isDead) => { deathLog++; });
+
+health.set(9);  // isDead is still false — no fire
+health.set(8);  // same — no fire
+health.set(0);  // crossed — fires once with (true, false)
+```
+
+Without this guard, the callback would fire on every `health` mutation regardless of whether `isDead` changed. Wrapping the source in `computed()` would achieve the same via the computed's own equality check — the guard makes that wrapping optional.
+
+### `when(predicate, callback)`
+
+Fires `callback` exactly once when `predicate` first returns a truthy value, then auto-disposes. If the predicate is already truthy at registration, fires synchronously.
+
+```js
+import { when } from "@zakkster/lite-signal";
+
+when(() => user.isAuthenticated, () => {
+    navigate("/dashboard");
+});
+```
+
+The returned dispose function can cancel before the predicate fires:
+
+```js
+const cancel = when(() => slowApi.ready, () => start());
+if (userBacked) cancel();
+```
+
+### `whenAsync(predicate)`
+
+> ### ⚠️ Hot-path warning
+>
+> `whenAsync` calls `new Promise(...)` internally — **this is a heap allocation**. Every call allocates a Promise object, an executor closure, and Promise infrastructure (resolve function, microtask state). Promises require heap allocation by the language spec; this cost is unavoidable.
+>
+> **Use for:** high-level scene/UI orchestration, boot sequences, awaiting user input, level transitions. Anything that runs once or rarely.
+>
+> **NEVER use for:** per-frame entity updates, render-loop logic, animation tick handlers, anywhere that runs at 60/120 fps. The Promise allocations will be visible in GC traces and will cause frame-time spikes under sustained load.
+>
+> **For zero-GC hot-path logic, use `when` with a callback.**
+
+Promise-returning variant of `when`. Composes with `async/await` for declarative async control flow against reactive state:
+
+```js
+import { whenAsync } from "@zakkster/lite-signal";
+
+async function bootSequence() {
+    await whenAsync(() => config.loaded);
+    await whenAsync(() => auth.ready);
+    await whenAsync(() => db.connected);
+    render();
+}
+```
+
+The promise never rejects on its own — if the predicate never becomes truthy, the promise never settles. For timeout semantics use `Promise.race`:
+
+```js
+await Promise.race([
+    whenAsync(() => api.ready),
+    new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 5000))
+]);
+```
+
+### Allocation profile
+
+Honest accounting of where memory is spent in each primitive:
+
+| Primitive | Allocations at registration | Allocations per fire / check |
+|---|---|---|
+| `watch(source, cb)` | 3 closures (stop, effect body, hoisted untrack body) | **0** |
+| `when(predicate, cb)` | 2 closures (stop, effect body) | **0** |
+| `whenAsync(predicate)` | 1 Promise + 1 executor closure + Promise internals + 2 closures from `when` | **0** (after registration) |
+
+The "0 per fire" property for `watch` is deliberate engineering — the inner `untrack` callback is hoisted to a single closure allocated once at registration, with `currentNewValue` as shared mutable state. If you read the source and wonder why we don't use a clean inline arrow function inside the effect body, this is the answer: doing it inline would allocate a fresh closure on every dep change, at 7,200 allocs per minute per watcher at 120 fps.
+
+### Tree-shaking
+
+All three primitives live in a separate module (`src/watch.js`) and are re-exported from the main entry. If your bundle doesn't import them, they won't appear in the output — modern ESM tree-shaking (Vite, Rollup, esbuild) handles this reliably.
+
+---
+
 ## Edge cases pinned down
 
 These are the questions you'd ask in a code review, with the answers:
@@ -412,6 +545,8 @@ Three tiers, all reproducible.
 - **`05-scheduler.test.mjs`** — scheduler-deferred effects, dispose-during-schedule races, microtask integration, 32-bit version wrap (simulated), `setDefaultRegistry`, `onCleanup` inside computeds.
 - **`06-nested-objects.test.mjs`** — array mutation patterns (push/splice/spread), deep nested paths, Map/Set/Date inside signals, custom structural equality, computed memoisation cutoffs over object slices, signal-of-signals composition, high-frequency object updates, batched immutable updates.
 - **`07-dispose.test.mjs`** — unified `dispose(api)` across signals, computeds and effect handles, idempotency, cross-registry isolation (per-registry Symbol prevents pool corruption), foreign-value safety, top-level helper routing, 500-cycle balanced churn leaving pool and stats stable.
+- **`08-watch.test.mjs`** — Validates the user-land observer utilities (watch, when, whenAsync). Covers lifecycle teardown, old/new value tracking, and Promise-based asynchronous state resolution.
+- **`09-conformance.test.mjs`** — Industry-standard conformance tests. Validates the engine against extreme edge cases from the johnsoncodehk reactive test suite, ensuring strict zero-GC invariants, correct cleanup isolation, and re-entrant stability.
 
 ```bash
 npm test
@@ -471,8 +606,8 @@ In highly chaotic graphs with branch switching, selective reads, and wide dense 
 
 **The Takeaway:** "Zero-GC" and "topology scalability" are orthogonal dimensions. If you are building a DOM framework with massive dynamic `v-if` churn, use Alien Signals. If you are building a 120fps Canvas game with a stable scene graph where any GC pause is a dropped frame, use `lite-signal`.
 
-### Roadmap: v1.1
-We are actively working on a v1.1 architectural update to address this topology degradation while maintaining the zero-GC contract. By moving to a version-stamped dependency reconciliation pass (`lastSeenInEval`) with a pre-allocated scratch buffer, we expect to drop dynamic read costs to $O(1)$ unconditionally.
+### Roadmap: v1.2
+v1.2 (in benchmark validation) — Andrii Volynets (alien-signals#117) extended the benchmark matrix to dynamic-topology workloads and identified retracking-cost asymptotics, not allocation pressure, as the dominant cost in those scenarios. v1.2 replaces the cursor-based retracking with per-source version-stamped reconciliation: O(1) per read regardless of read order or dep-set churn. v1.2 will be validated against the alien-signals topology matrix and the before/after numbers published on release.
 
 ---
 
@@ -565,6 +700,79 @@ function spawnPlugin(pluginCode) {
   return () => r.destroy();  // unload kills the whole reactive world
 }
 ```
+
+---
+
+## Conformance
+
+lite-signal v1.1.0 was evaluated against the
+[reactive-framework-test-suite](https://github.com/johnsoncodehk/reactive-framework-test-suite),
+the most comprehensive behavioral test battery for JavaScript reactive
+libraries.
+
+**167 of 177 tests pass (94.4%)**, placing lite-signal **fifth of sixteen**
+evaluated libraries — behind alien-signals (177), @preact/signals-core (174),
+@reatom/core (173), and @vue/reactivity (170), and ahead of anod, solid-js,
+tansu, @solidjs/signals, the TC39 signals polyfill, mobx, Angular signals,
+Svelte, S.js, and reactively.
+
+We publish both passing and failing tests, because honesty about behavior is
+more useful to library users than a green checkmark.
+
+### What lite-signal does that no other library does
+
+- **`batch()` returns the callback's value.** Every other library evaluated
+  returns `void`. `const total = batch(() => ...)` is a lite-signal idiom.
+- **Cycle detection** in effects (matches preact, reatom, svelte, solid).
+  Many libraries silently iterate to a 200-step bail; lite-signal throws so
+  the bug surfaces at development time.
+- **`Object.is` equality** throughout, including NaN — matches Vue,
+  Angular, Reatom, the TC39 polyfill, and tansu. The `===` camp returns
+  incorrect results on NaN flows.
+- **Single-pass propagation** through computed chains on inner writes —
+  matches alien-signals and Vue; faster than preact, solid, reatom, mobx,
+  and most others by one re-evaluation per write.
+- **Auto-unsubscribe** on first-run effect throws — matches preact, reatom,
+  solid. Half the field leaks the subscription.
+
+### What v1.1.0 doesn't do yet
+
+10 tests fail. We've categorized them by intent.
+
+**Targeted for v1.2** (6 tests):
+
+- **Revert detection inside batches** (#147, #132, #123): writes inside a
+  `batch()` that net to no change still mark dependents as dirty. Vue,
+  Solid, Mobx, and roughly half the field share this behavior. v1.2 will
+  capture pre-batch values per signal and skip propagation on revert.
+- **Throw isolation in batch flush** (#121): if an effect throws during
+  flush, lite-signal currently halts the flush. v1.2 will collect errors,
+  finish the flush, then re-throw as `AggregateError`.
+- **Inner-write propagation through computed chains** (#180, #213): two
+  specific propagation paths where lite-signal disagrees with the field.
+  Both are propagation-order bugs in the recursive computed resolver,
+  not zero-GC tradeoffs.
+
+**Design choices we will not change** (2 tests):
+
+- **Inner writes inside computeds** (#179): writing to a signal from inside
+  a computed is a side effect, not a derivation. Use an `effect` instead.
+  Most of the field also fails this test.
+- **Nested batch coalescing inside an effect body** (#235): explicit
+  `batch()` calls *inside* an executing effect do not coalesce beyond the
+  effect's own implicit batching. Most libraries behave this way. Wrap the
+  batch outside the effect for the intended semantics.
+
+**Opt-in feature, deferred** (2 tests):
+
+- **Solid-style cascading disposal of nested effects** (#209, #210):
+  lite-signal does not maintain an owner tree of parent-child effects.
+  This matches preact, vue, mobx, the TC39 polyfill, Angular, Svelte,
+  tansu, and Solid 1.x. Solid 2 / @solidjs/signals, reatom, and anod
+  implement it. If you need it, please open an issue.
+
+Per-test results, the runner adapter, and reproductions live in
+`/conformance/`.
 
 ---
 

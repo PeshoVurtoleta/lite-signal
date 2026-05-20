@@ -165,7 +165,7 @@ export function batch<T>(fn: () => T): T;
 export function untrack<T>(fn: () => T): T;
 export function onCleanup(fn: () => void): void;
 export function stats(): RegistryStats;
-
+export declare function destroy(): void;
 
 /**
  * Configuration options for the watch utility.
@@ -177,25 +177,66 @@ export interface WatchOptions {
     immediate?: boolean;
 }
 
-/**
- * Track a reactive source and run a callback whenever its evaluated value changes.
- *
- * Models Vue's `watch(source, callback)` and MobX's `reaction(predicate, effect)`.
- * Internal reads inside the callback are untracked — they do not create reactive
- * dependencies.
- *
- * @example
- * const count = signal(0);
- * const stop = watch(() => count() * 2, (next, prev) => {
- * console.log(`Doubled count changed: ${prev} -> ${next}`);
- * });
- * * @param source    A function that reads reactive values (e.g., a signal/computed getter).
- * @param callback  Fired when the source's value changes. Receives the new and previous values.
- * @param options   Optional configuration (e.g., `{ immediate: true }`).
- * @returns         Dispose function — call to stop watching and release the effect.
- */
+//**
+* Track a reactive source and run a callback whenever its projected value
+* changes. The callback receives `(newValue, oldValue, stop)` — the third
+* argument is a dispose function that can be called from inside the callback
+* to terminate the watcher.
+*
+* Internal reads inside the callback are untracked.
+*
+* Uses `Object.is` to guard against the raw-getter case where a dep mutation
+* fires the effect but the projected value is unchanged.
+*
+* @param source    Reactive read function.
+* @param callback  Called with the new and previous values plus a stop handle.
+* @param options   `immediate: true` runs the callback once on registration
+*                  with `oldValue = undefined`.
+* @returns Dispose function. Idempotent and safe to call at any time, including
+*          synchronously during the immediate callback.
+*/
 export function watch<T>(
     source: () => T,
-    callback: (newValue: T, oldValue: T | undefined) => void,
-    options?: WatchOptions
+    callback: (newValue: T, oldValue: T | undefined, stop: () => void) => void,
+    options?: { immediate?: boolean }
 ): () => void;
+
+/**
+ * Fire `callback` exactly once when `predicate` first returns a truthy value,
+ * then auto-dispose. If `predicate` is already truthy at registration, fires
+ * synchronously.
+ *
+ * @param predicate  Reactive read function; callback fires when truthy.
+ * @param callback   Called once when predicate first truthy. Reads inside are untracked.
+ * @returns Dispose function. Call before predicate fires to cancel; idempotent.
+ */
+export function when(
+    predicate: () => unknown,
+    callback: () => void
+): () => void;
+
+/**
+ * Promise-returning variant of {@link when}. The returned promise resolves
+ * when `predicate` first returns a truthy value.
+ *
+ * ⚠️ **HOT-PATH WARNING — DO NOT USE PER FRAME.** This function calls
+ * `new Promise(...)`, which is a heap allocation (one Promise object plus
+ * executor closure plus internal infrastructure per call). Promises require
+ * heap allocation by the language spec — this cost is unavoidable.
+ *
+ * **Use for:** high-level scene/UI orchestration, boot sequences, awaiting
+ * user input or network state, level transitions. Anything that runs once
+ * or rarely.
+ *
+ * **NEVER use for:** per-frame entity updates, render-loop logic, animation
+ * tick handlers. For zero-GC hot-path logic use {@link when} with a callback.
+ *
+ * Note: this promise never rejects. If the predicate never becomes truthy,
+ * the promise never settles. Wrap in `Promise.race` for timeout semantics.
+ *
+ * @param predicate  Reactive read function; resolves promise when truthy.
+ * @returns Promise that resolves when predicate first truthy.
+ */
+export function whenAsync(
+    predicate: () => unknown
+): Promise<void>;

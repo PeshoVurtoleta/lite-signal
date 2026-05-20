@@ -68,6 +68,7 @@ class ReactiveNode {
         this.currentDep = null;
         // Doubly-linked subscriber list (these targets depend on this node).
         this.headSub = null;
+        this.tailSub = null;
 
         // Pool free-list pointer.
         this.nextFree = null;
@@ -244,10 +245,13 @@ export function createRegistry(config = {}) {
             link.source = source;
             link.target = target;
 
-            link.prevSub = null;
-            link.nextSub = source.headSub;
-            if (source.headSub !== null) source.headSub.prevSub = link;
-            source.headSub = link;
+            link.nextSub = null;
+            link.prevSub = source.tailSub;
+
+            if (source.tailSub !== null) source.tailSub.nextSub = link;
+            else source.headSub = link;
+
+            source.tailSub = link;
         }
 
         link.nextDep = expected;
@@ -270,8 +274,9 @@ export function createRegistry(config = {}) {
     function freeLink(link, target, source) {
         const pSub = link.prevSub;
         const nSub = link.nextSub;
+
         if (pSub !== null) pSub.nextSub = nSub; else source.headSub = nSub;
-        if (nSub !== null) nSub.prevSub = pSub;
+        if (nSub !== null) nSub.prevSub = pSub; else source.tailSub = pSub;
 
         link.source = null;
         link.target = null;
@@ -335,6 +340,7 @@ export function createRegistry(config = {}) {
         node.tailDep = null;
         node.currentDep = null;
         node.headSub = null;
+        node.tailSub = null;
 
         node.gen = (node.gen + 1) | 0;
         node.nextFree = freeNodeHead;
@@ -382,6 +388,7 @@ export function createRegistry(config = {}) {
         node.tailDep = null;
         node.currentDep = null;
         node.headSub = null;
+        node.tailSub = null;
         node.version = 0;
         node.evalVersion = 0;
         node.markEpoch = 0;
@@ -391,10 +398,19 @@ export function createRegistry(config = {}) {
     /** Invoke registered cleanup function(s) on `node` and clear. @private */
     function runCleanup(node) {
         const cleanup = node.cleanupFn;
-        if (cleanup) {
+        if (cleanup === undefined) return;
+
+        const prevObserver = currentObserver;
+        const prevTracking = isTrackingDeps;
+        currentObserver = null;
+        isTrackingDeps = false;
+        try {
             if (typeof cleanup === "function") cleanup();
             else for (let i = 0; i < cleanup.length; i++) cleanup[i]();
+        } finally {
             node.cleanupFn = undefined;
+            currentObserver = prevObserver;
+            isTrackingDeps = prevTracking;
         }
     }
 
@@ -540,6 +556,12 @@ export function createRegistry(config = {}) {
         node.flags = (node.flags & ~FLAG_QUEUED) | FLAG_COMPUTING;
 
         runCleanup(node);
+
+        // Cleanup may have disposed us (e.g. via a synchronous dispose() call from
+        // within the user's cleanup body). disposeNode clears flags to 0 and nulls
+        // computeFn; bailing here prevents a TypeError on computeFn() below and
+        // avoids reinitialising observer state on a freed slot.
+        if ((node.flags & FLAG_EFFECT) === 0) return;
 
         const prevObserver = currentObserver;
         const prevActiveDep = activeObserverCurrentDep;
@@ -910,6 +932,7 @@ export function createRegistry(config = {}) {
             n.tailDep = null;
             n.currentDep = null;
             n.headSub = null;
+            n.tailSub = null;
             n.version = 0;
             n.evalVersion = 0;
             n.markEpoch = 0;
@@ -1006,8 +1029,15 @@ export function stats() {
     return defaultRegistry.stats();
 }
 
+/** * Wipe the default registry. strictly for test-suite isolation.
+ * @private
+ */
+export function destroy() {
+    return defaultRegistry.destroy();
+}
+
 /**
  * Re-export of the user-land watch utility.
  * @see {@link watch} in Watch.js for full implementation details.
  */
-export {watch} from "./Watch.js"
+export {watch, when, whenAsync} from "./Watch.js"
