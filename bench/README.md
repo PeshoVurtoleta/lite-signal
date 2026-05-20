@@ -107,16 +107,54 @@ The expected sum (`BENCH_SINK_SUM = 5087104.00` for the current drive sequence) 
 
 ---
 
-## The four workloads
+## The nine workloads
 
 Each workload models a real reactive pattern. The reactive graph is built once per warmup pass and reused. Sizes at a glance:
 
-| Scenario     | N    | What it stresses architecturally                                                                  |
-| ------------ | ---- | ------------------------------------------------------------------------------------------------- |
-| MUX          | 256  | Fan-in dependency-tracking — does the library over-allocate when one node has many sources?      |
-| BROADCAST    | 1000 | Observer-list iteration — how fast can the library walk a single signal's subscriber list?       |
-| KAIROS       | 1000 | Glitch-freedom — does the library mark nodes stale without redundant recomputes before the pull? |
-| DEEP CHAIN   | 256  | Call-stack depth — does propagation through a long pipeline use iteration or risky recursion?    |
+| Scenario | N | What it stresses architecturally |
+| :--- | :--- | :--- |
+| MUX | 256 | Fan-in dependency tracking — does the library over-allocate when one node has many sources? |
+| BROADCAST | 1000 | Observer-list iteration — how fast can the library walk a single signal's subscriber list? |
+| KAIROS | 1000 | Glitch-freedom — does the library mark nodes stale without redundant recomputes before the pull? |
+| DEEP CHAIN | 256 | Call-stack depth — does propagation through a long pipeline use iteration or risky recursion? |
+| DYNAMIC DAG | 960 | Read-order stability — what happens to re-tracking costs when read iteration order inverts every run? |
+| SELECTIVE DAG | 960 | Edge churn — what is the hot-path allocation cost of dropping and adding dependency links mid-run? |
+| LARGE WEB APP | 960 | Conditional branches — approximates the 1000x12 dynamic app shape with heavy branch toggling. |
+| WIDE DENSE | 1000 | Overlapping reads — approximates the 1000x5 static app shape with dense cross-linking. |
+| SMALL SELECTIVE| 384 | Graph churn at scale — approximates the 64x6 selective app shape with variable read sets. |
+
+### The Static Core (N = 256–1000)
+
+**MUX — fan-in aggregation (N = 256)**
+256 inputs feeding one aggregator. Models a dashboard widget summing many independent counters. The drive loop writes to `sigs[i % 256]` so each iteration touches one input. The architectural question: when one downstream node has 256 upstream dependencies, does the library track those edges in a tight data structure or does it allocate per-edge metadata on every recompute?
+
+**BROADCAST — fan-out (N = 1000)**
+One source feeds 1000 effects. Models a global theme switch or a tick clock that drives many subscribers. The drive loop sets the source on each iteration; all 1000 effects re-run. The architectural question: how quickly can the library iterate one node's subscriber list?
+
+**KAIROS — one source, wide layer (N = 1000)**
+One source feeding 1000 computeds, which all feed one aggregating effect. Models a state object whose change invalidates many derived selectors, all of which feed a single render pass. This is the canonical glitch-freedom test. The architectural question: does the library mark all 1000 computeds stale first, then let the effect pull once, or does it push-evaluate them and over-recompute?
+
+**DEEP CHAIN — long pipeline (N = 256)**
+256-deep computed chain ending in one effect. Models a transformation pipeline where each stage is its own computed. The architectural question: does the library walk the chain iteratively (bounded stack) or recursively (risk of `RangeError` and consistently slower call-stack overhead)?
+
+### The Dynamic Topology Matrix (N = 384–1000)
+
+These five workloads approximate the `js-reactivity-benchmark` scenarios. They move beyond steady-state graph propagation to stress dynamic edge re-tracking, branch switching, and varying layer depths.
+
+**DYNAMIC DAG (N = 960)**
+A deeply layered DAG where every computed reads 6 dependencies, but the *order* in which it reads them flips forward/backward on every iteration based on the source value. This deliberately breaks stable-read-order optimizations and forces worst-case dependency re-tracking.
+
+**SELECTIVE DAG (N = 960)**
+Every computed has 4 upstream candidates but only subscribes to 2 on any given iteration. The active pair changes every run. This tests pure structural churn: the library must allocate new dependency edges and tear down old ones on the hot path.
+
+**LARGE WEB APP (N = 960)**
+Approximates the "1000x12 dynamic" shape. 4 sources feed a 12-layer graph. Computeds use conditional logic (`A ? (B+C) : (B+D)`) to toggle branches, modeling a large component tree with conditional rendering.
+
+**WIDE DENSE (N = 1000)**
+Approximates the "1000x5 wide dense" shape. 25 sources feed a short, wide 5-layer graph where every node densely reads 5 upstream dependencies. Tests static, heavy fan-in/fan-out cross-linking.
+
+**SMALL SELECTIVE (N = 384)**
+Approximates the "64x6 dynamic selective" shape. A smaller, tightly woven graph where nodes read a variable subset of up to 6 candidates depending on bitmasks from the source.
 
 ### MUX — fan-in aggregation (N = 256)
 
