@@ -1,6 +1,6 @@
 {
   "name": "lite-signal-bench",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "bench": "node --expose-gc benchmark.mjs"
