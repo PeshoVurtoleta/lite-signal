@@ -1,4 +1,4 @@
-import { effect, untrack } from "./futureVersions/Signal_1.2.1.js";
+import { effect, untrack } from "./Signal.js";
 
 /**
  * Sentinel for "first run" in `watch`. Distinguishes a legitimate `undefined`

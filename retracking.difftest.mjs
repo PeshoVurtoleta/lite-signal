@@ -17,7 +17,7 @@
  * Wire it into CI by importing your two builds below and asserting exit 0.
  */
 import * as REF from "./Signal.js";        // reference (e.g. last shipped)
-import * as CANDIDATE from "./futureVersions/1.2.0.js";   // build under review
+import * as CANDIDATE from "./futureVersions/Signal_1.3.js";   // build under review
 
 function buildGraph(lib) {
   const W = 8, LAYERS = 4, FAN = 5;
