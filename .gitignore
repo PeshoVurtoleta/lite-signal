@@ -1,0 +1,10 @@
+# Private Info & Future Work
+futureVersions/
+Publications/
+
+# Test & Build Output
+coverage/
+node_modules/
+
+# macOS System Files
+.DS_Store

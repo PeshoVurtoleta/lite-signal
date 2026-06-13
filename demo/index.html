@@ -1,0 +1,2287 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>lite-signal · oscilloscope</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap"
+          rel="stylesheet">
+    <style>
+        /* ─── Reset + tokens ─────────────────────────────────────────── */
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-0: #07090d;
+            --bg-1: #0d1117;
+            --bg-2: #131922;
+            --bg-3: #1a2230;
+            --line: rgba(255, 255, 255, 0.06);
+            --line-strong: rgba(255, 255, 255, 0.14);
+            --text: #d8d6d2;
+            --text-dim: #8b8d94;
+            --text-faint: #555960;
+            --green: #5fe39f;
+            --green-dim: #2b7a52;
+            --cyan: #7dd3fc;
+            --amber: #f5b942;
+            --magenta: #e879a8;
+            --red: #f87171;
+            --glow-green: 0 0 12px rgba(95, 227, 159, 0.6), 0 0 30px rgba(95, 227, 159, 0.25);
+            --glow-magenta: 0 0 12px rgba(232, 121, 168, 0.5);
+            --glow-amber: 0 0 12px rgba(245, 185, 66, 0.6), 0 0 30px rgba(245, 185, 66, 0.2);
+        }
+
+        html, body {
+            height: 100%;
+            margin: 0;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text);
+            background: var(--bg-0);
+            overflow: hidden;
+            font-feature-settings: "ss01", "ss02", "cv02", "cv11", "tnum";
+        }
+
+        /* Subtle CRT grain */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image: radial-gradient(circle at 20% 0%, rgba(95, 227, 159, 0.04) 0%, transparent 40%),
+            radial-gradient(circle at 80% 100%, rgba(125, 211, 252, 0.03) 0%, transparent 50%);
+            z-index: 0;
+        }
+
+        body::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: repeating-linear-gradient(
+                    0deg,
+                    transparent 0px,
+                    transparent 2px,
+                    rgba(255, 255, 255, 0.012) 2px,
+                    rgba(255, 255, 255, 0.012) 3px
+            );
+            z-index: 1;
+        }
+
+        #app {
+            position: relative;
+            z-index: 2;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ─── Header ─────────────────────────────────────────────────── */
+        header.top {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            padding: 14px 24px;
+            border-bottom: 1px solid var(--line);
+            background: linear-gradient(to bottom, var(--bg-1), var(--bg-0));
+        }
+
+        .brand {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            font-family: 'Space Mono', 'JetBrains Mono', monospace;
+        }
+
+        .brand .mark {
+            color: var(--green);
+            font-weight: 700;
+            font-size: 16px;
+            letter-spacing: -0.02em;
+            text-shadow: var(--glow-green);
+        }
+
+        .brand .pkg {
+            color: var(--text);
+            font-weight: 700;
+            font-size: 15px;
+            letter-spacing: -0.01em;
+        }
+
+        .brand .ver {
+            color: var(--text-faint);
+            font-size: 11px;
+        }
+
+        .tagline {
+            color: var(--text-dim);
+            font-size: 11px;
+            margin-left: auto;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .tagline .dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: var(--glow-green);
+            margin-right: 6px;
+            animation: pulse 2s infinite ease-in-out;
+            vertical-align: 1px;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.35;
+            }
+        }
+
+        /* ─── Tab nav ────────────────────────────────────────────────── */
+        nav.tabs {
+            display: flex;
+            background: var(--bg-1);
+            border-bottom: 1px solid var(--line);
+            padding: 0 18px;
+        }
+
+        nav.tabs button {
+            background: none;
+            border: 0;
+            color: var(--text-dim);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 12px 18px;
+            cursor: pointer;
+            letter-spacing: 0.02em;
+            position: relative;
+            transition: color .15s;
+        }
+
+        nav.tabs button:hover {
+            color: var(--text);
+        }
+
+        nav.tabs button[aria-current="true"] {
+            color: var(--green);
+        }
+
+        nav.tabs button[aria-current="true"]::after {
+            content: "";
+            position: absolute;
+            left: 12px;
+            right: 12px;
+            bottom: -1px;
+            height: 2px;
+            background: var(--green);
+            box-shadow: var(--glow-green);
+        }
+
+        nav.tabs .scene-num {
+            color: var(--text-faint);
+            margin-right: 8px;
+            font-weight: 300;
+        }
+
+        /* ─── Scene container ────────────────────────────────────────── */
+        main {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            position: relative;
+        }
+
+        .scene {
+            flex: 1;
+            display: none;
+            min-height: 0;
+        }
+
+        .scene[data-active] {
+            display: flex;
+        }
+
+        .stage {
+            flex: 1;
+            min-height: 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .panel {
+            width: 320px;
+            border-left: 1px solid var(--line);
+            background: var(--bg-1);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .panel .panel-head {
+            padding: 16px 20px 8px;
+            font-size: 10px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+            border-bottom: 1px solid var(--line);
+        }
+
+        .panel section {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .panel section h3 {
+            margin: 0 0 12px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--cyan);
+        }
+
+        /* ─── Inputs & buttons ───────────────────────────────────────── */
+        button.btn {
+            font-family: inherit;
+            font-size: 11px;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            background: var(--bg-3);
+            color: var(--text);
+            border: 1px solid var(--line-strong);
+            padding: 8px 14px;
+            cursor: pointer;
+            transition: all .12s;
+        }
+
+        button.btn:hover {
+            background: var(--bg-2);
+            border-color: var(--green-dim);
+            color: var(--green);
+        }
+
+        button.btn.primary {
+            background: var(--green-dim);
+            color: var(--bg-0);
+            border-color: var(--green);
+            font-weight: 700;
+        }
+
+        button.btn.primary:hover {
+            background: var(--green);
+            color: var(--bg-0);
+        }
+
+        button.btn.danger:hover {
+            border-color: var(--red);
+            color: var(--red);
+        }
+
+        button.btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .field {
+            margin-bottom: 10px;
+        }
+
+        .field label {
+            display: block;
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            color: var(--text-faint);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .field input[type="range"] {
+            width: 100%;
+            accent-color: var(--green);
+        }
+
+        .field select, .field input[type="number"] {
+            width: 100%;
+            background: var(--bg-3);
+            border: 1px solid var(--line-strong);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 6px 8px;
+        }
+
+        .field select:focus, .field input:focus {
+            outline: 1px solid var(--green);
+        }
+
+        .field-value {
+            color: var(--green);
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* ─── Metric tiles ───────────────────────────────────────────── */
+        .metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+
+        .metric {
+            background: var(--bg-2);
+            border: 1px solid var(--line);
+            padding: 8px 10px;
+        }
+
+        .metric .k {
+            font-size: 9px;
+            letter-spacing: 0.12em;
+            color: var(--text-faint);
+            text-transform: uppercase;
+        }
+
+        .metric .v {
+            font-size: 16px;
+            font-weight: 500;
+            color: var(--text);
+            font-variant-numeric: tabular-nums;
+            margin-top: 2px;
+        }
+
+        .metric .v.accent-green {
+            color: var(--green);
+        }
+
+        .metric .v.accent-cyan {
+            color: var(--cyan);
+        }
+
+        .metric .v.accent-amber {
+            color: var(--amber);
+        }
+
+        .metric .v.accent-magenta {
+            color: var(--magenta);
+        }
+
+        .metric .v small {
+            color: var(--text-dim);
+            font-weight: 400;
+            font-size: 11px;
+            margin-left: 3px;
+        }
+
+        /* ─── Stage canvases ─────────────────────────────────────────── */
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .stage-overlay {
+            position: absolute;
+            pointer-events: none;
+            color: var(--text-dim);
+            font-size: 11px;
+            letter-spacing: 0.05em;
+        }
+
+        .stage-overlay.tl {
+            top: 14px;
+            left: 18px;
+        }
+
+        .stage-overlay.tr {
+            top: 14px;
+            right: 18px;
+            text-align: right;
+        }
+
+        .stage-overlay.bl {
+            bottom: 14px;
+            left: 18px;
+        }
+
+        .stage-overlay.br {
+            bottom: 14px;
+            right: 18px;
+            text-align: right;
+        }
+
+        .stage-overlay .big {
+            display: block;
+            color: var(--green);
+            font-size: 22px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+            text-shadow: var(--glow-green);
+            letter-spacing: -0.01em;
+        }
+
+        .stage-overlay .big.accent-magenta {
+            color: var(--magenta);
+            text-shadow: var(--glow-magenta);
+        }
+
+        .stage-overlay .label {
+            font-size: 9px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+        }
+
+        /* ─── Pool gauges (scene 3) ──────────────────────────────────── */
+        .gauges-stack {
+            padding: 28px 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .gauge h2 {
+            margin: 0 0 8px;
+            font-size: 11px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            font-weight: 400;
+        }
+
+        .gauge h2 .qty {
+            color: var(--green);
+            margin-left: 8px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .gauge .bar {
+            position: relative;
+            height: 28px;
+            background: var(--bg-2);
+            border: 1px solid var(--line-strong);
+            overflow: hidden;
+        }
+
+        .gauge .bar .fill {
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 0;
+            background: linear-gradient(90deg, var(--green-dim), var(--green));
+            transition: width .15s;
+            box-shadow: var(--glow-green);
+        }
+
+        .gauge .bar .tick {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 1px;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .gauge .bar-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            margin-top: 6px;
+            color: var(--text-faint);
+            letter-spacing: 0.06em;
+        }
+
+        .gauge .bar-meta .right {
+            color: var(--text-dim);
+        }
+
+        /* Pool composition strip - shows live/free chunks */
+        .pool-strip {
+            margin-top: 18px;
+            display: grid;
+            grid-template-columns: repeat(64, 1fr);
+            gap: 2px;
+            padding: 12px;
+            background: var(--bg-2);
+            border: 1px solid var(--line);
+        }
+
+        .pool-strip .cell {
+            aspect-ratio: 1;
+            background: var(--bg-3);
+            transition: background .08s;
+        }
+
+        .pool-strip .cell.signal {
+            background: var(--green);
+        }
+
+        .pool-strip .cell.computed {
+            background: var(--cyan);
+        }
+
+        .pool-strip .cell.effect {
+            background: var(--amber);
+        }
+
+        .pool-strip .cell.flash {
+            animation: flash .4s;
+        }
+
+        @keyframes flash {
+            from {
+                background: white;
+            }
+        }
+
+        /* Error banner */
+        .error-banner {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            background: var(--bg-2);
+            border: 1px solid var(--red);
+            color: var(--red);
+            padding: 10px 16px;
+            font-size: 12px;
+            z-index: 10;
+            box-shadow: 0 4px 24px rgba(248, 113, 113, 0.2);
+            opacity: 0;
+            transition: opacity .25s;
+            pointer-events: none;
+        }
+
+        .error-banner[data-active] {
+            opacity: 1;
+        }
+
+        .error-banner .label {
+            font-size: 9px;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--red);
+            margin-bottom: 2px;
+            font-weight: 700;
+        }
+
+        /* ─── Telemetry strip ─────────────────────────────────────────── */
+        footer.telemetry {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            border-top: 1px solid var(--line);
+            background: var(--bg-1);
+        }
+
+        .tele {
+            padding: 10px 16px;
+            border-right: 1px solid var(--line);
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .tele:last-child {
+            border-right: 0;
+        }
+
+        .tele .k {
+            font-size: 9px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+        }
+
+        .tele .v {
+            font-size: 16px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+        }
+
+        .tele .v .delta {
+            font-size: 10px;
+            color: var(--text-dim);
+            margin-left: 4px;
+        }
+
+        .tele .v.accent {
+            color: var(--green);
+        }
+
+        /* ─── Log strip on stress scene ──────────────────────────────── */
+        .log-strip {
+            position: absolute;
+            left: 12px;
+            right: 12px;
+            bottom: 12px;
+            max-height: 90px;
+            overflow-y: auto;
+            font-size: 10px;
+            color: var(--text-dim);
+            background: rgba(7, 9, 13, 0.9);
+            border: 1px solid var(--line);
+            padding: 8px 12px;
+            font-feature-settings: "tnum";
+        }
+
+        .log-strip .line {
+            white-space: nowrap;
+        }
+
+        .log-strip .line .t {
+            color: var(--text-faint);
+            margin-right: 8px;
+        }
+
+        .log-strip .line.err .t {
+            color: var(--red);
+        }
+
+        .log-strip .line.ok .t {
+            color: var(--green);
+        }
+
+        /* ─── Misc ───────────────────────────────────────────────────── */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--bg-3);
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-1);
+        }
+
+        .help-line {
+            font-size: 10px;
+            color: var(--text-faint);
+            margin-top: 8px;
+            line-height: 1.6;
+        }
+
+        .help-line code {
+            background: var(--bg-3);
+            padding: 1px 5px;
+            color: var(--green);
+            font-family: inherit;
+            font-size: 10px;
+        }
+
+        /* Lab "screen edge" vignette */
+        main::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.6);
+        }
+
+        /* legend chip */
+        .legend {
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+
+        .legend .chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+
+        .legend .swatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .legend .swatch.s {
+            background: var(--green);
+            box-shadow: 0 0 6px rgba(95, 227, 159, 0.7);
+        }
+
+        .legend .swatch.c {
+            background: var(--cyan);
+        }
+
+        .legend .swatch.e {
+            background: var(--amber);
+            box-shadow: 0 0 6px rgba(245, 185, 66, 0.5);
+        }
+
+        /* ─── utilities ──────────────────────────────────────────────── */
+        .text-magenta {
+            color: var(--magenta);
+        }
+
+        .text-green {
+            color: var(--green);
+        }
+
+        .legend-row {
+            display: flex;
+            gap: 24px;
+        }
+
+        .btn-row + .btn-row {
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+
+    <!-- ───────── HEADER ───────── -->
+    <header class="top">
+        <div class="brand">
+            <span class="mark">◐</span>
+            <span class="pkg">@zakkster/lite-signal</span>
+            <span class="ver">v1.0.0</span>
+        </div>
+        <div class="tagline"><span class="dot"></span>oscilloscope · live reactive graph</div>
+    </header>
+
+    <!-- ───────── TAB NAV ───────── -->
+    <nav class="tabs" id="tabs">
+        <button data-tab="graph" aria-current="true"><span class="scene-num">01</span>Live Graph</button>
+        <button data-tab="stress"><span class="scene-num">02</span>Stress Test</button>
+        <button data-tab="pool"><span class="scene-num">03</span>Pool Inspector</button>
+        <button data-tab="vs"><span class="scene-num">04</span>vs Naïve</button>
+    </nav>
+
+    <!-- ───────── SCENES ───────── -->
+    <main>
+
+        <!-- SCENE 1: LIVE GRAPH -->
+        <section class="scene" data-scene="graph" data-active>
+            <div class="stage" id="graph-stage">
+                <canvas id="graph-canvas"></canvas>
+                <div class="stage-overlay tl">
+                    <span class="label">topology</span><br>
+                    <span id="graph-topology">4 signals · 12 computeds · 8 effects</span>
+                </div>
+                <div class="stage-overlay tr">
+                    <span class="label">propagations</span>
+                    <span class="big" id="graph-propagations">0</span>
+                </div>
+                <div class="stage-overlay bl">
+                    <div class="legend">
+                        <div class="chip"><span class="swatch s"></span>signal</div>
+                        <div class="chip"><span class="swatch c"></span>computed</div>
+                        <div class="chip"><span class="swatch e"></span>effect</div>
+                    </div>
+                </div>
+                <div class="stage-overlay br">
+                    <span class="label">click any signal to fire</span>
+                </div>
+            </div>
+            <aside class="panel">
+                <div class="panel-head">scene 01 · live graph</div>
+                <section>
+                    <h3>action</h3>
+                    <div class="btn-row">
+                        <button class="btn primary" id="graph-auto">▶ auto-fire</button>
+                        <button class="btn" id="graph-fire-all">fire all</button>
+                        <button class="btn" id="graph-rebuild">rebuild</button>
+                    </div>
+                    <p class="help-line">
+                        Each click triggers a <code>signal.set()</code>.
+                        The pulse you see is the synchronous mark-and-flush walk through the
+                        graph. There is no microtask between the click and the effect run.
+                    </p>
+                </section>
+                <section>
+                    <h3>topology</h3>
+                    <div class="field">
+                        <label>signals <span class="field-value" id="graph-n-signals-v">4</span></label>
+                        <input type="range" id="graph-n-signals" min="2" max="12" value="4">
+                    </div>
+                    <div class="field">
+                        <label>computeds <span class="field-value" id="graph-n-comp-v">12</span></label>
+                        <input type="range" id="graph-n-comp" min="4" max="32" value="12">
+                    </div>
+                    <div class="field">
+                        <label>effects <span class="field-value" id="graph-n-eff-v">8</span></label>
+                        <input type="range" id="graph-n-eff" min="2" max="16" value="8">
+                    </div>
+                </section>
+                <section>
+                    <h3>last propagation</h3>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="k">touched</div>
+                            <div class="v accent-cyan" id="m-touched">—</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">effects re-run</div>
+                            <div class="v accent-amber" id="m-fired">—</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">walltime</div>
+                            <div class="v accent-green" id="m-walltime">— µs</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">alloc Δ</div>
+                            <div class="v" id="m-alloc">0 B</div>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </section>
+
+        <!-- SCENE 2: STRESS TEST -->
+        <section class="scene" data-scene="stress">
+            <div class="stage" id="stress-stage">
+                <canvas id="stress-canvas"></canvas>
+                <div class="stage-overlay tl">
+                    <span class="label">workload</span><br>
+                    <span id="stress-workload-name">MUX · 256 inputs → sum → effect</span>
+                </div>
+                <div class="stage-overlay tr">
+                    <span class="label">throughput</span>
+                    <span class="big" id="stress-ops-big">— ops/s</span>
+                </div>
+                <div class="stage-overlay bl">
+                    <span class="label">5-second history · log scale</span>
+                </div>
+                <div class="log-strip" id="stress-log"></div>
+            </div>
+            <aside class="panel">
+                <div class="panel-head">scene 02 · stress test</div>
+                <section>
+                    <h3>workload</h3>
+                    <div class="field">
+                        <label>scenario</label>
+                        <select id="stress-scenario">
+                            <option value="mux">MUX — N signals → sum → effect</option>
+                            <option value="kairos">KAIROS — 1 signal → N computeds → effect</option>
+                            <option value="broadcast">BROADCAST — 1 signal → N effects</option>
+                            <option value="chain">DEEP CHAIN — N-deep computed chain</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>scale N · <span class="field-value" id="stress-N-v">256</span></label>
+                        <input type="range" id="stress-N" min="32" max="4096" value="256" step="32">
+                    </div>
+                </section>
+                <section>
+                    <h3>execution</h3>
+                    <div class="btn-row">
+                        <button class="btn primary" id="stress-run">▶ run</button>
+                        <button class="btn danger" id="stress-stop" disabled>■ stop</button>
+                        <button class="btn" id="stress-reset">reset</button>
+                    </div>
+                    <p class="help-line">
+                        Continuous <code>set()</code> in a tight loop. Counter is total
+                        iterations completed; ops/s is the rolling rate over the last second.
+                        Heap delta is reported when <code>performance.memory</code> exists
+                        (Chromium only).
+                    </p>
+                </section>
+                <section>
+                    <h3>live</h3>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="k">iter</div>
+                            <div class="v accent-green" id="stress-iter">0</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">ops/sec</div>
+                            <div class="v accent-cyan" id="stress-ops">0</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">frame</div>
+                            <div class="v accent-amber" id="stress-frame">— ms</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">heap Δ</div>
+                            <div class="v" id="stress-heap">— KB</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">active links</div>
+                            <div class="v" id="stress-links">0</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">sink hash</div>
+                            <div class="v" id="stress-sink">—</div>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </section>
+
+        <!-- SCENE 3: POOL INSPECTOR -->
+        <section class="scene" data-scene="pool">
+            <div class="stage" id="pool-stage">
+                <div class="gauges-stack">
+                    <div class="gauge">
+                        <h2>node pool <span class="qty" id="pool-node-q">0 / 1024</span></h2>
+                        <div class="bar">
+                            <div class="fill" id="pool-node-bar"></div>
+                        </div>
+                        <div class="bar-meta">
+                            <span>signals · computeds · effects</span>
+                            <span class="right" id="pool-node-breakdown">— · — · —</span>
+                        </div>
+                        <div class="pool-strip" id="pool-node-strip"></div>
+                    </div>
+                    <div class="gauge">
+                        <h2>link pool <span class="qty" id="pool-link-q">0 / 4096</span></h2>
+                        <div class="bar">
+                            <div class="fill" id="pool-link-bar"></div>
+                        </div>
+                        <div class="bar-meta">
+                            <span>active dependency edges</span>
+                            <span class="right" id="pool-link-rate">— / s</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="error-banner" id="error-banner">
+                    <div class="label">capacity</div>
+                    <div id="error-msg">—</div>
+                </div>
+            </div>
+            <aside class="panel">
+                <div class="panel-head">scene 03 · pool inspector</div>
+                <section>
+                    <h3>registry config</h3>
+                    <div class="field">
+                        <label>maxNodes <span class="field-value" id="pool-mn-v">256</span></label>
+                        <input type="range" id="pool-mn" min="64" max="2048" value="256" step="64">
+                    </div>
+                    <div class="field">
+                        <label>maxLinks <span class="field-value" id="pool-ml-v">1024</span></label>
+                        <input type="range" id="pool-ml" min="256" max="8192" value="1024" step="256">
+                    </div>
+                    <div class="field">
+                        <label>onCapacityExceeded</label>
+                        <select id="pool-policy">
+                            <option value="throw">throw (strict)</option>
+                            <option value="grow">grow (up to 16× link ceiling)</option>
+                        </select>
+                    </div>
+                    <div class="btn-row">
+                        <button class="btn primary" id="pool-rebuild">build registry</button>
+                    </div>
+                </section>
+                <section>
+                    <h3>spawn</h3>
+                    <div class="btn-row">
+                        <button class="btn" data-spawn="signal">+ signal</button>
+                        <button class="btn" data-spawn="computed">+ computed</button>
+                        <button class="btn" data-spawn="effect">+ effect</button>
+                    </div>
+                    <div class="btn-row">
+                        <button class="btn" data-burst="32">burst × 32</button>
+                        <button class="btn" data-burst="256">burst × 256</button>
+                        <button class="btn danger" id="pool-stress-til-err">stress until error</button>
+                    </div>
+                </section>
+                <section>
+                    <h3>cleanup</h3>
+                    <div class="btn-row">
+                        <button class="btn" id="pool-dispose-half">dispose 50%</button>
+                        <button class="btn danger" id="pool-destroy">destroy()</button>
+                    </div>
+                </section>
+            </aside>
+        </section>
+
+        <!-- SCENE 4: VS NAÏVE -->
+        <section class="scene" data-scene="vs">
+            <div class="stage" id="vs-stage">
+                <canvas id="vs-canvas"></canvas>
+                <div class="stage-overlay tl">
+                    <span class="label">side-by-side · heap retention over time</span><br>
+                    <span id="vs-workload-name">MUX · 256 signals · 10K writes/s</span>
+                </div>
+                <div class="stage-overlay tr">
+                    <div class="legend-row">
+                        <div><span class="label">naïve impl</span><br><span class="big accent-magenta"
+                                                                            id="vs-naive-heap">— KB</span></div>
+                        <div><span class="label">lite-signal</span><br><span class="big" id="vs-lite-heap">— KB</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <aside class="panel">
+                <div class="panel-head">scene 04 · vs naïve</div>
+                <section>
+                    <h3>what this shows</h3>
+                    <p class="help-line">
+                        Two reactive implementations running the same workload side by side.
+                        <strong class="text-magenta">Magenta</strong> is a textbook
+                        observer pattern — one closure + one Set per signal. Each subscription
+                        allocates. <strong class="text-green">Green</strong> is
+                        <code>lite-signal</code>: pre-pooled nodes and links, no alloc after
+                        warmup. The chart plots retained heap from
+                        <code>performance.memory</code>.
+                    </p>
+                </section>
+                <section>
+                    <h3>control</h3>
+                    <div class="field">
+                        <label>writes per frame · <span class="field-value" id="vs-rate-v">128</span></label>
+                        <input type="range" id="vs-rate" min="8" max="1024" value="128" step="8">
+                    </div>
+                    <div class="field">
+                        <label>graph size N · <span class="field-value" id="vs-N-v">256</span></label>
+                        <input type="range" id="vs-N" min="32" max="1024" value="256" step="32">
+                    </div>
+                    <div class="btn-row">
+                        <button class="btn primary" id="vs-run">▶ run both</button>
+                        <button class="btn danger" id="vs-stop" disabled>■ stop</button>
+                        <button class="btn" id="vs-gc">force gc*</button>
+                    </div>
+                    <p class="help-line">*Requires <code>chrome --js-flags="--expose-gc"</code>. Without it, the button
+                        toggles a hint to V8 only.</p>
+                </section>
+                <section>
+                    <h3>live</h3>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="k">naïve writes</div>
+                            <div class="v accent-magenta" id="vs-naive-writes">0</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">lite writes</div>
+                            <div class="v accent-green" id="vs-lite-writes">0</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">naïve Δheap/s</div>
+                            <div class="v accent-magenta" id="vs-naive-rate">— KB</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">lite Δheap/s</div>
+                            <div class="v accent-green" id="vs-lite-rate">— KB</div>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </section>
+
+    </main>
+
+    <!-- ───────── TELEMETRY STRIP ───────── -->
+    <footer class="telemetry">
+        <div class="tele"><span class="k">version</span><span class="v">1.0.0</span></div>
+        <div class="tele"><span class="k">fps</span><span class="v accent" id="t-fps">—</span></div>
+        <div class="tele"><span class="k">ops/sec</span><span class="v" id="t-ops">—</span></div>
+        <div class="tele"><span class="k">active links</span><span class="v" id="t-links">0</span></div>
+        <div class="tele"><span class="k">heap</span><span class="v" id="t-heap">— MB</span></div>
+        <div class="tele"><span class="k">status</span><span class="v accent" id="t-status">idle</span></div>
+    </footer>
+
+</div>
+
+<script type="module">
+    import {createRegistry, batch, stats} from '../Signal.js';
+
+    /* ──────────────────────────────────────────────────────────────────
+       DEMO LOGIC
+       ────────────────────────────────────────────────────────────────── */
+    const $ = (id) => document.getElementById(id);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+    function sizeCanvas(c) {
+        const r = c.getBoundingClientRect();
+        c.width = Math.floor(r.width * dpr);
+        c.height = Math.floor(r.height * dpr);
+        const ctx = c.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        return {ctx, w: r.width, h: r.height};
+    }
+
+    // Hoisted sum over a TypedArray — Array.prototype.reduce takes a closure
+    // and would allocate one per call. This is a no-alloc replacement used by
+    // the oscilloscope sink-hash display.
+    function sumFloat64(arr) {
+        let s = 0;
+        for (let i = 0, n = arr.length; i < n; i++) s += arr[i];
+        return s;
+    }
+
+    function fmtNum(n) {
+        if (n >= 1000000) return (Math.round(n / 10000) / 100) + "M";
+        if (n >= 1000) return (Math.round(n / 100) / 10) + "K";
+        return String(Math.round(n));
+    }
+
+    function fmtBytes(n) {
+        if (n >= 1000000) return (Math.round(n / 10000) / 100) + " MB";
+        if (n >= 1000) return (Math.round(n / 100) / 10) + " KB";
+        return Math.round(n) + " B";
+    }
+
+    // rgba string cache: quantize alpha to 0.05 steps + memoize by (color, step),
+    // so canvas styling allocates only during warmup, never per frame.
+    const _rgba = Object.create(null);
+
+    function rgbaq(rgb, a) {
+        let row = _rgba[rgb];
+        if (row === undefined) row = _rgba[rgb] = [];
+        const q = a <= 0 ? 0 : a >= 1 ? 20 : (a * 20 + 0.5) | 0;
+        let s = row[q];
+        if (s === undefined) s = row[q] = "rgba(" + rgb + "," + (q / 20) + ")";
+        return s;
+    }
+
+    function mem() {
+        return (performance.memory && performance.memory.usedJSHeapSize) || 0;
+    }
+
+    const SINK = new Float64Array(2048);
+    let sinkPtr = 0;
+
+    function nextSinkSlot() {
+        const s = sinkPtr;
+        sinkPtr = (sinkPtr + 1) & 2047;
+        return s;
+    }
+
+    window.__BENCH_SINK = SINK;
+
+    let fpsLast = performance.now(), fpsFrames = 0, fpsValue = 60;
+    let opsSecondAcc = 0, opsSecondTs = performance.now(), opsValue = 0;
+
+    const domTele = {fps: $("t-fps"), ops: $("t-ops"), links: $("t-links"), heap: $("t-heap")};
+    let lastHeapTenths = -1, lastLinks = -1;
+
+    function bumpOps(n) {
+        opsSecondAcc += n;
+    }
+
+    function telemetryTick(now) {
+        fpsFrames++;
+        if (now - fpsLast >= 500) {
+            fpsValue = Math.round(fpsFrames * 1000 / (now - fpsLast));
+            fpsLast = now;
+            fpsFrames = 0;
+            domTele.fps.textContent = fpsValue;
+        }
+        if (now - opsSecondTs >= 1000) {
+            opsValue = opsSecondAcc;
+            opsSecondAcc = 0;
+            opsSecondTs = now;
+            domTele.ops.textContent = fmtNum(opsValue);
+        }
+        const m = mem();
+        if (m) {
+            const heapTenths = Math.floor(m / 104857.6);
+            if (heapTenths !== lastHeapTenths) {
+                lastHeapTenths = heapTenths;
+                domTele.heap.textContent = Math.floor(heapTenths / 10) + "." + (heapTenths % 10) + " MB";
+            }
+        }
+        try {
+            const links = stats().activeLinks;
+            if (links !== lastLinks) {
+                lastLinks = links;
+                domTele.links.textContent = fmtNum(links);
+            }
+        } catch (e) {
+        }
+        requestAnimationFrame(telemetryTick);
+    }
+
+    requestAnimationFrame(telemetryTick);
+
+    // ──────────────────────────────────────────────────────────────────
+    // SCENE 1 — LIVE GRAPH
+    // ──────────────────────────────────────────────────────────────────
+    const graph = (() => {
+        const canvas = $("graph-canvas");
+        let ctx, W, H, nodes = [], links = [], regNodes = [], registry = null, propagations = 0, autoFireTimer = null;
+
+        // Epoch-marker walk state: bump globalWalkEpoch before each traversal;
+        // a node is "visited" iff `node.walkEpoch === globalWalkEpoch`. This
+        // replaces `new Set()` per fireSignal/markDirty (called from a 700ms
+        // auto-fire setInterval — was a real allocation tick).
+        let globalWalkEpoch = 0;
+
+        // Cached array of signal nodes for auto-fire selection. Rebuilt on
+        // topology change instead of re-`.filter`-ing every interval tick.
+        let signalCache = [];
+        function rebuildSignalCache() {
+            signalCache.length = 0;
+            for (let i = 0; i < nodes.length; i++) {
+                if (nodes[i].kind === "signal") signalCache.push(nodes[i]);
+            }
+        }
+        const dom = {
+            topology: $("graph-topology"), propagations: $("graph-propagations"), touched: $("m-touched"),
+            fired: $("m-fired"), walltime: $("m-walltime"), alloc: $("m-alloc"), nSig: $("graph-n-signals"),
+            nComp: $("graph-n-comp"), nEff: $("graph-n-eff"), nSigV: $("graph-n-signals-v"),
+            nCompV: $("graph-n-comp-v"), nEffV: $("graph-n-eff-v")
+        };
+
+        function resize() {
+            const s = sizeCanvas(canvas);
+            ctx = s.ctx;
+            W = s.w;
+            H = s.h;
+        }
+
+        window.addEventListener("resize", resize);
+
+        function rebuild() {
+            if (registry) registry.destroy();
+            registry = createRegistry({maxNodes: 64, maxLinks: 256, onCapacityExceeded: "grow"});
+            nodes = [];
+            links = [];
+            regNodes = [];
+            signalCache.length = 0;
+
+            const nSig = +dom.nSig.value, nComp = +dom.nComp.value, nEff = +dom.nEff.value;
+            const MathMax1Sig = Math.max(1, nSig - 1), MathMax1Comp = Math.max(1, nComp - 1),
+                MathMax1Eff = Math.max(1, nEff - 1);
+
+            const sigs = [];
+            for (let i = 0; i < nSig; i++) {
+                const s = registry.signal(0);
+                sigs.push({api: s, node: pushNode("signal", s, 0, i / MathMax1Sig)});
+            }
+
+            const comps = [];
+            for (let i = 0; i < nComp; i++) {
+                const deps = [];
+                const taken = new Set();
+                for (let j = 0; j < 1 + (Math.random() * 2 | 0); j++) {
+                    const idx = (Math.random() * sigs.length) | 0;
+                    if (!taken.has(idx)) {
+                        taken.add(idx);
+                        deps.push(sigs[idx]);
+                    }
+                }
+                const cFn = () => {
+                    let s = 0;
+                    for (const d of deps) s += d.api();
+                    return s + i;
+                };
+                const c = registry.computed(cFn);
+                const node = pushNode("computed", c, 1, i / MathMax1Comp);
+                comps.push({api: c, node, fn: cFn});
+                for (const d of deps) pushLink(d.node, node);
+            }
+
+            for (let i = 0; i < nEff; i++) {
+                const deps = [];
+                const taken = new Set();
+                for (let j = 0; j < 1 + (Math.random() * 2 | 0); j++) {
+                    const idx = (Math.random() * comps.length) | 0;
+                    if (!taken.has(idx)) {
+                        taken.add(idx);
+                        deps.push(comps[idx]);
+                    }
+                }
+                const slot = nextSinkSlot();
+                const effectNode = pushNode("effect", null, 2, i / MathMax1Eff);
+                for (const d of deps) pushLink(d.node, effectNode);
+
+                registry.effect(() => {
+                    let s = 0;
+                    for (const d of deps) s += d.api();
+                    SINK[slot] = s;
+                    effectNode.firedAt = performance.now();
+                });
+            }
+
+            for (const n of nodes) {
+                n.vx = 0;
+                n.vy = 0;
+            }
+            dom.topology.textContent = `${nSig} signals · ${nComp} computeds · ${nEff} effects · ${links.length} edges`;
+        }
+
+        function pushNode(kind, api, tier, frac) {
+            const tierY = [0.15, 0.5, 0.85][tier];
+            const node = {
+                kind, api, tier, x: 0.1 + 0.8 * frac + (Math.random() - 0.5) * 0.05, y: tierY, targetY: tierY,
+                vx: 0, vy: 0, firedAt: 0, dirtyAt: 0, walkEpoch: 0,
+                r: kind === "signal" ? 9 : kind === "computed" ? 7 : 8,
+                colorRGB: kind === "signal" ? "95,227,159" : kind === "computed" ? "125,211,252" : "245,185,66"
+            };
+            nodes.push(node);
+            if (kind === "signal") signalCache.push(node);
+            if (api) regNodes.push({kind, api});
+            return node;
+        }
+
+        function pushLink(from, to) {
+            links.push({from, to, pulseAt: 0});
+        }
+
+        function step(dt) {
+            for (let i = 0; i < nodes.length; i++) {
+                const a = nodes[i];
+                a.vy += (a.targetY - a.y) * 8 * dt;
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const b = nodes[j], dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy + 0.0001;
+                    if (d2 < 0.06) {
+                        const f = 0.0008 / d2;
+                        a.vx += dx * f;
+                        a.vy += dy * f;
+                        b.vx -= dx * f;
+                        b.vy -= dy * f;
+                    }
+                }
+                a.vx *= Math.pow(0.06, dt);
+                a.vy *= Math.pow(0.06, dt);
+            }
+            for (const l of links) {
+                const a = l.from, b = l.to, dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) + 0.0001;
+                const f = (d - 0.18) * 1.5 * dt;
+                a.vx += dx / d * f;
+                a.vy += dy / d * f;
+                b.vx -= dx / d * f;
+                b.vy -= dy / d * f;
+            }
+            for (const n of nodes) {
+                n.x += n.vx * dt;
+                n.y += n.vy * dt;
+                if (n.x < 0.05) {
+                    n.x = 0.05;
+                    n.vx = 0;
+                }
+                if (n.x > 0.95) {
+                    n.x = 0.95;
+                    n.vx = 0;
+                }
+                if (n.y < 0.05) {
+                    n.y = 0.05;
+                    n.vy = 0;
+                }
+                if (n.y > 0.95) {
+                    n.y = 0.95;
+                    n.vy = 0;
+                }
+            }
+        }
+
+        function render(now) {
+            if (!ctx) return;
+            ctx.clearRect(0, 0, W, H);
+            for (const l of links) {
+                const x1 = l.from.x * W, y1 = l.from.y * H, x2 = l.to.x * W, y2 = l.to.y * H;
+                const pulseAge = now - l.pulseAt, pulseAlpha = pulseAge < 800 ? Math.max(0, 1 - pulseAge / 800) : 0;
+                ctx.strokeStyle = rgbaq("255,255,255", 0.08 + 0.5 * pulseAlpha);
+                ctx.lineWidth = 1 + 1.5 * pulseAlpha;
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+                if (pulseAlpha > 0) {
+                    const t = Math.min(1, pulseAge / 380);
+                    ctx.fillStyle = rgbaq("95,227,159", pulseAlpha);
+                    ctx.beginPath();
+                    ctx.arc(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            for (const n of nodes) {
+                const x = n.x * W, y = n.y * H;
+                const fireAge = now - n.firedAt, dirtyAge = now - n.dirtyAt;
+                const fireAlpha = fireAge < 500 ? Math.max(0, 1 - fireAge / 500) : 0;
+                const dirtyAlpha = dirtyAge < 350 ? Math.max(0, 1 - dirtyAge / 350) : 0;
+                const r = n.r + fireAlpha * 4;
+                if (fireAlpha > 0 || dirtyAlpha > 0) {
+                    ctx.shadowColor = rgbaq(n.colorRGB, 0.8 * Math.max(fireAlpha, dirtyAlpha));
+                    ctx.shadowBlur = 18;
+                }
+                ctx.fillStyle = rgbaq(n.colorRGB, 1);
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = "rgba(255,255,255,0.18)";
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(x, y, r + 2, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+
+        canvas.addEventListener("click", (e) => {
+            const r = canvas.getBoundingClientRect(), x = (e.clientX - r.left) / r.width,
+                y = (e.clientY - r.top) / r.height;
+            let hit = null, minD = Infinity;
+            for (const n of nodes) {
+                const d = Math.hypot((n.x - x) * r.width, (n.y - y) * r.height);
+                if (d < (n.r + 6) && d < minD) {
+                    hit = n;
+                    minD = d;
+                }
+            }
+            if (hit && hit.kind === "signal") fireSignal(hit);
+        });
+
+        function fireSignal(node) {
+            const t0 = performance.now(), memBefore = mem();
+            markDirty(node);
+            node.firedAt = performance.now();
+            for (const l of links) if (l.from === node) l.pulseAt = performance.now();
+            if (node.api) node.api.set(Math.random() * 100 | 0);
+            bumpOps(1);
+            propagations++;
+            dom.propagations.textContent = propagations;
+
+            // Epoch-marker traversal — zero alloc per fire. The walk counts
+            // visited nodes and effect-kind hits inline; the previous version
+            // built a Set and then materialised it via [...visited].filter(),
+            // which was allocating per auto-fire tick (a 700ms setInterval).
+            const ep = ++globalWalkEpoch;
+            let visitedCount = 0;
+            let effectsFired = 0;
+
+            function walk(n) {
+                if (n.walkEpoch === ep) return;
+                n.walkEpoch = ep;
+                visitedCount++;
+                if (n.kind === "effect") effectsFired++;
+                for (let i = 0; i < links.length; i++) {
+                    const l = links[i];
+                    if (l.from === n) {
+                        l.to.firedAt = performance.now();
+                        for (let j = 0; j < links.length; j++) {
+                            const ll = links[j];
+                            if (ll.from === l.to) ll.pulseAt = performance.now() + 80;
+                        }
+                        walk(l.to);
+                    }
+                }
+            }
+
+            walk(node);
+            dom.touched.textContent = visitedCount;
+            dom.fired.textContent = effectsFired;
+            dom.walltime.textContent = ((performance.now() - t0) * 1000).toFixed(1) + " µs";
+            const memDelta = mem() - memBefore;
+            dom.alloc.textContent = memDelta > 0 ? "+" + fmtBytes(memDelta) : "0 B";
+        }
+
+        function markDirty(start) {
+            const ep = ++globalWalkEpoch;
+
+            function walk(n) {
+                if (n.walkEpoch === ep) return;
+                n.walkEpoch = ep;
+                for (let i = 0; i < links.length; i++) {
+                    const l = links[i];
+                    if (l.from === n) {
+                        l.to.dirtyAt = performance.now();
+                        walk(l.to);
+                    }
+                }
+            }
+
+            walk(start);
+        }
+
+        $("graph-auto").addEventListener("click", () => {
+            const btn = $("graph-auto");
+            if (autoFireTimer) {
+                clearInterval(autoFireTimer);
+                autoFireTimer = null;
+                btn.textContent = "▶ auto-fire";
+                btn.classList.remove("primary");
+                btn.classList.add("btn");
+            } else {
+                autoFireTimer = setInterval(() => {
+                    if (signalCache.length === 0) return;
+                    const s = signalCache[(Math.random() * signalCache.length) | 0];
+                    if (s) fireSignal(s);
+                }, 700);
+                btn.textContent = "■ stop";
+                btn.classList.add("primary");
+            }
+        });
+
+        $("graph-fire-all").addEventListener("click", () => {
+            const sigs = nodes.filter(n => n.kind === "signal");
+            batch(() => {
+                for (const s of sigs) s.api.set(Math.random() * 100 | 0);
+            });
+            for (const s of sigs) {
+                s.firedAt = performance.now();
+                for (const l of links) if (l.from === s) l.pulseAt = performance.now();
+                markDirty(s);
+            }
+            bumpOps(sigs.length);
+        });
+
+        $("graph-rebuild").addEventListener("click", rebuild);
+        for (const id of ["nSig", "nComp", "nEff"]) {
+            dom[id].addEventListener("input", () => dom[id + "V"].textContent = dom[id].value);
+            dom[id].addEventListener("change", rebuild);
+        }
+
+        let lastT = performance.now();
+
+        function tick(now) {
+            step(Math.min(0.05, (now - lastT) / 1000));
+            lastT = now;
+            render(now);
+            requestAnimationFrame(tick);
+        }
+
+        requestAnimationFrame(tick);
+
+        return {resize, rebuild};
+    })();
+    graph.resize();
+    graph.rebuild();
+
+    // ──────────────────────────────────────────────────────────────────
+    // SCENE 2 — STRESS TEST
+    // ──────────────────────────────────────────────────────────────────
+    const stress = (() => {
+        const canvas = $("stress-canvas");
+        let ctx, W, H, registry = null, drive = null, teardown = null, running = false, iter = 0;
+        let series = [], lastSampleTs = 0, sampleCounter = 0, memBaseline = 0;
+        let heapNotSupportedShown = false;
+        let axLogMin = NaN, axSpan = NaN;
+        const axisLabels = ["", "", "", "", "", ""];
+
+        const dom = {
+            log: $("stress-log"), scenario: $("stress-scenario"), workloadName: $("stress-workload-name"),
+            n: $("stress-N"), nV: $("stress-N-v"), btnRun: $("stress-run"), btnStop: $("stress-stop"),
+            iter: $("stress-iter"), frame: $("stress-frame"), links: $("stress-links"), sink: $("stress-sink"),
+            ops: $("stress-ops"), opsBig: $("stress-ops-big"), heap: $("stress-heap"), status: $("t-status")
+        };
+
+        function resize() {
+            const s = sizeCanvas(canvas);
+            ctx = s.ctx;
+            W = s.w;
+            H = s.h;
+        }
+
+        window.addEventListener("resize", resize);
+
+        function log(msg, kind = "") {
+            const div = document.createElement("div");
+            div.className = "line " + kind;
+            const t = new Date(),
+                ts = `${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}.${String(t.getMilliseconds()).padStart(3, "0")}`;
+            div.innerHTML = `<span class="t">[${ts}]</span>${msg}`;
+            dom.log.appendChild(div);
+            dom.log.scrollTop = dom.log.scrollHeight;
+            while (dom.log.childNodes.length > 50) dom.log.removeChild(dom.log.firstChild);
+        }
+
+        function setupWorkload(name, N) {
+            if (teardown) try {
+                teardown();
+            } catch (e) {
+            }
+            if (registry) registry.destroy();
+            registry = createRegistry({maxNodes: N * 2 + 32, maxLinks: N * 8 + 64, onCapacityExceeded: "grow"});
+            const slot = nextSinkSlot();
+
+            if (name === "mux") {
+                const sigs = new Array(N);
+                for (let i = 0; i < N; i++) sigs[i] = registry.signal(0);
+                const sum = registry.computed(() => {
+                    let s = 0;
+                    for (let i = 0; i < N; i++) s += sigs[i]();
+                    return s;
+                });
+                registry.effect(() => {
+                    SINK[slot] = sum();
+                });
+                drive = (i) => sigs[i % N].set(i);
+            } else if (name === "kairos") {
+                const src = registry.signal(0), cs = new Array(N);
+                for (let i = 0; i < N; i++) {
+                    const k = i;
+                    cs[i] = registry.computed(() => src() * (k + 1));
+                }
+                registry.effect(() => {
+                    let s = 0;
+                    for (let i = 0; i < N; i++) s += cs[i]();
+                    SINK[slot] = s;
+                });
+                drive = (i) => src.set(i);
+            } else if (name === "broadcast") {
+                const src = registry.signal(0);
+                for (let i = 0; i < N; i++) {
+                    const k = i;
+                    registry.effect(() => {
+                        SINK[slot + (k & 31)] = src() + k;
+                    });
+                }
+                drive = (i) => src.set(i);
+            } else if (name === "chain") {
+                const src = registry.signal(0);
+                let prev = src;
+                for (let i = 0; i < Math.min(N, 1024); i++) {
+                    const p = prev;
+                    prev = registry.computed(() => p() + 1);
+                }
+                registry.effect(() => {
+                    SINK[slot] = prev();
+                });
+                drive = (i) => src.set(i);
+            }
+
+            teardown = () => {
+                drive = null;
+            };
+            iter = 0;
+            series = [];
+            sampleCounter = 0;
+            memBaseline = mem();
+            dom.iter.textContent = 0;
+            dom.ops.textContent = 0;
+            dom.sink.textContent = "—";
+            log(`workload built: ${name} N=${N} · links=${stats().activeLinks}`, "ok");
+        }
+
+        function loop() {
+            if (!running || !drive) return;
+            const t0 = performance.now();
+            let count = 0;
+            while (performance.now() - t0 < 8) {
+                for (let j = 0; j < 256; j++) drive(iter++);
+                count += 256;
+            }
+            sampleCounter += count;
+            bumpOps(count);
+
+            const now = performance.now();
+            if (now - lastSampleTs > 100) {
+                const opsPerSec = sampleCounter / ((now - lastSampleTs) / 1000) | 0;
+                series.push(opsPerSec);
+                while (series.length > 100) series.shift();
+
+                dom.iter.textContent = fmtNum(iter);
+                dom.frame.textContent = (now - t0).toFixed(2) + " ms";
+                dom.links.textContent = fmtNum(stats().activeLinks);
+                dom.ops.textContent = fmtNum(opsPerSec);
+                dom.opsBig.textContent = fmtNum(opsPerSec) + " ops/s";
+                dom.sink.textContent = (sumFloat64(SINK) | 0).toString(16).slice(-6);
+
+                const heapNow = mem();
+                if (heapNow && memBaseline) {
+                    const dKB = (heapNow - memBaseline) / 1024;
+                    dom.heap.textContent = (dKB >= 0 ? "+" : "") + dKB.toFixed(0) + " KB";
+                    dom.heap.className = "v " + (Math.abs(dKB) < 100 ? "accent-green" : "accent-amber");
+                } else if (!performance.memory && !heapNotSupportedShown) {
+                    // Same Chromium-only API caveat as Scene 4; surface it
+                    // once instead of leaving the cell stuck on its placeholder.
+                    heapNotSupportedShown = true;
+                    dom.heap.textContent = "n/a";
+                    dom.heap.className = "v";
+                }
+                lastSampleTs = now;
+                sampleCounter = 0;
+            }
+            render();
+            requestAnimationFrame(loop);
+        }
+
+        function render() {
+            if (!ctx) return;
+            ctx.clearRect(0, 0, W, H);
+            ctx.strokeStyle = "rgba(255,255,255,0.04)";
+            ctx.lineWidth = 1;
+            for (let i = 1; i < 10; i++) {
+                const x = (i / 10) * W;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, H);
+                ctx.stroke();
+            }
+            for (let i = 1; i < 5; i++) {
+                const y = (i / 5) * H;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(W, y);
+                ctx.stroke();
+            }
+
+            if (series.length < 2) return;
+            // Manual max/min scan — `Math.max(1000, ...series)` spreads the
+            // entire series array as arguments every frame at rAF rate, which
+            // allocates an arguments object proportional to N. Explicit loop
+            // is O(N) the same way but allocates nothing.
+            let sMax = 1000, sMin = 1;
+            for (let i = 0; i < series.length; i++) {
+                const v = series[i];
+                if (v > sMax) sMax = v;
+                if (v < sMin) sMin = v;
+            }
+            const logMax = Math.log10(sMax * 1.2),
+                logMin = Math.log10(sMin * 0.5);
+            const span = logMax - logMin || 1;
+
+            ctx.strokeStyle = "rgba(95,227,159,0.9)";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = "rgba(95,227,159,0.5)";
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            for (let i = 0; i < series.length; i++) {
+                const x = (i / 99) * W, y = H - ((Math.log10(Math.max(1, series[i])) - logMin) / span) * H;
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            ctx.fillStyle = "rgba(95,227,159,0.06)";
+            ctx.beginPath();
+            for (let i = 0; i < series.length; i++) {
+                const x = (i / 99) * W, y = H - ((Math.log10(Math.max(1, series[i])) - logMin) / span) * H;
+                if (i === 0) ctx.moveTo(x, H); else ctx.lineTo(x, y);
+            }
+            ctx.lineTo(((series.length - 1) / 99) * W, H);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = "rgba(139,141,148,0.6)";
+            ctx.font = '10px "JetBrains Mono", monospace';
+            ctx.textAlign = "left";
+            if (logMin !== axLogMin || span !== axSpan) {
+                axLogMin = logMin;
+                axSpan = span;
+                for (let p = 0; p <= 5; p++) axisLabels[p] = fmtNum(Math.pow(10, logMin + span * (1 - p / 5))) + " op/s";
+            }
+            for (let p = 0; p <= 5; p++) {
+                const y = (p / 5) * H;
+                if (y > 12) ctx.fillText(axisLabels[p], 8, y - 3);
+            }
+        }
+
+        dom.scenario.addEventListener("change", () => dom.workloadName.textContent = dom.scenario.selectedOptions[0].text);
+        dom.n.addEventListener("input", () => dom.nV.textContent = dom.n.value);
+        dom.btnRun.addEventListener("click", () => {
+            setupWorkload(dom.scenario.value, +dom.n.value);
+            running = true;
+            lastSampleTs = performance.now();
+            dom.btnRun.disabled = true;
+            dom.btnStop.disabled = false;
+            dom.status.textContent = "running";
+            log(`started · ${dom.scenario.value} · N=${+dom.n.value}`, "ok");
+            requestAnimationFrame(loop);
+        });
+        dom.btnStop.addEventListener("click", () => {
+            running = false;
+            dom.btnRun.disabled = false;
+            dom.btnStop.disabled = true;
+            dom.status.textContent = "idle";
+            log("stopped", "");
+        });
+        $("stress-reset").addEventListener("click", () => {
+            if (registry) registry.destroy();
+            registry = null;
+            drive = null;
+            teardown = null;
+            series = [];
+            iter = 0;
+            dom.iter.textContent = 0;
+            dom.ops.textContent = 0;
+            dom.heap.textContent = "— KB";
+            dom.frame.textContent = "— ms";
+            dom.sink.textContent = "—";
+            dom.opsBig.textContent = "— ops/s";
+            heapNotSupportedShown = false;
+            log("reset", "");
+        });
+
+        return {resize};
+    })();
+
+    // ──────────────────────────────────────────────────────────────────
+    // SCENE 3 — POOL INSPECTOR
+    // ──────────────────────────────────────────────────────────────────
+    const pool = (() => {
+        let registry = null, spawned = [], cells = [];
+        const dom = {
+            strip: $("pool-node-strip"), mn: $("pool-mn"), ml: $("pool-ml"), policy: $("pool-policy"),
+            nodeQ: $("pool-node-q"), linkQ: $("pool-link-q"), nodeBar: $("pool-node-bar"), linkBar: $("pool-link-bar"),
+            breakdown: $("pool-node-breakdown"), errMsg: $("error-msg"), banner: $("error-banner")
+        };
+
+        function buildStrip() {
+            dom.strip.innerHTML = "";
+            cells = [];
+            const cap = +dom.mn.value;
+            dom.strip.style.gridTemplateColumns = `repeat(64, 1fr)`;
+            for (let i = 0; i < cap; i++) {
+                const c = document.createElement("div");
+                c.className = "cell";
+                dom.strip.appendChild(c);
+                cells.push(c);
+            }
+        }
+
+        function rebuild() {
+            if (registry) try {
+                registry.destroy();
+            } catch (e) {
+            }
+            registry = createRegistry({
+                maxNodes: +dom.mn.value,
+                maxLinks: +dom.ml.value,
+                onCapacityExceeded: dom.policy.value
+            });
+            spawned = [];
+            buildStrip();
+            refresh();
+            flash("registry built", "green");
+        }
+
+        function flash(msg, color = "green") {
+            dom.errMsg.textContent = msg;
+            dom.banner.querySelector(".label").textContent = color === "green" ? "ok" : "capacity";
+            dom.banner.style.borderColor = `var(--${color === "green" ? "green" : "red"})`;
+            dom.banner.querySelector(".label").style.color = `var(--${color === "green" ? "green" : "red"})`;
+            dom.errMsg.style.color = `var(--${color === "green" ? "green" : "red"})`;
+            dom.banner.setAttribute("data-active", "");
+            clearTimeout(flash._t);
+            flash._t = setTimeout(() => dom.banner.removeAttribute("data-active"), 1800);
+        }
+
+        function refresh() {
+            if (!registry) return;
+            const st = registry.stats();
+
+            // THE FIX: Read the actual grown capacity from the engine, not the slider!
+            const nodeCap = st.nodePoolCapacity;
+            const linkCap = st.linkPoolCapacity;
+
+            const nodeUsed = st.signals + st.computeds + st.effects;
+            $("pool-node-q").textContent = `${nodeUsed} / ${nodeCap}`;
+            $("pool-link-q").textContent = `${st.activeLinks} / ${linkCap}`;
+            $("pool-node-bar").style.width = Math.min(100, (nodeUsed / nodeCap) * 100) + "%";
+            $("pool-link-bar").style.width = Math.min(100, (st.activeLinks / linkCap) * 100) + "%";
+            $("pool-node-breakdown").textContent = `${st.signals} · ${st.computeds} · ${st.effects}`;
+
+            for (let i = 0; i < cells.length; i++) {
+                cells[i].className = "cell";
+            }
+            let idx = 0;
+            for (const it of spawned) {
+                if (idx >= cells.length) break;
+                cells[idx].className = "cell " + it.kind;
+                idx++;
+            }
+        }
+
+        function spawn(kind) {
+            if (!registry) rebuild();
+            try {
+                if (kind === "signal") {
+                    const s = registry.signal(0);
+                    spawned.push({kind, ref: s});
+                } else if (kind === "computed") {
+                    const sigs = spawned.filter(x => x.kind === "signal");
+                    const dep = sigs.length ? sigs[(Math.random() * sigs.length) | 0].ref : registry.signal(0);
+                    if (!sigs.length) spawned.push({kind: "signal", ref: dep});
+                    const c = registry.computed(() => dep() + 1);
+                    spawned.push({kind, ref: c});
+                } else if (kind === "effect") {
+                    const sigs = spawned.filter(x => x.kind === "signal");
+                    const dep = sigs.length ? sigs[(Math.random() * sigs.length) | 0].ref : registry.signal(0);
+                    if (!sigs.length) spawned.push({kind: "signal", ref: dep});
+                    const slot = nextSinkSlot();
+                    const disposeHandle = registry.effect(() => {
+                        SINK[slot] = dep();
+                    });
+                    spawned.push({kind, ref: disposeHandle});
+                }
+                const idx = spawned.length - 1;
+                if (idx < cells.length) {
+                    cells[idx].classList.add("flash");
+                    setTimeout(() => cells[idx] && cells[idx].classList.remove("flash"), 400);
+                }
+                refresh();
+            } catch (err) {
+                flash(err.message, "red");
+                refresh();
+            }
+        }
+
+        $("pool-rebuild").addEventListener("click", rebuild);
+        for (const id of ["pool-mn", "pool-ml"]) $(id).addEventListener("input", () => $(id + "-v").textContent = $(id).value);
+        for (const b of document.querySelectorAll("[data-spawn]")) b.addEventListener("click", () => spawn(b.dataset.spawn));
+        for (const b of document.querySelectorAll("[data-burst]")) {
+            b.addEventListener("click", () => {
+                try {
+                    const n = +b.dataset.burst;
+                    for (let i = 0; i < n; i++) spawn(["signal", "computed", "effect"][i % 3]);
+                } catch (e) {
+                }
+            });
+        }
+
+        const POOL_STRESS_KINDS = ["signal", "computed", "effect"];
+        $("pool-stress-til-err").addEventListener("click", () => {
+            if (!registry) rebuild();
+            let count = 0;
+            const fastSigs = []; // Cache signals here to avoid O(N^2) filtering!
+
+            try {
+                while (count < 50000) {
+                    const k = POOL_STRESS_KINDS[count % 3];
+                    let ref, dispose;
+
+                    if (k === "signal") {
+                        ref = registry.signal(0);
+                        fastSigs.push(ref); // Cache it
+                        dispose = ref[Symbol.for("node_ptr")] ? undefined : ref; // Duck type
+                    } else if (k === "computed") {
+                        const dep = fastSigs.length ? fastSigs[(Math.random() * fastSigs.length) | 0] : registry.signal(0);
+                        if (!fastSigs.length) fastSigs.push(dep);
+                        ref = registry.computed(() => dep() + 1);
+                    } else {
+                        const dep = fastSigs.length ? fastSigs[(Math.random() * fastSigs.length) | 0] : registry.signal(0);
+                        if (!fastSigs.length) fastSigs.push(dep);
+                        const slot = nextSinkSlot();
+                        ref = registry.effect(() => {
+                            SINK[slot] = dep();
+                        });
+                        dispose = ref;
+                    }
+
+                    spawned.push({kind: k, ref, dispose});
+                    count++;
+                }
+            } catch (e) {
+                flash(`${e.name || "Error"} after ${count} spawns: ${e.message}`, "red");
+            }
+            refresh();
+        });
+
+        $("pool-dispose-half").addEventListener("click", () => {
+            if (!spawned.length) return;
+            const cutoff = (spawned.length / 2) | 0;
+            const toDispose = spawned.slice(cutoff);
+            spawned = spawned.slice(0, cutoff);
+
+            for (const it of toDispose) {
+                // THE FIX: Route the reference through the registry's unified dispose method
+                if (it.ref) {
+                    try {
+                        registry.dispose(it.ref);
+                    } catch (e) {
+                    }
+                }
+            }
+
+            flash(`disposed ${toDispose.length} entities`, "green");
+            refresh();
+        });
+
+        $("pool-destroy").addEventListener("click", () => {
+            if (registry) registry.destroy();
+            spawned = [];
+            flash("registry destroyed · pools reset", "green");
+            refresh();
+        });
+
+        rebuild();
+        setInterval(refresh, 200);
+        return {rebuild};
+    })();
+
+    // ──────────────────────────────────────────────────────────────────
+    // SCENE 4 — VS NAÏVE
+    // ──────────────────────────────────────────────────────────────────
+    const vs = (() => {
+        const canvas = $("vs-canvas");
+        let ctx, W, H, running = false, naiveSeries = [], liteSeries = [];
+        let naiveBaseline = 0, liteBaseline = 0, naiveWrites = 0, liteWrites = 0, lastRateTs = 0;
+        let lastNaiveWN = -1, lastLiteWN = -1, axTop = NaN, axBot = NaN, topLbl = "", botLbl = "";
+        let naiveSigs = [], liteRegistry, liteSigs = [];
+
+        const dom = {
+            rate: $("vs-rate"),
+            rateV: $("vs-rate-v"),
+            n: $("vs-N"),
+            nV: $("vs-N-v"),
+            btnRun: $("vs-run"),
+            btnStop: $("vs-stop"),
+            name: $("vs-workload-name"),
+            naiveHeap: $("vs-naive-heap"),
+            liteHeap: $("vs-lite-heap"),
+            naiveWrites: $("vs-naive-writes"),
+            liteWrites: $("vs-lite-writes")
+        };
+
+        function resize() {
+            const s = sizeCanvas(canvas);
+            ctx = s.ctx;
+            W = s.w;
+            H = s.h;
+        }
+
+        window.addEventListener("resize", resize);
+
+        function naiveSignal(initial) {
+            let value = initial;
+            const subs = new Set();
+            return {
+                get: () => value,
+                set: (v) => {
+                    value = v;
+                    for (const fn of subs) fn(v);
+                },
+                subscribe: (fn) => {
+                    subs.add(fn);
+                    return () => subs.delete(fn);
+                }
+            };
+        }
+
+        function naiveComputed(deps, fn) {
+            let value = fn(deps);
+            const subs = new Set();
+            for (const d of deps) {
+                d.subscribe(() => {
+                    value = fn(deps);
+                    for (const s of subs) s(value);
+                });
+            }
+            return {
+                get: () => value, subscribe: (fn) => {
+                    subs.add(fn);
+                    return () => subs.delete(fn);
+                }
+            };
+        }
+
+        function buildWorkloads(N) {
+            naiveSigs = [];
+            for (let i = 0; i < N; i++) naiveSigs.push(naiveSignal(0));
+            const naiveSum = naiveComputed(naiveSigs, (deps) => {
+                let s = 0;
+                for (const d of deps) s += d.get();
+                return s;
+            });
+            const naiveSlot = nextSinkSlot();
+            naiveSum.subscribe((v) => {
+                SINK[naiveSlot] = v;
+            });
+
+            if (liteRegistry) liteRegistry.destroy();
+            liteRegistry = createRegistry({maxNodes: N * 2 + 32, maxLinks: N * 4 + 64, onCapacityExceeded: "grow"});
+            liteSigs = new Array(N);
+            for (let i = 0; i < N; i++) liteSigs[i] = liteRegistry.signal(0);
+            const liteSum = liteRegistry.computed(() => {
+                let s = 0;
+                for (let i = 0; i < N; i++) s += liteSigs[i]();
+                return s;
+            });
+            const liteSlot = nextSinkSlot();
+            liteRegistry.effect(() => {
+                SINK[liteSlot] = liteSum();
+            });
+        }
+
+        function loop() {
+            if (!running) return;
+            const rate = +dom.rate.value, N = +dom.n.value;
+            for (let i = 0; i < rate; i++) naiveSigs[(naiveWrites + i) % N].set(naiveWrites + i);
+            naiveWrites += rate;
+            for (let i = 0; i < rate; i++) liteSigs[(liteWrites + i) % N].set(liteWrites + i);
+            liteWrites += rate;
+            bumpOps(rate * 2);
+
+            const m = mem();
+            if (m) {
+                const now = performance.now();
+                if (now - lastRateTs > 300) {
+                    const dN = (m - naiveBaseline) / 1024, dL = (m - liteBaseline) / 1024;
+                    naiveSeries.push(dN);
+                    liteSeries.push(dL);
+                    while (naiveSeries.length > 200) naiveSeries.shift();
+                    while (liteSeries.length > 200) liteSeries.shift();
+                    dom.naiveHeap.textContent = (dN >= 0 ? "+" : "") + dN.toFixed(0) + " KB";
+                    dom.liteHeap.textContent = (dL >= 0 ? "+" : "") + dL.toFixed(0) + " KB";
+                    lastRateTs = now;
+                }
+            }
+            // Dedup at the integer layer, not the string layer — fmtNum used
+            // to allocate a fresh string every frame even when the displayed
+            // value hadn't changed.
+            if (naiveWrites !== lastNaiveWN) {
+                lastNaiveWN = naiveWrites;
+                dom.naiveWrites.textContent = fmtNum(naiveWrites);
+            }
+            if (liteWrites !== lastLiteWN) {
+                lastLiteWN = liteWrites;
+                dom.liteWrites.textContent = fmtNum(liteWrites);
+            }
+            render();
+            requestAnimationFrame(loop);
+        }
+
+        function render() {
+            if (!ctx) return;
+            ctx.clearRect(0, 0, W, H);
+
+            // GRACEFUL DEGRADATION FOR NON-CHROMIUM BROWSERS.
+            // `performance.memory` is a Chromium-only API; in Safari and
+            // Firefox `mem()` returns 0, naiveSeries / liteSeries never get
+            // populated, and the chart would otherwise sit blank. Surface the
+            // limitation instead of failing silently.
+            if (!performance.memory) {
+                ctx.fillStyle = "rgba(161, 161, 170, 0.85)";
+                ctx.font = '12px "JetBrains Mono", ui-monospace, monospace';
+                ctx.textAlign = "center";
+                ctx.fillText("Heap telemetry requires a Chromium-based browser.", W / 2, H / 2 - 8);
+                ctx.fillStyle = "rgba(113, 113, 122, 0.75)";
+                ctx.font = '11px "JetBrains Mono", ui-monospace, monospace';
+                ctx.fillText("(Chrome, Edge, Brave, Arc, etc.) — engine is still running below.", W / 2, H / 2 + 14);
+                ctx.textAlign = "start";
+                // Also mark the metric cells as N/A so the side panel doesn't
+                // stall on "0 KB" forever.
+                dom.naiveHeap.textContent = "n/a";
+                dom.liteHeap.textContent = "n/a";
+                return;
+            }
+
+            ctx.strokeStyle = "rgba(255,255,255,0.04)";
+            ctx.lineWidth = 1;
+            for (let i = 1; i < 10; i++) {
+                const x = (i / 10) * W;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, H);
+                ctx.stroke();
+            }
+            if (naiveSeries.length < 2 || liteSeries.length < 2) return;
+
+            // Two-pass min/max across both series — was building
+            // `[...naiveSeries, ...liteSeries, 0]` and then spreading that
+            // into Math.max/min, allocating two arrays per frame at rAF rate.
+            let maxV = 0, minV = 0;
+            for (let i = 0; i < naiveSeries.length; i++) {
+                const v = naiveSeries[i];
+                if (v > maxV) maxV = v;
+                if (v < minV) minV = v;
+            }
+            for (let i = 0; i < liteSeries.length; i++) {
+                const v = liteSeries[i];
+                if (v > maxV) maxV = v;
+                if (v < minV) minV = v;
+            }
+            const range = Math.max(50, maxV - minV), top = maxV + range * 0.1, bot = minV - range * 0.1,
+                span = top - bot || 1;
+            const zeroY = H - ((0 - bot) / span) * H;
+
+            ctx.strokeStyle = "rgba(255,255,255,0.12)";
+            ctx.beginPath();
+            ctx.moveTo(0, zeroY);
+            ctx.lineTo(W, zeroY);
+            ctx.stroke();
+            ctx.fillStyle = "rgba(139,141,148,0.7)";
+            ctx.font = '10px "JetBrains Mono", monospace';
+            ctx.fillText("0 KB", 6, zeroY - 4);
+
+            function drawSeries(series, color, glowColor) {
+                const max = naiveSeries.length;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.shadowColor = glowColor;
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                for (let i = 0; i < series.length; i++) {
+                    const x = (i / (max - 1 || 1)) * W, y = H - ((series[i] - bot) / span) * H;
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+
+            drawSeries(naiveSeries, "rgba(232,121,168,0.95)", "rgba(232,121,168,0.5)");
+            drawSeries(liteSeries, "rgba(95,227,159,0.95)", "rgba(95,227,159,0.5)");
+            ctx.fillStyle = "rgba(139,141,148,0.6)";
+            ctx.textAlign = "left";
+            if (top !== axTop) {
+                axTop = top;
+                topLbl = "+" + Math.round(top) + " KB";
+            }
+            if (bot !== axBot) {
+                axBot = bot;
+                botLbl = Math.round(bot) + " KB";
+            }
+            ctx.fillText(topLbl, 6, 14);
+            ctx.fillText(botLbl, 6, H - 8);
+        }
+
+        dom.rate.addEventListener("input", () => dom.rateV.textContent = dom.rate.value);
+        dom.n.addEventListener("input", () => dom.nV.textContent = dom.n.value);
+        dom.btnRun.addEventListener("click", () => {
+            const N = +dom.n.value;
+            buildWorkloads(N);
+            dom.name.textContent = `MUX · ${N} signals · ${+dom.rate.value} writes/frame`;
+            naiveSeries = [];
+            liteSeries = [];
+            naiveWrites = 0;
+            liteWrites = 0;
+            naiveBaseline = mem();
+            liteBaseline = mem();
+            running = true;
+            dom.btnRun.disabled = true;
+            dom.btnStop.disabled = false;
+            requestAnimationFrame(loop);
+        });
+        dom.btnStop.addEventListener("click", () => {
+            running = false;
+            dom.btnRun.disabled = false;
+            dom.btnStop.disabled = true;
+        });
+        $("vs-gc").addEventListener("click", () => {
+            if (window.gc) window.gc();
+            const m = mem();
+            if (m) {
+                naiveBaseline = m;
+                liteBaseline = m;
+            }
+        });
+
+        resize();
+        return {resize};
+    })();
+
+    $("tabs").addEventListener("click", (e) => {
+        const t = e.target.closest("button[data-tab]");
+        if (!t) return;
+        for (const b of $("tabs").querySelectorAll("button")) b.setAttribute("aria-current", b === t ? "true" : "false");
+        for (const s of document.querySelectorAll(".scene")) {
+            if (s.dataset.scene === t.dataset.tab) s.setAttribute("data-active", "");
+            else s.removeAttribute("data-active");
+        }
+        if (t.dataset.tab === "graph") setTimeout(graph.resize, 0);
+        if (t.dataset.tab === "stress") setTimeout(stress.resize, 0);
+        if (t.dataset.tab === "vs") setTimeout(vs.resize, 0);
+    });
+
+    setTimeout(() => {
+        graph.resize();
+    }, 100);
+</script>
+</body>
+</html>

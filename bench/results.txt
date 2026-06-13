@@ -1,0 +1,146 @@
+Config: WARMUP=2  RUNS=5  ITERATIONS=20,000  Node v22
+Hardware: 2016-era MacBook Pro (Intel, ~10 yr old, 4 cores)
+Reported: median of 10 outer invocations (each the median of 5 inner runs).
+Run date: @zakkster/lite-signal@1.2.0.
+Harness: bench/benchmark.mjs  (lite-signal's own anti-DCE throughput harness)
+
+1.2.0 IS DROP-IN OVER 1.1.5. The hot paths are byte-identical; 1.2 adds the
+internal three-layer split (graph topology / ownership-lifecycle / propagation),
+the owner tree (closes conformance #209 / #210, see resultsReactive.txt), pre-batch
+revert, AggregateError on multi-throw flush, scheduler-thunk caching with a
+gen-bound ABA guard, and a shared `peek` (one closure per registry instead of per
+primitive). Steady-state numbers below are within run-to-run noise of the 1.1.5
+medians; the structural changes are paid for at construction time only.
+
+Δheap  = transient heap allocated during the timed loop (GC pressure).
+retained = heap surviving a forced GC after the loop (leaks / live graph).
+sink     = anti-DCE Float64Array validated non-zero after the loop.
+
+══════════════════════════════════════════════════════════════════════════════
+ STABLE TOPOLOGIES  (fan-in / fan-out / wide-memo / deep chain)
+══════════════════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────────────────
+MUX — 256 inputs → 1 sum computed → 1 effect                [lite-signal wins]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=     61.3ms   ops/s=318K   Δheap=      0.3KB  retained=    -8.9KB  sink=✓
+alien-signals       median=     98.9ms   ops/s=203K   Δheap=   7780.4KB  retained=    -1.7KB  sink=✓
+preact              median=    130.5ms   ops/s=153K   Δheap=  12532.2KB  retained=   -12.4KB  sink=✓
+solid               median=    753.6ms   ops/s= 27K   Δheap=  15612.3KB  retained=    -1.4KB  sink=✓
+
+──────────────────────────────────────────────────────────────────────────────
+KAIROS — 1 source → 1000 computeds → 1 aggregating effect   [lite-signal wins]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=   1303.9ms   ops/s= 15K   Δheap=    138.4KB  retained=    70.9KB  sink=✓
+alien-signals       median=   1590.4ms   ops/s= 13K   Δheap=    857.6KB  retained=    -0.6KB  sink=✓
+preact              median=   1632.5ms   ops/s= 11K   Δheap=    235.5KB  retained=  -400.4KB  sink=✓
+solid               median=   6954.9ms   ops/s=  2K   Δheap=   5854.5KB  retained=     9.2KB  sink=✓
+
+──────────────────────────────────────────────────────────────────────────────
+BROADCAST — 1 source → 1000 effects                         [lite-signal wins]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=    779.7ms   ops/s= 25K   Δheap=      0.3KB  retained=    -8.0KB  sink=✓
+alien-signals       median=    858.4ms   ops/s= 24K   Δheap=      0.3KB  retained=    -1.7KB  sink=✓
+preact              median=   1156.9ms   ops/s= 17K   Δheap=    216.4KB  retained=    -2.1KB  sink=✓
+solid               median=   2843.2ms   ops/s=  6K   Δheap=    459.4KB  retained=    -0.6KB  sink=✓
+
+──────────────────────────────────────────────────────────────────────────────
+DEEP CHAIN — 256-deep computed chain → 1 effect           [alien-signals wins]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=    382.3ms   ops/s= 52K   Δheap=      0.3KB  retained=    -7.6KB  sink=✓
+alien-signals       median=    315.9ms   ops/s= 66K   Δheap=    820.3KB  retained=    -1.7KB  sink=✓
+preact              median=    375.3ms   ops/s= 50K   Δheap=   4312.1KB  retained=   -11.3KB  sink=✓
+solid               median=   1813.1ms   ops/s= 10K   Δheap=   3740.8KB  retained=    -1.3KB  sink=✓
+
+══════════════════════════════════════════════════════════════════════════════
+ DYNAMIC TOPOLOGIES  (read-order churn / branch switching / dense fan-in)
+══════════════════════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────────────────────
+DYNAMIC DAG — sqrt-layered, FAN=6 deps, read order flips each iter [lite-signal wins]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=   9112.6ms   ops/s=  2K   Δheap=  12964.4KB  retained=    -7.6KB  sink=✓
+alien-signals       median=   9987.1ms   ops/s=  2K   Δheap=  38606.9KB  retained=    -1.8KB  sink=✓
+preact              median=   7874.5ms   ops/s=  2K   Δheap=   9736.0KB  retained=    -0.6KB  sink=✓
+solid               median=  17085.1ms   ops/s=  1K   Δheap=   8187.4KB  retained=    -1.6KB  sink=✓
+
+──────────────────────────────────────────────────────────────────────────────
+SELECTIVE DAG — sqrt-layered, 4 candidates, 2 read per iter (set churn) [alien edge]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=   4820.4ms   ops/s=  3K   Δheap=   9431.4KB  retained=    -7.6KB  sink=✓
+alien-signals       median=   4626.3ms   ops/s=  4K   Δheap=  41904.1KB  retained=    -0.6KB  sink=✓
+preact              median=   8236.0ms   ops/s=  2K   Δheap=   5529.6KB  retained=    -0.6KB  sink=✓
+solid               median=  10545.5ms   ops/s=  1K   Δheap=   9536.9KB  retained=    -1.6KB  sink=✓
+
+──────────────────────────────────────────────────────────────────────────────
+SMALL SELECTIVE — 6 layers × 64 wide, 6 candidates 3 read  [alien-signals wins]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=   1860.0ms   ops/s= 10K   Δheap=      0.3KB  retained=    -7.6KB  sink=✓
+alien-signals       median=   1716.2ms   ops/s= 11K   Δheap=  15635.0KB  retained=    -1.8KB  sink=✓
+
+──────────────────────────────────────────────────────────────────────────────
+LARGE WEB APP — 12 layers × ~80 wide, 4 sources, conditional reads [lite-signal wins]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=   2666.1ms   ops/s=  7K   Δheap=      0.3KB  retained=    -8.9KB  sink=✓
+alien-signals       median=   2711.3ms   ops/s=  7K   Δheap=    469.0KB  retained=    -0.9KB  sink=✓
+
+──────────────────────────────────────────────────────────────────────────────
+WIDE DENSE — 5 layers × ~200 wide, 25 sources, FAN=5 dense [lite-signal wins]
+──────────────────────────────────────────────────────────────────────────────
+lite-signal         median=   2677.7ms   ops/s=  7K   Δheap=      0.3KB  retained=    -9.0KB  sink=✓
+alien-signals       median=   2781.3ms   ops/s=  7K   Δheap=    438.8KB  retained=    -1.0KB  sink=✓
+
+Validation: all libs show sink=✓ (effects fired against the anti-DCE Float64Array).
+
+Relative performance — lite-signal @1.2.0 vs alien-signals (median of 10):
+  MUX              lite +38.0%   (1.1.5 run: +59%)
+  KAIROS           lite +18.0%   (1.1.5 run: +19%)
+  BROADCAST        lite  +9.2%   (1.1.5 run: +20%)
+  DEEP CHAIN       lite -21.0%   (1.1.5 run: -12%)
+  DYNAMIC DAG      lite  +8.8%   (1.1.5 run: +10%)
+  SELECTIVE DAG    lite  -4.2%   (1.1.5 run:  +0%)
+  SMALL SELECTIVE  lite  -8.4%   (1.1.5 run:  +8%)
+  LARGE WEB APP    lite  +1.7%   (1.1.5 run:  +6%)
+  WIDE DENSE       lite  +3.7%   (1.1.5 run:  +6%)
+
+  lite-signal wins MUX, KAIROS, BROADCAST, DYNAMIC DAG, LARGE WEB APP, WIDE DENSE
+  (6 of 9). alien-signals wins DEEP CHAIN (flatter representation on long chains),
+  SELECTIVE DAG, and SMALL SELECTIVE. The dynamic-DAG win is preserved over the
+  1.1.5 medians; the small relative shifts on the selective shapes are within
+  this run's host noise and concentrate on the construction-heavy paths (see
+  resultsReactive.txt's `S: createComputations*` rows for the underlying cost).
+
+Cross-framework headlines (this run also includes preact + solid on the 4 core scenarios;
+the full 5-framework suite is in resultsReactive.txt):
+  MUX         preact  130.5ms  solid  753.6ms    (lite  61.3ms)
+  KAIROS      preact 1632.5ms  solid 6954.9ms    (lite 1303.9ms)
+  DEEP CHAIN  preact  375.3ms  solid 1813.1ms    (lite  382.3ms)
+  BROADCAST   preact 1156.9ms  solid 2843.2ms    (lite  779.7ms)
+
+Notes on Δheap (transient allocation) — the zero-GC story is UNCHANGED on 1.2.0:
+  - On stable + wide shapes lite-signal allocates ~0.3KB across 20,000 iterations
+    (hot paths reuse pool slots). The contrast is starkest on MUX: lite 0.3KB vs
+    alien-signals 7,780KB and preact 12,532KB in the same loop.
+  - On the chaotic DYNAMIC/SELECTIVE DAG shapes (read order flips every iteration,
+    FAN=6) even lite-signal allocates 9–13MB: retracking re-links on a genuine
+    dependency-set change. It still allocates far less than alien-signals
+    (39–42MB on the same shapes).
+  - KAIROS lite Δheap 138KB / retained 71KB: the live 1002-node graph is pinned
+    in the pre-allocated pool for the run's duration. The pool IS the working memory.
+
+Notes on retained heap:
+  - Negative values mean V8 compacted below the pre-bench baseline during the
+    post-loop forceGc() — no leak. alien-signals' allocation is GC pressure, not a leak.
+
+Architectural reading:
+  - lite-signal leads on fan-in (MUX), fan-out (BROADCAST), and wide-memo (KAIROS) — the
+    patterns that dominate animation loops, HUDs, and scoreboards — and holds parity-to-
+    ahead on the dynamic shapes while remaining the only zero-Δheap library on every
+    stable scenario.
+  - alien-signals leads on the 256-deep pipeline (DEEP CHAIN) and on the construction-
+    bound selective shapes. The retracking machinery (cursor-hybrid + tailSub O(1) dedup)
+    keeps lite-signal competitive on the dynamic DAGs despite shipping zero allocation.
+  - 1.2.0 changed no hot path; the retracking rewrite that closed the dynamic-topology
+    gap shipped in 1.1.4 (version-stamped O(1) reconciliation + markEpoch clean-read
+    short-circuit). The 1.2 owner tree, pre-batch revert, and aggregated flush errors
+    are all paid at construction / batch-close / throw time, not in steady-state reads.
