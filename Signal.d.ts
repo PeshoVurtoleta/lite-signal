@@ -1,10 +1,10 @@
 /**
- * @zakkster/lite-signal — zero-GC reactive graph.
+ * @zakkster/lite-signal -- zero-GC reactive graph.
  *
  * Public type surface for the JavaScript implementation in `Signal.js`.
  */
 
-// ─── Options ──────────────────────────────────────────────────────────────────
+// --- Options ------------------------------------------------------------------
 
 /** Equality predicate. Returning `true` halts propagation. */
 export type EqualsFn<T> = (a: T, b: T) => boolean;
@@ -45,7 +45,7 @@ export type Dispose = () => void;
  */
 export type Disposable<T = unknown> = Signal<T> | Computed<T> | Dispose;
 
-// ─── Reactive primitive shapes ────────────────────────────────────────────────
+// --- Reactive primitive shapes ------------------------------------------------
 
 /** Reactive source of truth. */
 export interface Signal<T> {
@@ -71,7 +71,7 @@ export interface Computed<T> {
     subscribe(fn: (value: T) => void): Dispose;
 }
 
-// ─── Diagnostics ──────────────────────────────────────────────────────────────
+// --- Diagnostics --------------------------------------------------------------
 
 export interface RegistryStats {
     /** Number of signals created in this registry's lifetime. */
@@ -92,7 +92,7 @@ export interface RegistryStats {
     activeNodes: number;
 }
 
-// ─── Observer-lifecycle introspection (1.1.4) ─────────────────────────────────
+// --- Observer-lifecycle introspection (1.1.4) ---------------------------------
 
 /** Whether a described node is a signal, a computed, or an effect. */
 export type NodeKind = "signal" | "computed" | "effect";
@@ -109,9 +109,9 @@ export interface NodeDescriptor {
 
 /** Transition callbacks for {@link Registry.observeObservers}. */
 export interface ObserveObserversHooks {
-    /** Fired on the 0→1 observer transition (after registration). */
+    /** Fired on the 0->1 observer transition (after registration). */
     onConnect?: () => void;
-    /** Fired on the 1→0 observer transition. */
+    /** Fired on the 1->0 observer transition. */
     onDisconnect?: () => void;
 }
 
@@ -121,25 +121,25 @@ export type Unobserve = () => void;
 /** Anything carrying a node identity that the introspection surface can read. */
 export type ReactiveHandle = Signal<any> | Computed<any>;
 
-// ─── Graph-mutation hook (1.2.1) ──────────────────────────────────────────────
+// --- Graph-mutation hook (1.2.1) ----------------------------------------------
 
 /**
  * Opcode passed as the first argument to a {@link GraphMutationListener}.
  *
  *  - `1` node create.    `(intA, intB) = (node.id, node.flags)`.
- *  - `2` node dispose.   `(intA, intB) = (node.id, node.flags)` — fires for every node
+ *  - `2` node dispose.   `(intA, intB) = (node.id, node.flags)` -- fires for every node
  *                        disposed, including cascaded owner-tree children.
  *  - `3` link add.       `(intA, intB) = (source.id, target.id)`.
- *  - `4` link remove.    `(intA, intB) = (source.id, target.id)` — `-1` if the link
+ *  - `4` link remove.    `(intA, intB) = (source.id, target.id)` -- `-1` if the link
  *                        was already nulled (defensive, rare).
- *  - `5` recompute.      `(intA, intB) = (node.id, 0)` — fires just before an effect
+ *  - `5` recompute.      `(intA, intB) = (node.id, 0)` -- fires just before an effect
  *                        re-run or a computed re-eval.
  */
 export type GraphMutationOpcode = 1 | 2 | 3 | 4 | 5;
 
 /**
  * Listener registered with {@link Registry.onGraphMutation}. Called synchronously
- * inside each mutation point with three integers — no objects allocated.
+ * inside each mutation point with three integers -- no objects allocated.
  *
  * **Contract: observe only.** Listeners MUST NOT throw and MUST NOT mutate the
  * graph from inside the callback. Both will corrupt the engine's state. Wrap any
@@ -150,7 +150,7 @@ export type GraphMutationListener = (opcode: GraphMutationOpcode, intA: number, 
 /** Idempotent unsubscriber returned by {@link Registry.onGraphMutation}. */
 export type GraphMutationUnsubscribe = () => void;
 
-// ─── Errors ───────────────────────────────────────────────────────────────────
+// --- Errors -------------------------------------------------------------------
 
 /** Thrown when a pool ceiling is hit. */
 export class CapacityError extends Error {
@@ -160,7 +160,7 @@ export class CapacityError extends Error {
     constructor(kind: "nodes" | "links", capacity: number);
 }
 
-// ─── Registry ─────────────────────────────────────────────────────────────────
+// --- Registry -----------------------------------------------------------------
 
 export interface RegistryConfig {
     /** Initial node-pool capacity. Default: 1024. */
@@ -197,8 +197,8 @@ export interface Registry {
     isTracking(): boolean;
     /** O(1): does this source have at least one live observer right now? A `peek` does not count. */
     hasObservers(handle: ReactiveHandle): boolean;
-    /** Auto-pause hook: fires `onConnect` on the 0→1 observer transition and `onDisconnect`
-     *  on 1→0, after registration (transition-only — no immediate fire if already observed).
+    /** Auto-pause hook: fires `onConnect` on the 0->1 observer transition and `onDisconnect`
+     *  on 1->0, after registration (transition-only -- no immediate fire if already observed).
      *  Re-tracking a persistently-read source does not churn. Returns an idempotent unobserve.
      *  @throws TypeError if `handle` is not a reactive handle. */
     observeObservers(handle: ReactiveHandle, hooks?: ObserveObserversHooks): Unobserve;
@@ -251,12 +251,12 @@ export function createRegistry(config?: RegistryConfig): Registry;
 /** Replace the default registry backing the top-level helpers. */
 export function setDefaultRegistry(registry: Registry): void;
 
-// ─── Top-level helpers (delegate to default registry) ────────────────────────
+// --- Top-level helpers (delegate to default registry) ------------------------
 
 export function signal<T>(initial: T, opts?: SignalOptions<T>): Signal<T>;
 export function computed<T>(fn: () => T, opts?: ComputedOptions<T>): Computed<T>;
 export function effect(fn: () => void, opts?: EffectOptions): Dispose;
-/** Universal disposal — see {@link Registry.dispose}. */
+/** Universal disposal -- see {@link Registry.dispose}. */
 export function dispose(api: Disposable): void;
 export function batch<T>(fn: () => T): T;
 export function untrack<T>(fn: () => T): T;
@@ -296,7 +296,7 @@ export interface WatchOptions {
 
 /**
  * Track a reactive source and run a callback whenever its projected value
- * changes. The callback receives `(newValue, oldValue, stop)` — the third
+ * changes. The callback receives `(newValue, oldValue, stop)` -- the third
  * argument is a dispose function that can be called from inside the callback
  * to terminate the watcher.
  *
@@ -336,10 +336,10 @@ export function when(
  * Promise-returning variant of {@link when}. The returned promise resolves
  * when `predicate` first returns a truthy value.
  *
- * ⚠️ **HOT-PATH WARNING — DO NOT USE PER FRAME.** This function calls
+ * ! **HOT-PATH WARNING -- DO NOT USE PER FRAME.** This function calls
  * `new Promise(...)`, which is a heap allocation (one Promise object plus
  * executor closure plus internal infrastructure per call). Promises require
- * heap allocation by the language spec — this cost is unavoidable.
+ * heap allocation by the language spec -- this cost is unavoidable.
  *
  * **Use for:** high-level scene/UI orchestration, boot sequences, awaiting
  * user input or network state, level transitions. Anything that runs once

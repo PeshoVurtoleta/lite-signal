@@ -9,7 +9,7 @@ The library exposes a small reactive primitives API (signal, computed, effect,
 batch, untrack, onCleanup) backed by pre-allocated pools. Built for animation
 loops, Twitch Extensions, game HUDs, and other contexts where GC pauses break
 the frame budget. Effects flush synchronously in the same call stack as the
-triggering write — no `queueMicrotask`, no promises, no scheduler ticks.
+triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
 
 ## Core concepts
 
@@ -21,7 +21,7 @@ triggering write — no `queueMicrotask`, no promises, no scheduler ticks.
 - **Untrack**: `untrack(fn)` reads without subscribing.
 - **isTracking**: `isTracking()` returns true iff a read right now would record a dependency on this registry (for wrappers that lazily allocate signals).
 - **onCleanup**: registers teardown for the current computation; fires before each re-run and once on dispose. Works in effects and computeds.
-- **Observer-lifecycle introspection** (1.1.4; top-level + per-registry): `hasObservers(handle)` returns true iff a signal/computed has ≥1 live observer right now (O(1); a `peek` does not count). `observeObservers(handle, { onConnect?, onDisconnect? })` fires on the 0→1 and 1→0 observer transitions (after registration; transition-only) and returns an idempotent unobserve — the auto-pause hook for tickers (lite-time/lite-raf start a source only while it's watched). `forEachObserver(handle, fn)` / `forEachSource(handle, fn)` walk the live graph in either direction, passing a `{ kind, value }` descriptor (`kind` is `"signal" | "computed" | "effect"`) — for inspection (lite-devtools). The surface is gated by an internal counter: zero steady-state cost when nothing is observed. `hasObservers`/`forEach*` no-op on a non-handle; `observeObservers` throws `TypeError`. **Node identity (1.1.5):** `nodeId(handle)` returns the node's stable per-allocation id, `describe(handle)` returns the handle's own `{ id, kind, value }` descriptor, and `forEach*` descriptors now carry `id` too; a descriptor is **re-walkable** (pass it back into `forEachObserver`/`forEachSource`) — the recursion primitive lite-devtools uses to walk the full DAG. **Owner-tree introspection (1.2.1):** `forEachOwned(handle, fn)` walks a node's owned children (lifetime-binding edges from the 1.2 owner tree — invisible through dep/sub); `ownerOf(handle)` returns the owner's descriptor or `undefined` for top-level / stale handles. **Stale-handle guard (1.2.1):** the entire introspection surface plus `peek()`/`read()`/`set()` is now generation-checked. A handle held across the 1.2 owner-cascade auto-dispose used to resolve `NODE_PTR` ungated and silently report the recycled slot's NEW resident; 1.2.1 surfaces stale handles as `undefined` (or `TypeError`, for `observeObservers`) — same ABA discipline `dispose()` always had. Descriptors are gen-stamped so the re-walkable contract survives the guard. **Push-based mutation hook (1.2.1):** `onGraphMutation(fn)` registers a single nullable listener invoked synchronously at every mutation point with three integers `(opcode, intA, intB)` — opcodes `1` node-create / `2` node-dispose / `3` link-add / `4` link-remove / `5` recompute. Zero-cost gate when no listener is registered (one branch-predicted null check); allocation-free dispatch when registered. The connection point for push-based devtools/studio. Contract: observe only — never throw, never mutate.
+- **Observer-lifecycle introspection** (1.1.4; top-level + per-registry): `hasObservers(handle)` returns true iff a signal/computed has >=1 live observer right now (O(1); a `peek` does not count). `observeObservers(handle, { onConnect?, onDisconnect? })` fires on the 0->1 and 1->0 observer transitions (after registration; transition-only) and returns an idempotent unobserve -- the auto-pause hook for tickers (lite-time/lite-raf start a source only while it's watched). `forEachObserver(handle, fn)` / `forEachSource(handle, fn)` walk the live graph in either direction, passing a `{ kind, value }` descriptor (`kind` is `"signal" | "computed" | "effect"`) -- for inspection (lite-devtools). The surface is gated by an internal counter: zero steady-state cost when nothing is observed. `hasObservers`/`forEach*` no-op on a non-handle; `observeObservers` throws `TypeError`. **Node identity (1.1.5):** `nodeId(handle)` returns the node's stable per-allocation id, `describe(handle)` returns the handle's own `{ id, kind, value }` descriptor, and `forEach*` descriptors now carry `id` too; a descriptor is **re-walkable** (pass it back into `forEachObserver`/`forEachSource`) -- the recursion primitive lite-devtools uses to walk the full DAG. **Owner-tree introspection (1.2.1):** `forEachOwned(handle, fn)` walks a node's owned children (lifetime-binding edges from the 1.2 owner tree -- invisible through dep/sub); `ownerOf(handle)` returns the owner's descriptor or `undefined` for top-level / stale handles. **Stale-handle guard (1.2.1):** the entire introspection surface plus `peek()`/`read()`/`set()` is now generation-checked. A handle held across the 1.2 owner-cascade auto-dispose used to resolve `NODE_PTR` ungated and silently report the recycled slot's NEW resident; 1.2.1 surfaces stale handles as `undefined` (or `TypeError`, for `observeObservers`) -- same ABA discipline `dispose()` always had. Descriptors are gen-stamped so the re-walkable contract survives the guard. **Push-based mutation hook (1.2.1):** `onGraphMutation(fn)` registers a single nullable listener invoked synchronously at every mutation point with three integers `(opcode, intA, intB)` -- opcodes `1` node-create / `2` node-dispose / `3` link-add / `4` link-remove / `5` recompute. Zero-cost gate when no listener is registered (one branch-predicted null check); allocation-free dispatch when registered. The connection point for push-based devtools/studio. Contract: observe only -- never throw, never mutate.
 - **Registry**: `createRegistry({ maxNodes, maxLinks, onCapacityExceeded, maxFlushPasses })` creates an isolated reactive world with its own pools. Useful for tests, plugins, multi-tenant sandboxes. Top-level helpers use a default registry created at module load.
 - **CapacityError**: thrown when a fixed-size pool is exhausted under the `"throw"` policy, or when a `"grow"` policy hits the 16× starting-capacity ceiling on links.
 
@@ -30,27 +30,67 @@ triggering write — no `queueMicrotask`, no promises, no scheduler ticks.
 - **Two object pools**: nodes (default 1024) and links (default 4×nodes). Singly-linked via `nextFree`, O(1) allocate/free.
 - **Doubly-linked edge lists**: each link is in both a dep-list (on the target/observer) and a sub-list (on the source/dependency). O(1) unlink during cursor reconciliation.
 - **Cursor reconciliation**: at the start of each computed/effect run, `activeObserverCurrentDep` points at the head of the existing dep list. As the body reads deps, matching links advance the cursor (zero alloc); non-matching links insert before the cursor and the displaced tail is severed at the end of the run.
-- **Iterative mark phase**: `markDownstream` uses a pre-allocated `markStack` array for DFS — no recursion, no call stack growth on wide fan-out.
+- **Iterative mark phase**: `markDownstream` uses a pre-allocated `markStack` array for DFS -- no recursion, no call stack growth on wide fan-out.
 - **Recursive computed pull**: `pullComputed` is call-stack recursive; deep chains beyond ~10,000 nodes will throw `RangeError`. Effects don't have this limit.
-- **Double-buffered effect queue**: `effectQueueA` / `effectQueueB` alternate each flush pass — effects *scheduled by* the current pass (cross-effect cascades) drain in the next pass. A **self-write** (an effect writing a signal it reads) is the exception: `markDownstream`'s `FLAG_COMPUTING` guard does **not** re-queue the writing effect, so a self-cycle runs exactly once — while the write still propagates to the signal's other observers, and the effect stays responsive to later *external* writes (its `evalVersion` is bumped in the `executeEffect` finally). Mutual cross-effect write loops (A→B→A) are not self-cycles and trip `CycleError: flush passes exceeded` via `maxFlushPasses`.
+- **Double-buffered effect queue**: `effectQueueA` / `effectQueueB` alternate each flush pass -- effects *scheduled by* the current pass (cross-effect cascades) drain in the next pass. A **self-write** (an effect writing a signal it reads) is the exception: `markDownstream`'s `FLAG_COMPUTING` guard does **not** re-queue the writing effect, so a self-cycle runs exactly once -- while the write still propagates to the signal's other observers, and the effect stays responsive to later *external* writes (its `evalVersion` is bumped in the `executeEffect` finally). Mutual cross-effect write loops (A->B->A) are not self-cycles and trip `CycleError: flush passes exceeded` via `maxFlushPasses`.
 - **maxFlushPasses ceiling**: default 100. Exceeding this throws `CycleError`. Prevents runaway effect loops.
 - **32-bit modular versioning**: `globalVersion` and `node.version` are `(value + 1) | 0`, wrapping signed. Comparison via `((dep.version - evalVer) | 0) > 0` is wrap-safe and works in modular distance, not raw integer ordering. The engine never overflows.
-- **Generation counter**: each node has a `gen` field incremented on dispose and destroy. Scheduler trampolines capture the current gen and no-op if it changes — prevents stale callbacks from re-firing after dispose.
+- **Generation counter**: each node has a `gen` field incremented on dispose and destroy. Scheduler trampolines capture the current gen and no-op if it changes -- prevents stale callbacks from re-firing after dispose.
 - **destroy()**: resets all pools, rebuilds free lists, bumps every node's gen, resets globalVersion to 1. Safe to call mid-flight (in-flight effects finish their current invocation, scheduled ones become no-ops).
 
 ## Performance characteristics
 
-- `signal.set(v)` — O(downstream observers), zero alloc after warm-up.
-- `signal.peek()` — O(1), zero alloc.
-- `computed()` cache hit — O(deps), zero alloc.
-- `computed()` cache miss — O(deps + body), zero alloc if dep structure is stable.
-- Effect re-run with stable dep order — zero alloc.
+- `signal.set(v)` -- O(downstream observers), zero alloc after warm-up.
+- `signal.peek()` -- O(1), zero alloc.
+- `computed()` cache hit -- O(deps), zero alloc.
+- `computed()` cache miss -- O(deps + body), zero alloc if dep structure is stable.
+- Effect re-run with stable dep order -- zero alloc.
 - Stable read order: O(1) per dep via cursor reuse.
-- Chaotic/randomized read order: 1.1.4 added version-stamped per-source reconciliation plus a `markEpoch` clean-read short-circuit on the pull, so the prior O(N)-per-dep degradation no longer dominates high-fan-in batched read-after-write — the `dyn: large web app` and `dyn: wide dense` shapes that were the v1.1.x weakness are now the fastest of the five benchmarked frameworks (see resultsReactive.txt). Correctness verified by `retracking.difftest.mjs` (20,000 direct + 10,000 batched writes, 0 disagreements).
+- Chaotic/randomized read order: 1.1.4 added version-stamped per-source reconciliation plus a `markEpoch` clean-read short-circuit on the pull, so the prior O(N)-per-dep degradation no longer dominates high-fan-in batched read-after-write -- the `dyn: large web app` and `dyn: wide dense` shapes that were the v1.1.x weakness are now the fastest of the five benchmarked frameworks (see resultsReactive.txt). Correctness verified by `retracking.difftest.mjs` (20,000 direct + 10,000 batched writes, 0 disagreements).
 
 ## Version notes
 
-- **1.2.1** (current): correctness-and-introspection patch. Drop-in over 1.2.0;
+- **1.2.2** (current): `createNode` clean-free-list invariant audit. Removes
+  ten redundant field-writes that defended against a state the engine cannot
+  produce on a clean free-list: seven graph/batch fields (`headDep`, `tailDep`,
+  `headSub`, `tailSub`, `revertEpoch`, `preBatchValue`, `preBatchVersion`) and
+  three owner-tree fields (the non-adoption `firstOwned`, the adoption-path
+  `prevOwned`, and the else-branch `owner`). Both teardown paths
+  (`disposeNode` direct, `runCleanup` cascade) already null these fields, and
+  the `ReactiveNode` constructor initializes them to the same values on the
+  fresh-pool-growth path -- so the redundant writes in `createNode` were
+  defense against a state that cannot exist. **No public surface change, no
+  semantic change.** New `test/26-free-list-invariant_test.mjs` (3 invariant
+  tests + 1 targeted coverage test for the swallow-on-self-dispose-then-throw
+  branch in `pullComputed`) asserts the invariant directly by inspecting
+  freshly-allocated nodes via the documented `describe()` -> `NODE_PTR`
+  introspection protocol; new `test/25-devtools-real-boot_test.mjs` (10 tests)
+  boots the actual `Devtools.js` against the 1.2.2 engine and pins the 1.2.x
+  introspection contract for downstream tooling, including the 8-key
+  `stats()` shape (`signals`, `computeds`, `effects`, `activeNodes`,
+  `activeLinks`, `pooledLinks`, `nodePoolCapacity`, `linkPoolCapacity`).
+  408 tests total: 398 pass, 10 skip, 0 fail (the 10 skips are 9
+  signalBox-staged-for-1.5.0 in `test/24-signalbox_test.mjs` plus 1
+  architecturally-N/A SSR case in `17-reactivity`). Coverage on `Signal.js`:
+  100% statements / 98.43% branches / 100% functions / 100% lines; `Watch.js`
+  100% across all four (c8@11, Node 22) -- a branch-coverage gain over the
+  1.2.1 baseline (98.07%), from the targeted swallow-on-self-dispose-then-throw
+  test in `pullComputed`.
+  Version lineage:
+  this is the engine previously labeled `1.2.3` in dev -- renumbered to
+  `1.2.2` because the deletion is small, isolated, and intentionally
+  non-behavioral. Drop-in over 1.2.1. **Bench position** (third-party
+  [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark),
+  16 frameworks, 47 tests): #4 by geomean at 2.05× behind alien-signals
+  (1.00×), reflex (1.19×), @reactively (1.49×); 0.04× ahead of Preact
+  Signals (2.09×). Top-3 on 18/47 tests; outright winner on
+  `manyEffectsFromOneSource` and `manySourcesIntoOneComputedEffectWithDirect`.
+  In the community reactive suite (median-of-10), fastest of 5 frameworks
+  on the entire `dyn:*` family (the realistic large-DOM-framework shapes)
+  and the entire `S: updateComputations*` family. Behind on the
+  construction-cost path (`S: createComputations*`, `cellx`, `createDataSignals`).
+
+- **1.2.1**: correctness-and-introspection patch. Drop-in over 1.2.0;
   no public surface removed. **Stale-handle introspection (ABA fix):** the v1.2.0
   owner tree made the engine recycle pool slots autonomously on owner re-run, so
   holding a stale handle stopped being a user error and became a routine
@@ -63,16 +103,16 @@ triggering write — no `queueMicrotask`, no promises, no scheduler ticks.
   documented `TypeError`, for `observeObservers`). `describe()` descriptors are
   gen-stamped alongside `NODE_PTR`, so the "descriptors are re-walkable handles"
   contract survives the guard: a fresh descriptor walks, one held across a
-  recycle correctly goes stale. **Added — `onGraphMutation(fn)`:** registry-level
+  recycle correctly goes stale. **Added -- `onGraphMutation(fn)`:** registry-level
   (and top-level) graph-mutation hook for push-based tooling. Single nullable
   listener; every fire point is `if (mutationHook !== null) mutationHook(opcode, intA, intB)`
-  — zero-cost gate when absent, allocation-free dispatch when present. Opcodes:
+  -- zero-cost gate when absent, allocation-free dispatch when present. Opcodes:
   `1` node-create `(id, flags)`, `2` node-dispose `(id, flags)` (cascades
   included), `3` link-add `(source.id, target.id)`, `4` link-remove `(source.id, target.id)`,
   `5` recompute `(id, 0)` before each effect re-run / computed re-eval.
-  Contract: observe only — never throw, never mutate the graph from inside.
+  Contract: observe only -- never throw, never mutate the graph from inside.
   This is the connection point lite-devtools 1.1 / lite-studio 1.1 use to go
-  push-based. **Added — `forEachOwned(handle, fn)` / `ownerOf(handle)`:** owner-
+  push-based. **Added -- `forEachOwned(handle, fn)` / `ownerOf(handle)`:** owner-
   tree introspection. `forEachOwned` iterates a node's owned children as
   re-walkable descriptors; `ownerOf` returns the owner's descriptor or
   `undefined` (top-level or stale). Same descriptor conventions as
@@ -80,23 +120,23 @@ triggering write — no `queueMicrotask`, no promises, no scheduler ticks.
   Also: `Object.is` hoisted to a module-level const (one IC entry instead of
   per-call lookup in `signal()`/`computed()`). 404 tests, **100% line / 98.07%
   branch coverage** on `Signal.js` + `Watch.js`. New
-  `test/21-perf-pins.test.mjs` (6 tests — construction-shape + ABA-guard pins),
-  `test/22-mutation-hook.test.mjs` (12 tests — `onGraphMutation` registration,
+  `test/21-perf-pins.test.mjs` (6 tests -- construction-shape + ABA-guard pins),
+  `test/22-mutation-hook.test.mjs` (12 tests -- `onGraphMutation` registration,
   the 5 opcodes, payload shape, registry isolation), and
-  `test/23-owner-introspection.test.mjs` (14 tests — `forEachOwned`, `ownerOf`,
+  `test/23-owner-introspection.test.mjs` (14 tests -- `forEachOwned`, `ownerOf`,
   and gen-guarded behaviour across the introspection surface). Differential
   fuzz vs the published 1.1.5: 0 disagreements over 30,000 writes.
 
 - **1.2.0**: structural refactor (three named layers: graph topology /
   ownership / propagation) plus four additive features built on top. Drop-in over
   1.1.5; no public surface removed. **Owner tree:** an effect or computed that
-  creates nested observers (effect/computed) now owns them — when the owner
+  creates nested observers (effect/computed) now owns them -- when the owner
   re-runs or is disposed, the engine cascade-disposes those observers before
   the new run. Plain signals are deliberately NOT owner-adopted so lazy-
   allocation wrappers (lite-store keys, lite-form fields) continue to survive
   re-runs of the computed that allocated them. **Pre-batch revert:** inside a
   `batch(...)`, set X then set X back (under the signal's `equals`) reverts the
-  version bump — downstream effects/computeds do not fire. **AggregateError on
+  version bump -- downstream effects/computeds do not fire. **AggregateError on
   multi-throw:** two or more effects throwing in the same flush pass aggregate to
   `AggregateError` at the trigger; single-throw is unchanged. **Scheduler thunk
   caching:** the scheduler closure is cached on the node and gen-bound, so async
@@ -104,36 +144,36 @@ triggering write — no `queueMicrotask`, no promises, no scheduler ticks.
   (ABA safe). Internal split: `currentObserver` and `currentOwner` are now
   distinct pointers (today they move together, no behavioural change). **Perf:**
   shared `peek` (one closure per registry instead of per primitive) shaves
-  10–14% off signal/computed creation on the `S:create*` micros, no hot-path or
+  10-14% off signal/computed creation on the `S:create*` micros, no hot-path or
   behavioural change. 363 tests, 100% line / 98.62% branch coverage on
   `Signal.js` + `Watch.js`. Differential fuzz vs the published 1.1.5: 0
   disagreements over 30,000 writes. New `test/19-v12-additions.test.mjs`
-  (24 tests) and `test/20-axis-stress.test.mjs` (23 tests — eight orthogonal
+  (24 tests) and `test/20-axis-stress.test.mjs` (23 tests -- eight orthogonal
   engine-invariant axes plus permanent conformance pins). **Conformance fixes
   in 1.2.0**: #141 (dispose during execution then continue: no re-run), and
   #238 / #241 / #243 (cleanup ordering on cascade: inner-before-outer,
   deepest-first, and the inner-only-re-run regression). #141 was a latent
   crash present in 1.1.5 too; the v1.2 owner tree exercised it more
-  aggressively. Fix is two-fold — nullify the tracking cursor in `disposeNode`
+  aggressively. Fix is two-fold -- nullify the tracking cursor in `disposeNode`
   when the disposed node is the active observer (plus a `gen`-snapshot guard
   in `executeEffect`/`pullComputed`); and swap `runCleanup` to cascade
   children first, then own.
 
-- **1.1.5**: additive release in service of `@zakkster/lite-devtools` — stable
+- **1.1.5**: additive release in service of `@zakkster/lite-devtools` -- stable
   node identity on the introspection surface. `nodeId(handle)` -> the node's stable
   per-allocation id (the dedupe key for graph walks); `describe(handle)` -> the handle's
   own `{ id, kind, value }` descriptor, **re-walkable** (pass it back into
   `forEachObserver`/`forEachSource` to walk the full DAG); `forEach*` descriptors now carry
-  `id`. One SMI write at allocation, node shape kept monomorphic — **zero steady-state
+  `id`. One SMI write at allocation, node shape kept monomorphic -- **zero steady-state
   cost**. Drop-in over 1.1.4, no breaking changes. New `test/18-identity_test.mjs` (5 tests); plus `14-lifecycle-teardown`, `16-alien-parity`, and the `17-reactivity` behavioral suite.
 
-- **1.1.4**: combined release — a retracking rewrite plus an observer-lifecycle
+- **1.1.4**: combined release -- a retracking rewrite plus an observer-lifecycle
   introspection surface. Drop-in over 1.1.3. **Retracking:** version-stamped O(1)
   reconciliation + a `markEpoch` clean-read short-circuit replace the cursor strategy's
   O(N)-per-dep degradation under chaotic high-fan-in batched read-after-write; stable read
   order is unchanged (still O(1), still zero-alloc). The two documented v1.1.x losses flipped
-  to wins and are now fastest of five frameworks — `dyn: large web app` 6194ms→571ms, `dyn:
-  wide dense` 5115ms→912ms (verified by `retracking.difftest.mjs`: 20k direct + 10k batched, 0
+  to wins and are now fastest of five frameworks -- `dyn: large web app` 6194ms->571ms, `dyn:
+  wide dense` 5115ms->912ms (verified by `retracking.difftest.mjs`: 20k direct + 10k batched, 0
   disagreements; no regressions elsewhere). **Introspection:** `hasObservers`,
   `observeObservers`, `forEachObserver`, `forEachSource` (top-level + per-registry), gated by
   an internal counter so zero steady-state cost when unused. New `test/13-introspection_test.mjs`
@@ -142,7 +182,7 @@ triggering write — no `queueMicrotask`, no promises, no scheduler ticks.
 - **1.1.3**: adds `isTracking()` (top-level + per-registry). Returns true iff a
   read right now would record a dependency (`isTrackingDeps && currentObserver !== null`).
   False inside `untrack`, `subscribe` callbacks, `onCleanup` bodies, `watch` /
-  `when` callbacks, and outside any observer. ~1–2 ns. For wrapper libraries
+  `when` callbacks, and outside any observer. ~1-2 ns. For wrapper libraries
   (lite-store, lite-query, lite-form) that allocate reactive primitives lazily
   on property reads. Per-registry: wrappers operating against a non-default
   registry must call THAT registry's `isTracking()`, not the top-level one.
@@ -166,9 +206,9 @@ triggering write — no `queueMicrotask`, no promises, no scheduler ticks.
 
 ## When NOT to use
 
-- Server-side rendering — no SSR story.
-- Graph *construction* is allocation-heavy (per-node closures): on create-many micro-benchmarks `alien-signals` builds faster. Real apps build once and update forever — lite-signal leads the update + dynamic-topology rows. (The former "chaotic read order" caveat was closed in 1.1.4.)
-- If you want time-travel or serialization — build those on top. (Graph-inspection devtools are now buildable on the 1.1.4 introspection surface; see lite-devtools.)
+- Server-side rendering -- no SSR story.
+- Graph *construction* is allocation-heavy (per-node closures): on create-many micro-benchmarks `alien-signals` builds faster. Real apps build once and update forever -- lite-signal leads the update + dynamic-topology rows. (The former "chaotic read order" caveat was closed in 1.1.4.)
+- If you want time-travel or serialization -- build those on top. (Graph-inspection devtools are now buildable on the 1.1.4 introspection surface; see lite-devtools.)
 
 ## API summary
 
@@ -259,11 +299,11 @@ Fires callback on every change of the projected source value.
 - **Signature**: `watch<T>(source: () => T, callback: (newValue: T, oldValue: T | undefined, stop: () => void) => void, options?: { immediate?: boolean }): () => void`
 - **Returns**: dispose function. Idempotent. Safe to call synchronously inside the callback.
 - **options.immediate**: when `true`, callback fires once on registration with `oldValue = undefined`. Default `false`.
-- **Equality guard**: uses `Object.is(newValue, oldValue)` internally to avoid firing when the projected value is unchanged across dep mutations. Critical for raw getter sources like `() => health() <= 0` — many dep changes can produce the same boolean. Wrapping the source in `computed()` would achieve the same via the computed's own equality check.
+- **Equality guard**: uses `Object.is(newValue, oldValue)` internally to avoid firing when the projected value is unchanged across dep mutations. Critical for raw getter sources like `() => health() <= 0` -- many dep changes can produce the same boolean. Wrapping the source in `computed()` would achieve the same via the computed's own equality check.
 - **UNINITIALIZED sentinel**: uses `Symbol("watch.uninitialized")` instead of `undefined` to detect first-run. This means `signal(undefined)` is correctly distinguished from "watcher hasn't fired yet".
 - **Callback reads are untracked**: the callback can read other signals without registering them as dependencies.
 - **Stop in callback**: third callback argument is a stop handle. Safe to call at any point including synchronously during the immediate fire (the `wantsStopEarly` flag defers dispose until after the effect is registered).
-- **Allocation profile**: 3 closures at registration (stop, effect body, hoisted untrack body). **Zero allocations per fire** — the untrack body is hoisted with `currentNewValue` as shared mutable state. Hot-path safe at 120fps.
+- **Allocation profile**: 3 closures at registration (stop, effect body, hoisted untrack body). **Zero allocations per fire** -- the untrack body is hoisted with `currentNewValue` as shared mutable state. Hot-path safe at 120fps.
 
 ### when(predicate, callback)
 
@@ -275,7 +315,7 @@ Fires callback exactly once when predicate first returns truthy, then auto-dispo
 - **One-shot guarantee**: internal `fired` flag protects against double-fire even if dispose timing lets one more evaluation through.
 - **Callback reads are untracked.**
 - **Truthy/falsy semantics**: standard JS truthy check. `0`, `""`, `null`, `undefined`, `false`, `NaN` do not trigger; everything else does.
-- **Allocation profile**: 2 closures at registration (stop, effect body). **Zero allocations per check** — `untrack(callback)` passes the user's callback directly without wrapping. Hot-path safe at 120fps.
+- **Allocation profile**: 2 closures at registration (stop, effect body). **Zero allocations per check** -- `untrack(callback)` passes the user's callback directly without wrapping. Hot-path safe at 120fps.
 
 ### whenAsync(predicate)
 
@@ -285,11 +325,11 @@ Promise variant of `when`.
 - **Returns**: Promise that resolves when predicate first becomes truthy.
 - **Implementation**: `return new Promise((resolve) => when(predicate, resolve))`.
 - **Foot-gun**: promise never rejects. If predicate never becomes truthy, promise never settles. Use `Promise.race` for timeout: `Promise.race([whenAsync(p), timeoutPromise])`.
-- **⚠️ HOT-PATH WARNING**: `new Promise(...)` is a heap allocation. Each call allocates 1 Promise + 1 executor closure + Promise infrastructure (resolve fn, microtask state) + 2 closures from internal `when` call. This is unavoidable — Promises require heap allocation by spec. **Do NOT call per frame.** Use for high-level orchestration (boot sequences, scene transitions, awaiting user input). For 60/120fps logic, use `when(predicate, callback)` directly — it's zero-GC.
+- **! HOT-PATH WARNING**: `new Promise(...)` is a heap allocation. Each call allocates 1 Promise + 1 executor closure + Promise infrastructure (resolve fn, microtask state) + 2 closures from internal `when` call. This is unavoidable -- Promises require heap allocation by spec. **Do NOT call per frame.** Use for high-level orchestration (boot sequences, scene transitions, awaiting user input). For 60/120fps logic, use `when(predicate, callback)` directly -- it's zero-GC.
 
 ### Architecture note
 
-None of these touch the reactive engine — no `FLAG_WATCHER` on `ReactiveNode`, no extension to the object pool, no new internal primitive. They compose entirely from public API. This is the test that the core engine is structurally complete: when a higher-level pattern can be built without extending the engine, the engine has enough.
+None of these touch the reactive engine -- no `FLAG_WATCHER` on `ReactiveNode`, no extension to the object pool, no new internal primitive. They compose entirely from public API. This is the test that the core engine is structurally complete: when a higher-level pattern can be built without extending the engine, the engine has enough.
 
 ### Allocation profile summary
 
@@ -299,35 +339,35 @@ None of these touch the reactive engine — no `FLAG_WATCHER` on `ReactiveNode`,
 | `when` | 2 closures | 0 |
 | `whenAsync` | 1 Promise + executor + Promise internals + 2 closures (from `when`) | 0 |
 
-The deliberate engineering for `watch`'s "0 per fire" is the hoisted `untrackedFire` closure with `currentNewValue` shared mutable state — see source comment in `watch.js`. Inline arrow function inside the effect body would allocate per fire and break the zero-GC contract.
+The deliberate engineering for `watch`'s "0 per fire" is the hoisted `untrackedFire` closure with `currentNewValue` shared mutable state -- see source comment in `watch.js`. Inline arrow function inside the effect body would allocate per fire and break the zero-GC contract.
 
 ## Benchmark snapshot (Node 22, 2016-era Intel MacBook Pro, 20K iter × 5 runs × 50+ invocations)
 
 | Scenario                                | lite-signal | alien-signals | preact   | solid    |
 | --------------------------------------- | ----------- | ------------- | -------- | -------- |
-| MUX (256 sigs → sum → effect)           | **249K ops/s** | 207K       | 153K     | 77K      |
-| BROADCAST (1 sig → 1000 effects)        | **24K**     | 22K           | 17K      | 8K       |
-| KAIROS (1 sig → 1000 computeds → eff)   | **14K**     | 13K           | 12K      | 4K       |
-| DEEP CHAIN (256-deep memos → eff)       | 51K         | **60K**       | 50K      | 15K      |
+| MUX (256 sigs -> sum -> effect)           | **249K ops/s** | 207K       | 153K     | 77K      |
+| BROADCAST (1 sig -> 1000 effects)        | **24K**     | 22K           | 17K      | 8K       |
+| KAIROS (1 sig -> 1000 computeds -> eff)   | **14K**     | 13K           | 12K      | 4K       |
+| DEEP CHAIN (256-deep memos -> eff)       | 51K         | **60K**       | 50K      | 15K      |
 
 lite-signal wins three of four scenarios against current published versions of the
-alternatives: MUX +20%, BROADCAST +9%, KAIROS +8% — fan-in aggregation, fan-out
+alternatives: MUX +20%, BROADCAST +9%, KAIROS +8% -- fan-in aggregation, fan-out
 broadcast, and one-source-to-wide-memo-layer respectively. These are the patterns
 that dominate UI workloads. alien-signals retains a 15% lead on 256-deep computed
 pipelines, where its flatter internal representation pays off when the propagation
 path is long rather than wide.
 
 These four are the *stable* topologies (unchanged through 1.1.4). The chaotic,
-high-fan-in shapes that were lite-signal's documented weakness — `dyn: large web app`
-and `dyn: wide dense` in the cross-framework reactivity suite — were closed by the
+high-fan-in shapes that were lite-signal's documented weakness -- `dyn: large web app`
+and `dyn: wide dense` in the cross-framework reactivity suite -- were closed by the
 1.1.4 retracking rewrite and remain the fastest of five frameworks (re-confirmed on
 1.1.5, median-of-12): 555ms / 870ms vs alien-signals' 590ms / 933ms, with preact and
-vue ~7–30× slower. See resultsReactive.txt for the full 34-test, 5-framework table.
+vue ~7-30× slower. See resultsReactive.txt for the full 34-test, 5-framework table.
 
-On allocation pressure, lite-signal is alone in the zero-Δheap band: ~15 KB of
+On allocation pressure, lite-signal is alone in the zero-alloc band: ~15 KB of
 transient garbage per 20,000-iteration loop, regardless of scenario. preact runs
-~230 KB per loop; solid runs into single-digit megabytes; alien-signals — which
-earlier shared the zero-GC band — now allocates 0.9-3.9 MB per scenario in its
+~230 KB per loop; solid runs into single-digit megabytes; alien-signals -- which
+earlier shared the zero-GC band -- now allocates 0.9-3.9 MB per scenario in its
 current published version (not a leak; retained heap is near zero everywhere,
 but it is real GC pressure on the hot path).
 
@@ -379,7 +419,7 @@ const unsubscribe = onGraphMutation((opcode, intA, intB) => {
     case 5: devtools.onRecompute(intA);          break;
   }
 });
-// Stop listening — restores prior listener (or null), engine returns to zero-cost state.
+// Stop listening -- restores prior listener (or null), engine returns to zero-cost state.
 unsubscribe();
 
 // 1.2.1: walk the owner tree (cascade-disposal domains)
@@ -395,29 +435,40 @@ function dumpOwnerTree(handle, depth = 0) {
 
 ## File layout
 
-- `Signal.js`              — full implementation, single file.
-- `Signal.d.ts`          — TypeScript declarations for all public API.
-- `test/01-core_test.mjs`     — signal/computed/effect basics, equality, untrack.
-- `test/02-topology_test.mjs` — diamonds, chains, fan-out/in, cycle detection.
-- `test/03-pool_test.mjs`     — capacity errors, grow policy, pool reuse.
-- `test/04-zero-gc_test.mjs`  — heap retention (run with --expose-gc).
-- `test/05-scheduler_test.mjs` — scheduler races, dispose, gen counter, version wrap.
-- `test/06-nested-objects_test.mjs` — nested-object & reference-identity behaviours.
-- `test/07-dispose_test.mjs` — universal disposal: registry.dispose(api).
-- `test/08-watch_test.mjs` — new watch reactivity tests.
-- `test/09-conformance_test.mjs` — johnsoncodehk/reactive-framework-test-suite conformance fixes tests.
-- `test/10-is-tracking_test.mjs` — `isTracking()` across observer bodies, untracked windows, and outside any observer.
-- `test/11-adopted-reactive_test.mjs` — engine-agnostic edge cases adopted from the wider ecosystem (alien-signals link-integrity #226–228, equality-predicate corners, `update()`/`peek()`/`subscribe` contracts).
-- `test/12-coverage_test.mjs` — targeted public-surface + hot-path branch coverage (top-level routing, clean-read short-circuit, tail severance, scheduler ABA); owner-tree block capability-gated.
-- `test/13-introspection_test.mjs` — observer-lifecycle surface: `hasObservers`, `observeObservers` auto-pause, `forEach*` enumeration (10 tests).
-- `test/14-lifecycle-teardown_test.mjs` — effect-teardown guards: stopped effect doesn't re-subscribe to a signal read later in the same run, self-dispose leaves no orphan link, throwing setup leaves no live subscription (4 tests).
-- `test/15-owner-lazy-alloc_test.mjs` — owner-adoption contract for the 1.2.0 owner tree (lazy signals never adopted; observers still auto-disposed); capability-gated, skipped on 1.1.x (4 tests).
-- `test/16-alien-parity_test.mjs` — differential guards vs alien-signals@3.2.0 fixed-bug classes: cleanup reads create no deps, inner write doesn't block computed-chain propagation, dynamic dep-set correct under dirty-check (3 tests).
-- `test/17-reactivity_test.mjs` — behavioral suite over universal signal-system bug classes (subscription lifecycle, cleanup ordering, stale-dep tracking, batching, equality, nested invalidation, memory, sync async-boundary, scheduler/loops, + differential-review additions); SSR is N/A (≈30 tests).
-- `test/18-identity_test.mjs` — node identity (1.1.5): `nodeId`/`describe`, descriptor `id`, re-walkable descriptors, non-perturbing (5 tests).
-- `bench/benchmark.mjs`       — anti-DCE throughput harness (ops/s; results.txt).
-- `bench/benchmarkReactive.mjs` — cross-framework reactivity suite vs alien-signals, preact, vue-reactivity, solid (resultsReactive.txt).
-- `demo/index.html`           — interactive visualization of the reactive graph.
+- `Signal.js`              -- full implementation, single file.
+- `Signal.d.ts`          -- TypeScript declarations for all public API.
+- `test/01-core_test.mjs`     -- signal/computed/effect basics, equality, untrack.
+- `test/02-topology_test.mjs` -- diamonds, chains, fan-out/in, cycle detection.
+- `test/03-pool_test.mjs`     -- capacity errors, grow policy, pool reuse.
+- `test/04-zero-gc_test.mjs`  -- heap retention (run with --expose-gc).
+- `test/05-scheduler_test.mjs` -- scheduler races, dispose, gen counter, version wrap.
+- `test/06-nested-objects_test.mjs` -- nested-object & reference-identity behaviours.
+- `test/07-dispose_test.mjs` -- universal disposal: registry.dispose(api).
+- `test/08-watch_test.mjs` -- new watch reactivity tests.
+- `test/09-conformance_test.mjs` -- johnsoncodehk/reactive-framework-test-suite conformance fixes tests.
+- `test/10-is-tracking_test.mjs` -- `isTracking()` across observer bodies, untracked windows, and outside any observer.
+- `test/11-adopted-reactive_test.mjs` -- engine-agnostic edge cases adopted from the wider ecosystem (alien-signals link-integrity #226-228, equality-predicate corners, `update()`/`peek()`/`subscribe` contracts).
+- `test/12-coverage_test.mjs` -- targeted public-surface + hot-path branch coverage (top-level routing, clean-read short-circuit, tail severance, scheduler ABA); owner-tree block capability-gated.
+- `test/13-introspection_test.mjs` -- observer-lifecycle surface: `hasObservers`, `observeObservers` auto-pause, `forEach*` enumeration (10 tests).
+- `test/14-lifecycle-teardown_test.mjs` -- effect-teardown guards: stopped effect doesn't re-subscribe to a signal read later in the same run, self-dispose leaves no orphan link, throwing setup leaves no live subscription (4 tests).
+- `test/15-owner-lazy-alloc_test.mjs` -- owner-adoption contract for the 1.2.0 owner tree (lazy signals never adopted; observers still auto-disposed); capability-gated, skipped on 1.1.x (4 tests).
+- `test/16-alien-parity_test.mjs` -- differential guards vs alien-signals@3.2.0 fixed-bug classes: cleanup reads create no deps, inner write doesn't block computed-chain propagation, dynamic dep-set correct under dirty-check (3 tests).
+- `test/17-reactivity_test.mjs` -- behavioral suite over universal signal-system bug classes (subscription lifecycle, cleanup ordering, stale-dep tracking, batching, equality, nested invalidation, memory, sync async-boundary, scheduler/loops, + differential-review additions); SSR is N/A (~30 tests).
+- `test/18-identity_test.mjs` -- node identity (1.1.5): `nodeId`/`describe`, descriptor `id`, re-walkable descriptors, non-perturbing (5 tests).
+- `test/19-v12-additions_test.mjs` -- 1.2.0 surface coverage: shared-peek, owner-adoption rule, pre-batch revert (24 tests).
+- `test/20-axis-stress_test.mjs` -- eight orthogonal stress axes (batch-under-exception, connect/disconnect re-entrancy, untrack vs owner cascade, etc.) (23 tests).
+- `test/21-perf-pins_test.mjs` -- 1.2.1 construction-shape + ABA-guard pins (6 tests).
+- `test/22-mutation-hook_test.mjs` -- 1.2.1 `onGraphMutation` registration + opcode emission (12 tests).
+- `test/23-owner-introspection_test.mjs` -- `ownerOf`, `forEachOwned`, gen-guarded introspection (14 tests).
+- `test/24-signalbox_test.mjs` -- staged for 1.5.0; all tests `{skip: true}` on 1.2.x.
+- `test/25-devtools-real-boot_test.mjs` -- 1.2.2: real `Devtools.js` boot against the engine, ghost-contract pin, `stats()` shape pin (10 tests).
+- `test/26-free-list-invariant_test.mjs` -- 1.2.2: the audit's clean-free-list invariant, asserted by inspecting freshly-allocated nodes (4 tests).
+- `bench/benchmark.mjs`       -- anti-DCE throughput harness (ops/s; results.txt).
+- `bench/benchmarkReactive.mjs` -- cross-framework reactivity suite vs alien-signals, preact, vue-reactivity, solid (resultsReactive.txt).
+- `bench/dispose-recycle.mjs` -- 1.2.2 targeted microbench: create/dispose/recreate cycle (the free-list invariant audit target).
+- `bench/torture/` -- crash-detection soaks: `graph-fuzzer`, `scheduler-bench`, `torture-soak`. Exit 0 iff zero errors AND post-teardown pool clean.
+- `bench/run-all.sh` + `bench/aggregate.mjs` -- cold-process-per-engine protocol + per-scenario aggregation.
+- `demo/index.html`           -- interactive visualization of the reactive graph.
 
 ## Install
 

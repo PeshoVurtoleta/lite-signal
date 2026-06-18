@@ -9,3 +9,8 @@ node_modules/
 # macOS System Files
 .DS_Store
 /package-lock.json
+/bench/package-lock.json
+!/bench/bench-runs/
+!/bench/bench-reactive-runs/
+!/bench/tmp/
+!/test/devtools-probe/
