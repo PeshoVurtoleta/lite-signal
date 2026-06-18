@@ -1,11 +1,12 @@
 {
   "name": "lite-signal-bench",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "type": "module",
   "scripts": {
     "bench": "node --expose-gc benchmark.mjs",
     "bench-reactive": "node --expose-gc benchmarkReactive.mjs",
     "grapf-fuzzer": "node --expose-gc torture/graph-fuzzer.mjs",
+    "dispose-recycle": "node --expose-gc dispose-recycle.mjs",
     "scheduler-bench": "node --expose-gc torture/scheduler-bench.mjs",
     "torture-soak": "node --expose-gc torture/torture-soak.mjs"
   },

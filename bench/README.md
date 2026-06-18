@@ -399,41 +399,168 @@ checked against known-good values, and the `dyn` leaf-sums are cross-checked for
 agreement across every framework in the run. A framework whose adapter throws or
 disagrees is excluded from the comparison rather than silently reported.
 
-### How to read the 1.1.2 numbers (honestly)
+### How to read the current numbers
 
-At v1.1.2, `resultsReactive.txt` shows lite-signal:
+[`resultsReactive.txt`](./resultsReactive.txt) holds the most recent
+medianed run. At v1.2.x, lite-signal:
 
-- **ahead or even** on the kairo propagation shapes, `mol`, the entire
-  `updateComputations` row family, and `dyn: dynamic` / `dyn: deep`;
-- **behind** on graph *construction* (`createComputations*`, `cellx`) — a
-  one-time per-node allocation cost that real apps pay once, not per frame;
-- **far behind** on exactly two rows, `dyn: large web app` (~10×) and
-  `dyn: wide dense` (~5×). These are high-fan-in graphs driven batched with a
-  high read fraction. In 1.1.2 each read re-validates its dependency subtree
-  (no clean short-circuit) and dependency retracking is O(N) per dep under
-  chaotic read order — so the cost scales with fan-in, not with the actual
-  change set.
+- **ahead or even** on the entire `dyn:` family (`dyn: simple` / `dynamic` /
+  `large web app` / `wide dense` / `deep`), the whole `S: updateComputations`
+  family, the kairo `broad / diamond / mux / triangle / unstable` shapes,
+  and `mol`;
+- **behind** on graph *construction* (`S: createComputations*`, `cellx`,
+  `S: createDataSignals`) — a one-time per-node allocation cost that real
+  apps pay once, not per frame. The bench package's
+  [`dispose-recycle.mjs`](./dispose-recycle.mjs) is the focused microbench
+  for this path.
 
-This is the documented v1.1.x limitation, and it is *why* these two rows are in
-the suite: a benchmark you can lose is the only kind worth publishing. v1.1.3
-(in validation) adds a `markEpoch` clean short-circuit to the computed pull and
-an O(1) reconciliation to retracking; pre-release runs bring both rows to
-parity-or-ahead of alien-signals. The 1.1.2 baseline is published as-is so the
-before/after is verifiable rather than asserted.
+The `dyn: large web app` and `dyn: wide dense` rows used to be a v1.1.x
+weak spot (~10× behind alien-signals). The 1.1.3 retracking rewrite
+(`markEpoch` clean-read short-circuit + O(1) tailSub dedup) closed both,
+and the 1.2.x line keeps them closed — see the version-history block in
+[`resultsReactive.txt`](./resultsReactive.txt) for the before/after.
+Correctness of the retracking is verified by `retracking.difftest.mjs`
+(20,000 direct + 10,000 batched writes, 0 disagreements vs the prior
+shipped reference).
 
 ### Relationship to the conformance suite
 
 This is a *performance* suite. Behavioral correctness is measured separately by
-the [reactive-framework-test-suite](https://github.com/johnsoncodehk/reactive-framework-test-suite)
-(177 semantic tests), where lite-signal passes **174 / 177 — tied for second of
-fifteen frameworks**, behind only alien-signals (177). The three open items are
-the owner-tree cascading-disposal tests (#209 / #210), landing with the v1.2
-ownership hybrid, and one inner-write-in-computed design choice (#179). Speed and
-correctness are orthogonal; both are reported in full.
+the [reactive-framework-test-suite](https://github.com/johnsoncodehk/reactive-framework-test-suite).
+At v1.2.x lite-signal passes **177 / 178** (with `dyn` and the owner-tree
+cascading-disposal items now closed by the 1.2.0 ownership hybrid); the one
+remaining open cell is Inner Write #179, a documented design choice. Speed
+and correctness are orthogonal; both are reported in full.
 
 ---
 
-## Status of this harness
+## A targeted microbench: `dispose-recycle.mjs`
+
+`benchmark.mjs` and `benchmarkReactive.mjs` measure *steady-state*
+propagation. They build the graph once and reuse it for the whole timed
+window — by design. But some changes to the engine live entirely on the
+construction / disposal path: pool growth, the free-list invariant audit,
+the owner-cascade splice. Those changes have no effect on steady-state
+numbers and need their own microbench.
+
+`dispose-recycle.mjs` is that microbench. It isolates the
+create → dispose → recreate cycle:
+
+1. Allocate `N` signals.
+2. Dispose all `N`.
+3. Allocate `N` signals again — into the now-warm free-list.
+
+The `recreate` column is the row the v1.2.2 clean-free-list-invariant
+audit targets. It uses the same median-of-runs discipline as the other
+harnesses (warmup 3, runs 10, median by total time).
+
+Adapters: lite-signal (real dispose), alien-signals + preact (no manual
+disposal, so the recreate column measures fresh allocation against a GC'd
+heap — still a fair number for the comparison). The lite-signal adapter
+pre-sizes (`maxNodes`/`maxLinks`) so the timed window is pure allocation/
+recycle mechanics with no pool-growth array-copy penalty.
+
+```sh
+node --expose-gc bench/dispose-recycle.mjs
+FW=lite-signal,alien-signals,preact node --expose-gc bench/dispose-recycle.mjs
+```
+
+The output explicitly tags each row `real` (libraries with real disposal)
+or `no-op (fresh alloc)` (libraries without). Comparing `lite-signal real`
+vs `alien-signals no-op (fresh alloc)` on the `recreate` column is the
+useful number: "how much faster is the warm recycle path than a cold
+allocation against the JS heap?"
+
+---
+
+## Torture soaks (`bench/torture/`)
+
+The three files in `torture/` are **not benchmarks**. They are
+crash-detection soaks: they run for a configurable number of seconds and
+verify two invariants at the end:
+
+1. Zero thrown exceptions during the run.
+2. `activeNodes` / `activeLinks` return to the pre-soak baseline after a
+   final settle pass — i.e. the dispose path is sound under churn.
+
+Exit code is `0` iff both invariants hold; `1` on any error or stability
+failure. The ops/sec number is reported for context only.
+
+| File | What it stresses |
+| :--- | :--- |
+| `graph-fuzzer.mjs` | 1,500-node random DAG. Mixed fuzz operations: leaf writes, batched writes, mid/top/effect rewiring, nested batch + untrack reads. Targets the L1 graph-topology layer. |
+| `scheduler-bench.mjs` | 1,500 effects all using a microtask scheduler. Concurrent writes during pending microtask drains. Targets the scheduler-thunk caching + ABA-guard path (1.1.4+). |
+| `torture-soak.mjs` | 7,500-node graph with continuous writes, effect rewiring, and computed rewiring. Targets the pool-growth + LIFO free-list recycle path. |
+
+Each soak uses an **explicit registry with `onCapacityExceeded: "grow"`**
+because the default top-level surface uses a fixed-capacity default
+registry (1,024 nodes) and the soak shapes intentionally exceed that.
+
+```sh
+# Default 10 seconds each
+node --expose-gc bench/torture/graph-fuzzer.mjs
+node --expose-gc bench/torture/scheduler-bench.mjs
+node --expose-gc bench/torture/torture-soak.mjs
+
+# Override the per-soak duration
+TORTURE_SECONDS=30 node --expose-gc bench/torture/torture-soak.mjs
+```
+
+These exist because a benchmark can report perfect numbers while still
+crashing on the 1,000,001st write. The soaks pin the dispose/recycle/
+rewire path against that failure mode.
+
+---
+
+## Multi-engine cold-process protocol (`run-all.sh` + `aggregate.mjs`)
+
+JIT inline-cache pollution is real: when two engine implementations of
+the same API run in one Node process, V8's hidden classes for the call
+sites get polluted by the first engine's shape, and the second engine
+appears slower or faster than it really is. The fix is **one engine per
+cold Node process**.
+
+`run-all.sh` enforces that protocol: it iterates over engines, spawns a
+fresh `node --expose-gc benchmark.mjs` for each, and writes each run's
+stdout to `bench-runs/<engine>-rep<N>.txt`.
+
+```sh
+# Default: 3 reps per engine
+bash bench/run-all.sh
+
+# More reps for tighter confidence intervals
+REPS=10 bash bench/run-all.sh
+```
+
+`aggregate.mjs` is the companion: it reads every
+`bench-runs/<engine>-rep*.txt`, medians each engine's per-scenario median
+across reps, and prints a side-by-side table with each engine's
+relative-to-alien position. This is what produces the
+"median of 10 outer invocations" numbers in [`results.txt`](./results.txt).
+
+```sh
+node bench/aggregate.mjs
+```
+
+The two-step protocol matters because **one long process running
+ten engines is not the same as ten cold processes running one engine
+each**, even with `forceGc()` between runs. The cold-process protocol
+removes the IC-pollution variable so the medians reflect engine
+performance, not the order frameworks were loaded in.
+
+---
+
+## Bench package versioning
+
+The bench harness is its own internal package (`lite-signal-bench`, see
+[`package.json`](./package.json)). Versioning is independent of the
+engine: a bench-only change (new scenario, new soak, output format
+tweak) bumps the bench package but not the engine, and an engine-only
+change bumps the engine without touching the bench. The current
+bench-package version is in `bench/package.json`; the engine version is
+at the repo root.
+
+
 
 The nine `benchmark.mjs` workloads are stable. The methodology has been validated by reproducing the same medians across 50+ independent invocations on the same hardware, with standard deviation under 1K ops/s for the primary library across all scenarios. The sink validation has never reported `sink=✗` for any tested library on any scenario. The companion `benchmarkReactive.mjs` suite is the community js-reactivity benchmark, run unmodified in shape against the same hardware.
 

@@ -41,10 +41,10 @@ async function tryImport(spec) {
     return null;
   }
 }
-const alienLib = await tryImport("alien-signals");
-const preactLib = await tryImport("@preact/signals-core");
-const vueLib = await tryImport("@vue/reactivity");
-const solidLib = await tryImport("solid-js/dist/solid.js");
+const alien = await tryImport("alien-signals");
+const preact = await tryImport("@preact/signals-core");
+const vue = await tryImport("@vue/reactivity");
+const solid = await tryImport("solid-js/dist/solid.js");
 
 // ── Scale knobs (QUICK shrinks everything for a fast smoke run) ─────────────
 const QUICK = process.env.QUICK === "1";
@@ -104,8 +104,8 @@ const FRAMEWORKS = [];
 }
 
 // --- alien-signals ---
-if (alienLib) {
-  const { signal, computed, effect, startBatch, endBatch } = alienLib;
+if (alien) {
+  const { signal, computed, effect, startBatch, endBatch } = alien;
   const disposers = [];
   FRAMEWORKS.push({
     name: "alien-signals",
@@ -142,8 +142,8 @@ if (alienLib) {
 }
 
 // --- @preact/signals-core ---
-if (preactLib) {
-  const { signal, computed, effect, batch } = preactLib;
+if (preact) {
+  const { signal, computed, effect, batch } = preact;
   const disposers = [];
   FRAMEWORKS.push({
     name: "preact",
@@ -172,8 +172,8 @@ if (preactLib) {
 }
 
 // --- @vue/reactivity ---
-if (vueLib) {
-  const { shallowRef, computed, effect, effectScope } = vueLib;
+if (vue) {
+  const { shallowRef, computed, effect, effectScope } = vue;
   // Vue effects don't auto-batch: use a scheduler + manual drain (per upstream).
   let scheduled = [];
   let batching = false;
@@ -217,9 +217,9 @@ if (vueLib) {
 }
 
 // --- solid-js ---
-if (solidLib) {
+if (solid) {
   const { createSignal, createMemo, createRenderEffect, createRoot, batch } =
-    solidLib;
+    solid;
   const roots = [];
   FRAMEWORKS.push({
     name: "solid",

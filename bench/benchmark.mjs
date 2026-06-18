@@ -4,25 +4,25 @@
  *
  * KEY FIXES over the previous harness (which was reporting Solid at ~50 GHz):
  *
- *  1. ANTI-DCE SINK
- *     Each effect writes its current observable output to a Float64Array slot.
- *     After the timed loop, we sum the entire sink and print it (BENCH_SINK_SUM).
- *     This makes the work observable to V8's escape analysis and prevents
- *     dead-code elimination.
+ * 1. ANTI-DCE SINK
+ * Each effect writes its current observable output to a Float64Array slot.
+ * After the timed loop, we sum the entire sink and print it (BENCH_SINK_SUM).
+ * This makes the work observable to V8's escape analysis and prevents
+ * dead-code elimination.
  *
- *  2. FORCE OBSERVATION INSIDE THE INNER LOOP
- *     Libraries that defer effects (solid-js batches inside microtasks; alien
- *     uses synchronous effects but you still need a final read to force a pull
- *     for compute graphs) all see the same forcing pattern: after each
- *     `set()`, we read the head of the graph through a tracking-free path.
- *     If a library can prove the read is pure given internal state, that's a
- *     real win — but it can't elide the set's write to the underlying cell.
+ * 2. FORCE OBSERVATION INSIDE THE INNER LOOP
+ * Libraries that defer effects (solid-js batches inside microtasks; alien
+ * uses synchronous effects but you still need a final read to force a pull
+ * for compute graphs) all see the same forcing pattern: after each
+ * `set()`, we read the head of the graph through a tracking-free path.
+ * If a library can prove the read is pure given internal state, that's a
+ * real win — but it can't elide the set's write to the underlying cell.
  *
- *  3. SOLID HONEST MODE
- *     We run solid inside `createRoot` (it requires an owner) and we use
- *     `createMemo` for cached derivations (its equivalent of `computed`).
- *     We acknowledge Solid's batching: the harness measures *time to settle*,
- *     not "N fully observed effect re-runs", and we report this distinction.
+ * 3. SOLID HONEST MODE
+ * We run solid inside `createRoot` (it requires an owner) and we use
+ * `createMemo` for cached derivations (its equivalent of `computed`).
+ * We acknowledge Solid's batching: the harness measures *time to settle*,
+ * not "N fully observed effect re-runs", and we report this distinction.
  *
  * Result numbers are now MEANINGFUL: if a lib shows up as 100x faster than
  * lite-signal, it's because of batching semantics, not DCE.
@@ -30,7 +30,7 @@
  * Run: node --expose-gc bench/bench.mjs
  */
 
-import {createRegistry} from "../Signal";
+import {createRegistry} from "../Signal.js";
 import * as alien from "alien-signals";
 import * as preact from "@preact/signals-core";
 // IMPORTANT: solid-js resolves to its SSR build in Node by default,
@@ -141,12 +141,6 @@ const ADAPTERS = {
                 teardown: () => r.destroy()
             };
         },
-        // DYNAMIC_DAG: 12-layer DAG, ~80 wide, FAN=6 deps per node. Each computed
-        // reads its FAN deps in either forward or reverse order depending on the
-        // parity of the source signal. This deliberately defeats stable read order
-        // and exercises the dependency-retracking path on every iteration. It's
-        // the worst-case for cursor-based dep matching and a fair model for
-        // component trees with conditional rendering or selective subscriptions.
         dynamicDag(N, sinkSlot) {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
             const L = Math.max(2, Math.ceil(N / W));
@@ -178,10 +172,6 @@ const ADAPTERS = {
             });
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
-        // SELECTIVE_DAG: every computed has 4 candidate deps but reads only 2.
-        // Which two depends on (src() & 3), so the dep SET changes each iteration
-        // — drops one link, allocates another. This is the dep-churn pathology
-        // that exposes retracking cost most cleanly.
         selectiveDag(N, sinkSlot) {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
             const L = Math.max(2, Math.ceil(N / W));
@@ -189,8 +179,6 @@ const ADAPTERS = {
             const r = createRegistry({maxNodes: W * L + 32, maxLinks: W * L * POOL * 2, onCapacityExceeded: "grow"});
             const src = r.signal(0);
             let prevLayer = [src];
-            // Four (a, b) subsets of indices 0..3 — chosen so consecutive iterations
-            // always differ by at least one element (real set churn each step).
             const PAIRS = [[0, 1], [0, 2], [1, 3], [2, 3]];
             for (let layer = 0; layer < L; layer++) {
                 const newLayer = [];
@@ -212,8 +200,6 @@ const ADAPTERS = {
             });
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
-        // 1000x12-style: 12 layers × ~80 wide, 4 source signals, conditional read pattern.
-        // Approximates js-reactivity-benchmark "1000x12 dynamic large web app" shape.
         largeWebApp(N, sinkSlot) {
             const LAYERS = 12;
             const W = Math.max(4, Math.ceil(N / LAYERS));
@@ -239,7 +225,6 @@ const ADAPTERS = {
             });
             return {drive: (i) => sources[i % SOURCES].set(i), teardown: () => r.destroy()};
         },
-        // 1000x5-style: 5 layers × ~200 wide, 25 source signals, dense static reads (FAN=5).
         wideDense(N, sinkSlot) {
             const LAYERS = 5;
             const W = Math.max(4, Math.ceil(N / LAYERS));
@@ -265,8 +250,6 @@ const ADAPTERS = {
             });
             return {drive: (i) => sources[i % SOURCES].set(i), teardown: () => r.destroy()};
         },
-        // 64x6 selective DAG: smaller graph (~384 nodes), each compute selectively reads
-        // 3 of 6 candidate deps based on source value.
         smallSelective(N, sinkSlot) {
             const LAYERS = 6;
             const W = Math.max(4, Math.ceil(N / LAYERS));
@@ -308,19 +291,25 @@ const ADAPTERS = {
                 const k = i;
                 cs[i] = alien.computed(() => src() * (k + 1));
             }
-            alien.effect(() => {
+            const dispose = alien.effect(() => {
                 let s = 0; for (let i = 0; i < N; i++) s += cs[i]();
                 SINK[sinkSlot] = s;
             });
-            return {drive: (i) => src(i), teardown: () => {}};
+            return {drive: (i) => src(i), teardown: () => dispose()};
         },
         broadcast(N, sinkSlot) {
             const src = alien.signal(0);
+            const disposers = [];
             for (let i = 0; i < N; i++) {
                 const k = i;
-                alien.effect(() => { SINK[sinkSlot + (k & 31)] = src() + k; });
+                disposers.push(alien.effect(() => { SINK[sinkSlot + (k & 31)] = src() + k; }));
             }
-            return {drive: (i) => src(i), teardown: () => {}};
+            return {
+                drive: (i) => src(i),
+                teardown: () => {
+                    for (let i = 0; i < disposers.length; i++) disposers[i]();
+                }
+            };
         },
         deepChain(N, sinkSlot) {
             const src = alien.signal(0);
@@ -330,8 +319,8 @@ const ADAPTERS = {
                 prev = alien.computed(() => p() + 1);
             }
             const tip = prev;
-            alien.effect(() => { SINK[sinkSlot] = tip(); });
-            return {drive: (i) => src(i), teardown: () => {}};
+            const dispose = alien.effect(() => { SINK[sinkSlot] = tip(); });
+            return {drive: (i) => src(i), teardown: () => dispose()};
         },
         mux(N, sinkSlot) {
             const sigs = new Array(N);
@@ -339,8 +328,8 @@ const ADAPTERS = {
             const sum = alien.computed(() => {
                 let s = 0; for (let i = 0; i < N; i++) s += sigs[i](); return s;
             });
-            alien.effect(() => { SINK[sinkSlot] = sum(); });
-            return {drive: (i) => sigs[i % N](i), teardown: () => {}};
+            const dispose = alien.effect(() => { SINK[sinkSlot] = sum(); });
+            return {drive: (i) => sigs[i % N](i), teardown: () => dispose()};
         },
         dynamicDag(N, sinkSlot) {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
@@ -366,11 +355,11 @@ const ADAPTERS = {
                 prevLayer = newLayer;
             }
             const tip = prevLayer;
-            alien.effect(() => {
+            const dispose = alien.effect(() => {
                 let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
                 SINK[sinkSlot] = s;
             });
-            return {drive: (i) => src(i), teardown: () => {}};
+            return {drive: (i) => src(i), teardown: () => dispose()};
         },
         selectiveDag(N, sinkSlot) {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
@@ -393,11 +382,11 @@ const ADAPTERS = {
                 prevLayer = newLayer;
             }
             const tip = prevLayer;
-            alien.effect(() => {
+            const dispose = alien.effect(() => {
                 let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
                 SINK[sinkSlot] = s;
             });
-            return {drive: (i) => src(i), teardown: () => {}};
+            return {drive: (i) => src(i), teardown: () => dispose()};
         },
         largeWebApp(N, sinkSlot) {
             const LAYERS = 12;
@@ -417,11 +406,11 @@ const ADAPTERS = {
                 prevLayer = newLayer;
             }
             const tip = prevLayer;
-            alien.effect(() => {
+            const dispose = alien.effect(() => {
                 let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
                 SINK[sinkSlot] = s;
             });
-            return {drive: (i) => sources[i % SOURCES](i), teardown: () => {}};
+            return {drive: (i) => sources[i % SOURCES](i), teardown: () => dispose()};
         },
         wideDense(N, sinkSlot) {
             const LAYERS = 5;
@@ -441,11 +430,11 @@ const ADAPTERS = {
                 prevLayer = newLayer;
             }
             const tip = prevLayer;
-            alien.effect(() => {
+            const dispose = alien.effect(() => {
                 let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
                 SINK[sinkSlot] = s;
             });
-            return {drive: (i) => sources[i % SOURCES](i), teardown: () => {}};
+            return {drive: (i) => sources[i % SOURCES](i), teardown: () => dispose()};
         },
         smallSelective(N, sinkSlot) {
             const LAYERS = 6;
@@ -471,11 +460,11 @@ const ADAPTERS = {
                 prevLayer = newLayer;
             }
             const tip = prevLayer;
-            alien.effect(() => {
+            const dispose = alien.effect(() => {
                 let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
                 SINK[sinkSlot] = s;
             });
-            return {drive: (i) => src(i), teardown: () => {}};
+            return {drive: (i) => src(i), teardown: () => dispose()};
         }
     },
 
@@ -487,19 +476,25 @@ const ADAPTERS = {
                 const k = i;
                 cs[i] = preact.computed(() => src.value * (k + 1));
             }
-            preact.effect(() => {
+            const dispose = preact.effect(() => {
                 let s = 0; for (let i = 0; i < N; i++) s += cs[i].value;
                 SINK[sinkSlot] = s;
             });
-            return {drive: (i) => { src.value = i; }, teardown: () => {}};
+            return {drive: (i) => { src.value = i; }, teardown: () => dispose()};
         },
         broadcast(N, sinkSlot) {
             const src = preact.signal(0);
+            const disposers = [];
             for (let i = 0; i < N; i++) {
                 const k = i;
-                preact.effect(() => { SINK[sinkSlot + (k & 31)] = src.value + k; });
+                disposers.push(preact.effect(() => { SINK[sinkSlot + (k & 31)] = src.value + k; }));
             }
-            return {drive: (i) => { src.value = i; }, teardown: () => {}};
+            return {
+                drive: (i) => { src.value = i; },
+                teardown: () => {
+                    for (let i = 0; i < disposers.length; i++) disposers[i]();
+                }
+            };
         },
         deepChain(N, sinkSlot) {
             const src = preact.signal(0);
@@ -509,8 +504,8 @@ const ADAPTERS = {
                 prev = preact.computed(() => p.value + 1);
             }
             const tip = prev;
-            preact.effect(() => { SINK[sinkSlot] = tip.value; });
-            return {drive: (i) => { src.value = i; }, teardown: () => {}};
+            const dispose = preact.effect(() => { SINK[sinkSlot] = tip.value; });
+            return {drive: (i) => { src.value = i; }, teardown: () => dispose()};
         },
         mux(N, sinkSlot) {
             const sigs = new Array(N);
@@ -518,8 +513,8 @@ const ADAPTERS = {
             const sum = preact.computed(() => {
                 let s = 0; for (let i = 0; i < N; i++) s += sigs[i].value; return s;
             });
-            preact.effect(() => { SINK[sinkSlot] = sum.value; });
-            return {drive: (i) => { sigs[i % N].value = i; }, teardown: () => {}};
+            const dispose = preact.effect(() => { SINK[sinkSlot] = sum.value; });
+            return {drive: (i) => { sigs[i % N].value = i; }, teardown: () => dispose()};
         },
         dynamicDag(N, sinkSlot) {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
@@ -545,11 +540,11 @@ const ADAPTERS = {
                 prevLayer = newLayer;
             }
             const tip = prevLayer;
-            preact.effect(() => {
+            const dispose = preact.effect(() => {
                 let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i].value;
                 SINK[sinkSlot] = s;
             });
-            return {drive: (i) => { src.value = i; }, teardown: () => {}};
+            return {drive: (i) => { src.value = i; }, teardown: () => dispose()};
         },
         selectiveDag(N, sinkSlot) {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
@@ -572,11 +567,11 @@ const ADAPTERS = {
                 prevLayer = newLayer;
             }
             const tip = prevLayer;
-            preact.effect(() => {
+            const dispose = preact.effect(() => {
                 let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i].value;
                 SINK[sinkSlot] = s;
             });
-            return {drive: (i) => { src.value = i; }, teardown: () => {}};
+            return {drive: (i) => { src.value = i; }, teardown: () => dispose()};
         }
     },
 
@@ -727,23 +722,46 @@ const ADAPTERS = {
 
 // ─── Bench scenarios ─────────────────────────────────────────────────────────
 const SCENARIOS = [
-    {key: "kairos",         title: "KAIROS — 1 source → 1000 computeds → 1 aggregating effect", N: 1000},
-    {key: "broadcast",      title: "BROADCAST — 1 source → 1000 effects",                       N: 1000},
-    {key: "deepChain",      title: "DEEP CHAIN — 256-deep computed chain → 1 effect",           N: 256},
-    {key: "mux",            title: "MUX — 256 inputs → 1 sum computed → 1 effect",              N: 256},
-    {key: "dynamicDag",     title: "DYNAMIC DAG — sqrt-layered, FAN=6 deps, read order flips each iter",   N: 960},
-    {key: "selectiveDag",   title: "SELECTIVE DAG — sqrt-layered, 4 candidates, 2 read per iter (set churn)", N: 960},
+    {key: "kairos", title: "KAIROS — 1 source → 1000 computeds → 1 aggregating effect", N: 1000},
+    {key: "broadcast", title: "BROADCAST — 1 source → 1000 effects", N: 1000},
+    {key: "deepChain", title: "DEEP CHAIN — 256-deep computed chain → 1 effect", N: 256},
+    {key: "mux", title: "MUX — 256 inputs → 1 sum computed → 1 effect", N: 256},
+    {key: "dynamicDag", title: "DYNAMIC DAG — sqrt-layered, FAN=6 deps, read order flips each iter", N: 960},
+    {key: "selectiveDag", title: "SELECTIVE DAG — sqrt-layered, 4 candidates, 2 read per iter (set churn)", N: 960},
     // Approximations of js-reactivity-benchmark "cellx" workloads. The structural shapes match
     // (layer count × width × source count, dynamic/dense/selective semantics) but precise
     // conditional-read patterns and drive sequencing may differ — these aren't 1:1 ports.
     // Not implemented for preact/solid; harness skips libs that don't define a scenario.
-    {key: "largeWebApp",    title: "LARGE WEB APP — 12 layers × ~80 wide, 4 sources, conditional reads (≈ Andrii 1000x12 dynamic)", N: 960},
-    {key: "wideDense",      title: "WIDE DENSE — 5 layers × ~200 wide, 25 sources, FAN=5 dense (≈ Andrii 1000x5 wide dense)",       N: 1000},
-    {key: "smallSelective", title: "SMALL SELECTIVE — 6 layers × 64 wide, 6 candidates 3 read (≈ Andrii 64x6 dynamic selective)",   N: 384}
+    {
+        key: "largeWebApp",
+        title: "LARGE WEB APP — 12 layers × ~80 wide, 4 sources, conditional reads (≈ Andrii 1000x12 dynamic)",
+        N: 960
+    },
+    {
+        key: "wideDense",
+        title: "WIDE DENSE — 5 layers × ~200 wide, 25 sources, FAN=5 dense (≈ Andrii 1000x5 wide dense)",
+        N: 1000
+    },
+    {
+        key: "smallSelective",
+        title: "SMALL SELECTIVE — 6 layers × 64 wide, 6 candidates 3 read (≈ Andrii 64x6 dynamic selective)",
+        N: 384
+    }
 ];
 
-const LIBS = ["lite-signal", "alien-signals", "preact", "solid"];
+const ALL_LIBS = ["lite-signal", "alien-signals", "preact", "solid"];
 // const LIBS = ["lite-signal", "alien-signals", "preact"];
+
+
+// FW filter: run ONE engine per cold process to avoid cross-engine inline-cache
+// pollution. Each engine has its own ReactiveNode/signal shape; running several
+// through the shared drive()/set() call sites in one process degrades their ICs
+// monomorphic -> megamorphic, so engines later in the list measure slow.
+// Usage:  FW=140 node --expose-gc bench/benchmark.mjs > run-140.txt
+//         (repeat per engine, then assemble the table from the per-process files)
+const LIBS = process.env.FW
+    ? process.env.FW.split(",").map((s) => s.trim()).filter((s) => ALL_LIBS.includes(s))
+    : ALL_LIBS;
 
 // ─── Runner ──────────────────────────────────────────────────────────────────
 function runOne(lib, scenarioKey, N, sinkSlot) {
@@ -772,7 +790,10 @@ function runOne(lib, scenarioKey, N, sinkSlot) {
     }
 }
 
-function pad(s, n) { s = String(s); return s + " ".repeat(Math.max(0, n - s.length)); }
+function pad(s, n) {
+    s = String(s);
+    return s + " ".repeat(Math.max(0, n - s.length));
+}
 
 console.log(`Config: WARMUP=${WARMUP}  RUNS=${RUNS}  ITERATIONS=${ITERATIONS.toLocaleString()}`);
 if (!hasGC) console.log("⚠️  Run with --expose-gc for accurate heap numbers.");
