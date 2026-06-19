@@ -5,12 +5,31 @@
 [![npm version](https://img.shields.io/npm/v/@zakkster/lite-signal.svg?style=for-the-badge&color=latest)](https://www.npmjs.com/package/@zakkster/lite-signal)
 [![sponsor](https://img.shields.io/badge/sponsor-PeshoVurtoleta-ea4aaa.svg?logo=github)](https://github.com/sponsors/PeshoVurtoleta)
 ![Zero-GC](https://img.shields.io/badge/Zero--GC-Engine-00C853?style=for-the-badge&logo=leaf&logoColor=white)
+![Benchmark](https://img.shields.io/badge/js--reactivity--benchmark-4th%20of%2015-00C853?style=for-the-badge)
 [![npm bundle size](https://img.shields.io/bundlephobia/minzip/@zakkster/lite-signal?style=for-the-badge)](https://bundlephobia.com/result?p=@zakkster/lite-signal)
 [![npm downloads](https://img.shields.io/npm/dm/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Types-informational)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 [![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
+
+## 4th of 15 on the community reactivity benchmark -- and the only zero-GC engine in the field
+
+On the independent [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (Andrii Volynets' fork; 15 reactive libraries, 47 tests), `lite-signal` places **4th overall by geomean (81.6)** -- within noise of 5th-place Preact Signals (83.0, a 1.7% gap), behind only three push-eager engines: alien-signals, reflex, and @reactively.
+
+It is the **only object-pooled, zero-GC engine in the entire field**, and it gets that result without giving up glitch-freedom or lazy evaluation. Against the mainstream reactivity libraries it leads decisively:
+
+| vs                     | lite-signal is | 
+| ---------------------- | -------------- |
+| **@vue/reactivity**    | **1.6x faster** |
+| **Signia**             | **1.7x faster** |
+| **MobX**               | **2.3x faster** |
+| **@solidjs/signals**   | **2.6x faster** |
+| **SolidJS**            | **3.8x faster** |
+| Preact Signals         | ~even (+1.7%)   |
+| alien-signals          | 0.56x (the field leader) |
+
+`lite-signal` finishes **top-3 on 18 of the 47 tests** and is the **outright fastest of all 15** on `manyEffectsFromOneSource` (1 source -> many effects, fan-out) and `manySourcesIntoOneComputedEffectWithDirect` (many sources -> one computed, fan-in) -- the aggregation shapes that dominate live dashboards, scoreboards, and HUDs. The three engines ahead of it are all push-eager designs that allocate on the hot path; `lite-signal` is the only top-4 finisher that allocates **nothing** in steady state. (Note: this suite measures reactivity *libraries* -- Vue's reactivity core, MobX, Solid, Preact Signals, etc. -- not full UI frameworks like React or Angular.)
 
 ```bash
 npm install @zakkster/lite-signal

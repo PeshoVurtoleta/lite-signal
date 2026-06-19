@@ -81,10 +81,15 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   `1.2.2` because the deletion is small, isolated, and intentionally
   non-behavioral. Drop-in over 1.2.1. **Bench position** (third-party
   [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark),
-  16 frameworks, 47 tests): #4 by geomean at 2.05× behind alien-signals
-  (1.00×), reflex (1.19×), @reactively (1.49×); 0.04× ahead of Preact
-  Signals (2.09×). Top-3 on 18/47 tests; outright winner on
-  `manyEffectsFromOneSource` and `manySourcesIntoOneComputedEffectWithDirect`.
+  15 frameworks, 47 tests): #4 by geomean (81.6) at 1.78× behind alien-signals
+  (1.00×), reflex (1.03×), @reactively (1.30×); within noise of Preact
+  Signals (83.0, lite 1.7% ahead). The only object-pooled zero-GC engine in
+  the field. Ahead of @vue/reactivity (1.6×), Signia (1.7×), MobX (2.3×),
+  @solidjs/signals (2.6×), SolidJS (3.8×). Top-3 on 18/47 tests; outright
+  winner on `manyEffectsFromOneSource` and
+  `manySourcesIntoOneComputedEffectWithDirect`. (The suite measures reactivity
+  libraries -- Vue reactivity core, MobX, Solid, Preact Signals -- not full UI
+  frameworks like React/Angular.)
   In the community reactive suite (median-of-10), fastest of 5 frameworks
   on the entire `dyn:*` family (the realistic large-DOM-framework shapes)
   and the entire `S: updateComputations*` family. Behind on the
