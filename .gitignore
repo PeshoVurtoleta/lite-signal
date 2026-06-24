@@ -14,3 +14,4 @@ node_modules/
 !/bench/bench-reactive-runs/
 !/bench/tmp/
 !/test/devtools-probe/
+!/bench/bench-runs-reactive/
