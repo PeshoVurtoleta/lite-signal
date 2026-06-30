@@ -20,7 +20,10 @@ const REF = "alien-signals";   // the reference engine to compare lite builds ag
 
 const median = (a) => {
     const s = [...a].sort((x, y) => x - y);
-    return s[Math.floor(s.length / 2)];
+    const mid = s.length >> 1;
+    // Textbook median: average of two middle values for even-length samples,
+    // single middle for odd. Matches resultsReactive.txt (n=10 -> (s[4]+s[5])/2).
+    return (s.length & 1) ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 };
 
 // Parse a reactive data line: "<test name>   <number>ms<trailing spaces>".
@@ -53,8 +56,8 @@ for (const f of files) {
         const test = mm[1].trim();
         const val = parseFloat(mm[2]);
         if (!Number.isFinite(val)) continue;
-        (data[eng] ?? = {});
-        (data[eng][test] ?? = []).push(val);
+        (data[eng] ??= {});
+        (data[eng][test] ??= []).push(val);
         if (!seenTest.has(test)) {
             seenTest.add(test);
             allTests.push(test);

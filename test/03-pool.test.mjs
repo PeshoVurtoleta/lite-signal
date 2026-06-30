@@ -169,3 +169,67 @@ describe("destroy()", () => {
         assert.equal(c(), 10);
     });
 });
+
+// --- 1.3.0: lazy prealloc + growable pools ---------------------------------
+describe("prealloc: lazy (1.3.0)", () => {
+    it("destroy() on a never-allocated lazy registry is a clean no-op", () => {
+        // Empty-pool teardown path: with nothing ever constructed, both pools
+        // are length 0, so destroy() takes the freeHead = null branch rather
+        // than rebuilding a free list. Must not throw; stats stay at baseline.
+        const r = createRegistry({prealloc: "lazy"});
+        assert.equal(r.stats().activeNodes, 0);
+        assert.equal(r.stats().activeLinks, 0);
+        assert.doesNotThrow(() => r.destroy());
+        assert.equal(r.stats().activeNodes, 0);
+        assert.equal(r.stats().activeLinks, 0);
+        // Still usable afterwards (lazy construction kicks in on first demand).
+        const a = r.signal(1);
+        const c = r.computed(() => a() * 3);
+        assert.equal(c(), 3);
+        a.set(4);
+        assert.equal(c(), 12);
+    });
+
+    it("constructs on demand and reaches the same steady state as eager", () => {
+        const r = createRegistry({prealloc: "lazy", maxNodes: 1024, maxLinks: 4096});
+        const a = r.signal(2);
+        const b = r.signal(3);
+        const sum = r.computed(() => a() + b());
+        let seen;
+        r.effect(() => { seen = sum(); });
+        assert.equal(seen, 5);
+        a.set(10);
+        assert.equal(seen, 13);
+        // Active counts reflect exactly what was built; nothing leaked.
+        assert.equal(r.stats().signals, 2);
+        assert.equal(r.stats().computeds, 1);
+        assert.equal(r.stats().effects, 1);
+    });
+});
+
+describe("onCapacityExceeded: grow (1.3.0)", () => {
+    it("extends both pools past the initial ledger without throwing", () => {
+        const r = createRegistry({maxNodes: 4, maxLinks: 8, prealloc: "lazy", onCapacityExceeded: "grow"});
+        const sigs = [];
+        for (let i = 0; i < 40; i++) sigs.push(r.signal(i));
+        const c = r.computed(() => sigs.reduce((acc, s) => acc + s(), 0));
+        let runs = 0;
+        r.effect(() => { c(); runs++; });
+        sigs[0].set(1000);
+        assert.ok(runs >= 2);
+        // Ledger doubled past the initial capacities.
+        assert.ok(r.stats().nodePoolCapacity > 4, "node ledger grew");
+        assert.ok(r.stats().linkPoolCapacity > 8, "link ledger grew");
+    });
+
+    it("link growth is bounded by the maxLinks * 16 ceiling", () => {
+        const r = createRegistry({maxNodes: 64, maxLinks: 4, onCapacityExceeded: "grow"});
+        // Hard ceiling for links is maxLinks * 16 = 64. A fan-in wider than that
+        // must surface a CapacityError("links") rather than growing unbounded.
+        assert.throws(() => {
+            const leaves = [];
+            for (let i = 0; i < 80; i++) leaves.push(r.signal(i));
+            r.effect(() => { for (const s of leaves) s(); });
+        }, (e) => e instanceof CapacityError && e.kind === "links");
+    });
+});

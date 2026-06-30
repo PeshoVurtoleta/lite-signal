@@ -1,5 +1,5 @@
 /**
- * benchmarkReactive.mjs — single-file port of the js-reactivity-benchmark suite
+ * benchmarkReactive.mjs -- single-file port of the js-reactivity-benchmark suite
  * (transitive-bullshit/js-reactivity-benchmark, fork of milomg/js-reactivity-benchmark)
  * collapsed into one runnable .mjs, comparing @zakkster/lite-signal against
  * alien-signals, @preact/signals-core, @vue/reactivity, and solid-js.
@@ -27,13 +27,13 @@
  *   1. The kairo + cellx cases keep their internal console.assert checks
  *      (these are deterministic and PRNG-free).
  *   2. The dynamic graph is built identically (shared seeded PRNG) for every
- *      framework, and we assert all frameworks produce the SAME leaf sum —
+ *      framework, and we assert all frameworks produce the SAME leaf sum --
  *      a direct glitch-freeness cross-check. A divergent framework is flagged.
  */
 
 import { createRegistry } from "../Signal.js";
 
-// ── Optional framework imports (skip cleanly if a package isn't installed) ──
+// -- Optional framework imports (skip cleanly if a package isn't installed) --
 async function tryImport(spec) {
   try {
     return await import(spec);
@@ -46,7 +46,7 @@ const preact = await tryImport("@preact/signals-core");
 const vue = await tryImport("@vue/reactivity");
 const solid = await tryImport("solid-js/dist/solid.js");
 
-// ── Scale knobs (QUICK shrinks everything for a fast smoke run) ─────────────
+// -- Scale knobs (QUICK shrinks everything for a fast smoke run) -------------
 const QUICK = process.env.QUICK === "1";
 const KAIRO_ITERS = QUICK ? 100 : 1000; // inner repeats per kairo case
 const KAIRO_REPEATS = QUICK ? 3 : 10; // fastest-of-N
@@ -55,10 +55,10 @@ const MOL_REPEATS = QUICK ? 3 : 10;
 const S_COUNT = QUICK ? 1e4 : 1e5;
 const DYN_REPEATS = 1;
 
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 // Deterministic PRNG (replaces the `random` npm dep; shared by all frameworks
 // so every framework builds an identical graph). mulberry32 over a hashed seed.
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 function makeRng(seedStr) {
   let h = 1779033703 ^ seedStr.length;
   for (let i = 0; i < seedStr.length; i++) {
@@ -79,14 +79,14 @@ function makeRng(seedStr) {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 // Adapters
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 const FRAMEWORKS = [];
 
 // --- lite-signal ---
 {
-  const reg = createRegistry({ maxNodes: 1 << 14, onCapacityExceeded: "grow" });
+  const reg = createRegistry({ maxNodes: 1 << 14, prealloc: "eager", onCapacityExceeded: "grow" });
   FRAMEWORKS.push({
     name: "lite-signal",
     signal: (v) => {
@@ -248,9 +248,9 @@ if (solid) {
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 // Shared utils
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 class Counter {
   count = 0;
 }
@@ -272,9 +272,9 @@ async function fastestTest(times, fn) {
   return best;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 // Dynamic dependency graph (the configurable benchmark)
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 function makeGraph(framework, config, counter) {
   const { width, totalLayers, staticFraction, nSources } = config;
   return framework.withBuild(() => {
@@ -407,9 +407,9 @@ async function runDynamic(framework) {
   return rows;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 // kairo cases
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 function busy() {
   let a = 0;
   for (let i = 0; i < 100; i++) a++;
@@ -579,9 +579,9 @@ async function runKairo(framework) {
   return rows;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 // molBench
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 function fib(n) {
   if (n < 2) return 1;
   return fib(n - 1) + fib(n - 2);
@@ -618,9 +618,9 @@ async function runMol(framework) {
   return [{ test: "mol", time }];
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 // sBench (S.js create/update micro-benchmarks)
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 async function runS(framework) {
   const rows = [];
   const C = S_COUNT;
@@ -779,9 +779,9 @@ async function runS(framework) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 // cellxBench (with deterministic before/after correctness vectors)
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 function cellx(framework, layers) {
   return framework.withBuild(() => {
     const start = {
@@ -849,9 +849,9 @@ function runCellx(framework) {
   return rows;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 // Runner + reporting
-// ─────────────────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------
 function fmtMs(n) {
   return Number.isFinite(n) ? n.toFixed(2).padStart(9) + "ms" : "      n/a";
 }
@@ -884,7 +884,7 @@ console.log(
   `Config: ${QUICK ? "QUICK smoke run" : "FULL run"}  |  frameworks: ${ACTIVE.map((f) => f.name).join(", ")}`
 );
 if (typeof globalThis.gc !== "function") {
-  console.log("⚠️  Run with --expose-gc for clean timing/memory.");
+  console.log("!  Run with --expose-gc for clean timing/memory.");
 }
 console.log("");
 
@@ -901,12 +901,12 @@ for (const fw of ACTIVE) {
   console.log(`done (${((performance.now() - t0) / 1000).toFixed(1)}s)`);
 }
 
-// ── Comparison table (grouped by test, frameworks side by side) ─────────────
+// -- Comparison table (grouped by test, frameworks side by side) -------------
 console.log("");
 const nameCol = 34;
 const header = pad("test", nameCol) + ACTIVE.map((f) => pad(f.name, 16)).join("");
 console.log(header);
-console.log("─".repeat(header.length));
+console.log("-".repeat(header.length));
 for (const test of testOrder) {
   const cells = ACTIVE.map((f) => {
     const r = results[test][f.name];
@@ -915,18 +915,18 @@ for (const test of testOrder) {
   console.log(pad(test, nameCol) + cells.join(""));
 }
 
-// ── Correctness: dynamic-graph sum agreement across frameworks ──────────────
+// -- Correctness: dynamic-graph sum agreement across frameworks --------------
 // Only FINITE sums are compared. A framework whose adapter threw (runDynamic
-// caught the error and returned NaN — e.g. Solid creating computations outside a
+// caught the error and returned NaN -- e.g. Solid creating computations outside a
 // createRoot) is reported as "failed" and EXCLUDED from the agreement test: a
 // third-party adapter erroring out is not evidence about any other framework's
 // correctness. Among the finite sums, exact equality is "agree"; values that
-// match only within a tiny relative epsilon are flagged "(fp)" — that is
+// match only within a tiny relative epsilon are flagged "(fp)" -- that is
 // floating-point non-associativity at large magnitudes (e.g. the deep chain
 // reaching ~1e241), not a reactivity bug. Only a real beyond-epsilon mismatch
 // among working frameworks counts as DIVERGE.
 console.log("");
-console.log("Correctness — dynamic-graph leaf-sum agreement across frameworks:");
+console.log("Correctness -- dynamic-graph leaf-sum agreement across frameworks:");
 const REL_EPS = 1e-9;
 let allAgree = true;
 for (const test of testOrder) {
@@ -940,27 +940,27 @@ for (const test of testOrder) {
 
   let status;
   if (finite.length < 2) {
-    status = "—  (insufficient finite results)";
+    status = "--  (insufficient finite results)";
   } else {
     const ref = finite[0].sum;
     const exact = finite.every((e) => e.sum === ref);
     const approx = finite.every(
       (e) => Math.abs(e.sum - ref) <= REL_EPS * Math.max(Math.abs(e.sum), Math.abs(ref))
     );
-    if (exact) status = "✓ agree";
-    else if (approx) status = "≈ agree (fp)";
-    else { status = "✗ DIVERGE"; allAgree = false; }
+    if (exact) status = "[x] agree";
+    else if (approx) status = "~ agree (fp)";
+    else { status = "[ ] DIVERGE"; allAgree = false; }
   }
 
   const failNote = failed.length ? `  [${failed.map((e) => `${e.name}: failed`).join(", ")}]` : "";
   console.log(`  ${pad(test, nameCol)} ${status}${failNote}`);
   // Show the per-framework breakdown whenever it's worth inspecting.
-  if (status.startsWith("✗") || status.startsWith("≈")) {
+  if (status.startsWith("[ ]") || status.startsWith("~")) {
     for (const e of finite) console.log(`      ${pad(e.name, 16)} ${e.sum}`);
   }
 }
 
-// ── Correctness: cellx vectors ──────────────────────────────────────────────
+// -- Correctness: cellx vectors ----------------------------------------------
 let cellxOk = true;
 for (const test of testOrder) {
   if (!test.startsWith("cellx:")) continue;
@@ -970,7 +970,7 @@ for (const test of testOrder) {
   }
 }
 console.log("");
-console.log(`Correctness — kairo + cellx internal assertions: ${cellxOk ? "✓ cellx vectors matched" : "✗ cellx mismatch (see warnings above)"}`);
-console.log(`Correctness — dynamic sum agreement: ${allAgree ? "✓ all working frameworks agree (failed adapters excluded)" : "✗ divergence detected"}`);
+console.log(`Correctness -- kairo + cellx internal assertions: ${cellxOk ? "[x] cellx vectors matched" : "[ ] cellx mismatch (see warnings above)"}`);
+console.log(`Correctness -- dynamic sum agreement: ${allAgree ? "[x] all working frameworks agree (failed adapters excluded)" : "[ ] divergence detected"}`);
 console.log("");
 console.log("Note: times from this host are a relative baseline; run on a quiet machine for publishable numbers.");

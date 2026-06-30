@@ -1,4 +1,4 @@
-// Real lite-devtools 1.1.0 boot against the 1.2.2 engine.
+// Real lite-devtools 1.1.0 boot against the 1.3.0 engine.
 //
 // Setup note (test-rig quirk, NOT an engine bug). Because this repo's
 // package.json declares name="@zakkster/lite-signal", the resolver maps any
@@ -72,7 +72,7 @@ before(async () => {
     );
 });
 
-describe("lite-devtools 1.1.0 boots against the 1.2.2 engine", () => {
+describe("lite-devtools 1.1.0 boots against the 1.3.0 engine", () => {
     it("imports resolve and all 19 documented exports are functions", () => {
         const expected = [
             "capabilities", "inspect", "subscribers", "dependencies", "track",
@@ -151,7 +151,7 @@ describe("lite-devtools 1.1.0 boots against the 1.2.2 engine", () => {
         watch.stop();   // CRITICAL: clears the setInterval handle
     });
 
-    it("track() registers a lifecycle listener against a 1.2.2-built handle", () => {
+    it("track() registers a lifecycle listener against a 1.3.0-built handle", () => {
         const s = SIG.signal(0);
         const events = [];
         const untrack = DT.track(s, (e) => events.push(e));

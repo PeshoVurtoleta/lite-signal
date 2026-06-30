@@ -21,6 +21,7 @@ const OPS_PER_TICK = 2000;
 const r = createRegistry({
     maxNodes: TOTAL * 2,
     maxLinks: TOTAL * 16,
+    prealloc: "eager",
     onCapacityExceeded: "grow",
 });
 

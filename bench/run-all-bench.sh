@@ -6,7 +6,7 @@ set -e
 mkdir -p bench-runs
 # Engine list comes from the SINGLE source of truth: bench/frameworks.mjs.
 # No hardcoded list here — add/remove engines there and this picks them up.
-ENGINES=$(node -e 'import("./bench/frameworks.mjs").then(m => console.log(m.ENGINE_KEYS.join(" ")))')
+ENGINES=$(node -e 'import("./frameworks.mjs").then(m => console.log(m.ENGINE_KEYS.join(" ")))')
 REPS=${REPS:-10}   # repeat each engine N times; override with REPS=5 ./run-all.sh
 
 for eng in $ENGINES; do

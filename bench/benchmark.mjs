@@ -1,5 +1,5 @@
 /**
- * bench.mjs — honest cross-library benchmark for lite-signal vs alien-signals vs
+ * bench.mjs -- honest cross-library benchmark for lite-signal vs alien-signals vs
  * @preact/signals-core vs solid-js.
  *
  * KEY FIXES over the previous harness (which was reporting Solid at ~50 GHz):
@@ -16,7 +16,7 @@
  * for compute graphs) all see the same forcing pattern: after each
  * `set()`, we read the head of the graph through a tracking-free path.
  * If a library can prove the read is pure given internal state, that's a
- * real win — but it can't elide the set's write to the underlying cell.
+ * real win -- but it can't elide the set's write to the underlying cell.
  *
  * 3. SOLID HONEST MODE
  * We run solid inside `createRoot` (it requires an owner) and we use
@@ -38,13 +38,13 @@ import * as preact from "@preact/signals-core";
 // runtime explicitly to get real reactive behaviour.
 import * as solid from "solid-js/dist/solid.js";
 
-// ─── Config ──────────────────────────────────────────────────────────────────
+// --- Config ------------------------------------------------------------------
 const WARMUP = 2;
 const RUNS = 5;
 const ITERATIONS = 20_000;//20000
 const SINK_SIZE = 4096;
 
-// ─── Anti-DCE sink (shared across all libs and benchmarks) ───────────────────
+// --- Anti-DCE sink (shared across all libs and benchmarks) -------------------
 // Float64Array specifically because Uint32Array writes can be optimised away
 // if V8 can prove the slots are never read in the same iteration.
 const SINK = new Float64Array(SINK_SIZE);
@@ -58,7 +58,7 @@ function sinkSum() {
 
 function resetSink() { for (let i = 0; i < SINK.length; i++) SINK[i] = 0; }
 
-// ─── Memory helpers ──────────────────────────────────────────────────────────
+// --- Memory helpers ----------------------------------------------------------
 const hasGC = typeof globalThis.gc === "function";
 function forceGC() {
     if (!hasGC) return;
@@ -67,7 +67,7 @@ function forceGC() {
 }
 function heapKB() { return process.memoryUsage().heapUsed / 1024; }
 
-// ─── Stats ───────────────────────────────────────────────────────────────────
+// --- Stats -------------------------------------------------------------------
 function statSummary(samples) {
     const sorted = [...samples].sort((a, b) => a - b);
     const min = sorted[0];
@@ -84,10 +84,10 @@ function fmtKB(n) {
     return (n >= 0 ? " " : "") + v + "KB";
 }
 
-// ─── Lib adapters ────────────────────────────────────────────────────────────
+// --- Lib adapters ------------------------------------------------------------
 //
 // Each adapter exposes the same shape:
-//   setup(ITERATIONS, sinkOffset) → { drive(i): drive the loop for one iter,
+//   setup(ITERATIONS, sinkOffset) -> { drive(i): drive the loop for one iter,
 //                                      teardown(): clean up }
 //
 // The bench timer wraps the `drive` calls. `sinkOffset` is the start slot in
@@ -96,7 +96,7 @@ function fmtKB(n) {
 const ADAPTERS = {
     "lite-signal": {
         kairos(N, sinkSlot) {
-            const r = createRegistry({maxNodes: N + 64, onCapacityExceeded: "grow"});
+            const r = createRegistry({maxNodes: N + 64, prealloc: "eager", onCapacityExceeded: "grow"});
             const src = r.signal(0);
             const cs = new Array(N);
             for (let i = 0; i < N; i++) cs[i] = r.computed(() => src() * (i + 1));
@@ -108,7 +108,7 @@ const ADAPTERS = {
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
         broadcast(N, sinkSlot) {
-            const r = createRegistry({maxNodes: N + 16, onCapacityExceeded: "grow"});
+            const r = createRegistry({maxNodes: N + 16, prealloc: "eager", onCapacityExceeded: "grow"});
             const src = r.signal(0);
             for (let i = 0; i < N; i++) {
                 const k = i;
@@ -117,7 +117,7 @@ const ADAPTERS = {
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
         deepChain(N, sinkSlot) {
-            const r = createRegistry({maxNodes: N + 16, onCapacityExceeded: "grow"});
+            const r = createRegistry({maxNodes: N + 16, prealloc: "eager", onCapacityExceeded: "grow"});
             const src = r.signal(0);
             let prev = src;
             for (let i = 0; i < N; i++) {
@@ -129,7 +129,7 @@ const ADAPTERS = {
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
         mux(N, sinkSlot) {
-            const r = createRegistry({maxNodes: N + 16, onCapacityExceeded: "grow"});
+            const r = createRegistry({maxNodes: N + 16, prealloc: "eager", onCapacityExceeded: "grow"});
             const sigs = new Array(N);
             for (let i = 0; i < N; i++) sigs[i] = r.signal(0);
             const sum = r.computed(() => {
@@ -145,7 +145,7 @@ const ADAPTERS = {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
             const L = Math.max(2, Math.ceil(N / W));
             const FAN = 6;
-            const r = createRegistry({maxNodes: W * L + 32, maxLinks: W * L * FAN * 2, onCapacityExceeded: "grow"});
+            const r = createRegistry({maxNodes: W * L + 32, maxLinks: W * L * FAN * 2, prealloc: "eager", onCapacityExceeded: "grow"});
             const src = r.signal(0);
             let prevLayer = [src];
             for (let layer = 0; layer < L; layer++) {
@@ -176,7 +176,7 @@ const ADAPTERS = {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
             const L = Math.max(2, Math.ceil(N / W));
             const POOL = 4;   // 4 candidate deps per computed
-            const r = createRegistry({maxNodes: W * L + 32, maxLinks: W * L * POOL * 2, onCapacityExceeded: "grow"});
+            const r = createRegistry({maxNodes: W * L + 32, maxLinks: W * L * POOL * 2, prealloc: "eager", onCapacityExceeded: "grow"});
             const src = r.signal(0);
             let prevLayer = [src];
             const PAIRS = [[0, 1], [0, 2], [1, 3], [2, 3]];
@@ -204,7 +204,7 @@ const ADAPTERS = {
             const LAYERS = 12;
             const W = Math.max(4, Math.ceil(N / LAYERS));
             const SOURCES = 4;
-            const r = createRegistry({maxNodes: W * LAYERS + SOURCES + 16, maxLinks: W * LAYERS * 4, onCapacityExceeded: "grow"});
+            const r = createRegistry({maxNodes: W * LAYERS + SOURCES + 16, maxLinks: W * LAYERS * 4, prealloc: "eager", onCapacityExceeded: "grow"});
             const sources = new Array(SOURCES);
             for (let s = 0; s < SOURCES; s++) sources[s] = r.signal(0);
             let prevLayer = sources;
@@ -230,7 +230,7 @@ const ADAPTERS = {
             const W = Math.max(4, Math.ceil(N / LAYERS));
             const SOURCES = 25;
             const FAN = 5;
-            const r = createRegistry({maxNodes: W * LAYERS + SOURCES + 16, maxLinks: W * LAYERS * FAN * 2, onCapacityExceeded: "grow"});
+            const r = createRegistry({maxNodes: W * LAYERS + SOURCES + 16, maxLinks: W * LAYERS * FAN * 2, prealloc: "eager", onCapacityExceeded: "grow"});
             const sources = new Array(SOURCES);
             for (let s = 0; s < SOURCES; s++) sources[s] = r.signal(0);
             let prevLayer = sources;
@@ -254,7 +254,7 @@ const ADAPTERS = {
             const LAYERS = 6;
             const W = Math.max(4, Math.ceil(N / LAYERS));
             const POOL = 6;
-            const r = createRegistry({maxNodes: W * LAYERS + 16, maxLinks: W * LAYERS * POOL, onCapacityExceeded: "grow"});
+            const r = createRegistry({maxNodes: W * LAYERS + 16, maxLinks: W * LAYERS * POOL, prealloc: "eager", onCapacityExceeded: "grow"});
             const src = r.signal(0);
             let prevLayer = [src];
             for (let layer = 0; layer < LAYERS; layer++) {
@@ -576,7 +576,7 @@ const ADAPTERS = {
     },
 
     "solid": {
-        // We use the BROWSER build (solid-js/dist/solid.js) — see import above.
+        // We use the BROWSER build (solid-js/dist/solid.js) -- see import above.
         // The default Node resolution gives the SSR stub where effects don't
         // re-fire, producing meaningless ~0ms numbers.
         //
@@ -720,31 +720,31 @@ const ADAPTERS = {
     }
 };
 
-// ─── Bench scenarios ─────────────────────────────────────────────────────────
+// --- Bench scenarios ---------------------------------------------------------
 const SCENARIOS = [
-    {key: "kairos", title: "KAIROS — 1 source → 1000 computeds → 1 aggregating effect", N: 1000},
-    {key: "broadcast", title: "BROADCAST — 1 source → 1000 effects", N: 1000},
-    {key: "deepChain", title: "DEEP CHAIN — 256-deep computed chain → 1 effect", N: 256},
-    {key: "mux", title: "MUX — 256 inputs → 1 sum computed → 1 effect", N: 256},
-    {key: "dynamicDag", title: "DYNAMIC DAG — sqrt-layered, FAN=6 deps, read order flips each iter", N: 960},
-    {key: "selectiveDag", title: "SELECTIVE DAG — sqrt-layered, 4 candidates, 2 read per iter (set churn)", N: 960},
+    {key: "kairos", title: "KAIROS -- 1 source -> 1000 computeds -> 1 aggregating effect", N: 1000},
+    {key: "broadcast", title: "BROADCAST -- 1 source -> 1000 effects", N: 1000},
+    {key: "deepChain", title: "DEEP CHAIN -- 256-deep computed chain -> 1 effect", N: 256},
+    {key: "mux", title: "MUX -- 256 inputs -> 1 sum computed -> 1 effect", N: 256},
+    {key: "dynamicDag", title: "DYNAMIC DAG -- sqrt-layered, FAN=6 deps, read order flips each iter", N: 960},
+    {key: "selectiveDag", title: "SELECTIVE DAG -- sqrt-layered, 4 candidates, 2 read per iter (set churn)", N: 960},
     // Approximations of js-reactivity-benchmark "cellx" workloads. The structural shapes match
     // (layer count × width × source count, dynamic/dense/selective semantics) but precise
-    // conditional-read patterns and drive sequencing may differ — these aren't 1:1 ports.
+    // conditional-read patterns and drive sequencing may differ -- these aren't 1:1 ports.
     // Not implemented for preact/solid; harness skips libs that don't define a scenario.
     {
         key: "largeWebApp",
-        title: "LARGE WEB APP — 12 layers × ~80 wide, 4 sources, conditional reads (≈ Andrii 1000x12 dynamic)",
+        title: "LARGE WEB APP -- 12 layers × ~80 wide, 4 sources, conditional reads (~ Andrii 1000x12 dynamic)",
         N: 960
     },
     {
         key: "wideDense",
-        title: "WIDE DENSE — 5 layers × ~200 wide, 25 sources, FAN=5 dense (≈ Andrii 1000x5 wide dense)",
+        title: "WIDE DENSE -- 5 layers × ~200 wide, 25 sources, FAN=5 dense (~ Andrii 1000x5 wide dense)",
         N: 1000
     },
     {
         key: "smallSelective",
-        title: "SMALL SELECTIVE — 6 layers × 64 wide, 6 candidates 3 read (≈ Andrii 64x6 dynamic selective)",
+        title: "SMALL SELECTIVE -- 6 layers × 64 wide, 6 candidates 3 read (~ Andrii 64x6 dynamic selective)",
         N: 384
     }
 ];
@@ -763,10 +763,10 @@ const LIBS = process.env.FW
     ? process.env.FW.split(",").map((s) => s.trim()).filter((s) => ALL_LIBS.includes(s))
     : ALL_LIBS;
 
-// ─── Runner ──────────────────────────────────────────────────────────────────
+// --- Runner ------------------------------------------------------------------
 function runOne(lib, scenarioKey, N, sinkSlot) {
     const adapter = ADAPTERS[lib][scenarioKey];
-    if (!adapter) return null; // Lib doesn't implement this scenario — caller prints "n/a".
+    if (!adapter) return null; // Lib doesn't implement this scenario -- caller prints "n/a".
     const {drive, teardown} = adapter(N, sinkSlot);
     try {
         // Warmup
@@ -796,14 +796,14 @@ function pad(s, n) {
 }
 
 console.log(`Config: WARMUP=${WARMUP}  RUNS=${RUNS}  ITERATIONS=${ITERATIONS.toLocaleString()}`);
-if (!hasGC) console.log("⚠️  Run with --expose-gc for accurate heap numbers.");
+if (!hasGC) console.log("!  Run with --expose-gc for accurate heap numbers.");
 console.log("");
 
 let sinkSlot = 0;
 for (const sc of SCENARIOS) {
-    console.log("─".repeat(98));
+    console.log("-".repeat(98));
     console.log(sc.title);
-    console.log("─".repeat(98));
+    console.log("-".repeat(98));
     for (const lib of LIBS) {
         resetSink();
         const result = runOne(lib, sc.key, sc.N, sinkSlot);
@@ -815,13 +815,13 @@ for (const sc of SCENARIOS) {
         const {min, median, ops} = statSummary(samples);
         // SINK sanity: must be non-zero if effects ran with non-zero iteration values
         const sinkValue = SINK[sinkSlot];
-        const sinkOk = sinkValue !== 0 ? "✓" : "✗";
+        const sinkOk = sinkValue !== 0 ? "[x]" : "[ ]";
         console.log(
             pad(lib, 20) +
             "median=" + fmtMs(median) +
             " min=" + fmtMs(min) +
             " ops/s=" + pad(fmtOps(ops), 6) +
-            " Δheap=" + pad(fmtKB(deltaHeap), 9) +
+            " heap=" + pad(fmtKB(deltaHeap), 9) +
             " retained=" + pad(fmtKB(retained), 9) +
             " sink=" + sinkOk
         );
@@ -831,7 +831,7 @@ for (const sc of SCENARIOS) {
 }
 
 console.log("Notes:");
-console.log("  Δheap    = heap growth during iterations (raw alloc pressure)");
+console.log("  heap    = heap growth during iterations (raw alloc pressure)");
 console.log("  retained = heap growth surviving forceGc (true leaks / steady-state)");
-console.log("  Zero-GC libs should show retained ≈ 0KB; Δheap close to 0KB.");
+console.log("  Zero-GC libs should show retained ~ 0KB; heap close to 0KB.");
 console.log("  BENCH_SINK_SUM (anti-DCE):", sinkSum().toFixed(2));

@@ -30,6 +30,7 @@ const SECONDS = Number(process.env.TORTURE_SECONDS || 5);
 const r = createRegistry({
     maxNodes: TOTAL * 2,
     maxLinks: TOTAL * 16,
+    prealloc: "eager",
     onCapacityExceeded: "grow",
 });
 

@@ -82,11 +82,13 @@ export interface RegistryStats {
     effects: number;
     /** Number of dependency links currently in use. */
     activeLinks: number;
-    /** Number of dependency links available in the pool. */
+    /** Dependency links available in the pool (ledger-based: `linkPoolCapacity - activeLinks`). */
     pooledLinks: number;
-    /** Total link-pool capacity (grows under `"grow"` policy). */
+    /** Link-pool capacity ledger. Doubles under the `"grow"` policy; under `"lazy"`
+     *  prealloc it may exceed the count of physically constructed links. */
     linkPoolCapacity: number;
-    /** Total node-pool capacity (grows under `"grow"` policy). */
+    /** Node-pool capacity ledger. Doubles under the `"grow"` policy; under `"lazy"`
+     *  prealloc it may exceed the count of physically constructed nodes. */
     nodePoolCapacity: number;
     /** Number of nodes currently allocated (signals + computeds + alive effects). */
     activeNodes: number;
@@ -163,14 +165,31 @@ export class CapacityError extends Error {
 // --- Registry -----------------------------------------------------------------
 
 export interface RegistryConfig {
-    /** Initial node-pool capacity. Default: 1024. */
+    /** Initial node-pool capacity (a ledger under `prealloc: "lazy"`). Default: 1024. */
     maxNodes?: number;
-    /** Initial link-pool capacity. Default: `maxNodes * 4`. */
+    /** Initial link-pool capacity (a ledger under `prealloc: "lazy"`). Default: `maxNodes * 4`. */
     maxLinks?: number;
     /**
-     * Behaviour when a pool is exhausted:
-     *  - `"throw"` (default): throw {@link CapacityError} immediately.
-     *  - `"grow"`: double the pool. Links are bounded by `maxLinks * 16`.
+     * Pool population strategy. Default: `"eager"`.
+     *  - `"eager"`: construct the full `maxNodes` / `maxLinks` pools up front.
+     *    Deterministic latency -- zero allocation inside any subsequent hot path
+     *    (the contract for render loops, game ticks, and extension frame budgets),
+     *    at the cost of a larger resident heap that every major GC traces.
+     *  - `"lazy"`: treat `maxNodes` / `maxLinks` as capacity ledgers and construct
+     *    nodes/links on first demand, recycling through the free lists thereafter.
+     *    Smaller heap, faster cold start, lighter GC marking; identical zero-GC
+     *    steady state after warm-up. Prefer for footprint-sensitive or short-lived
+     *    registries.
+     */
+    prealloc?: "eager" | "lazy";
+    /**
+     * Behaviour when a pool is exhausted. Default: `"throw"`.
+     *  - `"throw"`: throw {@link CapacityError} immediately when the pool is full.
+     *  - `"grow"`: extend the pool on demand. Growth is chunked and incremental
+     *    (contiguous runs of up to 1024 links / 256 nodes per free-list miss),
+     *    not a single doubling burst, so any one growth pause stays bounded. The
+     *    capacity ledger still doubles, keeping {@link RegistryStats} semantics
+     *    unchanged. Link growth is bounded by a hard ceiling of `maxLinks * 16`.
      */
     onCapacityExceeded?: "throw" | "grow";
     /** Max effect-queue drain passes before a flush-cycle `Error` (message prefixed `"CycleError:"`) is thrown. Default: 100. */
@@ -282,7 +301,7 @@ export function describe(handle: ReactiveHandle): NodeDescriptor | undefined;
 export function onGraphMutation(fn: GraphMutationListener | null): GraphMutationUnsubscribe;
 export function onCleanup(fn: () => void): void;
 export function stats(): RegistryStats;
-export declare function destroy(): void;
+export function destroy(): void;
 
 /**
  * Configuration options for the watch utility.

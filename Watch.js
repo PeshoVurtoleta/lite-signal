@@ -2,7 +2,7 @@ import { effect, untrack } from "./Signal.js";
 
 /**
  * Sentinel for "first run" in `watch`. Distinguishes a legitimate `undefined`
- * source value from the uninitialized state — necessary because a naive
+ * source value from the uninitialized state -- necessary because a naive
  * `oldValue === undefined` check would conflate them.
  * @private
  */
@@ -10,7 +10,7 @@ const UNINITIALIZED = Symbol("watch.uninitialized");
 
 /**
  * Track a reactive source and run a callback whenever its projected value
- * changes. The callback receives `(newValue, oldValue, stop)` — the third
+ * changes. The callback receives `(newValue, oldValue, stop)` -- the third
  * argument is a dispose function that can be called from inside the callback
  * to terminate the watcher (matching MobX's `reaction` ergonomics).
  *
@@ -22,13 +22,13 @@ const UNINITIALIZED = Symbol("watch.uninitialized");
  * fires the effect but the projected value is unchanged (e.g.,
  * `watch(() => health() <= 0, ...)` where many `health` changes produce the
  * same boolean). Wrapping the source in a `computed` would achieve the same
- * via the computed's own equality check — the guard makes that wrapping
+ * via the computed's own equality check -- the guard makes that wrapping
  * optional.
  *
  * @example
  *   const count = signal(0);
- *   const stop = watch(count, (next, prev) => console.log(prev, "→", next));
- *   count.set(1);  // logs: 0 → 1
+ *   const stop = watch(count, (next, prev) => console.log(prev, "->", next));
+ *   count.set(1);  // logs: 0 -> 1
  *   stop();
  *
  * @example  // Self-disposing on a condition
@@ -65,7 +65,7 @@ export function watch(source, callback, options) {
     // ZERO-GC HOT PATH: the untrack body is hoisted into a closure allocated
     // ONCE at registration time. If this were declared inline as
     // `untrack(() => { ... })` inside the effect body, V8 would allocate a
-    // fresh closure on every fire — at 120fps that's 7,200 allocations per
+    // fresh closure on every fire -- at 120fps that's 7,200 allocations per
     // minute per watcher. The shared `currentNewValue` variable is the price
     // for keeping the per-fire cost at exactly zero allocations.
     const untrackedFire = () => {
@@ -123,7 +123,7 @@ export function when(predicate, callback) {
         // Defense-in-depth: even if dispose timing lets one more evaluation
         // through (e.g., during sync propagation), don't fire twice. In practice
         // stop() disposes this effect before any re-entry, so the early return is
-        // unreachable under the engine's self-cycle no-re-run guard — hence ignored.
+        // unreachable under the engine's self-cycle no-re-run guard -- hence ignored.
         /* c8 ignore next -- unreachable defensive guard; see comment above */
         if (fired) return;
         if (predicate()) {
@@ -142,10 +142,10 @@ export function when(predicate, callback) {
  * when `predicate` first returns a truthy value. Composes with `await` for
  * declarative async control flow against reactive state.
  *
- * ⚠️ **HOT-PATH WARNING — DO NOT USE PER FRAME.** This function calls
+ * ! **HOT-PATH WARNING -- DO NOT USE PER FRAME.** This function calls
  * `new Promise(...)`, which is a heap allocation. Every call allocates a
  * Promise object plus its executor closure plus internal Promise infrastructure
- * (resolve function, microtask state). This is unavoidable — Promises require
+ * (resolve function, microtask state). This is unavoidable -- Promises require
  * heap allocation by the language spec.
  *
  * **Use `whenAsync` for:** high-level scene/UI orchestration, boot sequences,
@@ -164,21 +164,21 @@ export function when(predicate, callback) {
  * Note: this promise never rejects. If the predicate never becomes truthy,
  * the promise never settles. Wrap in `Promise.race` for timeout semantics.
  *
- * @example  // ✅ OK — high-level orchestration
+ * @example  // OK -- high-level orchestration
  *   await whenAsync(() => user.isAuthenticated);
  *   navigate("/dashboard");
  *
- * @example  // ✅ OK — boot sequence
+ * @example  // OK -- boot sequence
  *   await whenAsync(() => assets.loaded);
  *   startGame();
  *
- * @example  // ❌ NOT OK — per-frame, allocates a Promise every frame
+ * @example  // NOT OK -- per-frame, allocates a Promise every frame
  *   function animate() {
  *       whenAsync(() => physics.settled).then(render);  // GC pressure!
  *       requestAnimationFrame(animate);
  *   }
  *
- * @example  // ✅ Same use case, zero-GC
+ * @example  // Same use case, zero-GC
  *   when(() => physics.settled, render);  // no Promise, no GC pressure
  *
  * @example  // With timeout

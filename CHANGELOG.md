@@ -4,7 +4,108 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [1.2.2] -- 2026-06-16
+## [1.3.0] -- 2026-06-XX
+
+The pool minor: the node and link pools become **growable and incrementally
+populated**, the propagation mark phase moves to an **intrusive linked-list
+stack**, and a small **registry config surface** (`prealloc`,
+`onCapacityExceeded`, `maxFlushPasses`) is exposed. Drop-in over 1.2.2 -- the
+hot paths and public callable API are byte-identical; everything here is pool
+mechanics, construction-time behavior, and new opt-in config. Steady-state
+zero-GC is unchanged: after warm-up the pools recycle exactly as before.
+
+**Default behavior: `prealloc: "eager"`.** The pools are preallocated up front
+by default, preserving 1.2.x's deterministic-latency profile (no allocation
+inside a hot loop or render frame -- the contract that matters for the 16ms /
+120fps Twitch-overlay and canvas use cases this engine targets). Lazy population
+is available as an opt-in (`prealloc: "lazy"`) for footprint-sensitive or
+fast-cold-start consumers. See the tradeoff note under *Added -- registry config*.
+
+### Added -- growable pools (`onCapacityExceeded: "grow"`)
+
+The node and link pools can now grow past their initial capacity instead of
+only throwing. Growth is **chunked and incremental**, not a single doubling
+burst:
+
+- **Link pool** refills in contiguous runs of up to **1024** links per
+  free-list miss; **node pool** in runs of up to **256**. This bounds any
+  single growth pause to roughly `chunk x ~0.5us` and keeps the freshly
+  constructed slots contiguous in memory (better locality than scattered
+  one-at-a-time `new`).
+- `onCapacityExceeded` (default `"throw"`) selects the policy: `"throw"` fails
+  fast with a `CapacityError` when a pool is full (the 1.2.x behavior, now
+  named); `"grow"` extends the pool on demand. Link growth is bounded by a hard
+  ceiling of `maxLinks * 16`.
+- The growth path **no longer length-extends the effect queues or mark stack**.
+  Previously `arr.length = newCap` permanently converted those arrays from
+  PACKED to HOLEY elements-kind -- a silent flush-path tax. They now grow by
+  sequential `arr[len++] = x` appends, which keep them packed.
+
+### Added -- registry config surface
+
+`createRegistry(config)` accepts three new options. All are additive and
+non-breaking; omitting `config` reproduces 1.2.x behavior with the eager
+default.
+
+- **`prealloc`** (`"eager"` default | `"lazy"`). `"eager"` constructs the full
+  `maxNodes` / `maxLinks` pools up front -- deterministic latency, zero
+  allocation inside any subsequent hot path, at the cost of a larger resident
+  heap that every major GC must trace. `"lazy"` treats `maxNodes` / `maxLinks`
+  as capacity *ledgers*, constructs nodes/links on first demand, and recycles
+  through the free lists thereafter -- smaller heap, faster cold start, lighter
+  GC marking, identical zero-GC steady state after warm-up. **Choose eager for
+  hard-real-time (render loops, game ticks, extension frame budgets); choose
+  lazy for footprint-sensitive or short-lived registries.**
+- **`onCapacityExceeded`** (`"throw"` default | `"grow"`) -- see above.
+- **`maxFlushPasses`** (default `100`) -- cycle-protection ceiling: the maximum
+  number of effect-queue drain passes before the flush throws an `Error`
+  prefixed `"CycleError:"`. Exposes what was a fixed internal bound so
+  pathological-but-legitimate deep-cascade graphs can raise it.
+
+### Changed -- intrusive mark stack in `markDownstream`
+
+The propagation mark phase now walks an **iterative DFS backed by an intrusive
+linked-list stack** (a `nextMark` field on each node) instead of a separate
+`markStack` container array. Because `nextMark` sits adjacent to the
+`markEpoch` field that the same sweep reads, the stack write lands in an
+already-hot cache line. Behaviorally identical -- same nodes marked in the same
+order, same glitch-free guarantee -- and it removes the container array's growth
+and HOLEY-conversion concerns entirely. The mark stack never grows the JS call
+stack regardless of graph depth (the iterative property from 1.2.4 is retained).
+
+### Added -- `ReactiveNode.nextMark`
+
+One field added to the node shape to back the intrusive mark stack. Initialized
+to `null` on construction, cleared on pop during a sweep and defensively on
+dispose, so the chain stays clean for reuse. This is the only node-shape change
+in 1.3.0.
+
+### Verified
+
+- **Full suite green** against the 1.3.0 engine: 423 tests, 413 pass, 0 fail,
+  10 skip. The 10 skips are the 9 `{skip:true}` `signalBox` tests in
+  `24-signalbox` (those primitives land in 1.5.0) plus 1 architecturally-N/A
+  SSR case in `17-reactivity`. The eager-default flip changed no test outcome.
+  Four new tests in `03-pool` cover the 1.3.0 paths: lazy on-demand construction
+  reaching the same steady state as eager, a never-allocated lazy registry
+  surviving `destroy()`, `"grow"` extending both pool ledgers, and the
+  `maxLinks * 16` link ceiling.
+- **Coverage** (c8@11, Node 22): `Signal.js` 100% statements / 98.26% branches /
+  100% functions / 100% lines; `Watch.js` 100% across all four. The lazy-pool
+  `destroy()` paths added in 1.3.0 are covered by the new `03-pool` tests.
+- **Behavior-preservation difftest**: 20,000 direct + 10,000 batched writes
+  against the published 1.1.5 reference, 0 disagreements. Pool growth, chunked
+  refill, and the intrusive mark stack do not alter observable propagation.
+- **Zero-GC steady state holds**: after warm-up, writing through a built graph
+  allocates nothing and the pool does not grow (eager) / does not grow further
+  (lazy, post warm-up). Confirmed across deep-chain, wide fan-out, and batched
+  scenarios.
+- **`stats()` shape unchanged from 1.2.x** (8 keys). The cumulative allocation
+  counters (`totalAllocations` / `totalDisposals` / `poolGrowths`) remain
+  reserved for 1.4.0 and are still absent here -- the introspection-contract
+  test continues to pin their absence.
+
+## [1.2.2] -- 2026-06-14
 
 A code-deletion ship: a `createNode` audit removes ten redundant field-writes
 that defended against a state the engine cannot produce on a clean free-list.
@@ -391,7 +492,7 @@ that split. No behavioural changes for existing code -- drop-in over 1.1.5.
   previously caught the first thrown effect in a flush, you now get an
   `AggregateError` whose `.errors[0]` is what you used to get.
 - The "scheduler-thunk caching" hint that referenced an older internal
-  staging name (Signal-1.3.0-rc) is gone; the file is the public 1.2.0.
+  staging name (Signal-1.3.0) is gone; the file is the public 1.2.0.
 
 ## [1.1.5] -- 2026-06-04
 

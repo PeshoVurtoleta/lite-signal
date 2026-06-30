@@ -15,21 +15,21 @@
 
 ## 4th of 15 on the community reactivity benchmark -- and the only zero-GC engine in the field
 
-On the independent [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (Andrii Volynets' fork; 15 reactive libraries, 47 tests), `lite-signal` places **4th overall by geomean (81.6)** -- within noise of 5th-place Preact Signals (83.0, a 1.7% gap), behind only three push-eager engines: alien-signals, reflex, and @reactively.
+On the independent [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (Andrii Volynets' fork; 15 reactive libraries, 47 tests), `lite-signal` places **4th overall by geomean (75.5)** -- now clearing 5th-place Preact Signals (79.2) by ~5%, a gap that widened on the 1.3.0 run, behind only three push-eager engines: alien-signals, reflex, and @reactively.
 
 It is the **only object-pooled, zero-GC engine in the entire field**, and it gets that result without giving up glitch-freedom or lazy evaluation. Against the mainstream reactivity libraries it leads decisively:
 
 | vs                     | lite-signal is | 
 | ---------------------- | -------------- |
-| **@vue/reactivity**    | **1.6x faster** |
+| **@vue/reactivity**    | **1.5x faster** |
 | **Signia**             | **1.7x faster** |
 | **MobX**               | **2.3x faster** |
-| **@solidjs/signals**   | **2.6x faster** |
-| **SolidJS**            | **3.8x faster** |
-| Preact Signals         | ~even (+1.7%)   |
+| **@solidjs/signals**   | **2.7x faster** |
+| **SolidJS**            | **4.2x faster** |
+| Preact Signals         | **1.05x faster** (~5% ahead) |
 | alien-signals          | 0.56x (the field leader) |
 
-`lite-signal` finishes **top-3 on 18 of the 47 tests** and is the **outright fastest of all 15** on `manyEffectsFromOneSource` (1 source -> many effects, fan-out) and `manySourcesIntoOneComputedEffectWithDirect` (many sources -> one computed, fan-in) -- the aggregation shapes that dominate live dashboards, scoreboards, and HUDs. The three engines ahead of it are all push-eager designs that allocate on the hot path; `lite-signal` is the only top-4 finisher that allocates **nothing** in steady state. (Note: this suite measures reactivity *libraries* -- Vue's reactivity core, MobX, Solid, Preact Signals, etc. -- not full UI frameworks like React or Angular.)
+`lite-signal` finishes **top-3 on 21 of the 47 tests** and is the **outright fastest of all 15** on three wide aggregation shapes -- `manyEffectsFromOneSource` (1 source -> many effects, fan-out), plus `manySourcesIntoOneComputedEffect` and `manySourcesIntoOneComputedEffectWithDirect` (many sources -> one computed, fan-in) -- the patterns that dominate live dashboards, scoreboards, and HUDs. It also edges the field leader alien-signals on a fourth (the 1-source linear-chain pull). The three engines ahead of it are all push-eager designs that allocate on the hot path; `lite-signal` is the only top-4 finisher that allocates **nothing** in steady state. (Note: this suite measures reactivity *libraries* -- Vue's reactivity core, MobX, Solid, Preact Signals, etc. -- not full UI frameworks like React or Angular.)
 
 ```bash
 npm install @zakkster/lite-signal
@@ -444,10 +444,11 @@ The effect dispose handle (`const dispose = effect(...)`) is still a plain funct
 
 ```ts
 const r = createRegistry({
-  maxNodes:          1024,       // default
-  maxLinks:          4 * 1024,   // default = maxNodes * 4
-  maxFlushPasses:    100,        // default
-  onCapacityExceeded: "throw"    // default. Other: "grow"
+  maxNodes:           1024,       // default (ledger)
+  maxLinks:           4 * 1024,   // default = maxNodes * 4 (ledger)
+  prealloc:           "eager",    // default. Other: "lazy"
+  maxFlushPasses:     100,        // default
+  onCapacityExceeded: "throw"     // default. Other: "grow"
 });
 
 const s = r.signal(0);
@@ -466,29 +467,34 @@ r.destroy();                     // reset all pools, invalidate generations
 <details>
 <summary>Pool sizing, the grow policy, and why there is a 16× link ceiling.</summary>
 
-The engine has two pool sizes: **nodes** and **links**. Both are fixed at registry creation but can be configured to grow.
+The engine has two pools: **nodes** and **links**. Their capacities are set at registry creation. As of **1.3.0** you also choose *when* the pools are populated (`prealloc`) and *what happens* when a capacity is hit (`onCapacityExceeded`).
+
+**`prealloc` (1.3.0)** -- `"eager"` (default) constructs the full `maxNodes` / `maxLinks` pools up front: deterministic latency, zero allocation inside any subsequent hot path (the contract that matters for 16ms render frames and 120fps canvas loops), at the cost of a larger resident heap. `"lazy"` treats the capacities as *ledgers*, constructs nodes/links on first demand, and recycles through the free lists thereafter: smaller heap, faster cold start, lighter GC marking, **identical zero-GC steady state after warm-up**. Choose eager for hard-real-time, lazy for footprint-sensitive or short-lived registries (per-viewer sandboxes, tests).
+
+**`onCapacityExceeded`** -- `"throw"` (default) fails fast with a `CapacityError`. `"grow"` extends the pool on demand. Growth is **chunked and incremental** -- contiguous runs of up to **1024 links / 256 nodes** per free-list miss, not a single doubling burst -- so any one growth pause stays bounded (~chunk x ~0.5us) and freshly constructed slots stay contiguous in memory. The capacity *ledger* still doubles, so `stats()` semantics are unchanged.
 
 ```mermaid
 flowchart LR
-  A[allocator hits empty pool] --> B{policy?}
+  A[allocator hits empty free-list] --> B{policy?}
   B -- "throw" --> C[CapacityError]
-  B -- "grow" --> D[double pool size]
-  D --> E{new size > 16× original?}
+  B -- "grow" --> D[construct a chunked run<br/>up to 1024 links / 256 nodes<br/>ledger doubles]
+  D --> E{ledger > 16x original links?}
   E -- yes --> F[CapacityError<br/>link ceiling]
   E -- no --> G[allocate, continue]
 ```
 
-Why a ceiling? Unbounded growth hides leaks. If your app reaches 16× its starting link capacity, something is wrong and you want to know -- `CapacityError` is louder than a slow OOM crash four hours later.
+Why a ceiling? Unbounded growth hides leaks. If your app reaches 16x its starting link capacity, something is wrong and you want to know -- `CapacityError` is louder than a slow OOM crash four hours later.
 
 Default sizing for a Twitch-extension-style budget:
 
-| Workload                            | maxNodes | maxLinks | policy   |
-| ----------------------------------- | -------- | -------- | -------- |
-| Tiny widget (<=50 reactive cells)    | 256      | 1024     | `"throw"` |
-| Standard overlay (~500 cells)       | 1024     | 4096     | `"throw"` |
-| Heavy dashboard (variable scale)    | 2048     | 16384    | `"grow"`  |
+| Workload                            | maxNodes | maxLinks | prealloc | policy   |
+| ----------------------------------- | -------- | -------- | -------- | -------- |
+| Tiny widget (<=50 reactive cells)    | 256      | 1024     | `"eager"` | `"throw"` |
+| Standard overlay (~500 cells)       | 1024     | 4096     | `"eager"` | `"throw"` |
+| Heavy dashboard (variable scale)    | 2048     | 16384    | `"eager"` | `"grow"`  |
+| Per-viewer sandbox / short-lived    | 512      | 2048     | `"lazy"`  | `"throw"` |
 
-`stats()` reports `signals`, `computeds`, `effects`, `activeLinks`, `pooledLinks`, `linkPoolCapacity`. Drop it on screen for live observability.
+`stats()` reports `signals`, `computeds`, `effects`, `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`, `linkPoolCapacity` (8 keys; the capacity keys are ledgers under `"lazy"`). Drop it on screen for live observability.
 
 </details>
 
@@ -500,9 +506,9 @@ Default sizing for a Twitch-extension-style budget:
 
 | API | Use case | Lifecycle | Hot-path safe? |
 |---|---|---|---|
-| `watch(source, cb)` | observe value changes over time | manual `stop()` | ✅ zero-GC per fire |
-| `watch(source, (v, p, stop) => ...)` | observe until a condition | self-dispose via callback arg | ✅ zero-GC per fire |
-| `when(predicate, cb)` | one-shot trigger when condition first true | auto-dispose | ✅ zero-GC per check |
+| `watch(source, cb)` | observe value changes over time | manual `stop()` | yes -- zero-GC per fire |
+| `watch(source, (v, p, stop) => ...)` | observe until a condition | self-dispose via callback arg | yes -- zero-GC per fire |
+| `when(predicate, cb)` | one-shot trigger when condition first true | auto-dispose | yes -- zero-GC per check |
 | `whenAsync(predicate)` | await a condition | auto-dispose | ! allocates Promise -- see below |
 
 ### `watch(source, callback, options?)`
@@ -652,25 +658,25 @@ These are the questions you'd ask in a code review, with the answers:
 
 ## Benchmarks
 
-Honest numbers, against the same workload, with anti-DCE sinks and verified effect execution. All measurements: Node 22, **2016-era Intel MacBook Pro (4 cores, ~10 yr old hardware)**, 20K iterations, **one engine per cold process**, median of 10 isolated runs. Newer/faster machines shift all libs up proportionally; the relative ordering between libs is what matters. Numbers below are lite-signal **@1.2.2** vs alien-signals on the same loop; the full five-framework comparison (incl. preact, vue-reactivity, solid across 34 reactive-suite tests) is in [`resultsReactive.txt`](./resultsReactive.txt). *(These numbers use the corrected one-engine-per-process protocol -- the prior 1.2.0 table ran several engines in one process, which let nursery-allocating engines borrow a warm heap and polluted shared inline caches. 1.2.2 is drop-in over 1.2.0; the hot paths are byte-identical, so the table moves here are the measurement correction, not engine changes. The 1.2.0 single-process table is in git history.)*
+Honest numbers, against the same workload, with anti-DCE sinks and verified effect execution. All measurements: Node 22, **2016-era Intel MacBook Pro (4 cores, ~10 yr old hardware)**, **one engine per cold process**, median across reps. Newer/faster machines shift all libs up proportionally; the relative ordering between libs is what matters. Numbers below are lite-signal **@1.3.0** (default `prealloc: "eager"`) vs alien-signals on the same `benchmark.mjs` loop -- the harness now reports **median execution time + transient heap** rather than ops/s. 1.3.0's hot paths are byte-identical to 1.2.2, so these track the 1.2.2 measurement; the deltas are run-to-run noise on this old host, not engine changes.
 
-| Scenario   | What it stresses                | lite-signal | alien-signals | lite vs alien |
-| ---------- | -------------------------------- | ----------- | ------------- | ------------- |
-| **MUX**    | 256 signals -> 1 sum -> 1 effect (fan-in) | **293K ops/s** | 190K       | **+35%**      |
-| **DYNAMIC DAG** | sqrt-layered, FAN=6, read flips each iter | **2K**  | 1K            | **+44%**      |
-| **SELECTIVE DAG** | sqrt-layered, set churn, 2 read/iter | **4K**   | 2K            | **+48%**      |
-| **SMALL SELECTIVE** | 6 layers × 64 wide, 6 cand / 3 read | **10K** | 7K            | **+31%**      |
-| **KAIROS**    | 1 signal -> 1000 computeds -> 1 effect | 15K     | 16K           | -4%           |
-| **BROADCAST** | 1 signal -> 1000 effects (fan-out)    | 18K     | 19K           | -7%           |
-| **WIDE DENSE** | 5 layers × ~200 wide, dense fan-in   | 7K      | 7K            | -5%           |
-| **LARGE WEB APP** | 12 layers × ~80 wide, conditional reads | 7K  | 7K            | -7%           |
-| **DEEP CHAIN** | 256-deep computed chain -> 1 effect  | 49K         | **59K**       | -19%          |
-| **heap-delta MUX**   | transient alloc pressure, 20K iters | **0.3 KB** | 7,780 KB      | --             |
-| **Retained MUX** | state surviving forced GC         | **-9 KB** (none) | -2 KB    | --             |
+| Scenario   | What it stresses                | lite-signal | alien-signals | lite vs alien | transient heap (lite / alien) |
+| ---------- | -------------------------------- | ----------- | ------------- | ------------- | ----------------------------- |
+| **SELECTIVE DAG** | sqrt-layered, set churn, 2 read/iter | **4744 ms** | 9176 ms | **+48% faster** | **1.5 MB / 37 MB** (24x less) |
+| **DYNAMIC DAG** | sqrt-layered, FAN=6, read flips each iter | **9670 ms** | 16888 ms | **+43% faster** | **5.1 MB / 24 MB** (4.7x less) |
+| **MUX**    | 256 signals -> 1 sum -> 1 effect (fan-in) | **67 ms** | 108 ms | **+38% faster** | **38 KB / 3.9 MB** (104x less) |
+| **SMALL SELECTIVE** | 6 layers × 64 wide, 6 cand / 3 read | **1937 ms** | 2744 ms | **+29% faster** | **0.3 KB / 23.9 MB** (>=23934x less) |
+| **KAIROS**    | 1 signal -> 1000 computeds -> 1 effect | 1339 ms | 1325 ms | -1% (parity) | 178 KB / 1.1 MB (6.4x less) |
+| **LARGE WEB APP** | 12 layers × ~80 wide, conditional reads | 2801 ms | 2701 ms | -4% (parity) | **0.3 KB / 41 KB** (41x less) |
+| **WIDE DENSE** | 5 layers × ~200 wide, dense fan-in | 2850 ms | 2740 ms | -4% (parity) | **0.3 KB / 11.6 MB** (>=11605x less) |
+| **BROADCAST** | 1 signal -> 1000 effects (fan-out) | 1182 ms | 1074 ms | -10% | 72 KB / 21 KB |
+| **DEEP CHAIN** | 256-deep computed chain -> 1 effect | 401 ms | **339 ms** | -18% | 18 KB / 905 KB (49.7x less) |
 
-**Reading the table:** lite-signal's wins cluster exactly where its zero-GC design pays off -- the **allocation-heavy dynamic shapes** (**DYNAMIC DAG +44%**, **SELECTIVE DAG +48%**, **SMALL SELECTIVE +31%**), where alien-signals churns the nursery and lite's object pool allocates nothing, plus **MUX +35%** (fan-in aggregation). These are the patterns that dominate live UI workloads under input churn: dashboards, scoreboards, HUDs, leaderboards. On the cheap, low-allocation **stable** shapes (KAIROS, BROADCAST, wide app/dense) lite runs at **parity** with alien -- within a 4-7% band that is inside this old host's run-to-run noise. The one structural loss is **DEEP CHAIN (-19%)**: on a 256-deep computed pipeline alien's flatter representation wins because the propagation path is long rather than wide.
+*(lower time = faster; transient heap = average delta-heap per rep, lower = less GC pressure)*
 
-On allocation pressure, `lite-signal` is alone in the zero-alloc band: ~0.3 KB of transient garbage on stable shapes across 20,000 iterations. The contrast is starkest on the dynamic DAGs -- lite allocates 9-13 MB (genuine retracking re-links) where alien-signals allocates 39-42 MB on the same shapes, and that allocation gap is the mechanism behind lite's +44-48% wins there once each engine is measured in isolation. preact ranges from ~220 KB to low-single-digit MB per stable loop, solid runs into single-digit megabytes. Negative "retained" numbers mean V8 reclaimed memory below the pre-bench baseline during the post-run forced GC -- no leaks anywhere.
+**Reading the table:** lite-signal's time wins cluster exactly where its zero-GC design pays off -- the **allocation-heavy dynamic shapes** (**SELECTIVE DAG +48%**, **DYNAMIC DAG +43%**, **SMALL SELECTIVE +29%**), where alien-signals churns the nursery and lite's object pool allocates near-nothing, plus **MUX +38%** (fan-in aggregation). These are the patterns that dominate live UI workloads under input churn: dashboards, scoreboards, HUDs, leaderboards. On the cheap, low-allocation **stable** shapes (KAIROS, large web app, wide dense) lite runs at **parity** with alien -- within a 1-4% band inside this old host's run-to-run noise. The two losses are **BROADCAST (-10%)** (pure fan-out, no retracking for the pool to amortize) and **DEEP CHAIN (-18%)**: on a 256-deep computed pipeline alien's flatter representation wins because the propagation path is long rather than wide.
+
+On allocation pressure, `lite-signal` wins **8 of 9 scenarios** and is alone in the zero-alloc band: **~0.3 KB** of transient garbage on the stable app shapes (large web app, wide dense, small selective) across the whole run. The contrast is starkest on the dynamic DAGs -- lite allocates 1.5-5 MB (genuine retracking re-links) where alien-signals allocates 24-37 MB on the same shapes, and that allocation gap is the mechanism behind lite's +43-48% wins there once each engine is measured in isolation. The one scenario where lite allocates more is **BROADCAST** (72 KB vs alien's 21 KB), a pure fan-out with no retracking. `prealloc: "lazy"` trades a little extra first-construction allocation on the dynamic shapes for a smaller resident heap and faster cold start; the steady state is identical. preact and solid trail both engines on the dynamic shapes by 1-2 orders of magnitude on transient heap.
 
 > Note on the +70.8 KB retained that lite-signal shows on KAIROS specifically: that's the pre-allocated pool sitting in memory holding the live graph (1002 nodes + ~2000 links). The pool *is* the working memory -- see the [Case for object pooling](#case-for-object-pooling) section. On the other benches the graph is small enough that the same pool floats below baseline after GC.
 
@@ -699,7 +705,7 @@ Three tiers, all reproducible.
 
 - **`01-core_test.mjs`** -- signal/computed/effect basics, equality semantics, NaN/+/-0, subscribe/peek/update, untrack, batch, cleanup ordering, first-run error recovery, nested object reference-identity gotchas.
 - **`02-topology_test.mjs`** -- diamond glitch-freedom, 256-deep and 1024-deep computed chains, wide fan-out (1000 effects from one signal), dynamic dependency switching, conditional fan-out, nested effects, cycle detection (`CycleError`).
-- **`03-pool_test.mjs`** -- `CapacityError` under both `"throw"` and `"grow"` policies, the 16× link ceiling, stable pool reuse across thousands of create/dispose cycles, registry isolation.
+- **`03-pool_test.mjs`** -- `CapacityError` under both `"throw"` and `"grow"` policies, the 16× link ceiling, stable pool reuse across thousands of create/dispose cycles, registry isolation, and (1.3.0) the lazy-prealloc paths: on-demand construction reaching the same steady state as eager, a never-allocated lazy registry surviving `destroy()`, and `"grow"` extending both pool ledgers past their initial capacity.
 - **`05-scheduler_test.mjs`** -- scheduler-deferred effects, dispose-during-schedule races, microtask integration, 32-bit version wrap (simulated), `setDefaultRegistry`, `onCleanup` inside computeds.
 - **`06-nested-objects_test.mjs`** -- array mutation patterns (push/splice/spread), deep nested paths, Map/Set/Date inside signals, custom structural equality, computed memoisation cutoffs over object slices, signal-of-signals composition, high-frequency object updates, batched immutable updates.
 - **`07-dispose_test.mjs`** -- unified `dispose(api)` across signals, computeds and effect handles, idempotency, cross-registry isolation (per-registry Symbol prevents pool corruption), foreign-value safety, top-level helper routing, 500-cycle balanced churn leaving pool and stats stable.
@@ -719,8 +725,8 @@ Three tiers, all reproducible.
 - **`21-perf-pins_test.mjs`** -- v1.2.1 construction-shape pins (6 tests). Locks the canonical handle shapes (`signal` 6 own props: peek/set/update/subscribe + NODE_PTR/NODE_GEN; `computed` 4: peek/subscribe + NODE_PTR/NODE_GEN) so a future "let's unify them" change has to be explicit. Locks the 1.2.1 ABA guards: detached `const {set} = signal()` keeps working on a LIVE signal; `read()` returns `undefined` and skips dep-tracking on a stale handle (no phantom subscription to the recycled slot); `set()` on a stale handle is a no-op across three corruption tiers (disposed slot, recycled slot, downstream propagation); `peek()` returns `undefined` for stale signal and computed handles.
 - **`22-mutation-hook_test.mjs`** -- 1.2.1 `onGraphMutation` semantics (12 tests across 2 suites). Registration: unsubscribe returns a function; `null` argument clears and the unsub restores the prior listener; non-function/non-null throws `TypeError`; multiple registrations stack LIFO; registries are isolated (no cross-talk). Opcode emission: `1` node-create fires with `(id, flags)` for signal (32) / computed (1) / effect (2); `2` node-dispose fires for cascade-disposed owned children; `3` link-add fires with `(source.id, target.id)` on dependency record; `4` link-remove fires when a dep-set flip severs the tail; `5` recompute fires on initial eval AND re-eval; the hook fires synchronously inside the mutation (listener sees its own event before the caller returns); payload is always three plain numbers -- no objects, no closures.
 - **`23-owner-introspection_test.mjs`** -- 1.2.1 owner-tree introspection + effect-disposer regression (22 tests across 4 suites). `ownerOf`: undefined for top-level / garbage input / stale handle; returns the enclosing effect's descriptor for a child created inside an effect body. `forEachOwned`: no-op for handles with no owned children / garbage input / stale handle; iterates owned children as `{id, kind, value}` descriptors. Gen-guarded introspection (ABA fix): `nodeId` / `describe` / `hasObservers` return undefined / false for stale handles; `observeObservers` throws `TypeError`; `forEachObserver` / `forEachSource` are no-ops; descriptors returned by `describeNode` are themselves gen-stamped so a descriptor obtained pre-recycle correctly walks as a no-op post-recycle (the "descriptors are re-walkable handles" contract survives the guard). Plus the 1.2.1 effect-dispose-handle fix: passing the effect's disposer directly to `describe` / `nodeId` / `forEachSource` / `forEachOwned` / `ownerOf` / `hasObservers` works as a first-class introspection handle (pre-fix it was a bare closure and returned `undefined` for a *live* effect); after `fx()` dispose the same handle correctly goes stale on every entry point; the disposer's `NODE_GEN` mirrors the effect node's birthGen exactly.
-- **`24-signalbox_test.mjs`** -- staged for v1.5.0; all 9 tests `{skip: true}` on 1.2.x. The `signalBox` / `computedBox` allocation-light handle API lands in 1.5.0; the suite is committed early so the surface is pinned and the skips are visible in the test count (the 10 skips on 1.2.2 are these 9 plus 1 architecturally-N/A SSR case in `17-reactivity`).
-- **`25-devtools-real-boot_test.mjs`** -- Devtools/Studio contract (10 tests). Boots the actual `Devtools.js` against the 1.2.2 engine and exercises all 19 Devtools exports plus the 10 symbols Studio imports from Devtools. Pins the ghost contract: heavy introspection (graph walk, owner-tree, observer descriptors) adds **zero** nodes to the live graph. Catches the real-rig failure mode where importing the package by its own name from a repo whose `package.json` declares `name: "@zakkster/lite-signal"` resolves to the published build instead of the local engine.
+- **`24-signalbox_test.mjs`** -- staged for v1.5.0; all 9 tests `{skip: true}` on 1.3.x. The `signalBox` / `computedBox` allocation-light handle API lands in 1.5.0; the suite is committed early so the surface is pinned and the skips are visible in the test count (the 10 skips on 1.3.0 are these 9 plus 1 architecturally-N/A SSR case in `17-reactivity`).
+- **`25-devtools-real-boot_test.mjs`** -- Devtools/Studio contract (10 tests). Boots the actual `Devtools.js` against the 1.3.0 engine and exercises all 19 Devtools exports plus the 10 symbols Studio imports from Devtools. Pins the ghost contract: heavy introspection (graph walk, owner-tree, observer descriptors) adds **zero** nodes to the live graph. Catches the real-rig failure mode where importing the package by its own name from a repo whose `package.json` declares `name: "@zakkster/lite-signal"` resolves to the published build instead of the local engine.
 - **`26-free-list-invariant_test.mjs`** -- the 1.2.2 audit's cleanliness pins (3 invariant tests + 1 targeted coverage test). Asserts directly -- by inspecting freshly-allocated nodes through the documented `describe()` -> `NODE_PTR` introspection protocol -- that the `ReactiveNode` constructor and the fresh-pool-growth path initialize the ten fields the audit removed from `createNode` to identical values, so the deleted writes were defending against a state the engine cannot produce on a clean free list. The 4th test covers the swallow-on-self-dispose-then-throw branch in `pullComputed` (the path that lifted branch coverage from 98.07% to 98.43%).
 
 ```bash
@@ -780,13 +786,15 @@ npm run verify   # test + test:gc + a sanity bench
 ## Performance Trade-offs & Topology Scaling
 
 <details>
-<summary>Stable vs dynamic topologies; Andrii Volynets' matrix, the 1.1.4 result, and the roadmap.</summary>
+<summary>Stable vs dynamic topologies; Andrii Volynets' matrix, the 1.1.4 result, the 1.3.0 ranking, and the roadmap.</summary>
 
 `lite-signal` was built with a strict mandate: **absolute zero garbage collection**. By packing the dependency graph into a flat, pre-allocated memory arena, we eliminate the Scavenger GC pauses that plague 120fps Canvas/WebGL loops.
 
 Through **v1.1.2**, that came with a mathematical trade-off: while memory allocation is $O(1)$, the cursor-based retracking degraded to $O(N)$ linear scans under chaotic, high-fan-in, batched read-after-write -- the shape of large DOM-style apps with heavy branch switching. **v1.1.4 closed that gap.** A version-stamped $O(1)$ reconciliation plus a `markEpoch` clean-read short-circuit on the pull replaced the cursor degradation; stable read order is unchanged (still $O(1)$, still zero-alloc).
 
 **Andrii Volynets** (author of the phenomenal [Alien Signals](https://github.com/stackblitz/alien-signals)) generously ran `lite-signal` through his advanced topology matrix on the **v1.1.2** engine. Those numbers -- the *pre-rewrite baseline* -- are below, followed by the 1.1.4 result.
+
+**1.3.0 on the official [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (15 libraries, 47 tests):** `lite-signal` holds **4th overall by geomean (75.5ms)**, behind only alien-signals (42.6, the field leader at 0.56x), reflex (48.9), and @reactively (59.3), and now **ahead of 5th-place Preact Signals (79.2, ~5%)** -- a gap that widened from 1.2.x. It finishes **top-3 on 21 of 47 tests** and is the **outright fastest of all 15 on three wide-aggregation shapes** -- `manyEffectsFromOneSource`, `manySourcesIntoOneComputedEffect`, and `manySourcesIntoOneComputedEffectWithDirect` -- even edging the leader alien-signals on those plus the 1-source linear-chain pull. It remains the only object-pooled, zero-GC engine in the field.
 
 #### 1. Stable Topologies (Fan-in / Fan-out / Broadcast)
 In stable environments (game engines, particle systems, visualizers), `lite-signal` is blisteringly fast and maintains a near-zero allocation profile, keeping frame times perfectly flat -- unchanged through 1.1.4.
@@ -799,32 +807,33 @@ In stable environments (game engines, particle systems, visualizers), `lite-sign
 | **1000x5 (25 sources, wide/dense)** | 304ms | 303ms | 1746ms |
 | **64x6 (selective dynamic DAG)** | 181ms | 196ms | 559ms |
 
-*1.2.2 on the local harness (slow 2016 MacBook, one engine per cold process -- compare within-column, lite vs alien; the approximating scenarios from `bench/benchmark.mjs`):*
-| Scenario | alien-signals | lite-signal (1.2.2) | result |
+*1.3.0 (default eager) on the local harness (slow 2016 MacBook, one engine per cold process -- compare within-column, lite vs alien; the approximating scenarios from `bench/benchmark.mjs`):*
+| Scenario | alien-signals | lite-signal (1.3.0) | result |
 | :--- | :--- | :--- | :--- |
-| **DYNAMIC DAG** (sqrt-layered, FAN=6) | 17558ms | 9821ms | **lite +44%** |
-| **SELECTIVE DAG** (sqrt-layered, set churn) | 9229ms | 4797ms | **lite +48%** |
-| **SMALL SELECTIVE** (~ 64x6)  | 2780ms | 1918ms | **lite +31%** |
-| **LARGE WEB APP** (~ 1000x12) | 2671ms | 2846ms | alien +7% |
-| **WIDE DENSE** (~ 1000x5)     | 2729ms | 2876ms | alien +5% |
+| **SELECTIVE DAG** (sqrt-layered, set churn) | 9176ms | 4744ms | **lite +48%** |
+| **DYNAMIC DAG** (sqrt-layered, FAN=6) | 16888ms | 9670ms | **lite +43%** |
+| **SMALL SELECTIVE** (~ 64x6)  | 2744ms | 1937ms | **lite +29%** |
+| **LARGE WEB APP** (~ 1000x12) | 2701ms | 2801ms | alien +4% |
+| **WIDE DENSE** (~ 1000x5)     | 2740ms | 2850ms | alien +4% |
 
-> **Honest note (1.2.2 isolated run):** measured one-engine-per-process, lite-signal's
-> wins are on the **allocation-heavy** dynamic shapes (DYNAMIC DAG +44%, SELECTIVE DAG
-> +48%, SMALL SELECTIVE +31%) -- exactly where alien churns the nursery and lite's pool
-> allocates nothing. The cheaper wide-app/dense shapes land within a few percent either
-> way (host noise on this old machine). The prior 1.2.0 table ran all engines in one
-> process, which understated these dynamic-shape gaps (alien borrowed lite's warm heap);
-> the isolated numbers here are the correct comparison. lite remains the only zero-alloc
-> library on every stable scenario (see [`results.txt`](./results.txt)).
+> **Honest note (1.3.0 isolated run):** measured one-engine-per-process, lite-signal's
+> wins are on the **allocation-heavy** dynamic shapes (SELECTIVE DAG +48%, DYNAMIC DAG
+> +43%, SMALL SELECTIVE +29%) -- exactly where alien churns the nursery and lite's pool
+> allocates near-nothing. The cheaper wide-app/dense shapes land within a few percent
+> either way (host noise on this old machine). 1.3.0's hot paths are byte-identical to
+> 1.2.2, so these match the 1.2.2 isolated numbers -- the deltas are run-to-run noise,
+> not engine changes. lite remains the only zero-alloc library on every stable scenario
+> (see [`results.txt`](./results.txt)).
 
-The cross-framework reactivity suite agrees independently, re-run on **1.2.2** (median-of-10, isolated): `dyn: large web app` **555ms** (+7% vs alien-signals' 600ms) and `dyn: wide dense` **922ms** (+0.4% vs 926ms) are wins there too -- lite-signal is the fastest of five frameworks on both, with preact ~14-19× slower and vue ~14-31× slower (see [`resultsReactive.txt`](./resultsReactive.txt)). lite also leads alien on **every** `S: updateComputations` row (+5% to +22%) and all five `dyn` rows -- the steady-state hot path. The retracking is verified correct by `retracking.difftest.mjs` -- 20,000 direct + 10,000 batched writes, 0 disagreements against the **published 1.1.5** reference (re-pinned for v1.2).
+The cross-framework reactivity suite agrees independently, re-run on **1.3.0** (default eager, median-of-10, isolated): lite-signal is the **fastest of five frameworks on all five `dyn` rows** -- `dyn: large web app` **544ms** (+7% vs alien-signals' 586ms) and `dyn: wide dense` **902ms** (+3% vs 926ms), plus simple component (+17%), dynamic component (+15%), and deep (+14%) -- with preact 6-19× slower and vue 15-32× slower on the app-shaped graphs (see the `run_*.txt` logs). On the tiny `S: updateComputations` micro-rows lite and alien trade the lead within a few percent (lite ahead on 3 of 7); these sub-60ms kernels are dominated by run-to-run noise on this old host. The retracking is verified correct by `retracking.difftest.mjs` -- 20,000 direct + 10,000 batched writes, 0 disagreements against the **published 1.1.5** reference (re-pinned for v1.2).
 
-**The Takeaway:** as of 1.1.4 you no longer have to choose. `lite-signal` keeps the zero-GC, flat-arena profile for 120fps Canvas/WebGL **and** wins decisively on the high-churn dynamic and fan-in topologies that dominate live UI -- the shapes where zero allocation pays off most. It runs at parity with alien-signals on cheap stable shapes. The one shape where alien's flatter representation still leads is the 256-deep computed pipeline (DEEP CHAIN, -19% on the 1.2.2 isolated run).
+**The Takeaway:** as of 1.1.4 you no longer have to choose, and 1.3.0 holds the line -- the engine still ranks **4th of 15** on the official js-reactivity-benchmark (the only zero-GC library in the field). `lite-signal` keeps the zero-GC, flat-arena profile for 120fps Canvas/WebGL **and** wins decisively on the high-churn dynamic and fan-in topologies that dominate live UI -- the shapes where zero allocation pays off most. It runs at parity with alien-signals on cheap stable shapes. The one shape where alien's flatter representation still leads is the 256-deep computed pipeline (DEEP CHAIN, -18% on the 1.3.0 isolated run).
 
 ### Roadmap
 - **1.1.5** -- additions in service of `lite-devtools` (node identity/traversability on the introspection walkers, for full auto-discovered graph rendering). *Shipped.*
 - **1.2.0** -- the **ownership hybrid**: an owner tree so nested effects/computeds auto-dispose with their parent (closes conformance #209 / #210, matching Solid's `createRoot` ergonomics). Plus three additive features built on the same internal split: pre-batch revert (`batch(() => { a.set(99); a.set(10); })` doesn't re-fire), multi-throw `AggregateError`, and scheduler-thunk caching with an ABA gen guard. *Shipped.*
-- **1.3** -- next engine work after the owner-tree validation. The pull-mode recursion depth limit (~5,000 chained computeds) is the main outstanding architectural item.
+- **1.3.0** -- the **pool minor**: node and link pools become growable and incrementally populated. New `prealloc` config (`"eager"` default | `"lazy"`) chooses up-front vs on-demand construction; `onCapacityExceeded: "grow"` extends pools via chunked refill (runs of up to 1024 links / 256 nodes, ledger doubles) bounded by the 16x link ceiling; `maxFlushPasses` is now a public config. Internally the propagation mark phase moved to an intrusive linked-list stack (a `nextMark` field) -- the only node-shape change. The hot paths and public callable API are byte-identical to 1.2.2; steady-state zero-GC is unchanged. *Shipped.*
+- **1.4** -- next engine work. The pull-mode recursion depth limit (~5,000 chained computeds) is the main outstanding architectural item; cumulative allocation counters (`totalAllocations` / `totalDisposals` / `poolGrowths`) are reserved for the `stats()` surface here.
 
 > Note: the retracking rewrite that closes the dynamic-topology gap shipped in **1.1.4**, not a future release. The earlier roadmap that listed it under "v1.2" is superseded.
 
@@ -873,14 +882,14 @@ Pure ES2020 + `Object.is` + `Int32 | 0`. Runs anywhere that runs modern JavaScri
 
 | Target                            | Supported |
 | --------------------------------- | --------- |
-| Chrome / Edge (last 2 majors)     | ✓         |
-| Firefox (last 2 majors)           | ✓         |
-| Safari 14+                        | ✓         |
-| Node.js 18+                       | ✓         |
-| Bun                               | ✓         |
-| Twitch Extensions (1MB / 3s)      | ✓         |
-| Cloudflare Workers                | ✓         |
-| Deno                              | ✓         |
+| Chrome / Edge (last 2 majors)     | yes         |
+| Firefox (last 2 majors)           | yes         |
+| Safari 14+                        | yes         |
+| Node.js 18+                       | yes         |
+| Bun                               | yes         |
+| Twitch Extensions (1MB / 3s)      | yes         |
+| Cloudflare Workers                | yes         |
+| Deno                              | yes         |
 
 ESM-only. No CommonJS build -- modern bundlers handle this; legacy consumers can use a wrapper.
 
@@ -978,7 +987,7 @@ The one remaining open item is a deliberate design choice (#179, below).
 The exact post-1.2 pass count is being re-run against the upstream suite;
 per-test results and the runner adapter live in `/conformance/`.
 
-**177 of 178 tests pass **, placing lite-signal **in the second place of sixteen**
+**177 of 178 tests pass**, placing lite-signal **in the second place of sixteen**
 evaluated libraries -- just behind alien-signals (177).
 
 We publish both passing and failing tests, because honesty about behavior is
