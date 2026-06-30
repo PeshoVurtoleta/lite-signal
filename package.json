@@ -53,7 +53,7 @@
   "homepage": "https://github.com/PeshoVurtoleta/lite-signal#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/PeshoVurtoleta/lite-signal.git"
+    "url": "git+https://gitlab.com/zakkster/lite-signal.git"
   },
   "bugs": {
     "url": "https://github.com/PeshoVurtoleta/lite-signal/issues",
