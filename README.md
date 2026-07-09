@@ -9,6 +9,8 @@
 [![npm bundle size](https://img.shields.io/bundlephobia/minzip/@zakkster/lite-signal?style=for-the-badge)](https://bundlephobia.com/result?p=@zakkster/lite-signal)
 [![npm downloads](https://img.shields.io/npm/dm/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
+[![Coverage Status](https://coveralls.io/repos/github/PeshoVurtoleta/lite-signal/badge.svg?branch=main)](https://coveralls.io/github/PeshoVurtoleta/lite-signal?branch=main)
+![Tree-Shakeable](https://img.shields.io/badge/tree--shakeable-yes-brightgreen)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Types-informational)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 [![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)

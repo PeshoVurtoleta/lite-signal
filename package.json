@@ -28,7 +28,7 @@
   "scripts": {
     "test": "node --test --test-reporter=spec",
     "test:gc": "node --expose-gc --test --test-reporter=spec",
-    "test:coverage": "c8 node --test --test-reporter=spec",
+    "test:coverage": "c8 --reporter=lcov node --test --test-reporter=spec test/*.mjs",
     "bench": "node --expose-gc bench/benchmark.mjs",
     "bench-reactive": "node --expose-gc bench/benchmarkReactive.mjs",
     "verify": "npm test && npm run bench"
@@ -68,7 +68,8 @@
   },
   "sideEffects": false,
   "devDependencies": {
+    "@zakkster/lite-devtools": "1.1.0",
     "c8": "^11.0.0",
-    "@zakkster/lite-devtools": "1.1.0"
+    "coveralls-next": "^6.0.2"
   }
 }
