@@ -92,6 +92,26 @@ export interface RegistryStats {
     nodePoolCapacity: number;
     /** Number of nodes currently allocated (signals + computeds + alive effects). */
     activeNodes: number;
+    /**
+     * Cumulative count of every node acquired over the registry's life -- whether
+     * popped from the free list or freshly constructed during a pool-growth chunk.
+     * Monotonic; reset only by {@link Registry.destroy}. The true total ever handed
+     * out, not the live count (`activeNodes` is the live gauge). Added in 1.4.0.
+     */
+    totalAllocations: number;
+    /**
+     * Cumulative count of every node returned to the pool (`disposeNode`). Monotonic;
+     * reset only by {@link Registry.destroy}. In a quiescent registry
+     * `totalAllocations - totalDisposals === activeNodes`. Added in 1.4.0.
+     */
+    totalDisposals: number;
+    /**
+     * Cumulative count of pool-growth chunks -- incremented whenever a node *or* link
+     * refill pushes capacity past its current ledger. Nonzero after warm-up means the
+     * initial pool was undersized and grew at runtime; an eager pool sized for its
+     * workload keeps this at 0. Reset only by {@link Registry.destroy}. Added in 1.4.0.
+     */
+    poolGrowths: number;
 }
 
 // --- Observer-lifecycle introspection (1.1.4) ---------------------------------

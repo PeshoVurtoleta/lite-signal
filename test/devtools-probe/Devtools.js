@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-devtools -- reactive-graph inspection for @zakkster/lite-signal. v1.1.0
+ * @zakkster/lite-devtools -- reactive-graph inspection for @zakkster/lite-signal. v1.2.0
  * -----------------------------------------------------------------------------
  * Built entirely on lite-signal's public introspection surface (no private symbols,
  * no patched objects). Requires lite-signal >= 1.1.5: the source eagerly imports
@@ -23,6 +23,10 @@
  * Type definitions ship in Devtools.d.ts; every public function carries a JSDoc summary
  * here, the formal contract is in the .d.ts.
  *
+ * 1.2.0: burstProfile() (flush/burst diagnostics; needs lite-signal >= 1.6 opcodes 6/7)
+ *        and watchAllocations() (steady-state allocation-panel feed for lite-studio).
+ *        Both are cold/debug paths, feature-detected via capabilities().burst.
+ *
  * MIT (c) Zahary Shinikchiev
  */
 import {
@@ -37,11 +41,19 @@ import * as SIG from "../../Signal.js";
 //   onGraphMutation           -- lite-signal 1.2.1 graph-mutation hook (the keystone)
 const HAS_OWNERS = typeof SIG.forEachOwned === "function" && typeof SIG.ownerOf === "function";
 const HAS_HOOK = typeof SIG.onGraphMutation === "function";
+// burst/flush profiling (lite-signal >= 1.6): opcodes 6/7 + the stats().flushPasses counter.
+const HAS_BURST = HAS_HOOK && (() => {
+    try {
+        return typeof stats().flushPasses === "number";
+    } catch (_) {
+        return false;
+    }
+})();
 
 /** Engine capability snapshot -- lets a consumer (lite-studio) pick push vs poll
  *  and show/hide the ownership view without try/catch probing. */
 export function capabilities() {
-    return {floor: "1.1.5", owners: HAS_OWNERS, mutationHook: HAS_HOOK};
+    return {floor: "1.1.5", owners: HAS_OWNERS, mutationHook: HAS_HOOK, burst: HAS_BURST};
 }
 
 // One engine listener, many internal consumers (watchGraph / profile). The
@@ -50,6 +62,7 @@ export function capabilities() {
 // the engine to its zero-cost state.
 const hubSubs = new Set();
 let hubOff = null;
+
 function hubDispatch(op, a, b) {
     // The engine fires this SYNCHRONOUSLY from inside mutation points
     // (createNode / disposeNode / link wiring / recompute). A subscriber that
@@ -59,21 +72,30 @@ function hubDispatch(op, a, b) {
     // (Verified by probe: an uncaught onSample throw escaped through
     // executeEffect before this guard existed.)
     for (const fn of hubSubs) {
-        try { fn(op, a, b); }
-        catch (e) {
+        try {
+            fn(op, a, b);
+        } catch (e) {
             // Cold path, debug tooling: surface, never propagate.
-            try { console.error("[lite-devtools] graph-mutation subscriber threw:", e); } catch (_) { /* no console */ }
+            try {
+                console.error("[lite-devtools] graph-mutation subscriber threw:", e);
+            } catch (_) { /* no console */
+            }
         }
     }
 }
+
 function hubAdd(fn) {
     hubSubs.add(fn);
     if (hubOff === null && HAS_HOOK) hubOff = SIG.onGraphMutation(hubDispatch);
     return () => {
         hubSubs.delete(fn);
-        if (hubSubs.size === 0 && hubOff !== null) { hubOff(); hubOff = null; }
+        if (hubSubs.size === 0 && hubOff !== null) {
+            hubOff();
+            hubOff = null;
+        }
     };
 }
+
 import {every} from "@zakkster/lite-time";
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
@@ -189,7 +211,10 @@ export function track(handle, onEvent) {
             if (op === 2 && a === id) onEvent({type: "dispose", id, observed: false, ts: now()});
         });
     }
-    return () => { if (offHook !== null) offHook(); return offLifecycle(); };
+    return () => {
+        if (offHook !== null) offHook();
+        return offLifecycle();
+    };
 }
 
 /**
@@ -478,7 +503,10 @@ export function trace(roots, fn, opts) {
         // The action blew up -- that is exactly when "what did it do to the
         // graph first" matters. Attach the partial trace and rethrow.
         const after = graph(roots, opts);
-        try { e.graphTrace = {before, after, diff: diff(before, after)}; } catch (_) { /* frozen/sealed error */ }
+        try {
+            e.graphTrace = {before, after, diff: diff(before, after)};
+        } catch (_) { /* frozen/sealed error */
+        }
         throw e;
     }
     const after = graph(roots, opts);
@@ -511,7 +539,9 @@ export function ownerTree(root, {maxDepth = Infinity, maxNodes = 10000} = {}) {
         count++;
         const node = {id: desc.id, kind: desc.kind, value: desc.value, owned: []};
         if (depth < maxDepth && count < maxNodes) {
-            SIG.forEachOwned(desc, (c) => { if (count < maxNodes) node.owned.push(build(c, depth + 1)); });
+            SIG.forEachOwned(desc, (c) => {
+                if (count < maxNodes) node.owned.push(build(c, depth + 1));
+            });
         }
         return node;
     };
@@ -548,13 +578,20 @@ export function findPath(from, to, {direction = "down", maxNodes = 100000} = {})
             if (found || byId.has(d.id)) return;
             byId.set(d.id, d);
             parent.set(d.id, h);
-            if (d.id === goal.id) { found = true; return; }
+            if (d.id === goal.id) {
+                found = true;
+                return;
+            }
             queue.push(d);
         });
         if (found) {
             const path = [byId.get(goal.id)];
             let cur = goal.id;
-            while (cur !== start.id) { const p = parent.get(cur); path.push(p); cur = p.id; }
+            while (cur !== start.id) {
+                const p = parent.get(cur);
+                path.push(p);
+                cur = p.id;
+            }
             return path.reverse();
         }
     }
@@ -585,8 +622,11 @@ export function watchGraph(roots, cb, {maxNodes, owners, pollMs = 250, immediate
         const g = snap();
         const d = diff(prev, g);
         const changed = d.addedNodes.length || d.removedNodes.length || d.changedNodes.length ||
-                        d.addedEdges.length || d.removedEdges.length;
-        if (changed) { cb({graph: g, diff: d, mutations, mode: HAS_HOOK ? "push" : "poll"}); prev = g; }
+            d.addedEdges.length || d.removedEdges.length;
+        if (changed) {
+            cb({graph: g, diff: d, mutations, mode: HAS_HOOK ? "push" : "poll"});
+            prev = g;
+        }
     };
 
     if (HAS_HOOK) {
@@ -595,7 +635,12 @@ export function watchGraph(roots, cb, {maxNodes, owners, pollMs = 250, immediate
             pending++;
             if (!scheduled) {
                 scheduled = true;
-                queueMicrotask(() => { scheduled = false; const n = pending; pending = 0; flush(n); });
+                queueMicrotask(() => {
+                    scheduled = false;
+                    const n = pending;
+                    pending = 0;
+                    flush(n);
+                });
             }
         });
         return {stop: off, mode: "push"};
@@ -628,7 +673,12 @@ export function profile({onSample} = {}) {
     });
     const top = (n = 10) => [...counts.entries()].map(([id, count]) => ({id, count}))
         .sort((x, y) => y.count - x.count).slice(0, n);
-    return {stop: () => { off(); return counts; }, counts, top};
+    return {
+        stop: () => {
+            off();
+            return counts;
+        }, counts, top
+    };
 }
 
 // --- Snapshot serialization (1.1) -----------------------------------------------
@@ -671,4 +721,144 @@ export function deserialize(json) {
         throw new TypeError("deserialize: not a lite-devtools snapshot");
     }
     return g;
+}
+
+// --- Burst / flush profiler (1.6 engine: opcodes 6 + 7) ------------------------
+
+/**
+ * Diagnose the multi-pass effect flush under bursty writes -- the instrumentation
+ * the 1.8 burst/flush work needs. Counts flush PASSES (opcode 6), effect ENQUEUES
+ * (opcode 7), and actual (re)computes/runs (opcode 5 -- which fires only AFTER the
+ * needsRun / clean short-circuit, so it counts genuine work, not pulls).
+ *
+ * The two derived signals are CANDIDATES, not verdicts (like profile().top()):
+ *   - redundant():      nodes that ran more than once in the window -- an effect that
+ *                       re-fired, or a computed that recomputed across passes.
+ *   - shortCircuited():  effects enqueued more often than they ran -- the mark phase
+ *                       queued an effect whose deps never version-bumped, so it
+ *                       short-circuited without running. The direct tell for "the
+ *                       double-buffer re-marks already-clean cones" (the 1.8 suspect).
+ *
+ * Counts are STRUCTURAL: deterministic and identical whether or not the profiler is
+ * attached, because the hook never alters control flow. Diagnose shape here, then
+ * measure TIME with the profiler DETACHED on the raw per-process bench -- attaching
+ * this allocates (Map growth) and would perturb a timing run, the same separation the
+ * gate and micro-benches already enforce.
+ *
+ * Requires lite-signal >= 1.6 (opcodes 6/7 + stats().flushPasses). If a 1.6 build ever
+ * lacked op 7, the enqueue map stays empty and shortCircuited() returns [] -- pass and
+ * run counts (redundant()) still work, so it degrades cleanly.
+ *
+ * @returns {{stop:()=>{passes:number,perPass:number[],queued:Map<number,number>,ran:Map<number,number>},
+ *           passes:()=>number, perPass:()=>number[],
+ *           queued:Map<number,number>, ran:Map<number,number>,
+ *           redundant:(n?:number)=>Array<{id:number,ran:number}>,
+ *           shortCircuited:(n?:number)=>Array<{id:number,queued:number,ran:number,wasted:number}>}|null}
+ *          null when the engine lacks the burst opcodes (check capabilities().burst).
+ */
+export function burstProfile() {
+    if (!HAS_HOOK || !HAS_BURST) return null;
+    let passes = 0;
+    const perPass = [];                  // toRun per flush pass, in order (op 6 payload b)
+    const queued = new Map();            // effect id -> times enqueued (op 7)
+    const ran = new Map();               // node id   -> times actually (re)computed/ran (op 5)
+    const off = hubAdd((op, a, b) => {
+        if (op === 5) {
+            ran.set(a, (ran.get(a) ?? 0) + 1);
+            return;
+        }
+        if (op === 7) {
+            queued.set(a, (queued.get(a) ?? 0) + 1);
+            return;
+        }
+        if (op === 6) {
+            passes++;
+            perPass.push(b | 0);
+        }
+    });
+    const redundant = (n = 10) => [...ran.entries()]
+        .filter((e) => e[1] > 1).map((e) => ({id: e[0], ran: e[1]}))
+        .sort((x, y) => y.ran - x.ran).slice(0, n);
+    const shortCircuited = (n = 10) => [...queued.entries()]
+        .map((e) => {
+            const r = ran.get(e[0]) ?? 0;
+            return {id: e[0], queued: e[1], ran: r, wasted: e[1] - r};
+        })
+        .filter((x) => x.wasted > 0).sort((x, y) => y.wasted - x.wasted).slice(0, n);
+    return {
+        stop: () => {
+            off();
+            return {passes, perPass: perPass.slice(), queued, ran};
+        },
+        passes: () => passes,
+        perPass: () => perPass.slice(),
+        queued, ran, redundant, shortCircuited,
+    };
+}
+
+// --- Steady-state allocation panel feed (1.4 counters; 1.6 flushPasses) ---------
+
+/**
+ * Time-series feed for a "the engine allocates nothing in steady state" panel
+ * (lite-studio). Samples the engine's own cumulative counters off the wall-clock
+ * scheduler (lite-time's `every`, NOT setInterval, and OUT of the reactive graph --
+ * a monitor must not instrument itself into what it measures, same rule as leakWatch).
+ *
+ * The two lines that ARE the moat -- `poolGrowthDelta` and `allocDelta` -- come from
+ * always-on engine counters (totalAllocations / poolGrowths, bumped in createNode /
+ * disposeNode regardless of any listener), so they are ALWAYS accurate: flat at 0 in
+ * steady state, and -- honestly -- `allocDelta` SPIKES under create/dispose churn (the
+ * engine pulling nodes from the pool, by design). The panel does not hide the handle-
+ * allocation cost; it shows the pool absorbing it (`poolGrowthDelta` stays 0).
+ *
+ * `recomputeDelta` (the work-done line that climbs under load) needs the mutation hook;
+ * `flushPassDelta` needs lite-signal >= 1.6 AND an attached hook (it advances only while
+ * observed). With the default `recomputes: true` both are live, because this feed
+ * attaches the op-5 listener itself. Set `recomputes: false` for the pure always-on moat
+ * lines with no hook attached.
+ *
+ * @param {(s:{ts:number, poolGrowthDelta:number, allocDelta:number, disposeDelta:number,
+ *            flushPassDelta:number, recomputeDelta:number, activeNodes:number,
+ *            activeLinks:number, totalAllocations:number, poolGrowths:number}) => void} cb
+ * @param {{sampleMs?:number, recomputes?:boolean}} [opts]  sampleMs: sample cadence
+ *        (default 250). recomputes: attach the op-5 recompute counter (default true).
+ * @returns {{stop:() => void}}  Idempotent stop; detaches the hook (if any) and the timer.
+ */
+export function watchAllocations(cb, {sampleMs = 250, recomputes = true} = {}) {
+    const base = stats();
+    let pAlloc = base.totalAllocations ?? 0, pDispose = base.totalDisposals ?? 0;
+    let pGrowth = base.poolGrowths ?? 0, pPasses = base.flushPasses ?? 0;
+
+    let recompute = 0, pRecompute = 0, offHook = null;
+    if (recomputes && HAS_HOOK) offHook = hubAdd((op) => {
+        if (op === 5) recompute++;
+    });
+
+    const cancel = every(sampleMs, () => {
+        const s = stats();
+        const alloc = s.totalAllocations ?? 0, dispose = s.totalDisposals ?? 0;
+        const growth = s.poolGrowths ?? 0, fpasses = s.flushPasses ?? 0;
+        cb({
+            ts: now(),
+            poolGrowthDelta: growth - pGrowth,      // 0 always, post-warmup -- the headline flat line
+            allocDelta: alloc - pAlloc,             // 0 steady; spikes under churn, by design
+            disposeDelta: dispose - pDispose,
+            flushPassDelta: fpasses - pPasses,      // requires >= 1.6 + an attached hook
+            recomputeDelta: recompute - pRecompute, // the line that climbs under load
+            activeNodes: s.activeNodes ?? ((s.signals | 0) + (s.computeds | 0) + (s.effects | 0)),
+            activeLinks: s.activeLinks ?? 0,
+            totalAllocations: alloc, poolGrowths: growth,   // cumulative -> "flat since boot"
+        });
+        pAlloc = alloc;
+        pDispose = dispose;
+        pGrowth = growth;
+        pPasses = fpasses;
+        pRecompute = recompute;
+    });
+    return {
+        stop: () => {
+            if (offHook !== null) offHook();
+            return cancel();
+        }
+    };
 }

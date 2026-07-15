@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-signal v1.3.0
+ * @zakkster/lite-signal v1.4.0
  * --------------------
  * Hybrid Doubly-Linked-List Reactive Graph Engine -- decoupled (Signal1_3) base
  * with the two 1.1.3 performance fixes ported in:
@@ -201,6 +201,7 @@ export class CapacityError extends Error {
  *        miss, not a single doubling burst -- so any one growth pause stays
  *        bounded; the capacity ledger still doubles (`stats()` semantics
  *        unchanged). Link growth is bounded by a hard ceiling of `maxLinks * 16`.
+ *        Each chunk increments `stats().poolGrowths`.
  * @param {number} [config.maxFlushPasses=100]       Cycle-protection: max effect-queue
  *                                                   drain passes before throwing an
  *                                                   Error prefixed `"CycleError:"`.
@@ -240,6 +241,13 @@ export function createRegistry(config) {
     let statSignals = 0;
     let statComputeds = 0;
     let statEffects = 0;
+    // 1.4: cumulative lifecycle counters for churn-rate observability (lite-devtools
+    // / lite-studio derive allocationRate, poolReuseRate, avg node lifetime from these).
+    // Monotonic across the registry's life; reset only by destroy(). Three integer
+    // bumps at existing chokepoints -- no new node fields, no hot-path cost.
+    let statTotalAllocations = 0;   // bumped on every createNode (pool pop OR fresh build)
+    let statTotalDisposals = 0;     // bumped on every disposeNode
+    let statPoolGrowths = 0;        // bumped when a node/link chunk pushes capacity past its ledger
 
     const effectQueueA = [];
     const effectQueueB = [];
@@ -259,35 +267,20 @@ export function createRegistry(config) {
     let nodeSeq = 1 | 0;
     let lifecycleCount = 0 | 0;
     const lifecycleMap = new WeakMap();
-
     function fireConnect(node) {
         const e = lifecycleMap.get(node);
         if (e === undefined || e.onConnect === undefined) return;
         const po = currentObserver, pt = isTrackingDeps;
-        currentObserver = null;
-        isTrackingDeps = false;
-        try {
-            e.onConnect();
-        } finally {
-            currentObserver = po;
-            isTrackingDeps = pt;
-        }
+        currentObserver = null; isTrackingDeps = false;
+        try { e.onConnect(); } finally { currentObserver = po; isTrackingDeps = pt; }
     }
-
     function fireDisconnect(node) {
         const e = lifecycleMap.get(node);
         if (e === undefined || e.onDisconnect === undefined) return;
         const po = currentObserver, pt = isTrackingDeps;
-        currentObserver = null;
-        isTrackingDeps = false;
-        try {
-            e.onDisconnect();
-        } finally {
-            currentObserver = po;
-            isTrackingDeps = pt;
-        }
+        currentObserver = null; isTrackingDeps = false;
+        try { e.onDisconnect(); } finally { currentObserver = po; isTrackingDeps = pt; }
     }
-
     let isFlushing = false;
 
     const flushErrorBuffer = [];
@@ -319,21 +312,18 @@ export function createRegistry(config) {
      *
      * @private
      */
-        // --- Graph-mutation hook (1.2.1 keystone prototype) ---------------------
-        // Single nullable listener; every fire point is `if (mutationHook !== null)`
-        // -- branch-predicted free when absent, allocation-free when present
-        // (opcode + two int args). Enables push-based devtools (watchGraph) and the
-        // recompute profiler. Opcodes: 1 node-create, 2 node-dispose, 3 link-add,
-        // 4 link-remove, 5 recompute.
+    // --- Graph-mutation hook (1.2.1 keystone prototype) ---------------------
+    // Single nullable listener; every fire point is `if (mutationHook !== null)`
+    // -- branch-predicted free when absent, allocation-free when present
+    // (opcode + two int args). Enables push-based devtools (watchGraph) and the
+    // recompute profiler. Opcodes: 1 node-create, 2 node-dispose, 3 link-add,
+    // 4 link-remove, 5 recompute.
     let mutationHook = null;
-
     function onGraphMutation(fn) {
         if (fn !== null && typeof fn !== "function") throw new TypeError("onGraphMutation: listener must be a function or null");
         const prev = mutationHook;
         mutationHook = fn;
-        return () => {
-            if (mutationHook === fn) mutationHook = prev;
-        };
+        return () => { if (mutationHook === fn) mutationHook = prev; };
     }
 
     function allocateLink(source, target) {
@@ -390,7 +380,16 @@ export function createRegistry(config) {
             if (linkPool.length > currentLinkCapacity) {
                 let doubled = currentLinkCapacity;
                 while (doubled < linkPool.length) doubled *= 2;
+                // The `> maxLinkLimit` arm is provably unreachable, retained as a clamp.
+                // Proof: maxLinkLimit === initialLinkCapacity * 16, currentLinkCapacity is
+                // only ever assigned a power-of-2 multiple of that same initial capacity,
+                // so 16x is ON the doubling chain (m, 2m, 4m, 8m, 16m). The guard above
+                // (`linkPool.length >= maxLinkLimit -> CapacityError`) plus the chunk math
+                // (`chunk = limit - linkPool.length`) cap linkPool.length AT maxLinkLimit,
+                // so `doubled` terminates at exactly 16m and can never exceed it.
+                /* c8 ignore next -- unreachable clamp; see proof above + COVERAGE-NOTES.md */
                 currentLinkCapacity = doubled > maxLinkLimit ? maxLinkLimit : doubled;
+                statPoolGrowths++;   // 1.4: link capacity ledger crossed
             }
         } else {
             link = freeLinkHead;
@@ -421,7 +420,12 @@ export function createRegistry(config) {
 
     /** Return a link to the free pool and unlink it from the source's sub list. @private */
     function freeLink(link, target, source) {
-        if (mutationHook !== null) mutationHook(4, link.source !== null ? link.source.id : -1, link.target !== null ? link.target.id : -1);
+        // Every caller (allocateLink sever, severTail, disposeNode dep-walk) passes a
+        // LIVE link: `source === link.source`, `target === link.target`. The 1.3.x
+        // `link.source !== null ? ... : -1` guards existed only to survive a cursor
+        // dangling at an already-freed link -- a state disposeNode's CURSOR REPAIR now
+        // makes unreachable. Reading the params directly is equivalent and branch-free.
+        if (mutationHook !== null) mutationHook(4, source.id, target.id);
         const pSub = link.prevSub;
         const nSub = link.nextSub;
         if (pSub !== null) pSub.nextSub = nSub; else source.headSub = nSub;
@@ -532,6 +536,17 @@ export function createRegistry(config) {
             if (pDep !== null) pDep.nextDep = nDep; else target.headDep = nDep;
             if (nDep !== null) nDep.prevDep = pDep; else target.tailDep = pDep;
 
+            // CURSOR REPAIR (1.4.0): `target` may be an observer that is MID-RUN with
+            // its re-tracking cursor parked on this very link -- it linked `source` on
+            // the previous run, has not reached that read yet on this one, and now
+            // disposes `source` from its own body. Splicing the link out and handing it
+            // to the free list would leave activeObserverCurrentDep dangling at a freed
+            // slot: severTail would then read a nulled prevDep, wipe target.headDep
+            // (orphaning every surviving dep), and double-free the link -- freeLink
+            // null-derefs on `source.headSub`. Advance the cursor to the next surviving
+            // dep instead. Disposal path only; no steady-state cost.
+            if (activeObserverCurrentDep === sLink) activeObserverCurrentDep = nDep;
+
             sLink.source = null;
             sLink.target = null;
             sLink.prevDep = null;
@@ -565,6 +580,7 @@ export function createRegistry(config) {
         node.nextFree = freeNodeHead;
         freeNodeHead = node;
         activeNodes = (activeNodes - 1) | 0;
+        statTotalDisposals++;   // 1.4: every node returned to the pool
     }
 
     /**
@@ -599,6 +615,7 @@ export function createRegistry(config) {
                 let doubled = currentNodesCapacity;
                 while (doubled < nodePool.length) doubled *= 2;
                 currentNodesCapacity = doubled;
+                statPoolGrowths++;   // 1.4: capacity ledger crossed
             }
         } else {
             node = freeNodeHead;
@@ -606,6 +623,7 @@ export function createRegistry(config) {
             node.nextFree = null;
         }
         activeNodes = (activeNodes + 1) | 0;
+        statTotalAllocations++;   // 1.4: every node acquired (pool pop or fresh build)
 
         // 1.2.3: Clean free-list invariant (Andrii's recommendation).
         //
@@ -625,8 +643,7 @@ export function createRegistry(config) {
         node.version = 0;
         node.evalVersion = 0;
         node.markEpoch = 0;
-        node.id = nodeSeq;
-        nodeSeq = (nodeSeq + 1) | 0;   // fresh identity per allocation (ported from 1.1.5)
+        node.id = nodeSeq; nodeSeq = (nodeSeq + 1) | 0;   // fresh identity per allocation (ported from 1.1.5)
 
         // Wire into Owner Context (lifecycle, not tracking -- keyed off currentOwner).
         // ONLY observers (computed/effect) are adopted: a re-running owner disposes
@@ -1000,10 +1017,7 @@ export function createRegistry(config) {
     // closures: set() is the hot write path (a closure over `node` beats the
     // this[NODE_PTR] load and keeps `const {set} = signal()` working), and peek()'s
     // body is too cheap to absorb the node recovery.
-    function sharedUpdate(fn) {
-        return this.set(fn(this[NODE_PTR].value));
-    }
-
+    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }
     function sharedSubscribe(fn) {
         const read = this;
         return effect(() => {
@@ -1017,7 +1031,6 @@ export function createRegistry(config) {
             }
         });
     }
-
     // Shared peeks (one per registry, not per primitive). Save one closure
     // allocation per signal/computed creation versus the previous per-instance
     // arrows. Method-invoked, so `this` is the read function and this[NODE_PTR]
@@ -1028,7 +1041,6 @@ export function createRegistry(config) {
         if (this[NODE_GEN] !== node.gen) return undefined;   // stale handle: slot recycled (ABA guard, matches read())
         return node.value;
     }
-
     function sharedComputedPeek() {
         const node = this[NODE_PTR];
         if (this[NODE_GEN] !== node.gen) return undefined;
@@ -1250,6 +1262,10 @@ export function createRegistry(config) {
     function batch(fn) {
         if (batchDepth === 0) {
             batchEpoch = (batchEpoch + 1) | 0;
+            // 2^32 wraparound sentinel: batchEpoch is bumped ONLY here (and reset to 1 by
+            // destroy()), so reaching 0 costs 4,294,967,295 top-level batch() calls. Kept
+            // because revertEpoch comparisons at 1071/1077 treat 0 as "no capture".
+            /* c8 ignore next -- 2^32 wraparound; unreachable without ~4.3e9 batches */
             if (batchEpoch === 0) batchEpoch = 1;
         }
         batchDepth = (batchDepth + 1) | 0;
@@ -1314,6 +1330,15 @@ export function createRegistry(config) {
     /**
      * Snapshot of registry counters. Useful for diagnostics and tests --
      * e.g. asserting that `activeNodes` returns to a baseline after teardown.
+     *
+     * Returns 11 keys: eight live gauges (`signals`, `computeds`, `effects`,
+     * `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`,
+     * `linkPoolCapacity`) plus three cumulative lifecycle counters added in 1.4.0
+     * (`totalAllocations`, `totalDisposals`, `poolGrowths`). The counters are
+     * monotonic over the registry's life and reset only by {@link destroy}; sample
+     * them over time to derive allocation rate, pool-reuse ratio, and graph churn
+     * without the engine computing rates itself. In a quiescent registry
+     * `totalAllocations - totalDisposals === activeNodes`.
      * @returns {RegistryStats}
      */
     function stats() {
@@ -1325,7 +1350,13 @@ export function createRegistry(config) {
             pooledLinks: currentLinkCapacity - activeLinks,
             linkPoolCapacity: currentLinkCapacity,
             nodePoolCapacity: currentNodesCapacity,
-            activeNodes
+            activeNodes,
+            // 1.4: cumulative lifecycle counters (monotonic; reset by destroy()).
+            // Derive: allocationRate = deltatotalAllocations/deltat; poolReuseRate =
+            // 1 - poolGrowths*initialCap/totalAllocations; avgLifetime ~ totalDisposals/rate.
+            totalAllocations: statTotalAllocations,
+            totalDisposals: statTotalDisposals,
+            poolGrowths: statPoolGrowths
         };
     }
 
@@ -1406,6 +1437,9 @@ export function createRegistry(config) {
         statSignals = 0;
         statComputeds = 0;
         statEffects = 0;
+        statTotalAllocations = 0;
+        statTotalDisposals = 0;
+        statPoolGrowths = 0;
 
         for (let i = 0; i < flushErrorCount; i++) flushErrorBuffer[i] = null;
         flushErrorCount = 0;
@@ -1416,7 +1450,6 @@ export function createRegistry(config) {
         const node = liveNode(handle);
         return node !== undefined && node.headSub !== null;
     }
-
     function observeObservers(handle, opts) {
         const node = liveNode(handle);
         if (node === undefined) throw new TypeError("observeObservers: argument is not a reactive handle");
@@ -1437,7 +1470,6 @@ export function createRegistry(config) {
             if (lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;
         };
     }
-
     function describeNode(node) {
         const fl = node.flags;
         const kind = (fl & FLAG_EFFECT) !== 0 ? "effect" : (fl & FLAG_COMPUTED) !== 0 ? "computed" : "signal";
@@ -1451,7 +1483,6 @@ export function createRegistry(config) {
         d[NODE_GEN] = node.gen;   // descriptors are re-walkable handles; stamp gen so the ABA guard holds for them too
         return d;
     }
-
     // Gen-guarded handle resolution (1.2.1): with the v1.2 owner tree, the
     // ENGINE recycles slots autonomously (owner re-run cascade-disposes owned
     // children), so stale handles are a normal occurrence -- introspecting the
@@ -1465,28 +1496,20 @@ export function createRegistry(config) {
         if (handle[NODE_GEN] !== node.gen) return undefined;   // stale: slot recycled
         return node;
     }
-
     function nodeId(handle) {
         const node = liveNode(handle);
         return node !== undefined ? node.id : undefined;
     }
-
     function describe(handle) {
         const node = liveNode(handle);
         return node !== undefined ? describeNode(node) : undefined;
     }
-
     function forEachObserver(handle, fn) {
         const node = liveNode(handle);
         if (node === undefined) return;
         let l = node.headSub;
-        while (l !== null) {
-            const nx = l.nextSub;
-            fn(describeNode(l.target));
-            l = nx;
-        }
+        while (l !== null) { const nx = l.nextSub; fn(describeNode(l.target)); l = nx; }
     }
-
     /** Iterate this node's OWNED children (v1.2 owner tree). Additive 1.3 API
      *  prototype: lets devtools/studio walk + render the ownership hierarchy
      *  (cascade-disposal domains), which is invisible through dep/sub edges. */
@@ -1494,52 +1517,22 @@ export function createRegistry(config) {
         const node = liveNode(handle);
         if (node === undefined) return;
         let c = node.firstOwned;
-        while (c !== null) {
-            const nx = c.nextOwned;
-            fn(describeNode(c));
-            c = nx;
-        }
+        while (c !== null) { const nx = c.nextOwned; fn(describeNode(c)); c = nx; }
     }
-
     /** Descriptor of this node's owner, or undefined (top-level / stale handle). */
     function ownerOf(handle) {
         const node = liveNode(handle);
         if (node === undefined || node.owner === null) return undefined;
         return describeNode(node.owner);
     }
-
     function forEachSource(handle, fn) {
         const node = liveNode(handle);
         if (node === undefined) return;
         let l = node.headDep;
-        while (l !== null) {
-            const nx = l.nextDep;
-            fn(describeNode(l.source));
-            l = nx;
-        }
+        while (l !== null) { const nx = l.nextDep; fn(describeNode(l.source)); l = nx; }
     }
 
-    return {
-        signal,
-        computed,
-        effect,
-        dispose,
-        batch,
-        untrack,
-        onCleanup,
-        stats,
-        destroy,
-        isTracking,
-        hasObservers,
-        observeObservers,
-        forEachObserver,
-        forEachSource,
-        forEachOwned,
-        ownerOf,
-        nodeId,
-        describe,
-        onGraphMutation
-    };
+    return {signal, computed, effect, dispose, batch, untrack, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};
 }
 
 // -----------------------------------------------------------------
@@ -1599,35 +1592,27 @@ export function destroy() {
 export function hasObservers(handle) {
     return defaultRegistry.hasObservers(handle);
 }
-
 export function observeObservers(handle, opts) {
     return defaultRegistry.observeObservers(handle, opts);
 }
-
 export function forEachObserver(handle, fn) {
     return defaultRegistry.forEachObserver(handle, fn);
 }
-
 export function forEachSource(handle, fn) {
     return defaultRegistry.forEachSource(handle, fn);
 }
-
 export function onGraphMutation(fn) {
     return defaultRegistry.onGraphMutation(fn);
 }
-
 export function forEachOwned(handle, fn) {
     return defaultRegistry.forEachOwned(handle, fn);
 }
-
 export function ownerOf(handle) {
     return defaultRegistry.ownerOf(handle);
 }
-
 export function nodeId(handle) {
     return defaultRegistry.nodeId(handle);
 }
-
 export function describe(handle) {
     return defaultRegistry.describe(handle);
 }

@@ -233,3 +233,121 @@ describe("onCapacityExceeded: grow (1.3.0)", () => {
         }, (e) => e instanceof CapacityError && e.kind === "links");
     });
 });
+
+// --- 1.4.0: cumulative lifecycle counters on stats() ------------------------
+describe("lifecycle counters (1.4.0)", () => {
+    it("stats() reports the 11-key 1.4.0 shape with all counters initially 0", () => {
+        const r = createRegistry();
+        const s = r.stats();
+        const expected = [
+            "signals", "computeds", "effects",
+            "activeNodes", "activeLinks", "pooledLinks",
+            "nodePoolCapacity", "linkPoolCapacity",
+            "totalAllocations", "totalDisposals", "poolGrowths"
+        ];
+        const keys = Object.keys(s);
+        assert.equal(keys.length, 11, "stats() exposes exactly 11 keys on 1.4.0");
+        for (const k of expected) {
+            assert.ok(k in s, `stats() must expose '${k}'`);
+        }
+        // Counters start at zero on a fresh registry.
+        assert.equal(s.totalAllocations, 0);
+        assert.equal(s.totalDisposals, 0);
+        assert.equal(s.poolGrowths, 0);
+    });
+
+    it("totalAllocations counts every node acquire (signal, computed, effect)", () => {
+        const r = createRegistry();
+        assert.equal(r.stats().totalAllocations, 0);
+        const a = r.signal(1);
+        assert.equal(r.stats().totalAllocations, 1, "after 1 signal");
+        const b = r.signal(2);
+        assert.equal(r.stats().totalAllocations, 2, "after 2 signals");
+        const c = r.computed(() => a() + b());
+        c();
+        assert.equal(r.stats().totalAllocations, 3, "after adding 1 computed");
+        const e = r.effect(() => c());
+        assert.equal(r.stats().totalAllocations, 4, "after adding 1 effect");
+        // Reading does not allocate; counter must not move.
+        a(); b(); c();
+        assert.equal(r.stats().totalAllocations, 4, "reads do not increment totalAllocations");
+        r.dispose(e); r.dispose(c); r.dispose(b); r.dispose(a);
+    });
+
+    it("totalDisposals counts every node dispose", () => {
+        const r = createRegistry();
+        const a = r.signal(1);
+        const b = r.signal(2);
+        const c = r.computed(() => a() + b());
+        c();
+        const e = r.effect(() => c());
+        assert.equal(r.stats().totalDisposals, 0, "no disposals yet");
+        r.dispose(e);
+        assert.equal(r.stats().totalDisposals, 1, "after disposing the effect");
+        r.dispose(c);
+        assert.equal(r.stats().totalDisposals, 2, "after disposing the computed");
+        r.dispose(b);
+        r.dispose(a);
+        assert.equal(r.stats().totalDisposals, 4, "after disposing both signals");
+    });
+
+    it("totalAllocations - totalDisposals === activeNodes across mixed churn", () => {
+        const r = createRegistry();
+        // Invariant must hold at every quiescent point through a mixed build/teardown.
+        const check = (label) => {
+            const s = r.stats();
+            assert.equal(
+                s.totalAllocations - s.totalDisposals,
+                s.activeNodes,
+                `${label}: alloc(${s.totalAllocations}) - disp(${s.totalDisposals}) === activeNodes(${s.activeNodes})`
+            );
+        };
+        check("start");
+        const a = r.signal(1);                          check("after 1 signal");
+        const b = r.signal(2);                          check("after 2 signals");
+        const c = r.computed(() => a() + b()); c();     check("after adding computed");
+        const e = r.effect(() => c());                  check("after adding effect");
+        r.dispose(e);                                   check("after disposing effect");
+        r.dispose(c);                                   check("after disposing computed");
+        // Cycle a few transient signals to exercise the recycle path.
+        for (let i = 0; i < 5; i++) {
+            const t = r.signal(i);
+            r.dispose(t);
+        }
+        check("after transient signal churn");
+        r.dispose(a); r.dispose(b);                     check("after final teardown");
+    });
+
+    it("poolGrowths increments when a 'grow' policy crosses the ledger", () => {
+        const r = createRegistry({maxNodes: 4, maxLinks: 16, onCapacityExceeded: "grow"});
+        assert.equal(r.stats().poolGrowths, 0, "starts at 0");
+        // 4 signals fit within the initial ledger -- no growth required.
+        const fit = [];
+        for (let i = 0; i < 4; i++) fit.push(r.signal(i));
+        assert.equal(r.stats().poolGrowths, 0, "still 0 while within initial ledger");
+        // 5th signal forces a node-pool growth chunk -> poolGrowths must bump.
+        const overflow = r.signal(99);
+        assert.ok(r.stats().poolGrowths >= 1, "poolGrowths bumps on first ledger crossing");
+        // The grown capacity is reflected in nodePoolCapacity.
+        assert.ok(r.stats().nodePoolCapacity > 4, "nodePoolCapacity grew past the initial ledger");
+    });
+
+    it("poolGrowths stays 0 on a right-sized eager pool, and destroy() resets all three", () => {
+        const r = createRegistry({maxNodes: 128, maxLinks: 512, prealloc: "eager"});
+        // Build a graph well within the eager pool -- no growth should occur.
+        const sigs = [];
+        for (let i = 0; i < 50; i++) sigs.push(r.signal(i));
+        const c = r.computed(() => sigs.reduce((acc, s) => acc + s(), 0));
+        c();
+        r.effect(() => c());
+        const before = r.stats();
+        assert.equal(before.poolGrowths, 0, "right-sized eager pool: no growth");
+        assert.ok(before.totalAllocations > 0, "totalAllocations should be > 0 before destroy");
+        // destroy() resets all three cumulative counters.
+        r.destroy();
+        const after = r.stats();
+        assert.equal(after.totalAllocations, 0, "destroy() resets totalAllocations");
+        assert.equal(after.totalDisposals, 0, "destroy() resets totalDisposals");
+        assert.equal(after.poolGrowths, 0, "destroy() resets poolGrowths");
+    });
+});

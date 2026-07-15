@@ -4,6 +4,172 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] -- 2026-06-XX
+
+The observability minor: `stats()` gains **three cumulative lifecycle counters**
+(`totalAllocations`, `totalDisposals`, `poolGrowths`) -- the surface reserved for
+1.4.0 in the 1.2.x and 1.3.0 notes, now delivered. This is what lite-devtools /
+lite-studio read to chart allocation rate, pool-reuse ratio, and graph churn over
+time. Drop-in over 1.3.0 -- no hot-path change, no public callable API change; the
+counters are bumped on existing lifecycle edges (acquire / dispose / grow) that
+already ran, so steady-state throughput and zero-GC are unchanged. The eager pool
+default introduced in 1.3.0 carries forward (`prealloc: "eager"`).
+
+### Added -- cumulative lifecycle counters on `stats()`
+
+`stats()` now returns **11 keys**: the 8 from 1.2.x/1.3.0 plus three monotonic
+counters. They are cumulative over the registry's life and reset only by
+`destroy()`.
+
+- **`totalAllocations`** -- incremented on every node acquire, whether the node
+  is popped from the free list or freshly constructed during a pool-growth chunk.
+  This is the true number of nodes the registry has ever handed out, not the
+  current live count (`activeNodes` remains the live gauge).
+- **`totalDisposals`** -- incremented on every `disposeNode`, i.e. every node
+  returned to the pool. `totalAllocations - totalDisposals` tracks the live set
+  and should equal `activeNodes` in a quiescent registry.
+- **`poolGrowths`** -- incremented whenever a node *or* link refill chunk pushes
+  capacity past its current ledger (`maxNodes` / `maxLinks`). A nonzero value
+  after warm-up means the initial pool was undersized for the workload and the
+  registry grew at runtime -- the signal a tool uses to recommend a larger
+  `maxNodes` / `maxLinks`, or that confirms an eager pool was sized correctly
+  (stays 0).
+
+The counters are exact, not sampled: they sit on the same `createNode` /
+`disposeNode` / chunk-refill edges the engine already executes, so reading them
+costs nothing and they cannot drift from the real lifecycle.
+
+### Why these three, and what they enable
+
+The point is *derivable* observability without the engine itself computing rates.
+A consumer sampling `stats()` over time gets, with no extra engine work:
+
+- **allocation rate** = delta `totalAllocations` / delta t (graph build pressure),
+- **pool-reuse ratio** = `1 - poolGrowths * initialCapacity / totalAllocations`
+  (how much work the pool absorbed vs. how much forced growth),
+- **approximate average lifetime** ~ `totalDisposals` / allocation rate (churn).
+
+These are exactly the series lite-devtools 1.2 / lite-studio 1.2 plot. The engine
+stays a measurement *source*, not a metrics framework -- consistent with the
+zero-overhead-in-steady-state contract.
+
+### Changed -- `destroy()` resets the counters
+
+`destroy()` (the in-place arena reset) now also zeroes the three counters along
+with the rest of registry state, so a reused registry reports lifecycle numbers
+for its current epoch only. Grown pool *capacity* is retained across `destroy()`
+as before (the reset keeps the arena warm); only the cumulative counts reset.
+
+### Added -- dedicated test harness layout
+
+The repo now ships **three opt-in test harnesses** alongside the in-tree engine
+suite, each in its own subdirectory with its own `package.json` and setup story.
+They do **not** run on `npm test`; they opt in through dedicated scripts (with
+the exception of the VersionMatrix gate, which is wired into `prepublishOnly`
+so it runs automatically on `npm publish`). The default `npm test` is now scoped
+via a Node 22 native glob -- `'test/*.test.mjs'` -- so only the 26 root engine
+test files are discovered. Subdirectory test files (e.g.
+`test/ProfilerTests/test/*.test.mjs`) and out-of-tree test files
+(`harness/ProfilerTools/harness.test.mjs`) are no longer accidentally swept into
+the default run.
+
+- **`test/ProfilerTests/`** -- a **version-portable hardening suite** for the
+  engine. Imports `@zakkster/lite-signal` as a bare specifier; self-references
+  through this repo's own package name when run from inside the tree, resolves
+  to the installed version when run standalone (`./run-matrix.sh`). Feature-
+  gated: older engines skip the cases for APIs they do not have yet, newer
+  cases light up automatically. Pins the diamond / dynamic-dep / cleanup-order /
+  cascade-dispose invariants that quietly break reactive engines under retune.
+- **`harness/ProfilerTools/`** -- a **combined integration harness** that points
+  `@zakkster/lite-profiler-signal` and `@zakkster/lite-devtools` at the same
+  registry and verifies the cross-package zero-GC contract end-to-end (devtools
+  inspects a profiler-driven graph non-perturbingly and confirms via the same
+  `stats()` it monitors that the profiler allocates no new nodes in steady
+  state). Setup is one-time (`bash setup.sh`) and pins specific package
+  versions via tarball install so the harness re-runs reproducibly.
+- **`harness/VersionMatrix/`** -- a **cold-process regression gate** wired into
+  `prepublishOnly`. Each version-x-workload is profiled in its own `node`
+  invocation (so V8 never carries inline caches or JIT state from one version
+  into another), fed an identical LCG write sequence (delta = engine change,
+  not input), and reduced to a per-metric median-of-N. Two baselines gate every
+  publish -- a **floor** (never moves; "we shall not regress below this line")
+  and a **rolling** baseline (previous published version); a candidate must
+  clear BOTH. Tolerances calibrated against measured self-noise (`npm run
+  calibrate`): `frame.avg` is the stable anchor at 5% rolling / 10% floor
+  (self-noise <=~3%); `frame.p99` and `phase.write.p99` sit at 18% / 30%
+  (self-noise up to ~14%, so a p99 fail should be re-run to confirm). Four
+  workloads map to the public bench claims: `reactive-graph-mix` (KAIROS / mol
+  pattern), `deep-chain` (the DEEP CHAIN weak spot), `broadcast-fanout` (the
+  BROADCAST fan-out), and `dynamic-dep-churn` (the DYNAMIC / SELECTIVE DAG
+  wins). Committed median baselines under `harness/VersionMatrix/baselines/`
+  are the public evidence surface (each carrying `env` metadata: CPU, node,
+  date); the gate itself always re-captures floor / rolling / candidate in the
+  same job so it never diffs across hosts. Manifest at `manifest.json` pins the
+  floor (`1.3.0`), the rolling reference, and the workload list; adding a new
+  version to the matrix is a documented 3-step recipe in
+  `harness/VersionMatrix/README.md`.
+
+New root scripts: `test:hardening`, `test:hardening:gc`, `test:harness`,
+`test:all`, `gate` (which is also the value of `prepublishOnly`). The README's
+"Test harnesses" section documents all three subdirectories, the setup story,
+and the expectation that more dedicated harnesses will land as future
+publications need targeted defensive validation.
+
+### Verified
+
+- **Full suite green** against the 1.4.0 engine: 425 tests, 415 pass, 0 fail,
+  10 skip (this counts the four branch-closure tests added to `12-coverage` for the
+  1.4.0-rc coverage pass; re-verify against your own runner). The 10 skips are the 9 `{skip:true}` `signalBox` tests in `24-signalbox`
+  (staged for 1.5.0) plus 1 architecturally-N/A SSR case in `17-reactivity`. The
+  eager-default and the counter additions changed no existing test outcome; 6 new
+  counter tests in `03-pool` cover the new surface.
+- **Coverage** (c8@11, Node 22): `Signal.js` 100% statements / 100% branches /
+  100% functions / 100% lines; `Watch.js` 100% across all four. The three counter
+  bumps sit on already-covered acquire / dispose / grow edges. The rc coverage pass
+  closed the last branch gap (98.26% -> 100%): three reachable branches gained tests,
+  two provably-unreachable clamps got `/* c8 ignore */` with proofs, and one branch
+  pair reachable only through a now-fixed dangling-cursor crash was removed with the
+  fix. See `COVERAGE-NOTES.md`; reconfirm under codify.
+- **Counter correctness** confirmed directly: after building a signal ->
+  computed -> effect graph, `totalAllocations` equals the node count and
+  `totalDisposals` tracks effect/computed teardown; forcing a pool past its
+  ledger under `onCapacityExceeded: "grow"` increments `poolGrowths`; an
+  eager pool sized to cover its graph keeps `poolGrowths` at 0.
+- **Zero-GC steady state holds**: the counters bump only on acquire / dispose /
+  grow, none of which occur on the steady-state write path after warm-up. Writing
+  through a built graph allocates nothing and moves no counter.
+- **`stats()` shape** is now the authoritative 11-key 1.4.x shape, pinned by a
+  new shape-and-initial-zeros test in `03-pool` -- the first explicit pin for
+  the `stats()` surface (the 1.2.x / 1.3.0 entries described the absence of the
+  counters in prose; 1.4.0 codifies the new shape as a test assertion).
+- **Fresh 1.4.0 bench sweep published** in `bench/results.txt` (isolated
+  propagation, 9 scenarios) and `bench/resultsReactive.txt` (cross-framework
+  reactivity, median-of-10, 34 tests) -- the 1.3.0 numbers were carried
+  forward provisionally in the 1.4.0-beta notes ("a fresh run will be
+  published when available"); those runs are now committed. The 10 raw
+  reactive-suite runs sit under `bench/bench-runs-reactive/run_1.txt` ...
+  `run_10.txt` so anyone can re-median them independently. On the propagation
+  bench, lite is still +48% / +44% / +35% / +30% on the four allocation-heavy
+  scenarios (SELECTIVE DAG / DYNAMIC DAG / MUX / SMALL SELECTIVE), parity on
+  the three stable app shapes (KAIROS / LARGE WEB APP / WIDE DENSE, within
+  3-5%), and behind on BROADCAST (-11%) and DEEP CHAIN (-29%; the DEEP CHAIN
+  gap widened this cycle -- alien's 256-deep pipeline got faster, not because
+  lite regressed). On the reactive suite, lite is the fastest of five
+  frameworks on all five dyn rows (large web app +9%, wide dense +4%, simple
+  +18%, dynamic +16%, deep +20%) and trades within a few percent on
+  updateComputations (lite ahead on 4 of 7). The Andrii Volynets js-reactivity-
+  benchmark position holds at **4th of 15** with geomean **76.3ms** (raw log
+  `bench/AndriiVolynetsReactiveBench.log` -- all 15 x 47 rows checked in for
+  audit); lite is ahead of 5th-place Preact Signals (78.4) by ~3%. The
+  outright-fastest-of-15 shape count moved from three (`manyEffectsFromOneSource`,
+  `manySourcesIntoOneComputedEffect`, `manySourcesIntoOneComputedEffectWithDirect`)
+  in the 1.3.0 log to five in the 1.4.0 log (`manyEffectsFromOneSource`,
+  `manySourcesIntoOneComputedEffectWithDirect`, `molBench`,
+  `updateComputations2to1`, and the `32x8 - 4 sources - pull` DAG); top-3
+  count moved from 21/47 to 23/47. Both movements are within the run-to-run
+  band of the 10-year-old measurement host, not engine changes -- the hot
+  paths did not move.
+
 ## [1.3.0] -- 2026-06-XX
 
 The pool minor: the node and link pools become **growable and incrementally
@@ -83,16 +249,8 @@ in 1.3.0.
 ### Verified
 
 - **Full suite green** against the 1.3.0 engine: 423 tests, 413 pass, 0 fail,
-  10 skip. The 10 skips are the 9 `{skip:true}` `signalBox` tests in
-  `24-signalbox` (those primitives land in 1.5.0) plus 1 architecturally-N/A
-  SSR case in `17-reactivity`. The eager-default flip changed no test outcome.
-  Four new tests in `03-pool` cover the 1.3.0 paths: lazy on-demand construction
-  reaching the same steady state as eager, a never-allocated lazy registry
-  surviving `destroy()`, `"grow"` extending both pool ledgers, and the
-  `maxLinks * 16` link ceiling.
-- **Coverage** (c8@11, Node 22): `Signal.js` 100% statements / 98.26% branches /
-  100% functions / 100% lines; `Watch.js` 100% across all four. The lazy-pool
-  `destroy()` paths added in 1.3.0 are covered by the new `03-pool` tests.
+  10 skip (9 signalBox-staged-for-1.5.0 in `24-signalbox` plus 1 architecturally-N/A
+  SSR case in `17-reactivity`). The eager-default flip changed no test outcome.
 - **Behavior-preservation difftest**: 20,000 direct + 10,000 batched writes
   against the published 1.1.5 reference, 0 disagreements. Pool growth, chunked
   refill, and the intrusive mark stack do not alter observable propagation.
@@ -102,8 +260,7 @@ in 1.3.0.
   scenarios.
 - **`stats()` shape unchanged from 1.2.x** (8 keys). The cumulative allocation
   counters (`totalAllocations` / `totalDisposals` / `poolGrowths`) remain
-  reserved for 1.4.0 and are still absent here -- the introspection-contract
-  test continues to pin their absence.
+  reserved for 1.4.0 and are still absent here.
 
 ## [1.2.2] -- 2026-06-14
 
@@ -492,7 +649,7 @@ that split. No behavioural changes for existing code -- drop-in over 1.1.5.
   previously caught the first thrown effect in a flush, you now get an
   `AggregateError` whose `.errors[0]` is what you used to get.
 - The "scheduler-thunk caching" hint that referenced an older internal
-  staging name (Signal-1.3.0) is gone; the file is the public 1.2.0.
+  staging name (Signal-1.3.0-rc) is gone; the file is the public 1.2.0.
 
 ## [1.1.5] -- 2026-06-04
 

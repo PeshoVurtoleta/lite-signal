@@ -50,10 +50,65 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
 
 ## Version notes
 
-- **1.3.0** (current): the **pool minor**. Node and link pools become growable
-  and incrementally populated; the propagation mark phase moves to an intrusive
-  linked-list stack; a small registry config surface is exposed. **The hot paths
-  and public callable API are byte-identical to 1.2.2** -- everything here is
+- **1.4.0-beta** (current): the **observability minor**. `stats()` gains three
+  cumulative lifecycle counters -- `totalAllocations`, `totalDisposals`,
+  `poolGrowths` -- the surface reserved for 1.4.0 in the 1.2.x/1.3.0 notes, now
+  delivered. **The hot paths and public callable API are byte-identical to 1.3.0**;
+  the counters bump on existing acquire / dispose / pool-grow edges that already
+  ran, never on the steady-state read path, so throughput and zero-GC are
+  unchanged. The 1.3.0 eager pool default carries forward (`prealloc: "eager"`).
+  **`stats()` now returns 11 keys** (the 8 live gauges plus the 3 counters).
+  `totalAllocations` counts every node acquired (pool pop OR fresh build);
+  `totalDisposals` counts every node returned to the pool, with
+  `totalAllocations - totalDisposals === activeNodes` in a quiescent registry;
+  `poolGrowths` counts pool-growth chunks (node OR link crossing its ledger) --
+  nonzero after warm-up means the initial pool was undersized, 0 means an eager pool
+  was sized right. All three are monotonic and reset only by `destroy()`. They are
+  exact, not sampled: a consumer sampling `stats()` over time derives allocation
+  rate (delta totalAllocations / delta t), pool-reuse ratio
+  (1 - poolGrowths*initialCap/totalAllocations), and churn without the engine
+  computing rates -- the series lite-devtools 1.2 / lite-studio 1.2 plot. **Tests:**
+  425 total, 415 pass, 0 fail, 10 skip (6 counter tests in `test/03-pool.test.mjs`
+  cover the 11-key shape, the live invariant, poolGrowths firing on growth vs staying
+  0 on a sized eager pool, and destroy() reset; the 1.4.0-rc coverage pass added four
+  branch-closure tests to `test/12-coverage.test.mjs`). **Coverage:** `Signal.js` 100%
+  statements / 100% branches / 100% functions / 100% lines; `Watch.js` 100%
+  (re-verify against your own runner).
+  **Test layout in 1.4.0:** the repo now ships three opt-in harness subdirectories
+  -- `test/ProfilerTests/` (version-portable engine hardening, feature-gated, runs
+  via `npm run test:hardening`), `harness/ProfilerTools/` (combined
+  profiler+devtools integration, one-time `bash setup.sh`, runs via `npm run
+  test:harness`), and `harness/VersionMatrix/` (see next paragraph). The default
+  `npm test` is scoped to `'test/*.test.mjs'` (Node 22 native glob) so subdirectory
+  and out-of-tree test files are no longer swept in. Drop-in over 1.3.0.
+  **VersionMatrix regression gate (`harness/VersionMatrix/`):** a same-host,
+  cold-process performance gate wired into `prepublishOnly` -- a candidate that
+  regresses beyond calibrated tolerances aborts `npm publish` before it starts.
+  Each version-x-workload is profiled in its own `node` invocation (V8 never
+  carries inline caches or JIT state across versions), fed an identical LCG write
+  sequence (delta = engine change, not input), and reduced to a per-metric
+  median-of-N (default 5). **Two baselines: a `floor` (never moves) and a
+  `rolling` (previous published version) baseline**; a candidate must clear BOTH.
+  Tolerances calibrated against measured self-noise (`npm run calibrate`):
+  `frame.avg` is the stable anchor at 5% vs rolling / 10% vs floor (self-noise
+  <=~3%); `frame.p99` and `phase.write.p99` sit at 18% / 30% (self-noise up to
+  ~14%, so a p99 fail should be re-run to confirm). Four workloads map to the
+  public bench claims: `reactive-graph-mix` (kairo/mol pattern), `deep-chain`
+  (the DEEP CHAIN weak spot), `broadcast-fanout` (the BROADCAST fan-out), and
+  `dynamic-dep-churn` (the DYNAMIC / SELECTIVE DAG wins). Committed median
+  baselines under `harness/VersionMatrix/baselines/<version>/*.json` carry `env`
+  metadata (CPU, node, date) as public evidence; the gate itself always
+  re-captures floor / rolling / candidate in the same job so it never diffs
+  across hosts. Commands: `npm run gate` (prepublish), `npm run calibrate`
+  (measure self-noise), `bash matrix.sh gate <version>` (published candidate),
+  `node diff.mjs` (diagnostic over committed baselines). Details in
+  `harness/VersionMatrix/README.md`.
+
+- **1.3.0** (drop-in over 1.2.2): the **pool minor**. Node and link pools become
+  growable and incrementally populated; the propagation mark phase moves to an
+  intrusive linked-list stack (a `nextMark` field); a small registry config surface
+  (`prealloc`, `onCapacityExceeded`, `maxFlushPasses`) is exposed. The hot paths and
+  public callable API are byte-identical to 1.2.2 -- everything here is
   pool mechanics, construction-time behavior, and new opt-in config. Steady-state
   zero-GC is unchanged: after warm-up the pools recycle exactly as before.
   **`prealloc` (`"eager"` default | `"lazy"`):** `"eager"` constructs the full
@@ -82,31 +137,47 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   allocation counters (`totalAllocations` / `totalDisposals` / `poolGrowths`) remain
   reserved for 1.4.0 and are still absent. **Tests:** 423 total, 413 pass, 0 fail,
   10 skip (the 10 skips are 9 signalBox-staged-for-1.5.0 in
-  `test/24-signalbox_test.mjs` plus 1 architecturally-N/A SSR case in
-  `17-reactivity`); 4 new pool tests in `test/03-pool_test.mjs` cover the lazy
+  `test/24-signalbox.test.mjs` plus 1 architecturally-N/A SSR case in
+  `17-reactivity`); 4 new pool tests in `test/03-pool.test.mjs` cover the lazy
   on-demand / never-allocated-destroy / grow-extends-ledger / link-ceiling paths.
-  **Coverage** (c8@11, Node 22): `Signal.js` 100% statements / 98.26% branches /
-  100% functions / 100% lines; `Watch.js` 100% across all four. Behavior-
+  **Coverage** (c8@11, Node 22): `Signal.js` 100% statements / 100% branches /
+  100% functions / 100% lines; `Watch.js` 100% across all four (rc coverage pass;
+  reconfirm under codify). Behavior-
   preservation difftest: 20,000 direct + 10,000 batched writes vs the published
   1.1.5 reference, 0 disagreements -- pool growth, chunked refill, and the intrusive
   mark stack do not alter observable propagation. Drop-in over 1.2.2.
   **Bench position** (third-party
   [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark),
-  15 frameworks, 47 tests): #4 by geomean (75.5) at 1.77x behind alien-signals
-  (1.00x), reflex (1.15x), @reactively (1.39x); now ahead of 5th-place Preact
-  Signals (79.2, lite ~5% ahead -- the gap widened from 1.2.x). The only
+  15 frameworks, 47 tests; fresh 1.4.0 run, raw log
+  `bench/AndriiVolynetsReactiveBench.log`): #4 by geomean (76.3) at 1.75x behind
+  alien-signals (1.00x, 43.7), reflex (1.09x, 47.5), @reactively (1.28x, 56.0);
+  ahead of 5th-place Preact Signals (78.4, lite ~3% ahead). The only
   object-pooled zero-GC engine in the field. Ahead of @vue/reactivity (1.5x),
-  Signia (1.7x), MobX (2.3x), @solidjs/signals (2.7x), SolidJS (4.2x). Top-3 on
-  21/47 tests; outright winner on `manyEffectsFromOneSource`,
-  `manySourcesIntoOneComputedEffect`, and
-  `manySourcesIntoOneComputedEffectWithDirect` (and edges the leader alien on a
-  fourth, the 1-source linear-chain pull). (The suite measures reactivity
-  libraries -- Vue reactivity core, MobX, Solid, Preact Signals -- not full UI
-  frameworks like React/Angular.)
-  In the community reactive suite (median-of-10), fastest of 5 frameworks
-  on the entire `dyn:*` family (the realistic large-DOM-framework shapes)
-  and the entire `S: updateComputations*` family. Behind on the
-  construction-cost path (`S: createComputations*`, `cellx`, `createDataSignals`).
+  Signia (1.7x), MobX (2.2x), @solidjs/signals (2.7x), SolidJS (4.1x). Top-3 on
+  23/47 tests; outright winner (rank 1 of all 15) on FIVE shapes:
+  `manyEffectsFromOneSource` (1 source -> many effects, fan-out),
+  `manySourcesIntoOneComputedEffectWithDirect` (many sources -> one computed,
+  fan-in), `molBench` (mixed app graph -- the suite's realistic-workload proxy),
+  `updateComputations2to1` (steady-state update micro), and the `32x8 - 4
+  sources - pull` rectangular DAG. Rank 2 on another six shapes
+  (broadPropagation, deepPropagation, diamond, mux, unstable propagation, plus
+  `manySourcesIntoOneComputedEffect`, `10x5 read 20%` simple component, and
+  `1000x5 25 sources` wide dense). (The suite measures reactivity libraries --
+  Vue reactivity core, MobX, Solid, Preact Signals -- not full UI frameworks
+  like React/Angular.)
+  In the community reactive suite (median-of-10, raw runs in
+  `bench/bench-runs-reactive/run_1.txt` ... `run_10.txt`), fastest of 5
+  frameworks on the entire `dyn:*` family (the realistic large-DOM-framework
+  shapes): dyn: simple 428.89ms (+18% vs alien), dynamic 309.76ms (+16%), large
+  web app 536.93ms (+9%), wide dense 889.98ms (+4%), deep 312.08ms (+20%).
+  Trade the lead with alien on the `S: updateComputations*` family within a few
+  percent (lite ahead on 4/7 rows). Behind on the construction-cost path
+  (`S: createComputations*`, `cellx`, `createDataSignals`).
+  1.3.0 -> 1.4.0 changed no hot-path bytes (only added the three `stats()`
+  counters, all on existing acquire/dispose/pool-grow edges); the deltas from
+  the 1.3.0 sweep are within run-to-run noise on the 10-year-old measurement
+  host. All five dyn rows moved slightly in lite's favor this cycle -- host
+  noise, not an engine speedup.
 
 - **1.2.2**: `createNode` clean-free-list invariant audit. Removes
   ten redundant field-writes that defended against a state the engine cannot
@@ -118,17 +189,17 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   the `ReactiveNode` constructor initializes them to the same values on the
   fresh-pool-growth path -- so the redundant writes in `createNode` were
   defense against a state that cannot exist. **No public surface change, no
-  semantic change.** New `test/26-free-list-invariant_test.mjs` (3 invariant
+  semantic change.** New `test/26-free-list-invariant.test.mjs` (3 invariant
   tests + 1 targeted coverage test for the swallow-on-self-dispose-then-throw
   branch in `pullComputed`) asserts the invariant directly by inspecting
   freshly-allocated nodes via the documented `describe()` -> `NODE_PTR`
-  introspection protocol; new `test/25-devtools-real-boot_test.mjs` (10 tests)
+  introspection protocol; new `test/25-devtools-real-boot.test.mjs` (10 tests)
   boots the actual `Devtools.js` against the 1.2.2 engine and pins the 1.2.x
   introspection contract for downstream tooling, including the 8-key
   `stats()` shape (`signals`, `computeds`, `effects`, `activeNodes`,
   `activeLinks`, `pooledLinks`, `nodePoolCapacity`, `linkPoolCapacity`).
   408 tests total: 398 pass, 10 skip, 0 fail (the 10 skips are 9
-  signalBox-staged-for-1.5.0 in `test/24-signalbox_test.mjs` plus 1
+  signalBox-staged-for-1.5.0 in `test/24-signalbox.test.mjs` plus 1
   architecturally-N/A SSR case in `17-reactivity`). Coverage on `Signal.js`:
   100% statements / 98.43% branches / 100% functions / 100% lines; `Watch.js`
   100% across all four (c8@11, Node 22) -- a branch-coverage gain over the
@@ -214,7 +285,7 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   own `{ id, kind, value }` descriptor, **re-walkable** (pass it back into
   `forEachObserver`/`forEachSource` to walk the full DAG); `forEach*` descriptors now carry
   `id`. One SMI write at allocation, node shape kept monomorphic -- **zero steady-state
-  cost**. Drop-in over 1.1.4, no breaking changes. New `test/18-identity_test.mjs` (5 tests); plus `14-lifecycle-teardown`, `16-alien-parity`, and the `17-reactivity` behavioral suite.
+  cost**. Drop-in over 1.1.4, no breaking changes. New `test/18-identity.test.mjs` (5 tests); plus `14-lifecycle-teardown`, `16-alien-parity`, and the `17-reactivity` behavioral suite.
 
 - **1.1.4**: combined release -- a retracking rewrite plus an observer-lifecycle
   introspection surface. Drop-in over 1.1.3. **Retracking:** version-stamped O(1)
@@ -225,7 +296,7 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   wide dense` 5115ms->912ms (verified by `retracking.difftest.mjs`: 20k direct + 10k batched, 0
   disagreements; no regressions elsewhere). **Introspection:** `hasObservers`,
   `observeObservers`, `forEachObserver`, `forEachSource` (top-level + per-registry), gated by
-  an internal counter so zero steady-state cost when unused. New `test/13-introspection_test.mjs`
+  an internal counter so zero steady-state cost when unused. New `test/13-introspection.test.mjs`
   (10 tests). Internally staged as 1.1.4 + 1.1.5; ships as a single 1.1.4.
 
 - **1.1.3**: adds `isTracking()` (top-level + per-registry). Returns true iff a
@@ -321,15 +392,18 @@ interface RegistryConfig {
   onCapacityExceeded?: "throw" | "grow";  // default "throw"; "grow" = chunked refill, ledger doubles, 16x link ceiling
 }
 
-interface RegistryStats {
+interface RegistryStats {            // 11 keys as of 1.4.0
   signals: number;
   computeds: number;
   effects: number;
   activeLinks: number;
   pooledLinks: number;
-  linkPoolCapacity: number;
-  nodePoolCapacity: number;
-  activeNodes: number;
+  linkPoolCapacity: number;          // ledger; doubles under "grow"
+  nodePoolCapacity: number;          // ledger; doubles under "grow"
+  activeNodes: number;               // live gauge
+  totalAllocations: number;          // 1.4.0: cumulative node acquires; reset by destroy()
+  totalDisposals: number;            // 1.4.0: cumulative node disposals; totalAllocations - totalDisposals === activeNodes
+  poolGrowths: number;               // 1.4.0: cumulative pool-growth chunks; 0 if eager pool sized right
 }
 
 class CapacityError extends Error {
@@ -497,32 +571,34 @@ function dumpOwnerTree(handle, depth = 0) {
 
 - `Signal.js`              -- full implementation, single file.
 - `Signal.d.ts`          -- TypeScript declarations for all public API.
-- `test/01-core_test.mjs`     -- signal/computed/effect basics, equality, untrack.
-- `test/02-topology_test.mjs` -- diamonds, chains, fan-out/in, cycle detection.
-- `test/03-pool_test.mjs`     -- capacity errors, grow policy, pool reuse.
-- `test/04-zero-gc_test.mjs`  -- heap retention (run with --expose-gc).
-- `test/05-scheduler_test.mjs` -- scheduler races, dispose, gen counter, version wrap.
-- `test/06-nested-objects_test.mjs` -- nested-object & reference-identity behaviours.
-- `test/07-dispose_test.mjs` -- universal disposal: registry.dispose(api).
-- `test/08-watch_test.mjs` -- new watch reactivity tests.
-- `test/09-conformance_test.mjs` -- johnsoncodehk/reactive-framework-test-suite conformance fixes tests.
-- `test/10-is-tracking_test.mjs` -- `isTracking()` across observer bodies, untracked windows, and outside any observer.
-- `test/11-adopted-reactive_test.mjs` -- engine-agnostic edge cases adopted from the wider ecosystem (alien-signals link-integrity #226-228, equality-predicate corners, `update()`/`peek()`/`subscribe` contracts).
-- `test/12-coverage_test.mjs` -- targeted public-surface + hot-path branch coverage (top-level routing, clean-read short-circuit, tail severance, scheduler ABA); owner-tree block capability-gated.
-- `test/13-introspection_test.mjs` -- observer-lifecycle surface: `hasObservers`, `observeObservers` auto-pause, `forEach*` enumeration (10 tests).
-- `test/14-lifecycle-teardown_test.mjs` -- effect-teardown guards: stopped effect doesn't re-subscribe to a signal read later in the same run, self-dispose leaves no orphan link, throwing setup leaves no live subscription (4 tests).
-- `test/15-owner-lazy-alloc_test.mjs` -- owner-adoption contract for the 1.2.0 owner tree (lazy signals never adopted; observers still auto-disposed); capability-gated, skipped on 1.1.x (4 tests).
-- `test/16-alien-parity_test.mjs` -- differential guards vs alien-signals@3.2.0 fixed-bug classes: cleanup reads create no deps, inner write doesn't block computed-chain propagation, dynamic dep-set correct under dirty-check (3 tests).
-- `test/17-reactivity_test.mjs` -- behavioral suite over universal signal-system bug classes (subscription lifecycle, cleanup ordering, stale-dep tracking, batching, equality, nested invalidation, memory, sync async-boundary, scheduler/loops, + differential-review additions); SSR is N/A (~30 tests).
-- `test/18-identity_test.mjs` -- node identity (1.1.5): `nodeId`/`describe`, descriptor `id`, re-walkable descriptors, non-perturbing (5 tests).
-- `test/19-v12-additions_test.mjs` -- 1.2.0 surface coverage: shared-peek, owner-adoption rule, pre-batch revert (24 tests).
-- `test/20-axis-stress_test.mjs` -- eight orthogonal stress axes (batch-under-exception, connect/disconnect re-entrancy, untrack vs owner cascade, etc.) (23 tests).
-- `test/21-perf-pins_test.mjs` -- 1.2.1 construction-shape + ABA-guard pins (6 tests).
-- `test/22-mutation-hook_test.mjs` -- 1.2.1 `onGraphMutation` registration + opcode emission (12 tests).
-- `test/23-owner-introspection_test.mjs` -- `ownerOf`, `forEachOwned`, gen-guarded introspection (14 tests).
-- `test/24-signalbox_test.mjs` -- staged for 1.5.0; all tests `{skip: true}` on 1.2.x.
-- `test/25-devtools-real-boot_test.mjs` -- 1.2.2: real `Devtools.js` boot against the engine, ghost-contract pin, `stats()` shape pin (10 tests).
-- `test/26-free-list-invariant_test.mjs` -- 1.2.2: the audit's clean-free-list invariant, asserted by inspecting freshly-allocated nodes (4 tests).
+- `test/01-core.test.mjs`     -- signal/computed/effect basics, equality, untrack.
+- `test/02-topology.test.mjs` -- diamonds, chains, fan-out/in, cycle detection.
+- `test/03-pool.test.mjs`     -- capacity errors, grow policy, pool reuse.
+- `test/04-zero-gc.test.mjs`  -- heap retention (run with --expose-gc).
+- `test/05-scheduler.test.mjs` -- scheduler races, dispose, gen counter, version wrap.
+- `test/06-nested-objects.test.mjs` -- nested-object & reference-identity behaviours.
+- `test/07-dispose.test.mjs` -- universal disposal: registry.dispose(api).
+- `test/08-watch.test.mjs` -- new watch reactivity tests.
+- `test/09-conformance.test.mjs` -- johnsoncodehk/reactive-framework-test-suite conformance fixes tests.
+- `test/10-is-tracking.test.mjs` -- `isTracking()` across observer bodies, untracked windows, and outside any observer.
+- `test/11-adopted-reactive.test.mjs` -- engine-agnostic edge cases adopted from the wider ecosystem (alien-signals link-integrity #226-228, equality-predicate corners, `update()`/`peek()`/`subscribe` contracts).
+- `test/12-coverage.test.mjs` -- targeted public-surface + hot-path branch coverage (top-level routing, clean-read short-circuit, tail severance, scheduler ABA); owner-tree block capability-gated.
+- `test/13-introspection.test.mjs` -- observer-lifecycle surface: `hasObservers`, `observeObservers` auto-pause, `forEach*` enumeration (10 tests).
+- `test/14-lifecycle-teardown.test.mjs` -- effect-teardown guards: stopped effect doesn't re-subscribe to a signal read later in the same run, self-dispose leaves no orphan link, throwing setup leaves no live subscription (4 tests).
+- `test/15-owner-lazy-alloc.test.mjs` -- owner-adoption contract for the 1.2.0 owner tree (lazy signals never adopted; observers still auto-disposed); capability-gated, skipped on 1.1.x (4 tests).
+- `test/16-alien-parity.test.mjs` -- differential guards vs alien-signals@3.2.0 fixed-bug classes: cleanup reads create no deps, inner write doesn't block computed-chain propagation, dynamic dep-set correct under dirty-check (3 tests).
+- `test/17-reactivity.test.mjs` -- behavioral suite over universal signal-system bug classes (subscription lifecycle, cleanup ordering, stale-dep tracking, batching, equality, nested invalidation, memory, sync async-boundary, scheduler/loops, + differential-review additions); SSR is N/A (~30 tests).
+- `test/18-identity.test.mjs` -- node identity (1.1.5): `nodeId`/`describe`, descriptor `id`, re-walkable descriptors, non-perturbing (5 tests).
+- `test/19-v12-additions.test.mjs` -- 1.2.0 surface coverage: shared-peek, owner-adoption rule, pre-batch revert (24 tests).
+- `test/20-axis-stress.test.mjs` -- eight orthogonal stress axes (batch-under-exception, connect/disconnect re-entrancy, untrack vs owner cascade, etc.) (23 tests).
+- `test/21-perf-pins.test.mjs` -- 1.2.1 construction-shape + ABA-guard pins (6 tests).
+- `test/22-mutation-hook.test.mjs` -- 1.2.1 `onGraphMutation` registration + opcode emission (12 tests).
+- `test/23-owner-introspection.test.mjs` -- `ownerOf`, `forEachOwned`, gen-guarded introspection (14 tests).
+- `test/24-signalbox.test.mjs` -- staged for 1.5.0; all tests `{skip: true}` on 1.2.x.
+- `test/25-devtools-real-boot.test.mjs` -- 1.2.2: real `Devtools.js` boot against the engine, ghost-contract pin, `stats()` shape pin (10 tests).
+- `test/26-free-list-invariant.test.mjs` -- 1.2.2: the audit's clean-free-list invariant, asserted by inspecting freshly-allocated nodes (4 tests).
+- `test/ProfilerTests/`        -- version-portable engine hardening suite. Own `package.json`, own `node:test`. Imports `@zakkster/lite-signal` as bare specifier; self-references in-tree, resolves to the installed version when run standalone. Feature-gated cases activate automatically as the engine gains APIs. Run via `npm run test:hardening` (in-tree) or `./run-matrix.sh` (standalone matrix vs published lines).
+- `harness/ProfilerTools/`     -- combined integration harness: `@zakkster/lite-profiler-signal` + `@zakkster/lite-devtools` pointed at the same lite-signal registry. Verifies the cross-package zero-GC contract end-to-end (devtools inspects a profiler-driven graph non-perturbingly; the profiler allocates no new nodes in steady state). Own `package.json`, one-time setup via `bash setup.sh` (pins peer deps via tarball). Run via `npm run test:harness`. Both harnesses are opt-in: `npm test` from root is scoped to `'test/*.test.mjs'` and does NOT sweep them.
 - `bench/benchmark.mjs`       -- anti-DCE throughput harness (ops/s; results.txt).
 - `bench/benchmarkReactive.mjs` -- cross-framework reactivity suite vs alien-signals, preact, vue-reactivity, solid (resultsReactive.txt).
 - `bench/dispose-recycle.mjs` -- 1.2.2 targeted microbench: create/dispose/recreate cycle (the free-list invariant audit target).

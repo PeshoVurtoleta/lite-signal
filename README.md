@@ -17,21 +17,21 @@
 
 ## 4th of 15 on the community reactivity benchmark -- and the only zero-GC engine in the field
 
-On the independent [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (Andrii Volynets' fork; 15 reactive libraries, 47 tests), `lite-signal` places **4th overall by geomean (75.5)** -- now clearing 5th-place Preact Signals (79.2) by ~5%, a gap that widened on the 1.3.0 run, behind only three push-eager engines: alien-signals, reflex, and @reactively.
+On the independent [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (Andrii Volynets' fork; 15 reactive libraries, 47 tests), `lite-signal` places **4th overall by geomean (76.3)** -- ahead of 5th-place Preact Signals (78.4) by ~3%, behind only three push-eager engines: alien-signals, reflex, and @reactively. Raw run: [`bench/AndriiVolynetsReactiveBench.log`](./bench/AndriiVolynetsReactiveBench.log) (all 15 x 47 rows, checked in for audit).
 
 It is the **only object-pooled, zero-GC engine in the entire field**, and it gets that result without giving up glitch-freedom or lazy evaluation. Against the mainstream reactivity libraries it leads decisively:
 
-| vs                     | lite-signal is | 
+| vs                     | lite-signal is |
 | ---------------------- | -------------- |
 | **@vue/reactivity**    | **1.5x faster** |
 | **Signia**             | **1.7x faster** |
-| **MobX**               | **2.3x faster** |
+| **MobX**               | **2.2x faster** |
 | **@solidjs/signals**   | **2.7x faster** |
-| **SolidJS**            | **4.2x faster** |
-| Preact Signals         | **1.05x faster** (~5% ahead) |
-| alien-signals          | 0.56x (the field leader) |
+| **SolidJS**            | **4.1x faster** |
+| Preact Signals         | **1.03x faster** (~3% ahead) |
+| alien-signals          | 0.57x (the field leader) |
 
-`lite-signal` finishes **top-3 on 21 of the 47 tests** and is the **outright fastest of all 15** on three wide aggregation shapes -- `manyEffectsFromOneSource` (1 source -> many effects, fan-out), plus `manySourcesIntoOneComputedEffect` and `manySourcesIntoOneComputedEffectWithDirect` (many sources -> one computed, fan-in) -- the patterns that dominate live dashboards, scoreboards, and HUDs. It also edges the field leader alien-signals on a fourth (the 1-source linear-chain pull). The three engines ahead of it are all push-eager designs that allocate on the hot path; `lite-signal` is the only top-4 finisher that allocates **nothing** in steady state. (Note: this suite measures reactivity *libraries* -- Vue's reactivity core, MobX, Solid, Preact Signals, etc. -- not full UI frameworks like React or Angular.)
+`lite-signal` finishes **top-3 on 23 of the 47 tests** and is the **outright fastest of all 15** on five shapes: `manyEffectsFromOneSource` (1 source -> many effects, fan-out) and `manySourcesIntoOneComputedEffectWithDirect` (many sources -> one computed, fan-in) -- the wide-aggregation patterns that dominate live dashboards, scoreboards, and HUDs -- plus `molBench` (the mixed-app graph the suite uses as its realistic-workload proxy), `updateComputations2to1` (a steady-state update micro), and the `32x8 - 4 sources - pull` rectangular DAG. It comes second on another six shapes -- broad/deep/diamond/mux/unstable propagation, `manySourcesIntoOneComputedEffect` (fan-in), `10x5 read 20%` (simple component), `1000x5 25 sources` (wide dense) -- for 11 top-2 finishes total. The three engines ahead of it are all push-eager designs that allocate on the hot path; `lite-signal` is the only top-4 finisher that allocates **nothing** in steady state. (Note: this suite measures reactivity *libraries* -- Vue's reactivity core, MobX, Solid, Preact Signals, etc. -- not full UI frameworks like React or Angular.)
 
 ```bash
 npm install @zakkster/lite-signal
@@ -67,6 +67,7 @@ Synchronous, glitch-free, push-pull. No microtask queue, no allocations after wa
 - [Edge cases pinned down](#edge-cases-pinned-down)
 - [Benchmarks](#benchmarks)
 - [Testing strategy](#testing-strategy)
+- [Test harnesses](#test-harnesses)
 - [What this is not](#what-this-is-not)
 - [Ecosystem](#ecosystem)
 - [Browser and runtime support](#browser-and-runtime-support)
@@ -496,7 +497,7 @@ Default sizing for a Twitch-extension-style budget:
 | Heavy dashboard (variable scale)    | 2048     | 16384    | `"eager"` | `"grow"`  |
 | Per-viewer sandbox / short-lived    | 512      | 2048     | `"lazy"`  | `"throw"` |
 
-`stats()` reports `signals`, `computeds`, `effects`, `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`, `linkPoolCapacity` (8 keys; the capacity keys are ledgers under `"lazy"`). Drop it on screen for live observability.
+`stats()` reports 11 keys: eight live gauges -- `signals`, `computeds`, `effects`, `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`, `linkPoolCapacity` (the capacity keys are ledgers under `"lazy"`) -- plus three cumulative lifecycle counters added in **1.4.0**: `totalAllocations`, `totalDisposals`, and `poolGrowths` (monotonic over the registry's life, reset only by `destroy()`). Sample them over time to chart allocation rate, pool-reuse ratio, and graph churn; in a quiescent registry `totalAllocations - totalDisposals === activeNodes`. Drop it on screen for live observability.
 
 </details>
 
@@ -660,25 +661,25 @@ These are the questions you'd ask in a code review, with the answers:
 
 ## Benchmarks
 
-Honest numbers, against the same workload, with anti-DCE sinks and verified effect execution. All measurements: Node 22, **2016-era Intel MacBook Pro (4 cores, ~10 yr old hardware)**, **one engine per cold process**, median across reps. Newer/faster machines shift all libs up proportionally; the relative ordering between libs is what matters. Numbers below are lite-signal **@1.3.0** (default `prealloc: "eager"`) vs alien-signals on the same `benchmark.mjs` loop -- the harness now reports **median execution time + transient heap** rather than ops/s. 1.3.0's hot paths are byte-identical to 1.2.2, so these track the 1.2.2 measurement; the deltas are run-to-run noise on this old host, not engine changes.
+Honest numbers, against the same workload, with anti-DCE sinks and verified effect execution. All measurements: Node 22, **2016-era Intel MacBook Pro (4 cores, ~10 yr old hardware)**, **one engine per cold process**, median across reps. Newer/faster machines shift all libs up proportionally; the relative ordering between libs is what matters. Numbers below are the **fresh 1.4.0 bench sweep** (default `prealloc: "eager"`) vs alien-signals on the same `benchmark.mjs` loop -- the harness reports **median execution time + transient heap** rather than ops/s. 1.4.0's hot paths are byte-identical to 1.3.0 (the only 1.4.0 addition is three cumulative counters on `stats()` -- `totalAllocations` / `totalDisposals` / `poolGrowths` -- that bump on the existing acquire / dispose / pool-grow edges, never on the steady-state read path), so these track the 1.3.0 measurement within run-to-run noise on this old host. Full per-engine tables: [`results.txt`](./results.txt) (this propagation suite) and [`resultsReactive.txt`](./resultsReactive.txt) (the cross-framework reactivity suite). The 10 raw reactive-suite runs are checked into [`bench/bench-runs-reactive/`](./bench/bench-runs-reactive/) so anyone can re-median them independently.
 
 | Scenario   | What it stresses                | lite-signal | alien-signals | lite vs alien | transient heap (lite / alien) |
 | ---------- | -------------------------------- | ----------- | ------------- | ------------- | ----------------------------- |
-| **SELECTIVE DAG** | sqrt-layered, set churn, 2 read/iter | **4744 ms** | 9176 ms | **+48% faster** | **1.5 MB / 37 MB** (24x less) |
-| **DYNAMIC DAG** | sqrt-layered, FAN=6, read flips each iter | **9670 ms** | 16888 ms | **+43% faster** | **5.1 MB / 24 MB** (4.7x less) |
-| **MUX**    | 256 signals -> 1 sum -> 1 effect (fan-in) | **67 ms** | 108 ms | **+38% faster** | **38 KB / 3.9 MB** (104x less) |
-| **SMALL SELECTIVE** | 6 layers × 64 wide, 6 cand / 3 read | **1937 ms** | 2744 ms | **+29% faster** | **0.3 KB / 23.9 MB** (>=23934x less) |
-| **KAIROS**    | 1 signal -> 1000 computeds -> 1 effect | 1339 ms | 1325 ms | -1% (parity) | 178 KB / 1.1 MB (6.4x less) |
-| **LARGE WEB APP** | 12 layers × ~80 wide, conditional reads | 2801 ms | 2701 ms | -4% (parity) | **0.3 KB / 41 KB** (41x less) |
-| **WIDE DENSE** | 5 layers × ~200 wide, dense fan-in | 2850 ms | 2740 ms | -4% (parity) | **0.3 KB / 11.6 MB** (>=11605x less) |
-| **BROADCAST** | 1 signal -> 1000 effects (fan-out) | 1182 ms | 1074 ms | -10% | 72 KB / 21 KB |
-| **DEEP CHAIN** | 256-deep computed chain -> 1 effect | 401 ms | **339 ms** | -18% | 18 KB / 905 KB (49.7x less) |
+| **SELECTIVE DAG** | sqrt-layered, set churn, 2 read/iter | **4726 ms** | 9089 ms | **+48% faster** | **1.7 MB / 28 MB** (17x less) |
+| **DYNAMIC DAG** | sqrt-layered, FAN=6, read flips each iter | **9587 ms** | 17011 ms | **+44% faster** | **4.8 MB / 24 MB** (5.0x less) |
+| **MUX**    | 256 signals -> 1 sum -> 1 effect (fan-in) | **67 ms** | 103 ms | **+35% faster** | **38 KB / 3.9 MB** (104x less) |
+| **SMALL SELECTIVE** | 6 layers × 64 wide, 6 cand / 3 read | **1939 ms** | 2758 ms | **+30% faster** | **0.3 KB / 24.5 MB** (>=24502x less) |
+| **LARGE WEB APP** | 12 layers × ~80 wide, conditional reads | 2810 ms | 2727 ms | -3% (parity) | **0.3 KB / 41 KB** (41x less) |
+| **KAIROS**    | 1 signal -> 1000 computeds -> 1 effect | 1360 ms | 1296 ms | -5% (parity) | 178 KB / 1.0 MB (5.8x less) |
+| **WIDE DENSE** | 5 layers × ~200 wide, dense fan-in | 2879 ms | 2751 ms | -5% (parity) | **0.3 KB / 11.6 MB** (>=11605x less) |
+| **BROADCAST** | 1 signal -> 1000 effects (fan-out) | 1186 ms | 1068 ms | -11% | 72 KB / 21 KB |
+| **DEEP CHAIN** | 256-deep computed chain -> 1 effect | 395 ms | **307 ms** | -29% | 18 KB / 903 KB (49.6x less) |
 
 *(lower time = faster; transient heap = average delta-heap per rep, lower = less GC pressure)*
 
-**Reading the table:** lite-signal's time wins cluster exactly where its zero-GC design pays off -- the **allocation-heavy dynamic shapes** (**SELECTIVE DAG +48%**, **DYNAMIC DAG +43%**, **SMALL SELECTIVE +29%**), where alien-signals churns the nursery and lite's object pool allocates near-nothing, plus **MUX +38%** (fan-in aggregation). These are the patterns that dominate live UI workloads under input churn: dashboards, scoreboards, HUDs, leaderboards. On the cheap, low-allocation **stable** shapes (KAIROS, large web app, wide dense) lite runs at **parity** with alien -- within a 1-4% band inside this old host's run-to-run noise. The two losses are **BROADCAST (-10%)** (pure fan-out, no retracking for the pool to amortize) and **DEEP CHAIN (-18%)**: on a 256-deep computed pipeline alien's flatter representation wins because the propagation path is long rather than wide.
+**Reading the table:** lite-signal's time wins cluster exactly where its zero-GC design pays off -- the **allocation-heavy dynamic shapes** (**SELECTIVE DAG +48%**, **DYNAMIC DAG +44%**, **SMALL SELECTIVE +30%**), where alien-signals churns the nursery and lite's object pool allocates near-nothing, plus **MUX +35%** (fan-in aggregation). These are the patterns that dominate live UI workloads under input churn: dashboards, scoreboards, HUDs, leaderboards. On the cheap, low-allocation **stable** shapes (KAIROS, large web app, wide dense) lite runs at **parity** with alien -- within a 3-5% band inside this old host's run-to-run noise. The two losses are **BROADCAST (-11%)** (pure fan-out, no retracking for the pool to amortize) and **DEEP CHAIN (-29%)**: on a 256-deep computed pipeline alien's flatter representation wins because the propagation path is long rather than wide -- and the gap widened on this sweep because alien's 256-deep pipeline got faster (~339ms -> ~307ms) while lite held its ground (~401ms -> ~395ms), an alien improvement, not a lite regression.
 
-On allocation pressure, `lite-signal` wins **8 of 9 scenarios** and is alone in the zero-alloc band: **~0.3 KB** of transient garbage on the stable app shapes (large web app, wide dense, small selective) across the whole run. The contrast is starkest on the dynamic DAGs -- lite allocates 1.5-5 MB (genuine retracking re-links) where alien-signals allocates 24-37 MB on the same shapes, and that allocation gap is the mechanism behind lite's +43-48% wins there once each engine is measured in isolation. The one scenario where lite allocates more is **BROADCAST** (72 KB vs alien's 21 KB), a pure fan-out with no retracking. `prealloc: "lazy"` trades a little extra first-construction allocation on the dynamic shapes for a smaller resident heap and faster cold start; the steady state is identical. preact and solid trail both engines on the dynamic shapes by 1-2 orders of magnitude on transient heap.
+On allocation pressure, `lite-signal` wins **8 of 9 scenarios** and is alone in the zero-alloc band: **~0.3 KB** of transient garbage on the stable app shapes (large web app, wide dense, small selective) across the whole run. The contrast is starkest on the dynamic DAGs -- lite allocates 1.7-4.8 MB (genuine retracking re-links) where alien-signals allocates 24-28 MB on the same shapes, and that allocation gap is the mechanism behind lite's +44-48% wins there once each engine is measured in isolation. The one scenario where lite allocates more is **BROADCAST** (72 KB vs alien's 21 KB), a pure fan-out with no retracking. `prealloc: "lazy"` trades a little extra first-construction allocation on the dynamic shapes for a smaller resident heap and faster cold start; the steady state is identical. preact and solid trail both engines on the dynamic shapes by 1-2 orders of magnitude on transient heap.
 
 > Note on the +70.8 KB retained that lite-signal shows on KAIROS specifically: that's the pre-allocated pool sitting in memory holding the live graph (1002 nodes + ~2000 links). The pool *is* the working memory -- see the [Case for object pooling](#case-for-object-pooling) section. On the other benches the graph is small enough that the same pool floats below baseline after GC.
 
@@ -705,31 +706,31 @@ Three tiers, all reproducible.
 
 `npm test` runs the suite in `test/`, covering:
 
-- **`01-core_test.mjs`** -- signal/computed/effect basics, equality semantics, NaN/+/-0, subscribe/peek/update, untrack, batch, cleanup ordering, first-run error recovery, nested object reference-identity gotchas.
-- **`02-topology_test.mjs`** -- diamond glitch-freedom, 256-deep and 1024-deep computed chains, wide fan-out (1000 effects from one signal), dynamic dependency switching, conditional fan-out, nested effects, cycle detection (`CycleError`).
-- **`03-pool_test.mjs`** -- `CapacityError` under both `"throw"` and `"grow"` policies, the 16× link ceiling, stable pool reuse across thousands of create/dispose cycles, registry isolation, and (1.3.0) the lazy-prealloc paths: on-demand construction reaching the same steady state as eager, a never-allocated lazy registry surviving `destroy()`, and `"grow"` extending both pool ledgers past their initial capacity.
-- **`05-scheduler_test.mjs`** -- scheduler-deferred effects, dispose-during-schedule races, microtask integration, 32-bit version wrap (simulated), `setDefaultRegistry`, `onCleanup` inside computeds.
-- **`06-nested-objects_test.mjs`** -- array mutation patterns (push/splice/spread), deep nested paths, Map/Set/Date inside signals, custom structural equality, computed memoisation cutoffs over object slices, signal-of-signals composition, high-frequency object updates, batched immutable updates.
-- **`07-dispose_test.mjs`** -- unified `dispose(api)` across signals, computeds and effect handles, idempotency, cross-registry isolation (per-registry Symbol prevents pool corruption), foreign-value safety, top-level helper routing, 500-cycle balanced churn leaving pool and stats stable.
-- **`08-watch_test.mjs`** -- Validates the user-land observer utilities (watch, when, whenAsync). Covers lifecycle teardown, old/new value tracking, and Promise-based asynchronous state resolution.
-- **`09-conformance_test.mjs`** -- Industry-standard conformance tests. Validates the engine against extreme edge cases from the johnsoncodehk reactive test suite, ensuring strict zero-GC invariants, correct cleanup isolation, and re-entrant stability.
-- **`10-is-tracking_test.mjs`** -- The `isTracking()` observer-context predicate. 11 tests across 5 describe blocks: true inside effect/computed bodies; false inside `untrack`, `subscribe` callbacks, `onCleanup` bodies, and `watch` callbacks (the untracked-window cases that catch an observer-only misimplementation); false outside any observer including at the call site of an unobserved computed read; state-restoration after a thrown body; per-registry isolation; top-level binding.
-- **`11-adopted-reactive_test.mjs`** -- 24 engine-agnostic edge cases adopted from across the ecosystem: alien-signals' parent-child link-integrity regression (#226-228), equality-predicate corners (preact/solid/vue), `signal.update(fn)` functional setter (vue/solid), `peek()` non-subscription depth (preact/vue), and the `subscribe` behavioral contract (preact/mobx).
-- **`12-coverage_test.mjs`** -- 18 targeted exercises for public surface and hot-path branches the behavioral suites don't incidentally hit: top-level routing to the default registry, the computed clean-read short-circuit (`markEpoch` O(1) skip), dependency-set shrink severing the stale tail, error/structural edge paths, scheduler ABA across a recycled pool slot, and the v1.2 owner-tree paths (direct-child detach, cascade tolerates an already-freed child). Capability-gated via a runtime probe, so the same file runs unchanged across engines.
-- **`13-introspection_test.mjs`** -- The observer-lifecycle surface (1.1.4). 10 tests across 3 describe blocks: `hasObservers` (live observation reflects; a peek doesn't count), `observeObservers` auto-pause lifecycle (start-on-first / stop-on-last, no extra connect for a 2nd observer, re-observe fires again, no churn on re-track, conditional reads toggle honestly, transition-only registration, works for computeds), and `forEachObserver`/`forEachSource` enumeration (both directions; descriptor carries kind + value).
-- **`14-lifecycle-teardown_test.mjs`** -- Effect-teardown guards against the alien-signals@3.2.1 regressions (4 tests). A stopped effect must not re-subscribe to a signal read later in the same run; self-dispose must leave no orphaned link (clean `activeLinks`); a throwing setup must leave no live subscription; normal and dynamic re-tracking stay unaffected by the `allocateLink` eligibility gate.
-- **`15-owner-lazy-alloc_test.mjs`** -- Owner-adoption contract for the 1.2.0 owner tree (5 tests). A signal allocated lazily *inside* a computed/effect must **not** be owner-adopted (it survives the owner's re-run -- the lite-store/lite-form lazy-field shape) and sibling lazy signals must not cross-wire, while observers (nested effect/computed) *are* still auto-disposed on the owner's re-run.
-- **`16-alien-parity_test.mjs`** -- Differential regression guards (3 tests) reproducing the *properties* behind alien-signals@3.2.0 fixed bugs: reads inside a cleanup create no spurious dependencies (the dispose-cleanup fix); an inner-effect write does not block later propagation through a computed chain (#112); a dynamic dependency-set change stays correct under dirty-check (#109/#110).
-- **`17-reactivity_test.mjs`** -- Behavioral suite (~30 tests across 11 groups) mirroring universal signal-system bug classes: subscription lifecycle, cleanup ordering, stale-dependency tracking, batching/timing (incl. set-then-revert), equality cutoff (NaN/+/-0/custom), nested invalidation + glitch-free diamond, memory/retained nodes, the synchronous async-boundary, scheduler & loops (self-write termination, self-reading computed), and differential-review additions (cached computed errors, mid-batch pull, self-disposing getter, pooled-slot return). SSR hydration is a documented N/A -- lite has no DOM layer.
-- **`18-identity_test.mjs`** -- Node identity (1.1.5; 5 tests). Unique/stable ids; `nodeId`/`describe` return `undefined` for a non-handle; the descriptor's visible shape is `{ id, kind, value }`; `forEach*` descriptors carry `id` and are **re-walkable** (`nodeId`/`forEachSource` accept a descriptor); identity walks are non-perturbing (add no observers).
-- **`19-v12-additions_test.mjs`** -- v1.2.0 release-prep regressions (24 tests across 8 suites). Shared `peek` (one closure per registry, identical reference across primitives, no tracking, two registries hold independent peeks). Owner-adoption rule (signals not adopted, computeds/effects adopted, cascade drains correctly). Pre-batch revert (signal-level, propagates through computeds, respects custom `equals`, nested batches, final-different-value still fires). Multi-throw aggregation (`AggregateError` with both errors carried, single-throw unwrapped, engine survives). `CycleError` via `maxFlushPasses` (default + custom). `maxLinks` config branch under `throw` and `grow`. Documented disposed-signal semantics (read undefined, set silent no-op, dispose idempotent). Scheduler-thunk ABA guard across a recycled pool slot.
-- **`20-axis-stress_test.mjs`** -- engine-invariant regression guards along eight orthogonal "axes" (16 tests across 9 suites). Pins lite-signal's actual contract on: batch semantics under exception (writes commit; pre-batch revert holds; effects see the post-throw value), connect/disconnect lifecycle re-entrancy (`observeObservers` from inside an `onConnect`, transition-only registration), untrack does NOT suppress owner adoption (a nested effect created via `untrack` is still owner-cascaded), untrack inside a computed body (no hidden dep leaks; tracked source re-evaluates), queue safety under self-dispose mid-flush (no UAF), value-dependent cycle detection (computed graph closes a cycle, `CycleError` thrown), nested-effect creation order (effects run synchronously on creation; immediately-stopped one still ran), synchronous flush (no scheduler in the default path; batch coalesces). Plus a bonus suite: 1,000 effect-create-then-dispose cycles return pool to baseline; `dispose()` idempotent; `dispose()` on foreign values safe.
-- **`21-perf-pins_test.mjs`** -- v1.2.1 construction-shape pins (6 tests). Locks the canonical handle shapes (`signal` 6 own props: peek/set/update/subscribe + NODE_PTR/NODE_GEN; `computed` 4: peek/subscribe + NODE_PTR/NODE_GEN) so a future "let's unify them" change has to be explicit. Locks the 1.2.1 ABA guards: detached `const {set} = signal()` keeps working on a LIVE signal; `read()` returns `undefined` and skips dep-tracking on a stale handle (no phantom subscription to the recycled slot); `set()` on a stale handle is a no-op across three corruption tiers (disposed slot, recycled slot, downstream propagation); `peek()` returns `undefined` for stale signal and computed handles.
-- **`22-mutation-hook_test.mjs`** -- 1.2.1 `onGraphMutation` semantics (12 tests across 2 suites). Registration: unsubscribe returns a function; `null` argument clears and the unsub restores the prior listener; non-function/non-null throws `TypeError`; multiple registrations stack LIFO; registries are isolated (no cross-talk). Opcode emission: `1` node-create fires with `(id, flags)` for signal (32) / computed (1) / effect (2); `2` node-dispose fires for cascade-disposed owned children; `3` link-add fires with `(source.id, target.id)` on dependency record; `4` link-remove fires when a dep-set flip severs the tail; `5` recompute fires on initial eval AND re-eval; the hook fires synchronously inside the mutation (listener sees its own event before the caller returns); payload is always three plain numbers -- no objects, no closures.
-- **`23-owner-introspection_test.mjs`** -- 1.2.1 owner-tree introspection + effect-disposer regression (22 tests across 4 suites). `ownerOf`: undefined for top-level / garbage input / stale handle; returns the enclosing effect's descriptor for a child created inside an effect body. `forEachOwned`: no-op for handles with no owned children / garbage input / stale handle; iterates owned children as `{id, kind, value}` descriptors. Gen-guarded introspection (ABA fix): `nodeId` / `describe` / `hasObservers` return undefined / false for stale handles; `observeObservers` throws `TypeError`; `forEachObserver` / `forEachSource` are no-ops; descriptors returned by `describeNode` are themselves gen-stamped so a descriptor obtained pre-recycle correctly walks as a no-op post-recycle (the "descriptors are re-walkable handles" contract survives the guard). Plus the 1.2.1 effect-dispose-handle fix: passing the effect's disposer directly to `describe` / `nodeId` / `forEachSource` / `forEachOwned` / `ownerOf` / `hasObservers` works as a first-class introspection handle (pre-fix it was a bare closure and returned `undefined` for a *live* effect); after `fx()` dispose the same handle correctly goes stale on every entry point; the disposer's `NODE_GEN` mirrors the effect node's birthGen exactly.
-- **`24-signalbox_test.mjs`** -- staged for v1.5.0; all 9 tests `{skip: true}` on 1.3.x. The `signalBox` / `computedBox` allocation-light handle API lands in 1.5.0; the suite is committed early so the surface is pinned and the skips are visible in the test count (the 10 skips on 1.3.0 are these 9 plus 1 architecturally-N/A SSR case in `17-reactivity`).
-- **`25-devtools-real-boot_test.mjs`** -- Devtools/Studio contract (10 tests). Boots the actual `Devtools.js` against the 1.3.0 engine and exercises all 19 Devtools exports plus the 10 symbols Studio imports from Devtools. Pins the ghost contract: heavy introspection (graph walk, owner-tree, observer descriptors) adds **zero** nodes to the live graph. Catches the real-rig failure mode where importing the package by its own name from a repo whose `package.json` declares `name: "@zakkster/lite-signal"` resolves to the published build instead of the local engine.
-- **`26-free-list-invariant_test.mjs`** -- the 1.2.2 audit's cleanliness pins (3 invariant tests + 1 targeted coverage test). Asserts directly -- by inspecting freshly-allocated nodes through the documented `describe()` -> `NODE_PTR` introspection protocol -- that the `ReactiveNode` constructor and the fresh-pool-growth path initialize the ten fields the audit removed from `createNode` to identical values, so the deleted writes were defending against a state the engine cannot produce on a clean free list. The 4th test covers the swallow-on-self-dispose-then-throw branch in `pullComputed` (the path that lifted branch coverage from 98.07% to 98.43%).
+- **`01-core.test.mjs`** -- signal/computed/effect basics, equality semantics, NaN/+/-0, subscribe/peek/update, untrack, batch, cleanup ordering, first-run error recovery, nested object reference-identity gotchas.
+- **`02-topology.test.mjs`** -- diamond glitch-freedom, 256-deep and 1024-deep computed chains, wide fan-out (1000 effects from one signal), dynamic dependency switching, conditional fan-out, nested effects, cycle detection (`CycleError`).
+- **`03-pool.test.mjs`** -- `CapacityError` under both `"throw"` and `"grow"` policies, the 16× link ceiling, stable pool reuse across thousands of create/dispose cycles, registry isolation, (1.3.0) the lazy-prealloc paths: on-demand construction reaching the same steady state as eager, a never-allocated lazy registry surviving `destroy()`, and `"grow"` extending both pool ledgers past their initial capacity, and (1.4.0) the `stats()` lifecycle counters: the 11-key shape, `totalAllocations` / `totalDisposals` tracking the `activeNodes` live invariant, `poolGrowths` firing on growth and staying 0 on a correctly-sized eager pool, and `destroy()` resetting all three.
+- **`05-scheduler.test.mjs`** -- scheduler-deferred effects, dispose-during-schedule races, microtask integration, 32-bit version wrap (simulated), `setDefaultRegistry`, `onCleanup` inside computeds.
+- **`06-nested-objects.test.mjs`** -- array mutation patterns (push/splice/spread), deep nested paths, Map/Set/Date inside signals, custom structural equality, computed memoisation cutoffs over object slices, signal-of-signals composition, high-frequency object updates, batched immutable updates.
+- **`07-dispose.test.mjs`** -- unified `dispose(api)` across signals, computeds and effect handles, idempotency, cross-registry isolation (per-registry Symbol prevents pool corruption), foreign-value safety, top-level helper routing, 500-cycle balanced churn leaving pool and stats stable.
+- **`08-watch.test.mjs`** -- Validates the user-land observer utilities (watch, when, whenAsync). Covers lifecycle teardown, old/new value tracking, and Promise-based asynchronous state resolution.
+- **`09-conformance.test.mjs`** -- Industry-standard conformance tests. Validates the engine against extreme edge cases from the johnsoncodehk reactive test suite, ensuring strict zero-GC invariants, correct cleanup isolation, and re-entrant stability.
+- **`10-is-tracking.test.mjs`** -- The `isTracking()` observer-context predicate. 11 tests across 5 describe blocks: true inside effect/computed bodies; false inside `untrack`, `subscribe` callbacks, `onCleanup` bodies, and `watch` callbacks (the untracked-window cases that catch an observer-only misimplementation); false outside any observer including at the call site of an unobserved computed read; state-restoration after a thrown body; per-registry isolation; top-level binding.
+- **`11-adopted-reactive.test.mjs`** -- 24 engine-agnostic edge cases adopted from across the ecosystem: alien-signals' parent-child link-integrity regression (#226-228), equality-predicate corners (preact/solid/vue), `signal.update(fn)` functional setter (vue/solid), `peek()` non-subscription depth (preact/vue), and the `subscribe` behavioral contract (preact/mobx).
+- **`12-coverage.test.mjs`** -- 30 targeted exercises for public surface and hot-path branches the behavioral suites don't incidentally hit: top-level routing to the default registry, the computed clean-read short-circuit (`markEpoch` O(1) skip), dependency-set shrink severing the stale tail, error/structural edge paths, scheduler ABA across a recycled pool slot, and the v1.2 owner-tree paths (direct-child detach, cascade tolerates an already-freed child). The final four close the 1.4.0-rc branch gap: the `allocateLink` dead-target gate, the `executeEffect` scheduler-reentrancy cycle throw, the stale computed-handle read, and the disposeNode cursor-repair regression. Capability-gated via a runtime probe, so the same file runs unchanged across engines.
+- **`13-introspection.test.mjs`** -- The observer-lifecycle surface (1.1.4). 10 tests across 3 describe blocks: `hasObservers` (live observation reflects; a peek doesn't count), `observeObservers` auto-pause lifecycle (start-on-first / stop-on-last, no extra connect for a 2nd observer, re-observe fires again, no churn on re-track, conditional reads toggle honestly, transition-only registration, works for computeds), and `forEachObserver`/`forEachSource` enumeration (both directions; descriptor carries kind + value).
+- **`14-lifecycle-teardown.test.mjs`** -- Effect-teardown guards against the alien-signals@3.2.1 regressions (4 tests). A stopped effect must not re-subscribe to a signal read later in the same run; self-dispose must leave no orphaned link (clean `activeLinks`); a throwing setup must leave no live subscription; normal and dynamic re-tracking stay unaffected by the `allocateLink` eligibility gate.
+- **`15-owner-lazy-alloc.test.mjs`** -- Owner-adoption contract for the 1.2.0 owner tree (4 tests). A signal allocated lazily *inside* a computed/effect must **not** be owner-adopted (it survives the owner's re-run -- the lite-store/lite-form lazy-field shape) and sibling lazy signals must not cross-wire, while observers (nested effect/computed) *are* still auto-disposed on the owner's re-run.
+- **`16-alien-parity.test.mjs`** -- Differential regression guards (3 tests) reproducing the *properties* behind alien-signals@3.2.0 fixed bugs: reads inside a cleanup create no spurious dependencies (the dispose-cleanup fix); an inner-effect write does not block later propagation through a computed chain (#112); a dynamic dependency-set change stays correct under dirty-check (#109/#110).
+- **`17-reactivity.test.mjs`** -- Behavioral suite (~30 tests across 11 groups) mirroring universal signal-system bug classes: subscription lifecycle, cleanup ordering, stale-dependency tracking, batching/timing (incl. set-then-revert), equality cutoff (NaN/+/-0/custom), nested invalidation + glitch-free diamond, memory/retained nodes, the synchronous async-boundary, scheduler & loops (self-write termination, self-reading computed), and differential-review additions (cached computed errors, mid-batch pull, self-disposing getter, pooled-slot return). SSR hydration is a documented N/A -- lite has no DOM layer.
+- **`18-identity.test.mjs`** -- Node identity (1.1.5; 5 tests). Unique/stable ids; `nodeId`/`describe` return `undefined` for a non-handle; the descriptor's visible shape is `{ id, kind, value }`; `forEach*` descriptors carry `id` and are **re-walkable** (`nodeId`/`forEachSource` accept a descriptor); identity walks are non-perturbing (add no observers).
+- **`19-v12-additions.test.mjs`** -- v1.2.0 release-prep regressions (24 tests across 8 suites). Shared `peek` (one closure per registry, identical reference across primitives, no tracking, two registries hold independent peeks). Owner-adoption rule (signals not adopted, computeds/effects adopted, cascade drains correctly). Pre-batch revert (signal-level, propagates through computeds, respects custom `equals`, nested batches, final-different-value still fires). Multi-throw aggregation (`AggregateError` with both errors carried, single-throw unwrapped, engine survives). `CycleError` via `maxFlushPasses` (default + custom). `maxLinks` config branch under `throw` and `grow`. Documented disposed-signal semantics (read undefined, set silent no-op, dispose idempotent). Scheduler-thunk ABA guard across a recycled pool slot.
+- **`20-axis-stress.test.mjs`** -- engine-invariant regression guards along eight orthogonal "axes" (23 tests across 11 suites). Pins lite-signal's actual contract on: batch semantics under exception (writes commit; pre-batch revert holds; effects see the post-throw value), connect/disconnect lifecycle re-entrancy (`observeObservers` from inside an `onConnect`, transition-only registration), untrack does NOT suppress owner adoption (a nested effect created via `untrack` is still owner-cascaded), untrack inside a computed body (no hidden dep leaks; tracked source re-evaluates), queue safety under self-dispose mid-flush (no UAF), value-dependent cycle detection (computed graph closes a cycle, `CycleError` thrown), nested-effect creation order (effects run synchronously on creation; immediately-stopped one still ran), synchronous flush (no scheduler in the default path; batch coalesces). Plus a bonus suite: 1,000 effect-create-then-dispose cycles return pool to baseline; `dispose()` idempotent; `dispose()` on foreign values safe.
+- **`21-perf-pins.test.mjs`** -- v1.2.1 construction-shape pins (6 tests). Locks the canonical handle shapes (`signal` 6 own props: peek/set/update/subscribe + NODE_PTR/NODE_GEN; `computed` 4: peek/subscribe + NODE_PTR/NODE_GEN) so a future "let's unify them" change has to be explicit. Locks the 1.2.1 ABA guards: detached `const {set} = signal()` keeps working on a LIVE signal; `read()` returns `undefined` and skips dep-tracking on a stale handle (no phantom subscription to the recycled slot); `set()` on a stale handle is a no-op across three corruption tiers (disposed slot, recycled slot, downstream propagation); `peek()` returns `undefined` for stale signal and computed handles.
+- **`22-mutation-hook.test.mjs`** -- 1.2.1 `onGraphMutation` semantics (12 tests across 2 suites). Registration: unsubscribe returns a function; `null` argument clears and the unsub restores the prior listener; non-function/non-null throws `TypeError`; multiple registrations stack LIFO; registries are isolated (no cross-talk). Opcode emission: `1` node-create fires with `(id, flags)` for signal (32) / computed (1) / effect (2); `2` node-dispose fires for cascade-disposed owned children; `3` link-add fires with `(source.id, target.id)` on dependency record; `4` link-remove fires when a dep-set flip severs the tail; `5` recompute fires on initial eval AND re-eval; the hook fires synchronously inside the mutation (listener sees its own event before the caller returns); payload is always three plain numbers -- no objects, no closures.
+- **`23-owner-introspection.test.mjs`** -- 1.2.1 owner-tree introspection + effect-disposer regression (14 tests across 3 suites). `ownerOf`: undefined for top-level / garbage input / stale handle; returns the enclosing effect's descriptor for a child created inside an effect body. `forEachOwned`: no-op for handles with no owned children / garbage input / stale handle; iterates owned children as `{id, kind, value}` descriptors. Gen-guarded introspection (ABA fix): `nodeId` / `describe` / `hasObservers` return undefined / false for stale handles; `observeObservers` throws `TypeError`; `forEachObserver` / `forEachSource` are no-ops; descriptors returned by `describeNode` are themselves gen-stamped so a descriptor obtained pre-recycle correctly walks as a no-op post-recycle (the "descriptors are re-walkable handles" contract survives the guard). Plus the 1.2.1 effect-dispose-handle fix: passing the effect's disposer directly to `describe` / `nodeId` / `forEachSource` / `forEachOwned` / `ownerOf` / `hasObservers` works as a first-class introspection handle (pre-fix it was a bare closure and returned `undefined` for a *live* effect); after `fx()` dispose the same handle correctly goes stale on every entry point; the disposer's `NODE_GEN` mirrors the effect node's birthGen exactly.
+- **`24-signalbox.test.mjs`** -- staged for v1.5.0; all 9 tests `{skip: true}` on 1.4.0. The `signalBox` / `computedBox` allocation-light handle API lands in 1.5.0; the suite is committed early so the surface is pinned and the skips are visible in the test count (the 10 skips on 1.4.0 are these 9 plus 1 architecturally-N/A SSR case in `17-reactivity`).
+- **`25-devtools-real-boot.test.mjs`** -- Devtools/Studio contract (10 tests). Boots the actual `Devtools.js` against the 1.4.0 engine and exercises all 19 Devtools exports plus the 10 symbols Studio imports from Devtools. Pins the ghost contract: heavy introspection (graph walk, owner-tree, observer descriptors) adds **zero** nodes to the live graph. Catches the real-rig failure mode where importing the package by its own name from a repo whose `package.json` declares `name: "@zakkster/lite-signal"` resolves to the published build instead of the local engine.
+- **`26-free-list-invariant.test.mjs`** -- the 1.2.2 audit's cleanliness pins (3 invariant tests + 1 targeted coverage test). Asserts directly -- by inspecting freshly-allocated nodes through the documented `describe()` -> `NODE_PTR` introspection protocol -- that the `ReactiveNode` constructor and the fresh-pool-growth path initialize the ten fields the audit removed from `createNode` to identical values, so the deleted writes were defending against a state the engine cannot produce on a clean free list. The 4th test covers the swallow-on-self-dispose-then-throw branch in `pullComputed` (the path that lifted branch coverage from 98.07% to 98.43%).
 
 ```bash
 npm test
@@ -737,7 +738,7 @@ npm test
 
 ### Tier 2 -- Memory (allocation-free verification)
 
-`npm run test:gc` runs `test/04-zero-gc_test.mjs` with `--expose-gc`:
+`npm run test:gc` runs the whole suite with `--expose-gc` so the memory budgets in `test/04-zero-gc.test.mjs` are enforced (they no-op without an exposed GC):
 
 - 100,000 `set()` calls on a graph with effects retain **< 200 KB** of heap.
 - 1,000 create/dispose cycles retain **< 50 KB**.
@@ -780,15 +781,94 @@ Run any of them with `TORTURE_SECONDS=N` for a longer soak. Indicative numbers f
 | scheduler-bench       |    10 s  | 28.8 M   |    0   | 1000 / 0                    |
 
 ```bash
-npm run verify   # test + test:gc + a sanity bench
+npm run verify   # test + a sanity bench
 ```
+
+---
+
+## Test harnesses
+
+Beyond the engine's own test tiers above, `@zakkster/lite-signal` ships **dedicated harnesses** that live in their own subdirectories with their own `package.json` and setup story. They are version-portable, integration-grade, or otherwise too specialised to belong in the in-tree engine suite -- and they are explicitly opt-in: a plain `npm test` does **not** run them. Each is a self-contained artifact you can run against any installed engine, or carry into a different repo to verify a claim independently.
+
+This section will grow. As future versions ship publications that need specific defensive validation (e.g. a `flushStrategy` ship, a TC39-polyfill ship, a zero-GC public gate, a profiler/observability ship), the corresponding harness lands here.
+
+### `test/ProfilerTests/` -- version-portable hardening suite
+
+An adversarial, **version-portable** conformance + hardening suite for `@zakkster/lite-signal`. `node:test` only, zero test deps. Each file imports the **bare** package (`@zakkster/lite-signal`), so it resolves to whatever version is installed when run standalone, and self-references through this repo's own package name when run inside the source tree. Advanced cases are **feature-gated**: an older engine skips the cases for APIs it does not have yet, and they light up automatically as the surface grows.
+
+Pins the invariants that quietly break reactive engines: glitch-freedom on diamonds, dropping the untaken branch on dynamic dependencies, keeping unobserved computeds lazy, cleanup order, surviving a throwing effect, no leaks under churn, cascade-disposing an ownership scope. The same cases worth asking about in an interview, and the same ones that regress when an engine is re-tuned for speed.
+
+```bash
+# Against the local engine (self-references through the root package name):
+npm run test:hardening
+npm run test:hardening:gc
+
+# Standalone, against any published version (run from inside test/ProfilerTests):
+cd test/ProfilerTests
+./run-matrix.sh                              # tests every published line
+./run-matrix.sh 1.3.0 1.4.0-beta.1           # pick versions explicitly
+```
+
+The matrix is **ratcheted stricter every release**: a regression in a future version fails loudly, instead of shipping. The README inside the suite (`test/ProfilerTests/README.md`) records the current pass/skip table per published line.
+
+### `harness/VersionMatrix/` -- cold-process performance gate
+
+A **same-host, cold-process regression gate** for the engine. Turns "did this release regress?" from a judgment call into a checkpoint: the driver swaps each engine version into `node_modules` in its own `node` invocation (so V8 never carries inline caches or JIT state from one version into another), feeds every version an identical LCG write sequence (so a delta is the engine changing, not the input), and reduces N cold samples per version-x-workload to a per-metric median. Wired as `prepublishOnly` -- a regression on the four reference workloads aborts `npm publish` before it starts -- and also runnable on demand via `npm run gate`.
+
+**Two baselines.** A candidate must clear BOTH a **floor** (never moves -- "we shall not regress below this line") AND a **rolling** baseline (the previous published version). Tolerances are calibrated against measured self-noise (`npm run calibrate`): `frame.avg` is the stable anchor (self-noise <=~3%, gated tight at 5% vs rolling / 10% vs floor); `frame.p99` and `phase.write.p99` are jitter-prone (self-noise up to ~14%), so their tolerances sit above that floor (18% rolling / 30% floor) and a p99 fail should be confirmed with a re-run. The two-baseline design catches the blind spot of a fixed floor -- an engine that improves 1.4 -> 1.6 then regresses back to 1.4 levels still clears a 1.3 floor, but fails the rolling gate.
+
+**Four workloads**, each mapping to a public bench claim so a change that regresses one shape can't hide behind another:
+
+- `reactive-graph-mix` -- general sources -> layer1 -> layer2 + effects (the KAIROS / mol pattern).
+- `deep-chain` -- long linear computed chain (the DEEP CHAIN weak spot).
+- `broadcast-fanout` -- one source -> many leaves (the BROADCAST pattern).
+- `dynamic-dep-churn` -- branch-flipping bodies that retrack every cycle (the DYNAMIC / SELECTIVE DAG wins).
+
+Graphs are sized under lite-signal's default 1024-node pool cap; frame cost is scaled by `ITER` (more update cycles), not more nodes.
+
+```bash
+npm run calibrate                         # self-noise: same version twice, per metric
+bash matrix.sh gate <candidate-version>   # published candidate vs floor + rolling
+bash matrix.sh gate-self <label> <path>   # current-tree candidate (engine path) vs floor + rolling
+node diff.mjs                             # diagnostic over committed baselines -> matrix-report.json
+node gate.mjs <label>                     # gate over already-captured baselines (exit 1 on regression)
+npm run gate                              # what prepublish runs -- gate-self against the current tree
+```
+
+Committed median baselines live under `harness/VersionMatrix/baselines/<version>/*.json` (each carrying `env` metadata: CPU, node, date). These are the **public evidence surface** -- anyone can rerun and diff -- but the gate always re-captures floor / rolling / candidate in the same job so it never diffs across hosts. Details, including how to add a new version to the matrix, in [`harness/VersionMatrix/README.md`](./harness/VersionMatrix/README.md).
+
+### `harness/ProfilerTools/` -- combined profiler + devtools integration
+
+A live cross-package harness that points `@zakkster/lite-profiler-signal` and `@zakkster/lite-devtools` at the **same** lite-signal registry and verifies the integration. `profiler-signal` writes coarse frame telemetry into signals (fps, frameP99, frameClass, per-phase p99); a small dashboard effect reads those signals; `devtools` then inspects that live graph **non-perturbingly** (peek + enumerator walks, never adding an observer) and confirms, via the same `stats()` it monitors, that the profiler allocates no new graph nodes in steady state. This is the externally-runnable proof of the zero-GC contract end-to-end: not just on a microbench, but across the actual published package chain consumers install.
+
+```bash
+# One-time setup -- pulls peer deps + the engine version the harness targets:
+cd harness/ProfilerTools
+bash setup.sh
+
+# Then:
+npm test
+npm run test:gc
+
+# Or from the root:
+npm run test:harness
+```
+
+The setup script pins specific package versions via tarball install so the harness can be re-run reproducibly without depending on whatever happens to be in the public registry on the day. Treat the setup as a one-time per-checkout cost.
+
+### Notes
+
+- The hardening suite and the profiler integration do **not** run on `npm test` from the root. They opt in through the `test:hardening` / `test:harness` scripts (and `test:all`, which chains everything).
+- The **VersionMatrix gate** is wired into `prepublishOnly` -- a regression on the four reference workloads blocks `npm publish` -- and can also be run on demand via `npm run gate`. The harness and its baselines are checked in; diagnostic runs (`node diff.mjs`) are opt-in from the harness directory.
+- All three subdirectories have their own `package.json` with local scripts, so you can also `cd` in and run `npm test` directly -- the root scripts are just shortcuts.
+- The `npm --prefix <dir> test` form used in the root scripts is the cross-platform replacement for `cd && npm test` -- works identically on Linux, macOS, and Windows.
 
 ---
 
 ## Performance Trade-offs & Topology Scaling
 
 <details>
-<summary>Stable vs dynamic topologies; Andrii Volynets' matrix, the 1.1.4 result, the 1.3.0 ranking, and the roadmap.</summary>
+<summary>Stable vs dynamic topologies; Andrii Volynets' matrix, the 1.1.4 result, the 1.4.0 ranking, and the roadmap.</summary>
 
 `lite-signal` was built with a strict mandate: **absolute zero garbage collection**. By packing the dependency graph into a flat, pre-allocated memory arena, we eliminate the Scavenger GC pauses that plague 120fps Canvas/WebGL loops.
 
@@ -796,7 +876,7 @@ Through **v1.1.2**, that came with a mathematical trade-off: while memory alloca
 
 **Andrii Volynets** (author of the phenomenal [Alien Signals](https://github.com/stackblitz/alien-signals)) generously ran `lite-signal` through his advanced topology matrix on the **v1.1.2** engine. Those numbers -- the *pre-rewrite baseline* -- are below, followed by the 1.1.4 result.
 
-**1.3.0 on the official [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (15 libraries, 47 tests):** `lite-signal` holds **4th overall by geomean (75.5ms)**, behind only alien-signals (42.6, the field leader at 0.56x), reflex (48.9), and @reactively (59.3), and now **ahead of 5th-place Preact Signals (79.2, ~5%)** -- a gap that widened from 1.2.x. It finishes **top-3 on 21 of 47 tests** and is the **outright fastest of all 15 on three wide-aggregation shapes** -- `manyEffectsFromOneSource`, `manySourcesIntoOneComputedEffect`, and `manySourcesIntoOneComputedEffectWithDirect` -- even edging the leader alien-signals on those plus the 1-source linear-chain pull. It remains the only object-pooled, zero-GC engine in the field.
+**1.4.0 on the official [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (15 libraries, 47 tests):** `lite-signal` holds **4th overall by geomean (76.3ms)**, behind only alien-signals (43.7, the field leader at 0.57x), reflex (47.5), and @reactively (56.0), and **ahead of 5th-place Preact Signals (78.4, ~3%)**. It finishes **top-3 on 23 of 47 tests** and is the **outright fastest of all 15** on five shapes -- the wide-aggregation pair (`manyEffectsFromOneSource`, `manySourcesIntoOneComputedEffectWithDirect`), `molBench` (mixed app graph), `updateComputations2to1` (steady-state update micro), and a `32x8` rectangular pull DAG. Raw log with all 15 x 47 rows: [`bench/AndriiVolynetsReactiveBench.log`](./bench/AndriiVolynetsReactiveBench.log). It remains the only object-pooled, zero-GC engine in the field.
 
 #### 1. Stable Topologies (Fan-in / Fan-out / Broadcast)
 In stable environments (game engines, particle systems, visualizers), `lite-signal` is blisteringly fast and maintains a near-zero allocation profile, keeping frame times perfectly flat -- unchanged through 1.1.4.
@@ -809,33 +889,35 @@ In stable environments (game engines, particle systems, visualizers), `lite-sign
 | **1000x5 (25 sources, wide/dense)** | 304ms | 303ms | 1746ms |
 | **64x6 (selective dynamic DAG)** | 181ms | 196ms | 559ms |
 
-*1.3.0 (default eager) on the local harness (slow 2016 MacBook, one engine per cold process -- compare within-column, lite vs alien; the approximating scenarios from `bench/benchmark.mjs`):*
-| Scenario | alien-signals | lite-signal (1.3.0) | result |
+*1.4.0 (default eager) on the local harness (slow 2016 MacBook, one engine per cold process -- compare within-column, lite vs alien; the approximating scenarios from `bench/benchmark.mjs`):*
+| Scenario | alien-signals | lite-signal (1.4.0) | result |
 | :--- | :--- | :--- | :--- |
-| **SELECTIVE DAG** (sqrt-layered, set churn) | 9176ms | 4744ms | **lite +48%** |
-| **DYNAMIC DAG** (sqrt-layered, FAN=6) | 16888ms | 9670ms | **lite +43%** |
-| **SMALL SELECTIVE** (~ 64x6)  | 2744ms | 1937ms | **lite +29%** |
-| **LARGE WEB APP** (~ 1000x12) | 2701ms | 2801ms | alien +4% |
-| **WIDE DENSE** (~ 1000x5)     | 2740ms | 2850ms | alien +4% |
+| **SELECTIVE DAG** (sqrt-layered, set churn) | 9089ms | 4726ms | **lite +48%** |
+| **DYNAMIC DAG** (sqrt-layered, FAN=6) | 17011ms | 9587ms | **lite +44%** |
+| **SMALL SELECTIVE** (~ 64x6)  | 2758ms | 1939ms | **lite +30%** |
+| **LARGE WEB APP** (~ 1000x12) | 2727ms | 2810ms | alien +3% |
+| **WIDE DENSE** (~ 1000x5)     | 2751ms | 2879ms | alien +5% |
 
-> **Honest note (1.3.0 isolated run):** measured one-engine-per-process, lite-signal's
+> **Honest note (1.4.0 isolated run):** measured one-engine-per-process, lite-signal's
 > wins are on the **allocation-heavy** dynamic shapes (SELECTIVE DAG +48%, DYNAMIC DAG
-> +43%, SMALL SELECTIVE +29%) -- exactly where alien churns the nursery and lite's pool
+> +44%, SMALL SELECTIVE +30%) -- exactly where alien churns the nursery and lite's pool
 > allocates near-nothing. The cheaper wide-app/dense shapes land within a few percent
-> either way (host noise on this old machine). 1.3.0's hot paths are byte-identical to
-> 1.2.2, so these match the 1.2.2 isolated numbers -- the deltas are run-to-run noise,
-> not engine changes. lite remains the only zero-alloc library on every stable scenario
-> (see [`results.txt`](./results.txt)).
+> either way (host noise on this old machine). 1.4.0's hot paths are byte-identical to
+> 1.3.0 (the only 1.4.0 addition is three cumulative counters on `stats()` that bump on
+> existing acquire/dispose/pool-grow edges), so these match the 1.3.0 isolated numbers
+> within run-to-run noise -- not engine changes. lite remains the only zero-alloc
+> library on every stable scenario (see [`results.txt`](./results.txt)).
 
-The cross-framework reactivity suite agrees independently, re-run on **1.3.0** (default eager, median-of-10, isolated): lite-signal is the **fastest of five frameworks on all five `dyn` rows** -- `dyn: large web app` **544ms** (+7% vs alien-signals' 586ms) and `dyn: wide dense` **902ms** (+3% vs 926ms), plus simple component (+17%), dynamic component (+15%), and deep (+14%) -- with preact 6-19× slower and vue 15-32× slower on the app-shaped graphs (see the `run_*.txt` logs). On the tiny `S: updateComputations` micro-rows lite and alien trade the lead within a few percent (lite ahead on 3 of 7); these sub-60ms kernels are dominated by run-to-run noise on this old host. The retracking is verified correct by `retracking.difftest.mjs` -- 20,000 direct + 10,000 batched writes, 0 disagreements against the **published 1.1.5** reference (re-pinned for v1.2).
+The cross-framework reactivity suite agrees independently, re-run on **1.4.0** (default eager, median-of-10, isolated): lite-signal is the **fastest of five frameworks on all five `dyn` rows** -- `dyn: large web app` **537ms** (+9% vs alien-signals' 591ms) and `dyn: wide dense` **890ms** (+4% vs 930ms), plus simple component (+18%), dynamic component (+16%), and deep (+20%) -- with preact 6-19x slower and vue 15-32x slower on the app-shaped graphs (see [`resultsReactive.txt`](./resultsReactive.txt); the 10 raw runs are checked into [`bench/bench-runs-reactive/`](./bench/bench-runs-reactive/)). On the tiny `S: updateComputations` micro-rows lite and alien trade the lead within a few percent (lite ahead on 4 of 7); these sub-60ms kernels are dominated by run-to-run noise on this old host. The retracking is verified correct by `retracking.difftest.mjs` -- 20,000 direct + 10,000 batched writes, 0 disagreements against the **published 1.1.5** reference (re-pinned for v1.2).
 
-**The Takeaway:** as of 1.1.4 you no longer have to choose, and 1.3.0 holds the line -- the engine still ranks **4th of 15** on the official js-reactivity-benchmark (the only zero-GC library in the field). `lite-signal` keeps the zero-GC, flat-arena profile for 120fps Canvas/WebGL **and** wins decisively on the high-churn dynamic and fan-in topologies that dominate live UI -- the shapes where zero allocation pays off most. It runs at parity with alien-signals on cheap stable shapes. The one shape where alien's flatter representation still leads is the 256-deep computed pipeline (DEEP CHAIN, -18% on the 1.3.0 isolated run).
+**The Takeaway:** as of 1.1.4 you no longer have to choose, and 1.4.0 holds the line -- the engine still ranks **4th of 15** on the official js-reactivity-benchmark (the only zero-GC library in the field). `lite-signal` keeps the zero-GC, flat-arena profile for 120fps Canvas/WebGL **and** wins decisively on the high-churn dynamic and fan-in topologies that dominate live UI -- the shapes where zero allocation pays off most. It runs at parity with alien-signals on cheap stable shapes. The one shape where alien's flatter representation still leads is the 256-deep computed pipeline (DEEP CHAIN, -29% on the 1.4.0 isolated run -- the gap widened this cycle because alien's DEEP CHAIN got faster (~339ms -> ~307ms), not because lite regressed).
 
 ### Roadmap
 - **1.1.5** -- additions in service of `lite-devtools` (node identity/traversability on the introspection walkers, for full auto-discovered graph rendering). *Shipped.*
 - **1.2.0** -- the **ownership hybrid**: an owner tree so nested effects/computeds auto-dispose with their parent (closes conformance #209 / #210, matching Solid's `createRoot` ergonomics). Plus three additive features built on the same internal split: pre-batch revert (`batch(() => { a.set(99); a.set(10); })` doesn't re-fire), multi-throw `AggregateError`, and scheduler-thunk caching with an ABA gen guard. *Shipped.*
 - **1.3.0** -- the **pool minor**: node and link pools become growable and incrementally populated. New `prealloc` config (`"eager"` default | `"lazy"`) chooses up-front vs on-demand construction; `onCapacityExceeded: "grow"` extends pools via chunked refill (runs of up to 1024 links / 256 nodes, ledger doubles) bounded by the 16x link ceiling; `maxFlushPasses` is now a public config. Internally the propagation mark phase moved to an intrusive linked-list stack (a `nextMark` field) -- the only node-shape change. The hot paths and public callable API are byte-identical to 1.2.2; steady-state zero-GC is unchanged. *Shipped.*
-- **1.4** -- next engine work. The pull-mode recursion depth limit (~5,000 chained computeds) is the main outstanding architectural item; cumulative allocation counters (`totalAllocations` / `totalDisposals` / `poolGrowths`) are reserved for the `stats()` surface here.
+- **1.4.0** -- the **observability minor**: `stats()` gains three cumulative lifecycle counters (`totalAllocations`, `totalDisposals`, `poolGrowths`), the surface reserved for it in the 1.2.x/1.3.0 notes. Monotonic over the registry's life, reset by `destroy()`, bumped on the existing acquire/dispose/grow edges -- no hot-path change, no public callable API change. This is what lite-devtools / lite-studio read to chart allocation rate, pool-reuse ratio, and graph churn. Also adds the `harness/VersionMatrix/` regression gate (cold-process, same-host, two baselines) and its checked-in baselines, wired into `prepublishOnly` -- so a release that regresses `frame.avg` on the four reference workloads (reactive-graph-mix, deep-chain, broadcast-fanout, dynamic-dep-churn) fails the publish. Drop-in over 1.3.0. *Shipped.*
+- **1.5** -- the `signalBox` / `computedBox` allocation-light handle API (staged in `test/24-signalbox`). The pull-mode recursion depth limit (~5,000 chained computeds) remains the main outstanding architectural item.
 
 > Note: the retracking rewrite that closes the dynamic-topology gap shipped in **1.1.4**, not a future release. The earlier roadmap that listed it under "v1.2" is superseded.
 
@@ -989,7 +1071,7 @@ The one remaining open item is a deliberate design choice (#179, below).
 The exact post-1.2 pass count is being re-run against the upstream suite;
 per-test results and the runner adapter live in `/conformance/`.
 
-**177 of 178 tests pass**, placing lite-signal **in the second place of sixteen**
+**177 of 178 tests pass **, placing lite-signal **in the second place of sixteen**
 evaluated libraries -- just behind alien-signals (177).
 
 We publish both passing and failing tests, because honesty about behavior is
@@ -1087,7 +1169,7 @@ npm test          # behavior suite, ~1.3s
 npm run test:gc   # zero-gc suite, requires --expose-gc, ~3s
 npm run bench     # comparative benchmark vs alien-signals (results.txt), ~5min
 npm run bench-reactive  # 5-framework reactivity suite (resultsReactive.txt)
-npm run verify    # test + test:gc + sanity bench; gate for publish
+npm run verify    # test + sanity bench; run before publishing
 ```
 
 ---

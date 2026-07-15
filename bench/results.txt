@@ -1,7 +1,7 @@
 Config: WARMUP=2  RUNS=5  ITERATIONS=20,000  Node v22  REPS=10 per engine
 Hardware: 2016-era MacBook Pro (Intel, ~10 yr old, 4 cores)
 Reported: median across 10 isolated per-engine runs (one engine per cold process).
-Run date: @zakkster/lite-signal@1.3.0, default prealloc: "eager".
+Run date: @zakkster/lite-signal@1.4.0 (fresh 1.4.0 bench run), default prealloc: "eager".
 Harness: bench/benchmark.mjs via run-all-bench.sh + aggregate.mjs
 
 PREALLOC / PROTOCOL NOTE (read this first). These numbers are the default-config run
@@ -11,12 +11,13 @@ FW=<engine> per child, medianed by aggregate.mjs): each engine has its own
 ReactiveNode/signal shape, so sharing call sites across engines in one process would
 degrade their inline caches monomorphic -> megamorphic and let nursery-allocating
 engines borrow a prior engine's warm heap. The isolated protocol below is the correct
-comparison. The engine hot paths are byte-identical 1.2.2 -> 1.3.0-rc -- 1.3.0 adds
-growable/lazy pools, an intrusive mark stack, and a small config surface, all paid at
-construction / pool-growth time, not in steady-state reads -- so these track the 1.2.2
-numbers; the deltas are run-to-run noise on this old host, not engine changes.
-(prealloc: "lazy" trades a little first-construction allocation on the dynamic shapes
-for a smaller resident heap and faster cold start; steady state is identical.)
+comparison. The engine hot paths are byte-identical 1.2.2 -> 1.3.0 -> 1.4.0 -- 1.4.0
+only adds three cumulative counters to `stats()` (totalAllocations / totalDisposals /
+poolGrowths) that bump on the existing acquire/dispose/pool-grow edges, never on the
+steady-state read path -- so these track the 1.3.0 measurement within run-to-run noise
+on this old host. (prealloc: "lazy" trades a little first-construction allocation on
+the dynamic shapes for a smaller resident heap and faster cold start; steady state is
+identical.)
 
 deltaheap = transient heap allocated during the timed loop (GC pressure). Reported
             below as the AVERAGE delta-heap across reps -- on this 10-year-old host a
@@ -24,8 +25,8 @@ deltaheap = transient heap allocated during the timed loop (GC pressure). Report
             read as small non-zero averages; their median floor is the ~0.3KB
             pool-reuse value (true zero-GC steady state).
 retained  = heap surviving a forced GC after the loop (leaks / live graph).
-            Structurally unchanged from 1.2.2 (same graph, same pool); not separately
-            re-measured this cycle.
+            Structurally unchanged from 1.2.2 / 1.3.0 (same graph, same pool); not
+            separately re-measured this cycle.
 sink      = anti-DCE Float64Array validated non-zero after the loop.
 
 ==============================================================================
@@ -34,60 +35,93 @@ sink      = anti-DCE Float64Array validated non-zero after the loop.
 
 scenario               lite-signal   alien-signals          preact           solid
 ----------------------------------------------------------------------------------
-KAIROS                    1338.8ms        1325.4ms        1631.1ms        6727.5ms
-BROADCAST                 1181.8ms        1073.5ms        1053.8ms        2915.1ms
-DEEP CHAIN                 400.6ms         339.1ms         392.0ms        1709.8ms
-MUX                         66.7ms         107.6ms         132.7ms         733.0ms
-DYNAMIC DAG               9669.8ms       16888.1ms        7041.5ms       17092.1ms
-SELECTIVE DAG             4744.3ms        9175.5ms        7360.7ms       10405.6ms
-LARGE WEB APP             2801.1ms        2701.2ms              --              --
-WIDE DENSE                2850.0ms        2740.4ms              --              --
-SMALL SELECTIVE           1936.6ms        2743.9ms              --              --
+KAIROS                    1359.6ms        1296.0ms        1643.8ms        7803.4ms
+BROADCAST                 1185.6ms        1067.5ms        1098.8ms        3273.9ms
+DEEP CHAIN                 395.0ms         306.6ms         406.6ms        2009.5ms
+MUX                         66.7ms         103.4ms         145.3ms         772.7ms
+DYNAMIC DAG               9586.9ms       17010.8ms        7243.3ms       20283.6ms
+SELECTIVE DAG             4726.3ms        9088.8ms        7373.7ms       11952.8ms
+LARGE WEB APP             2810.2ms        2727.0ms              --              --
+WIDE DENSE                2878.6ms        2751.3ms              --              --
+SMALL SELECTIVE           1939.3ms        2758.0ms              --              --
 
 (LARGE WEB APP / WIDE DENSE / SMALL SELECTIVE are lite-vs-alien only -- the
 preact/solid adapters for those three shapes are not wired in this harness.)
 
-Relative -- lite-signal @1.3.0 vs alien-signals (isolated, median of 10):
-  MUX              lite +38%     [lite wins]
-  DYNAMIC DAG      lite +43%     [lite wins]
+Relative -- lite-signal @1.4.0 vs alien-signals (isolated, median of 10):
   SELECTIVE DAG    lite +48%     [lite wins]
-  SMALL SELECTIVE  lite +29%     [lite wins]
-  KAIROS           lite  -1%     [parity, host-noise range]
-  LARGE WEB APP    lite  -4%     [parity]
-  WIDE DENSE       lite  -4%     [parity]
-  BROADCAST        lite -10%     [alien edge -- pure fan-out, no retracking to amortize]
-  DEEP CHAIN       lite -18%     [alien wins -- flatter rep on long chains]
+  DYNAMIC DAG      lite +44%     [lite wins]
+  MUX              lite +35%     [lite wins]
+  SMALL SELECTIVE  lite +30%     [lite wins]
+  LARGE WEB APP    lite  -3%     [parity, host-noise range]
+  KAIROS           lite  -5%     [parity, host-noise range]
+  WIDE DENSE       lite  -5%     [parity, host-noise range]
+  BROADCAST        lite -11%     [alien edge -- pure fan-out, no retracking to amortize]
+  DEEP CHAIN       lite -29%     [alien wins -- flatter rep on long chains]
 
   lite-signal wins MUX, DYNAMIC DAG, SELECTIVE DAG, SMALL SELECTIVE (4 of 9),
-  and the wins are large (+29% to +48%). alien-signals runs at parity on the cheap
+  and the wins are large (+30% to +48%). alien-signals runs at parity on the cheap
   stable shapes (KAIROS, large web app, wide dense -- within this host's run-to-run
-  noise), edges BROADCAST (a pure fan-out where the pool has no retracking to
-  amortize), and wins DEEP CHAIN decisively (-18%).
+  noise, alien +3 to +5% on this run), edges BROADCAST (a pure fan-out where the pool
+  has no retracking to amortize), and wins DEEP CHAIN decisively (-29%). The DEEP
+  CHAIN gap widened vs 1.3.0's isolated run (-18% -> -29%) because alien's flatter
+  representation got faster on the 256-deep linear pipeline (~339ms -> ~307ms) while
+  lite held its ground (~401ms -> ~395ms) -- an alien improvement, not a lite
+  regression. See resultsReactive.txt for the cross-framework picture on the same
+  bench sweep.
 
 WHY THE WINS CLUSTER WHERE THEY DO:
   The shapes where lite wins BIG are the allocation-heavy ones -- the dynamic DAGs
   (read order flips every iteration, dense fan-in) where alien churns the nursery.
   Run in isolation, alien pays the full GC cost of that churn and lite's
-  zero-allocation pool pulls 29-48% ahead. The cheap stable shapes (KAIROS, large
+  zero-allocation pool pulls 30-48% ahead. The cheap stable shapes (KAIROS, large
   app, wide dense) barely allocate, so there is no GC tailwind for the pool to
   exploit and the two engines land within a few percent -- inside host noise on this
   10-year-old machine.
 
   The honest summary: lite-signal's advantage is precisely where its zero-GC design
-  pays off -- high-churn dynamic graphs and wide fan-in (MUX +38%). On the cheap,
-  low-allocation stable shapes it runs at parity with alien (+/-4%). The two losses
-  are BROADCAST (-10%, pure fan-out) and the 256-deep pipeline (DEEP CHAIN -18%),
-  where alien's flatter representation wins on long propagation paths.
+  pays off -- high-churn dynamic graphs and wide fan-in (MUX +35%). On the cheap,
+  low-allocation stable shapes it runs at parity with alien (within +/-5%). The two
+  losses are BROADCAST (-11%, pure fan-out) and the 256-deep pipeline (DEEP CHAIN
+  -29%), where alien's flatter representation wins on long propagation paths.
 
 deltaheap (transient allocation, average across reps) -- the zero-GC story holds:
+
+scenario          @zakkster/lite-signal  alien-signals preact-signals  solid-signals
+------------------------------------------------------------------------------------
+KAIROS                    178.1KB       1036.2KB        525.0KB      10912.4KB
+BROADCAST                  71.9KB         20.6KB       2411.0KB      12016.5KB
+DEEP CHAIN                 18.2KB        903.3KB        246.0KB       2349.5KB
+MUX                        37.7KB       3926.3KB        238.2KB      15629.6KB
+DYNAMIC DAG              4775.3KB      23920.7KB       4177.3KB       9579.6KB
+SELECTIVE DAG            1684.2KB      28373.3KB      10451.1KB       8121.0KB
+LARGE WEB APP               0.3KB         40.9KB             --             --
+WIDE DENSE                  0.3KB      11604.6KB             --             --
+SMALL SELECTIVE             0.3KB      24501.7KB             --             --
+
+Transient heap vs alien-signals (x less = lite allocates that many times less):
+  KAIROS                       5.8x less
+  DEEP CHAIN                  49.6x less
+  MUX                        104.1x less
+  DYNAMIC DAG                  5.0x less
+  SELECTIVE DAG               16.8x less
+  LARGE WEB APP               >=41x less
+  WIDE DENSE               >=11605x less
+  SMALL SELECTIVE          >=24502x less
+  BROADCAST                   -3.5x  (lite allocates more -- pure fan-out, no
+                                      retracking to amortize; still 33.5x less than
+                                      preact's 2411KB on the same shape)
+
+  Heap wins vs alien-signals: 8 of 9 scenarios.
+
   - lite-signal wins 8 of 9 scenarios on transient heap. On the truly stable app
     shapes (LARGE WEB APP, WIDE DENSE, SMALL SELECTIVE) lite allocates ~0.3KB across
-    the run (hot paths reuse pool slots) vs alien's 41KB / 11.6MB / 23.9MB.
+    the run (hot paths reuse pool slots) vs alien's 41KB / 11.6MB / 24.5MB.
   - On MUX: lite ~38KB vs alien-signals ~3,926KB and preact ~238KB in the same loop
     (the ~38KB is the across-reps average; the median is the ~0.3KB pool-reuse floor).
-  - On the chaotic DYNAMIC/SELECTIVE DAG shapes lite-signal allocates 1.5-5.1MB
+  - On the chaotic DYNAMIC/SELECTIVE DAG shapes lite-signal allocates 1.6-4.8MB
     (genuine retracking re-links on a real dependency-set change) -- still far less
-    than alien-signals (24-37MB on the same shapes), which is the mechanism behind
+    than alien-signals (24-28MB on the same shapes), which is the mechanism behind
     lite's isolated win there.
   - The one heap loss is BROADCAST: lite ~72KB vs alien ~21KB -- a pure fan-out with
     no retracking, where alien's flatter representation touches less transient memory.
@@ -95,10 +129,10 @@ deltaheap (transient allocation, average across reps) -- the zero-GC story holds
 retained heap:
   - Negative values mean V8 compacted below the pre-bench baseline during the
     post-loop forceGc() -- no leak anywhere. alien-signals' allocation is GC
-    pressure, not a leak. Retained heap is structurally unchanged from 1.2.2: the
-    pre-allocated pool IS the working memory, and 1.3.0 does not alter the live-graph
-    shape (under eager the pool is sized up front; under lazy it grows to the same
-    in-use set).
+    pressure, not a leak. Retained heap is structurally unchanged from 1.2.2 / 1.3.0:
+    the pre-allocated pool IS the working memory, and 1.4.0 does not alter the
+    live-graph shape (under eager the pool is sized up front; under lazy it grows to
+    the same in-use set).
 
 Architectural reading:
   - lite-signal leads on fan-in (MUX) and the dynamic/selective DAGs -- the high-
@@ -109,12 +143,19 @@ Architectural reading:
     parity on the cheap stable shapes. The retracking machinery (version-stamped O(1)
     reconciliation + markEpoch clean-read short-circuit, shipped 1.1.4) is what keeps
     lite ahead on the dynamic DAGs while shipping zero allocation.
-  - 1.2.2 -> 1.3.0 changed no hot path. The 1.3.0 growable/lazy pools, intrusive
-    mark stack, and config surface are paid at construction / pool-growth time, not
-    in steady-state reads. The table moves here are run-to-run host noise, not engine
-    changes.
+  - 1.3.0 -> 1.4.0 changed no hot path. The 1.4.0 addition (three cumulative counters
+    on stats(): totalAllocations, totalDisposals, poolGrowths) bumps on existing
+    acquire/dispose/pool-grow edges, never on the steady-state read path. The
+    table moves here are run-to-run host noise, not engine changes.
+
+VersionMatrix gate (harness/VersionMatrix/): this bench is the public evidence surface;
+  the same-host regression gate is in harness/VersionMatrix. It captures floor,
+  rolling, and candidate in one cold-process run and blocks a publish that regresses
+  frame.avg by >5% (rolling) or >10% (floor) on the four workloads that map to the
+  rows above (reactive-graph-mix, deep-chain, broadcast-fanout, dynamic-dep-churn).
+  Runs on prepublish; details in harness/VersionMatrix/README.md.
 
 Validation: all libs show sink=ok (effects fired against the anti-DCE Float64Array).
 Note: times from this host are a relative baseline; run on a quiet machine for
 publishable absolute numbers. The relative ordering between libraries is what
-matters. Prior baselines (1.2.2, 1.2.0, 1.1.5) are preserved in git history.
+matters. Prior baselines (1.3.0, 1.2.2, 1.2.0, 1.1.5) are preserved in git history.
