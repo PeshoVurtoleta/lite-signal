@@ -64,9 +64,9 @@ as before (the reset keeps the arena warm); only the cumulative counts reset.
 
 The repo now ships **three opt-in test harnesses** alongside the in-tree engine
 suite, each in its own subdirectory with its own `package.json` and setup story.
-They do **not** run on `npm test`; they opt in through dedicated scripts (with
-the exception of the VersionMatrix gate, which is wired into `prepublishOnly`
-so it runs automatically on `npm publish`). The default `npm test` is now scoped
+They do **not** run on `npm test`; they opt in through dedicated scripts,
+including the VersionMatrix gate (run on demand via `npm run gate`). The
+default `npm test` is now scoped
 via a Node 22 native glob -- `'test/*.test.mjs'` -- so only the 26 root engine
 test files are discovered. Subdirectory test files (e.g.
 `test/ProfilerTests/test/*.test.mjs`) and out-of-tree test files
@@ -87,8 +87,8 @@ the default run.
   `stats()` it monitors that the profiler allocates no new nodes in steady
   state). Setup is one-time (`bash setup.sh`) and pins specific package
   versions via tarball install so the harness re-runs reproducibly.
-- **`harness/VersionMatrix/`** -- a **cold-process regression gate** wired into
-  `prepublishOnly`. Each version-x-workload is profiled in its own `node`
+- **`harness/VersionMatrix/`** -- a **cold-process regression gate** run on
+  demand via `npm run gate`. Each version-x-workload is profiled in its own `node`
   invocation (so V8 never carries inline caches or JIT state from one version
   into another), fed an identical LCG write sequence (delta = engine change,
   not input), and reduced to a per-metric median-of-N. Two baselines gate every
@@ -110,7 +110,7 @@ the default run.
   `harness/VersionMatrix/README.md`.
 
 New root scripts: `test:hardening`, `test:hardening:gc`, `test:harness`,
-`test:all`, `gate` (which is also the value of `prepublishOnly`). The README's
+`test:all`, `gate` (the on-demand VersionMatrix regression gate). The README's
 "Test harnesses" section documents all three subdirectories, the setup story,
 and the expectation that more dedicated harnesses will land as future
 publications need targeted defensive validation.

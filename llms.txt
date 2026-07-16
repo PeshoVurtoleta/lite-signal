@@ -82,8 +82,8 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   `npm test` is scoped to `'test/*.test.mjs'` (Node 22 native glob) so subdirectory
   and out-of-tree test files are no longer swept in. Drop-in over 1.3.0.
   **VersionMatrix regression gate (`harness/VersionMatrix/`):** a same-host,
-  cold-process performance gate wired into `prepublishOnly` -- a candidate that
-  regresses beyond calibrated tolerances aborts `npm publish` before it starts.
+  cold-process performance gate run on demand via `npm run gate` -- a candidate that
+  regresses beyond calibrated tolerances is flagged against the current tree.
   Each version-x-workload is profiled in its own `node` invocation (V8 never
   carries inline caches or JIT state across versions), fed an identical LCG write
   sequence (delta = engine change, not input), and reduced to a per-metric
@@ -99,7 +99,7 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   baselines under `harness/VersionMatrix/baselines/<version>/*.json` carry `env`
   metadata (CPU, node, date) as public evidence; the gate itself always
   re-captures floor / rolling / candidate in the same job so it never diffs
-  across hosts. Commands: `npm run gate` (prepublish), `npm run calibrate`
+  across hosts. Commands: `npm run gate` (on-demand regression gate), `npm run calibrate`
   (measure self-noise), `bash matrix.sh gate <version>` (published candidate),
   `node diff.mjs` (diagnostic over committed baselines). Details in
   `harness/VersionMatrix/README.md`.
