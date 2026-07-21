@@ -1,0 +1,10 @@
+{
+  "name": "lite-signal-hard-suite",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Adversarial, version-portable conformance + hardening suite for @zakkster/lite-signal. node:test only; imports the bare package so it runs against any installed version. Advanced cases are feature-gated and light up as the engine gains APIs.",
+  "scripts": {
+    "test": "node --test",
+    "test:gc": "node --test --expose-gc"
+  }
+}

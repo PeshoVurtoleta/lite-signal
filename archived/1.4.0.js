@@ -1,18 +1,18 @@
 /**
- * @zakkster/lite-signal v1.4.1
+ * @zakkster/lite-signal v1.4.0
  * --------------------
- * Hybrid Doubly-Linked-List Reactive Graph Engine -- decoupled (Signal1_3) base
+ * Hybrid Doubly-Linked-List Reactive Graph Engine — decoupled (Signal1_3) base
  * with the two 1.1.3 performance fixes ported in:
- *   1. pullComputed clean short-circuit (markEpoch) -- kills the dynamic-graph
+ *   1. pullComputed clean short-circuit (markEpoch) — kills the dynamic-graph
  *      regression: "large web app" 4900ms -> 665ms, "wide dense" 4472 -> 952.
- *   2. allocateLink: O(1) tailSub dedup replaces the O(N) prefix scan -- divergent
+ *   2. allocateLink: O(1) tailSub dedup replaces the O(N) prefix scan — divergent
  *      re-tracking is O(N) not O(N^2) (600-dep flip micro: 1373ms -> 62ms).
  * Ownership tree + L1/L2/L3 layering + observer/owner split are UNCHANGED; they
  * were never the regression. Same EDGE NOTE as 1.1.3 applies to fix (2): a nested
  * re-read of the same source can retain one bounded, dispose-reclaimed link.
  *
  * Original header:
- * Hybrid Doubly-Linked-List Reactive Graph Engine.
+ * v1.3.2: Hybrid Doubly-Linked-List Reactive Graph Engine.
  *
  * Performance model:
  * - ReactiveLink DLL object pool guarantees O(1) graph edge allocation.
@@ -20,7 +20,7 @@
  * - Divergence triggers immediate tail-severing to bound worst-case complexity.
  * - O(1) Owner Context Tree ensures automatic teardown of nested observers.
  *
- * -- ARCHITECTURE: three layers + a public API, with a strict dependency direction --
+ * ── ARCHITECTURE: three layers + a public API, with a strict dependency direction ──
  *
  *   L1  GRAPH TOPOLOGY      allocateLink, freeLink, severTail
  *       Owns the ReactiveLink pool and the dep/sub doubly-linked lists.
@@ -29,7 +29,7 @@
  *   L2  OWNERSHIP / LIFECYCLE   createNode, disposeNode, runCleanup
  *       Owns the owner tree and node death + user cleanup.
  *       INVARIANT: never touches the `activeObserverCurrentDep` cursor.
- *       Sanctioned downward edge -> L1: disposeNode walks a dying node's own
+ *       Sanctioned downward edge → L1: disposeNode walks a dying node's own
  *       dep/sub lists and calls freeLink to extract it from the graph.
  *
  *   L3  PROPAGATION / EXECUTION   markDownstream, flushEffects, executeEffect, pullComputed
@@ -37,18 +37,18 @@
  *       (a pure propagation primitive). executeEffect/pullComputed are the
  *       ORCHESTRATORS: they drive the cursor + severTail (L1) AND, before a
  *       re-run, call runCleanup (L2) to cascade-dispose owned children.
- *       Sanctioned upward call -> L2: executeEffect/pullComputed -> runCleanup.
+ *       Sanctioned upward call → L2: executeEffect/pullComputed → runCleanup.
  *
  *   API  signal, computed, effect, dispose, batch, untrack, onCleanup, stats, destroy
  *
- *   The only cross-layer edges are L3->runCleanup and L2->freeLink. The graph of
+ *   The only cross-layer edges are L3→runCleanup and L2→freeLink. The graph of
  *   dependencies is acyclic; nothing in L1 reaches up, nothing in L2 touches
  *   the cursor, and the engine is the single place the two subsystems meet.
  *
- * -- OWNER vs OBSERVER --
+ * ── OWNER vs OBSERVER ──
  *   `currentObserver` = the node whose READS establish dependencies (tracking).
  *   `currentOwner`    = the node that OWNS anything created right now (lifecycle).
- *   Today they move together, so behaviour is unchanged -- but they are distinct
+ *   Today they move together, so behaviour is unchanged — but they are distinct
  *   pointers so future runWithOwner/createRoot can attach ownership without
  *   establishing reactive dependencies (and untrack can suppress tracking
  *   without orphaning created nodes). createNode and onCleanup key off the
@@ -115,7 +115,7 @@ class ReactiveNode {
         this.headSub = null;
         this.tailSub = null;
 
-        // Owner Context Tree (Auto-Disposal of Nested Observers) -- 1.2.0.
+        // Owner Context Tree (Auto-Disposal of Nested Observers) — 1.2.0.
         // An effect/computed created inside another effect/computed is "owned"
         // by it. When the owner re-runs or is disposed, owned children are
         // cascade-disposed before the new run. Plain signals are NOT adopted
@@ -127,7 +127,7 @@ class ReactiveNode {
 
         // Pool free-list pointer.
         this.nextFree = null;
-        // 1.3.0: Intrusive mark-stack pointer. markDownstream chains visited
+        // 1.2.4: Intrusive mark-stack pointer. markDownstream chains visited
         // nodes through this field instead of an external array, eliminating the
         // separate cache line + bounds-check on each push/pop. Always null
         // outside an active markDownstream sweep; cleared on pop and on dispose.
@@ -178,30 +178,15 @@ export class CapacityError extends Error {
  *
  * Use this when you need multiple independent reactive graphs (e.g. one per
  * Twitch Extension viewer, one per worker, one per test). The top-level
- * helpers ({@link signal}, {@link effect}, ...) delegate to a single shared
+ * helpers ({@link signal}, {@link effect}, …) delegate to a single shared
  * default registry; call {@link setDefaultRegistry} to swap that for your own.
  *
  * @param {object} [config]
- * @param {number} [config.maxNodes=1024]            Initial node-pool capacity (ledger).
- * @param {number} [config.maxLinks=maxNodes*4]      Initial link-pool capacity (ledger).
- * @param {"eager"|"lazy"} [config.prealloc="eager"]
- *        Pool population strategy. `"eager"` constructs the full `maxNodes` /
- *        `maxLinks` pools up front -- deterministic latency, zero allocation
- *        inside any subsequent hot path (the contract for render loops, game
- *        ticks, and extension frame budgets), at the cost of a larger resident
- *        heap that every major GC traces. `"lazy"` treats the capacities as
- *        ledgers and constructs nodes/links on first demand, recycling through
- *        the free lists thereafter -- smaller heap, faster cold start, lighter
- *        GC marking, identical zero-GC steady state after warm-up. Choose eager
- *        for hard-real-time, lazy for footprint-sensitive or short-lived registries.
+ * @param {number} [config.maxNodes=1024]            Initial node-pool capacity.
+ * @param {number} [config.maxLinks=maxNodes*4]      Initial link-pool capacity.
  * @param {"throw"|"grow"} [config.onCapacityExceeded="throw"]
- *        `"throw"` fails fast with a {@link CapacityError} when a pool is full.
- *        `"grow"` extends the pool on a free-list miss. Growth is chunked and
- *        incremental -- contiguous runs of up to 1024 links / 256 nodes per
- *        miss, not a single doubling burst -- so any one growth pause stays
- *        bounded; the capacity ledger still doubles (`stats()` semantics
- *        unchanged). Link growth is bounded by a hard ceiling of `maxLinks * 16`.
- *        Each chunk increments `stats().poolGrowths`.
+ *        `"throw"` fails fast when pools are full.
+ *        `"grow"` doubles the pool (bounded by `maxLinks * 16` for links).
  * @param {number} [config.maxFlushPasses=100]       Cycle-protection: max effect-queue
  *                                                   drain passes before throwing an
  *                                                   Error prefixed `"CycleError:"`.
@@ -222,7 +207,7 @@ export function createRegistry(config) {
     // demand and recycled through the free lists thereafter -- the zero-GC
     // steady state is identical after warm-up, but the heap no longer carries
     // never-used live objects for every major GC to mark.
-    const prealloc = (config !== undefined && config.prealloc !== undefined) ? config.prealloc : "eager";
+    const prealloc = (config !== undefined && config.prealloc !== undefined) ? config.prealloc : "lazy";
     const nodePool = [];
     let freeNodeHead = null;
     const linkPool = [];
@@ -244,7 +229,7 @@ export function createRegistry(config) {
     // 1.4: cumulative lifecycle counters for churn-rate observability (lite-devtools
     // / lite-studio derive allocationRate, poolReuseRate, avg node lifetime from these).
     // Monotonic across the registry's life; reset only by destroy(). Three integer
-    // bumps at existing chokepoints -- no new node fields, no hot-path cost.
+    // bumps at existing chokepoints — no new node fields, no hot-path cost.
     let statTotalAllocations = 0;   // bumped on every createNode (pool pop OR fresh build)
     let statTotalDisposals = 0;     // bumped on every disposeNode
     let statPoolGrowths = 0;        // bumped when a node/link chunk pushes capacity past its ledger
@@ -263,7 +248,7 @@ export function createRegistry(config) {
     let batchDepth = 0;
     let isTrackingDeps = false;
 
-    // -- Node identity + observer-lifecycle introspection (ported from 1.1.5) --
+    // ── Node identity + observer-lifecycle introspection (ported from 1.1.5) ──
     let nodeSeq = 1 | 0;
     let lifecycleCount = 0 | 0;
     const lifecycleMap = new WeakMap();
@@ -286,19 +271,19 @@ export function createRegistry(config) {
     const flushErrorBuffer = [];
     let flushErrorCount = 0;
 
-    // === L1 * GRAPH TOPOLOGY ======================================
+    // ═══ L1 · GRAPH TOPOLOGY ══════════════════════════════════════
     // Owns the ReactiveLink pool and the dep/sub lists. Pure edge mechanics:
-    // INVARIANT -- must never touch node.owner / firstOwned.
+    // INVARIANT — must never touch node.owner / firstOwned.
 
-    // --- HYBRID ALLOCATOR -----------------------------------------
+    // ─── HYBRID ALLOCATOR ─────────────────────────────────────────
 
     /**
-     * Establish (or reuse) a dependency link from `source` -> `target`.
+     * Establish (or reuse) a dependency link from `source` → `target`.
      *
-     * Fast path: cursor match (re-tracking same dep at same position) -- O(1), no allocation.
-     * Mid path: O(1) tailSub dedup (1.1.4 rewrite) -- divergent retracking stays O(N) overall,
-     *           not O(N^2).
-     * Cold path: pool exhausted -> grow or throw per policy.
+     * Fast path: cursor match (re-tracking same dep at same position) — O(1), no allocation.
+     * Mid path: O(1) tailSub dedup (1.1.4 rewrite) — divergent retracking stays O(N) overall,
+     *           not O(N²).
+     * Cold path: pool exhausted → grow or throw per policy.
      *
      * SEVER-FIRST: on a cursor-miss divergence the unmatched dep tail is freed
      * BEFORE any new link is allocated, so peak link usage never exceeds steady
@@ -329,7 +314,7 @@ export function createRegistry(config) {
     function allocateLink(source, target) {
         // Eligibility gate (restored from 1.1.5): an observer disposed mid-run (self-dispose, or
         // an outer observer torn down while suspended) has flags cleared to 0. Linking would splice
-        // a dead, pool-bound node back into source's subscriber list -- a phantom edge. Cold path only.
+        // a dead, pool-bound node back into source's subscriber list — a phantom edge. Cold path only.
         if (target.flags === 0) return null;
         let expected = activeObserverCurrentDep;
 
@@ -380,14 +365,6 @@ export function createRegistry(config) {
             if (linkPool.length > currentLinkCapacity) {
                 let doubled = currentLinkCapacity;
                 while (doubled < linkPool.length) doubled *= 2;
-                // The `> maxLinkLimit` arm is provably unreachable, retained as a clamp.
-                // Proof: maxLinkLimit === initialLinkCapacity * 16, currentLinkCapacity is
-                // only ever assigned a power-of-2 multiple of that same initial capacity,
-                // so 16x is ON the doubling chain (m, 2m, 4m, 8m, 16m). The guard above
-                // (`linkPool.length >= maxLinkLimit -> CapacityError`) plus the chunk math
-                // (`chunk = limit - linkPool.length`) cap linkPool.length AT maxLinkLimit,
-                // so `doubled` terminates at exactly 16m and can never exceed it.
-                /* c8 ignore next -- unreachable clamp; see proof above + COVERAGE-NOTES.md */
                 currentLinkCapacity = doubled > maxLinkLimit ? maxLinkLimit : doubled;
                 statPoolGrowths++;   // 1.4: link capacity ledger crossed
             }
@@ -403,7 +380,7 @@ export function createRegistry(config) {
 
         link.nextSub = null;
         link.prevSub = source.tailSub;
-        const _was0 = lifecycleCount !== 0 && source.headSub === null;   // 0->1 detect (pre-link)
+        const _was0 = lifecycleCount !== 0 && source.headSub === null;   // 0→1 detect (pre-link)
         if (source.tailSub !== null) source.tailSub.nextSub = link;
         else source.headSub = link;
         source.tailSub = link;
@@ -420,17 +397,12 @@ export function createRegistry(config) {
 
     /** Return a link to the free pool and unlink it from the source's sub list. @private */
     function freeLink(link, target, source) {
-        // Every caller (allocateLink sever, severTail, disposeNode dep-walk) passes a
-        // LIVE link: `source === link.source`, `target === link.target`. The 1.3.x
-        // `link.source !== null ? ... : -1` guards existed only to survive a cursor
-        // dangling at an already-freed link -- a state disposeNode's CURSOR REPAIR now
-        // makes unreachable. Reading the params directly is equivalent and branch-free.
-        if (mutationHook !== null) mutationHook(4, source.id, target.id);
+        if (mutationHook !== null) mutationHook(4, link.source !== null ? link.source.id : -1, link.target !== null ? link.target.id : -1);
         const pSub = link.prevSub;
         const nSub = link.nextSub;
         if (pSub !== null) pSub.nextSub = nSub; else source.headSub = nSub;
         if (nSub !== null) nSub.prevSub = pSub; else source.tailSub = pSub;
-        if (lifecycleCount !== 0 && source.headSub === null) fireDisconnect(source);   // 1->0
+        if (lifecycleCount !== 0 && source.headSub === null) fireDisconnect(source);   // 1→0
 
         link.source = null;
         link.target = null;
@@ -466,13 +438,13 @@ export function createRegistry(config) {
         }
     }
 
-    // === L2 * OWNERSHIP / LIFECYCLE ===============================
+    // ═══ L2 · OWNERSHIP / LIFECYCLE ═══════════════════════════════
     // Owns the owner tree, node death, and user cleanup.
-    // INVARIANT -- must never touch the activeObserverCurrentDep cursor.
-    // Sanctioned downward edge -> L1: disposeNode calls freeLink to extract a
+    // INVARIANT — must never touch the activeObserverCurrentDep cursor.
+    // Sanctioned downward edge → L1: disposeNode calls freeLink to extract a
     // dying node from the graph.
 
-    // --- LIFECYCLE & OWNERSHIP ---------------------------------------
+    // ─── LIFECYCLE & OWNERSHIP ───────────────────────────────────────
 
     function disposeNode(node) {
         if (mutationHook !== null) mutationHook(2, node.id, node.flags | 0);
@@ -480,7 +452,7 @@ export function createRegistry(config) {
 
         // RACE WITH ACTIVE TRACKING: an effect/computed may call dispose on
         // itself from inside its own body (#141). Once we tear the node down
-        // its dep-list, FLAG_COMPUTING, and cursor become stale immediately --
+        // its dep-list, FLAG_COMPUTING, and cursor become stale immediately —
         // any read() that runs in the REST of the body would otherwise try to
         // hang a fresh link off a freed slot. Null the tracking state now so
         // subsequent reads in this call stack become no-ops, and let
@@ -518,7 +490,7 @@ export function createRegistry(config) {
 
         runCleanup(node);
 
-        // CROSS-EDGE L2->L1: extract this node's own edges from the graph.
+        // CROSS-EDGE L2→L1: extract this node's own edges from the graph.
         let dLink = node.headDep;
         while (dLink !== null) {
             const next = dLink.nextDep;
@@ -535,17 +507,6 @@ export function createRegistry(config) {
             const nDep = sLink.nextDep;
             if (pDep !== null) pDep.nextDep = nDep; else target.headDep = nDep;
             if (nDep !== null) nDep.prevDep = pDep; else target.tailDep = pDep;
-
-            // CURSOR REPAIR (1.4.0): `target` may be an observer that is MID-RUN with
-            // its re-tracking cursor parked on this very link -- it linked `source` on
-            // the previous run, has not reached that read yet on this one, and now
-            // disposes `source` from its own body. Splicing the link out and handing it
-            // to the free list would leave activeObserverCurrentDep dangling at a freed
-            // slot: severTail would then read a nulled prevDep, wipe target.headDep
-            // (orphaning every surviving dep), and double-free the link -- freeLink
-            // null-derefs on `source.headSub`. Advance the cursor to the next surviving
-            // dep instead. Disposal path only; no steady-state cost.
-            if (activeObserverCurrentDep === sLink) activeObserverCurrentDep = nDep;
 
             sLink.source = null;
             sLink.target = null;
@@ -574,7 +535,7 @@ export function createRegistry(config) {
         node.revertEpoch = 0;
         node.preBatchValue = undefined;
         node.preBatchVersion = 0;
-        node.nextMark = null;   // 1.3.0: defensive -- disposal during a sweep shouldn't happen, but ensures clean state
+        node.nextMark = null;   // 1.2.4: defensive — disposal during a sweep shouldn't happen, but ensures clean state
 
         node.gen = (node.gen + 1) | 0;
         node.nextFree = freeNodeHead;
@@ -587,7 +548,7 @@ export function createRegistry(config) {
      * Claim a node from the free pool, reinitialise, and return it.
      * Grows pool per `policy` if exhausted (or throws CapacityError under "throw").
      * Adopts the new node into `currentOwner` if there is one AND the new node is
-     * an observer (computed/effect) -- plain signals are not adopted (see ReactiveNode
+     * an observer (computed/effect) — plain signals are not adopted (see ReactiveNode
      * comment on the owner tree).
      * @private
      */
@@ -600,7 +561,7 @@ export function createRegistry(config) {
             // longer length-extended here: `arr.length = n` converts a PACKED
             // array to HOLEY permanently (a hidden flush-path tax); sequential
             // `arr[len++] = x` appends keep them packed and auto-grow. (markStack
-            // is gone entirely as of 1.3.0's intrusive mark stack.)
+            // is gone entirely as of 1.2.4's intrusive mark stack.)
             let chunk = (policy === "throw") ? (currentNodesCapacity - nodePool.length) : 256;
             if (chunk > 256) chunk = 256;
             node = new ReactiveNode();
@@ -636,7 +597,7 @@ export function createRegistry(config) {
         //
         // What stays: fields that define the new lifetime (value, flags, id,
         // firstOwned, conditional owner-tree wiring) AND fields dispose does
-        // not touch (version, evalVersion, markEpoch -- used by the propagation
+        // not touch (version, evalVersion, markEpoch — used by the propagation
         // and pull machinery, must be reset for the new lifetime).
         node.value = value;
         node.flags = flags | 0;
@@ -645,19 +606,19 @@ export function createRegistry(config) {
         node.markEpoch = 0;
         node.id = nodeSeq; nodeSeq = (nodeSeq + 1) | 0;   // fresh identity per allocation (ported from 1.1.5)
 
-        // Wire into Owner Context (lifecycle, not tracking -- keyed off currentOwner).
+        // Wire into Owner Context (lifecycle, not tracking — keyed off currentOwner).
         // ONLY observers (computed/effect) are adopted: a re-running owner disposes
         // its nested observers (which would otherwise leak dep links), but plain
         // signals have no deps to leak, and disposing them breaks lazy-allocation
         // libraries (lite-store allocates a key's signal on first read, INSIDE the
-        // reading computed -- adopting it meant that computed's next run wiped the
+        // reading computed — adopting it meant that computed's next run wiped the
         // store key). Signals are therefore never owner-adopted.
         //
         // 1.2.3 clean free-list invariant (extended to the owner tree):
         // owner / prevOwned / firstOwned are all guaranteed-null on every node
-        // leaving the pool. Both teardown paths null them -- disposeNode (lines
+        // leaving the pool. Both teardown paths null them — disposeNode (lines
         // ~451-453) on direct dispose, runCleanup (lines ~609-615) on parent
-        // cascade -- and the ReactiveNode constructor inits them to null on the
+        // cascade — and the ReactiveNode constructor inits them to null on the
         // fresh-allocation path. The three former null-writes here (firstOwned,
         // the adoption-path prevOwned, and the else-branch owner) were defense
         // against a state that cannot exist. Only the writes that establish the
@@ -681,12 +642,12 @@ export function createRegistry(config) {
     /**
      * Cascade-dispose owned children inside-out (deepest first), then invoke this
      * node's own cleanup if any. Cascade order is the v1.2 conformance fix for
-     * #238 / #241 / #243 -- nested cleanups must fire grandchild -> child -> outer
+     * #238 / #241 / #243 — nested cleanups must fire grandchild → child → outer
      * so that a parent's cleanup still sees its own state intact.
      * @private
      */
     function runCleanup(node) {
-        // Cascade children FIRST -- deepest cleanups fire before shallowest.
+        // Cascade children FIRST — deepest cleanups fire before shallowest.
         // This matches the universal invariant in the upstream conformance suite
         // (#238 / #241 / #243): nested cleanups run inside-out on owner-tree
         // disposal, mirroring the parent-knows-best assumption shared with
@@ -725,23 +686,22 @@ export function createRegistry(config) {
         }
     }
 
-    // === L3 * PROPAGATION / EXECUTION =============================
+    // ═══ L3 · PROPAGATION / EXECUTION ═════════════════════════════
     // markDownstream is owner-free AND cursor-free (a pure propagation
     // primitive). executeEffect/pullComputed are the orchestrators: they drive
     // the cursor + severTail (L1) and, before a re-run, call runCleanup (L2) to
-    // cascade-dispose owned children. Sanctioned upward call -> L2: runCleanup.
+    // cascade-dispose owned children. Sanctioned upward call → L2: runCleanup.
 
-    // --- EXECUTION ENGINE -----------------------------------------
+    // ─── EXECUTION ENGINE ─────────────────────────────────────────
 
     /**
      * Mark all transitive subscribers of `startNode` dirty.
-     * 1.3.0: Iterative DFS backed by an intrusive linked-list stack (`nextMark`)
-     * instead of an external array (the iterative property itself is retained
-     * from 1.2.4) -- eliminates array bounds checks and consolidates the touched
-     * memory to the node's own cache line (we already loaded `t` to check
+     * 1.2.4: Iterative DFS via an intrusive linked-list stack (nextMark) instead
+     * of an external array — eliminates array bounds checks and consolidates the
+     * touched memory to the node's own cache line (we already loaded `t` to check
      * t.markEpoch, so writing t.nextMark is in-cache).
      * Effects are enqueued for the flush phase; computeds are merely marked
-     * (their re-evaluation is lazy -- triggered by the next read).
+     * (their re-evaluation is lazy — triggered by the next read).
      * @private
      */
     function markDownstream(startNode) {
@@ -782,7 +742,7 @@ export function createRegistry(config) {
      * effects scheduled mid-flush land in the next pass. Individual effect throws
      * are caught and buffered; at end-of-flush a single throw is rethrown directly,
      * multiple throws are aggregated into an `AggregateError` (1.2.0). Exceeds
-     * `maxFlushPasses` (default 100) -> Error prefixed `"CycleError:"`.
+     * `maxFlushPasses` (default 100) → Error prefixed `"CycleError:"`.
      * @private
      */
     function flushEffects() {
@@ -842,7 +802,7 @@ export function createRegistry(config) {
      * Run an effect's compute body, re-tracking dependencies.
      * Short-circuits if no dependency has bumped its version since last eval.
      * If the body self-disposes (node.gen advances during the body), skips the
-     * post-body bookkeeping (severTail, flag clear, evalVersion bump) -- that
+     * post-body bookkeeping (severTail, flag clear, evalVersion bump) — that
      * gen-snapshot guard is the v1.2 conformance fix for #141.
      * @private
      */
@@ -872,7 +832,7 @@ export function createRegistry(config) {
         }
 
         node.flags = (node.flags & ~FLAG_QUEUED) | FLAG_COMPUTING;
-        runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before re-run
+        runCleanup(node);   // CROSS-EDGE L3→L2: dispose owned children before re-run
         if ((node.flags & FLAG_EFFECT) === 0) return;
 
         const prevObserver = currentObserver;
@@ -888,7 +848,7 @@ export function createRegistry(config) {
         // SELF-DISPOSE DETECTION: snapshot the gen. disposeNode bumps gen,
         // so if it advanced during the body the node was disposed (and may
         // already have been recycled into a different role). Skip the
-        // dep-list / flag / version mutations in that case -- they would
+        // dep-list / flag / version mutations in that case — they would
         // either crash on the freed link list or corrupt the new resident.
         const savedGen = node.gen;
         if (mutationHook !== null) mutationHook(5, node.id, 0);
@@ -917,7 +877,7 @@ export function createRegistry(config) {
      * Errors thrown by computeFn are captured in `node.value` with FLAG_HAS_ERROR;
      * subsequent reads re-throw until a dependency change re-runs computeFn.
      *
-     * Same gen-snapshot self-dispose guard as executeEffect -- see #141 fix.
+     * Same gen-snapshot self-dispose guard as executeEffect — see #141 fix.
      *
      * @private
      */
@@ -954,7 +914,7 @@ export function createRegistry(config) {
         if (shouldRun) {
             if ((node.flags & FLAG_COMPUTING) !== 0) throw new Error("CycleError: Circular dependency detected.");
             node.flags |= FLAG_COMPUTING;
-            runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute
+            runCleanup(node);   // CROSS-EDGE L3→L2: dispose owned children before recompute
 
             const prevObserver = currentObserver;
             const prevOwner = currentOwner;
@@ -966,7 +926,7 @@ export function createRegistry(config) {
             activeObserverCurrentDep = node.headDep;
             isTrackingDeps = true;
 
-            // Same self-dispose detection as executeEffect -- see comment there.
+            // Same self-dispose detection as executeEffect — see comment there.
             const savedGen = node.gen;
             if (mutationHook !== null) mutationHook(5, node.id, 0);
             try {
@@ -984,7 +944,7 @@ export function createRegistry(config) {
                     node.version = globalVersion;
                 } else {
                     // The body disposed `node` and then threw. The error has
-                    // nowhere to land -- the caller of the read that triggered
+                    // nowhere to land — the caller of the read that triggered
                     // this pull has already had its tracking state torn down.
                     // Swallow rather than corrupt a recycled slot. The
                     // canonical thrown-computed test (#168 / cached error)
@@ -1009,9 +969,9 @@ export function createRegistry(config) {
         return node.value;
     }
 
-    // --- PUBLIC API --------------------------------------------------
+    // ─── PUBLIC API ──────────────────────────────────────────────────
 
-    // --- shared accessor methods (one set per registry, not per primitive) -------
+    // ─── shared accessor methods (one set per registry, not per primitive) ───────
     // update/subscribe are method-invoked (s.update(fn), s.subscribe(fn)), so `this`
     // is the read function and this[NODE_PTR] is the node. set() and peek() stay
     // closures: set() is the hot write path (a closure over `node` beats the
@@ -1190,7 +1150,7 @@ export function createRegistry(config) {
             const gen = node.gen | 0;
             // Cache the gen-bound thunk so re-schedules reuse the same closure.
             // The inline guard preserves ABA correctness across dispose+recycle
-            // (gen bumps on disposeNode -> stale thunk no-ops).
+            // (gen bumps on disposeNode → stale thunk no-ops).
             node.schedulerThunk = () => {
                 if (node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);
             };
@@ -1245,7 +1205,7 @@ export function createRegistry(config) {
 
     /**
      * Coalesce multiple synchronous writes into a single effect-flush pass.
-     * Nested batches are merged -- only the outermost close triggers the flush.
+     * Nested batches are merged — only the outermost close triggers the flush.
      *
      * Pre-batch revert (1.2.0): if a signal is set, then set back to its
      * pre-batch value (under its `equals`) before the outer close, the version
@@ -1262,10 +1222,6 @@ export function createRegistry(config) {
     function batch(fn) {
         if (batchDepth === 0) {
             batchEpoch = (batchEpoch + 1) | 0;
-            // 2^32 wraparound sentinel: batchEpoch is bumped ONLY here (and reset to 1 by
-            // destroy()), so reaching 0 costs 4,294,967,295 top-level batch() calls. Kept
-            // because revertEpoch comparisons at 1071/1077 treat 0 as "no capture".
-            /* c8 ignore next -- 2^32 wraparound; unreachable without ~4.3e9 batches */
             if (batchEpoch === 0) batchEpoch = 1;
         }
         batchDepth = (batchDepth + 1) | 0;
@@ -1328,17 +1284,8 @@ export function createRegistry(config) {
     }
 
     /**
-     * Snapshot of registry counters. Useful for diagnostics and tests --
+     * Snapshot of registry counters. Useful for diagnostics and tests —
      * e.g. asserting that `activeNodes` returns to a baseline after teardown.
-     *
-     * Returns 11 keys: eight live gauges (`signals`, `computeds`, `effects`,
-     * `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`,
-     * `linkPoolCapacity`) plus three cumulative lifecycle counters added in 1.4.0
-     * (`totalAllocations`, `totalDisposals`, `poolGrowths`). The counters are
-     * monotonic over the registry's life and reset only by {@link destroy}; sample
-     * them over time to derive allocation rate, pool-reuse ratio, and graph churn
-     * without the engine computing rates itself. In a quiescent registry
-     * `totalAllocations - totalDisposals === activeNodes`.
      * @returns {RegistryStats}
      */
     function stats() {
@@ -1352,7 +1299,7 @@ export function createRegistry(config) {
             nodePoolCapacity: currentNodesCapacity,
             activeNodes,
             // 1.4: cumulative lifecycle counters (monotonic; reset by destroy()).
-            // Derive: allocationRate = deltatotalAllocations/deltat; poolReuseRate =
+            // Derive: allocationRate = ΔtotalAllocations/Δt; poolReuseRate =
             // 1 - poolGrowths*initialCap/totalAllocations; avgLifetime ~ totalDisposals/rate.
             totalAllocations: statTotalAllocations,
             totalDisposals: statTotalDisposals,
@@ -1475,7 +1422,7 @@ export function createRegistry(config) {
         const kind = (fl & FLAG_EFFECT) !== 0 ? "effect" : (fl & FLAG_COMPUTED) !== 0 ? "computed" : "signal";
         // Plain property assignment, not Object.defineProperty.
         // Object.keys() never includes symbol-keyed properties regardless of
-        // descriptor -- enumerable: false was defending nothing. Confirmed
+        // descriptor — enumerable: false was defending nothing. Confirmed
         // empirically: `o[Symbol()] = x; Object.keys(o)` returns only
         // string-keyed enumerable props.
         const d = {id: node.id, kind, value: node.value};
@@ -1535,9 +1482,9 @@ export function createRegistry(config) {
     return {signal, computed, effect, dispose, batch, untrack, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};
 }
 
-// -----------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────
 // GLOBAL BINDINGS
-// -----------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────
 
 let defaultRegistry = createRegistry();
 
@@ -1617,4 +1564,4 @@ export function describe(handle) {
     return defaultRegistry.describe(handle);
 }
 
-export {watch, when, whenAsync} from "./Watch.js";
+export {watch, when, whenAsync} from "../Watch.js";

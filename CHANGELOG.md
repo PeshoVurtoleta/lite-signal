@@ -4,6 +4,202 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.4.1] -- 2026-07-21
+
+The verification-surface patch. **The engine is unchanged**: the only edit to
+`Signal.js` is the version string in its header banner, and `Signal.d.ts` is
+untouched. Everything here lives in `bench/torture/`, which does not ship --
+`files[]` excludes it. If you consume the package, 1.4.1 is byte-for-byte 1.4.0
+plus a version number.
+
+What changed is what the repo can *prove* about that engine. The torture
+directory used to answer two questions -- did anything throw, and did the pool
+come back -- and both are liveness questions. Neither reads a value and asks
+whether it is right. This release adds five scenarios that assert on meaning,
+and fixes the three existing soaks, which had been lying in small ways.
+
+### Added -- five semantic torture scenarios
+
+The three pre-1.4.1 soaks (`graph-fuzzer`, `scheduler-bench`, `torture-soak`)
+pass green on an engine whose computeds return stale values. That is not a
+hypothesis. Flipping the clean short-circuit in `pullComputed` from `<= 0` to
+`<= 1` -- a one-character edit, exactly the shape a perf tweak makes -- keeps the
+pool perfectly balanced, throws nothing, and all three soaks report PASS. The
+new scenarios exist to close that gap.
+
+- **`oracle-fuzzer.mjs`** -- differential correctness. Drives a random DAG and,
+  after every operation, compares **every** computed against an independent
+  reference evaluator that recomputes from the leaves with no caching, no
+  versioning and no short-circuit. The reference shares no code with the engine,
+  so a bug in the engine's invalidation cannot hide in the oracle too. Node
+  shapes cover static fan-in (`sum`), dynamic dependency sets (`select`, which
+  reads a selector then exactly one dep, so the source set moves between
+  evaluations), and value passthrough (`identity`, which preserves `-0` and `NaN`
+  where a `sum` would normalise them away). Failures print the seed and a
+  minimised operation log so they replay.
+- **`glitch-hunter.mjs`** -- glitch freedom across diamond topologies plus exact
+  wakeup accounting. An engine may not expose an intermediate state in which two
+  branches of a diamond disagree about which epoch they reflect.
+- **`work-accounting.mjs`** -- minimum body-execution counts across 10 fixed
+  topologies. Pins that the engine does *exactly* the necessary work: no
+  recompute of an unaffected node, and no skipped recompute of an affected one.
+  Both directions fail loudly.
+- **`concurrent-storm.mjs`** -- reentrancy, nesting and flush ordering against
+  eight documented contracts: self-write termination, mutual A->B->A loops
+  tripping `CycleError` rather than hanging, nested batches flushing only at the
+  outermost boundary, effects scheduled *by* a pass draining in the *next* pass,
+  writes and reads inside cleanup, dispose-mid-flush, self-disposal from inside
+  a body, and async writes interleaved with flushes.
+- **`scheduler-storm.mjs`** -- deferred-execution hazards under saturation. The
+  cached `schedulerThunk` is gen-bound; `dispose` bumps `gen`, so a `run` the
+  scheduler is still holding must become a silent no-op and must **not** fire the
+  new resident once that pool slot is recycled. That is a textbook ABA hazard and
+  the guard is one `===` away from being wrong. Also pins that `FLAG_QUEUED` is
+  cleared only inside `executeEffect` (which is what makes a microtask scheduler
+  coalesce N writes into one run), and that a throwing scheduler does not take
+  the rest of the flush pass down with it.
+
+Where no contract is documented, these files **pin the observed behaviour** and
+say so at the scenario, rather than asserting an invented one.
+
+#### Measured discrimination
+
+Each scenario was validated by mutating the engine and confirming the scenario
+fails, then restoring. Recorded because a torture suite nobody has mutation-
+tested is decoration:
+
+| mutant | caught by | missed by |
+| ------ | --------- | --------- |
+| `pullComputed` short-circuit `<= 0` -> `<= 1` | oracle-fuzzer (400/400 seeds), glitch-hunter, work-accounting | all three legacy soaks |
+| drop `node.gen === gen` from the cached thunk | scheduler-storm | **the entire 405-test unit suite** |
+| `batch` flushing at every boundary, not the outermost | concurrent-storm | -- (unit suite catches it too) |
+
+The ABA row is the reason this release exists: 405 unit tests pass on an engine
+whose stale thunks fire into recycled pool slots.
+
+### Added -- one entry point, two groups
+
+`bench/torture/run.mjs` replaces the ad-hoc shell loops people were writing
+around six separate `node --expose-gc bench/torture/<file>.mjs` invocations.
+
+```bash
+npm run torture              # everything
+npm run torture:semantic     # correctness only, ~10s, CI-shaped
+npm run torture:soak         # resource soaks only
+node bench/torture/run.mjs --list
+node bench/torture/run.mjs --seconds 30 --bail
+node bench/torture/run.mjs oracle glitch    # substring match on names
+```
+
+Scenarios are split into **`semantic`** (deterministic, fast, assert on meaning
+-- belong in CI on every commit) and **`soak`** (wall-clock bound, assert on
+resources -- belong in a nightly or pre-publish job). Each scenario stays a
+standalone executable module, and the runner **spawns them as child processes**
+rather than importing them. That is deliberate: several assert on global pool
+accounting and on the default registry, so running two in one process would let
+the first one's residue poison the second's baseline. Process isolation is the
+only thing that makes those assertions mean anything.
+
+`--expose-gc` is passed by the runner unconditionally. It is not optional:
+several scenarios force collection to settle finalizers, and without it they
+would silently degrade to asserting nothing rather than failing loudly.
+
+### Added -- shared torture infrastructure
+
+`bench/torture/helpers/index.mjs` collects what every soak had grown its own
+copy of: the seeded `mulberry32` PRNG (so a failure replays from its seed
+alone), the `soakRegistry` / `fixedRegistry` constructors, and `createReport`,
+which **collects failures instead of throwing on the first one** -- torture
+output is read once, usually in CI, and "fix, rerun, discover the next one" is a
+slow loop.
+
+It also holds `VALUE_POOL`, the adversarial value domain. An earlier draft of
+the oracle used integers only, and a mutant that swapped the default equality
+from `Object.is` to `==` sailed straight through, because on integers the two
+agree. The pool now contains the pairs where the candidate definitions
+disagree: `Object.is` vs `===` differ on `NaN` and on `-0`/`0`; `===` vs `==`
+differ on `0`/`""`/`false`/`"0"` and `null`/`undefined`. Equality decides whether
+a write propagates at all, so it has to be fuzzed with values that can tell the
+definitions apart.
+
+The module is deliberately dependency-free and side-effect-free: importing it
+must not touch the default registry, or an import would quietly allocate and
+poison the pool baselines the scenarios assert on.
+
+### Fixed -- the soaks printed `impossible` on a healthy run
+
+All three legacy soaks used a magic-constant guard as a JIT sink
+(`if (acc === 1234567) console.log("impossible")`) to stop V8 eliminating the
+accumulator loops that make the engine do real work. Those constants are
+**reachable**: a 1.4.0 soak run printed `impossible` for real, because the
+accumulator genuinely landed on the sentinel. The sink polluted stdout on a
+passing run, which is how a CI log teaches people to ignore it.
+
+Replaced with a module-scoped int32 sink accumulated in the loop and read at
+teardown. It never prints -- and it now carries an assertion the old form could
+not: **if the sink never advances, the run fails**, because that means the work
+loops were optimised away and the soak measured nothing. Previously that failure
+mode was undetectable.
+
+### Fixed -- "pool returned to baseline" was not what was being asserted
+
+The soaks printed a `baseline` (e.g. `7500 / 17992`), a post-teardown figure
+(`2500 / 0`), and then declared that the pool had "returned to baseline". Those
+numbers never match and were never supposed to: teardown disposes the computeds
+and effects and leaves only the signals alive, so the real assertion is a
+leaf-only floor of `N_SIGNALS + 8`. The verdict did not describe the check.
+
+- the pre-run stat is now labelled `pre-soak`, not `baseline`;
+- the floor actually asserted on is printed
+  (`post-teardown floor asserted: <= 2508 nodes / 0 links`), so a reader can
+  check the verdict against the numbers instead of trusting it;
+- the pass line reads `pool drained to its leaf-only floor`.
+
+### Fixed -- `helpers/` resolution
+
+The helpers module was committed at `bench/torture/index.mjs` while the
+scenarios -- and the module's own header docstring -- referenced
+`bench/torture/helpers/index.mjs`. Four of the five semantic scenarios died with
+`ERR_MODULE_NOT_FOUND` before executing a single assertion, leaving the suite at
+1/5 with three stack traces in the log. Moved to the path everything already
+expected. `run.mjs` propagated the failure correctly; nothing else would have
+caught it, because the torture suite is not wired into `npm test` or
+`npm run gate`.
+
+### Changed -- torture sources are ASCII
+
+`bench/torture/*.mjs` carried em dashes, less-than-or-equal glyphs, and 1,820
+box-drawing characters. `Signal.js` is pure ASCII and `bench/benchmark.mjs` uses
+only the sanctioned multiplication sign, which made the torture directory the
+lone outlier against the ecosystem's ASCII-only source rule. Normalised to
+`--`, `<=` and `-`. The directory's `README.md` is left as it is, consistent
+with `bench/README.md`.
+
+### Added -- `harness/ProfilerTools/` is now checked in
+
+The combined profiler + devtools integration harness has been described in the
+README and wired into `test:harness` / `test:all` since 1.4.0, but its four files
+were never committed. They land here: `harness.test.mjs`, `package.json`,
+`setup.sh`, `README.md`. Verified working -- 5/5 passing, a 7-node / 6-edge
+telemetry DAG discovered through devtools, and `activeNodes 22 -> 22` across
+2,000 driven frames, which is the zero-GC contract holding end-to-end across
+three packages rather than on a microbench.
+
+Its scope is now stated explicitly in the README and `llms.txt`, because it was
+previously ambiguous and the ambiguity was dangerous: **`setup.sh` hard-pins
+`@zakkster/lite-signal@1.6.0-preview.2` from the registry and nothing resolves
+to `../../Signal.js`.** The harness does not test the working tree. Since
+`npm run test:all` chains it, a passing `test:all` is not by itself clearance to
+publish -- `npm test`, `npm run torture` and `npm run test:hardening` are the
+legs that exercise local changes.
+
+### Not changed
+
+- `Signal.js` behaviour, `Signal.d.ts`, the public API, the hot path, bundle
+  size, and the 1.4.0 `stats()` surface.
+- `npm test` still runs `test/*.test.mjs` only: **405 passing**, unchanged.
+- The torture suite remains opt-in and unpublished.
+
 ## [1.4.0] -- 2026-06-XX
 
 The observability minor: `stats()` gains **three cumulative lifecycle counters**

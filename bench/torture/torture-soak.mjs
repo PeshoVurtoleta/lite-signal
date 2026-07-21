@@ -1,7 +1,7 @@
 /**
- * bench/torture/torture-soak.mjs — high-volume churn soak.
+ * bench/torture/torture-soak.mjs -- high-volume churn soak.
  *
- * Not a benchmark — a soak. Continuously writes, rewires effects, and
+ * Not a benchmark -- a soak. Continuously writes, rewires effects, and
  * rewires computeds against a 7,500-node graph for five seconds. The
  * ops/sec is contextual; the assertion is that nothing crashes and that
  * after teardown the pool returns to its leaf-only baseline.
@@ -16,7 +16,7 @@
  *
  * The uploaded original had a known bug: computedDis was wired to a no-op
  * comment ("if you expose dispose, call it here") even though dispose IS
- * exposed — so computeds leaked across rewires. Fixed below.
+ * exposed -- so computeds leaked across rewires. Fixed below.
  */
 import {performance} from "node:perf_hooks";
 import {createRegistry} from "../../Signal.js";
@@ -41,6 +41,15 @@ const effects = new Array(N_EFFECTS);
 const effectDis = new Array(N_EFFECTS);
 const computeds = new Array(N_COMPUTEDS);
 
+// JIT sink. The accumulator loops below exist to make the engine do real work;
+// without a live read of their result V8 is free to eliminate them and the soak
+// measures nothing. Previous revisions guarded a magic constant
+// (`if (acc === 1234567) console.log("impossible")`), but those constants are
+// REACHABLE -- the 1.4.0 soak run printed "impossible" for real -- so the sink
+// polluted stdout on a healthy run. Accumulating into a module-scoped int32 that
+// is read at teardown keeps the stores live without ever printing.
+let sink = 0;
+
 function makeEffect(i) {
     if (effectDis[i]) effectDis[i]();
     const stop = r.effect(() => {
@@ -54,7 +63,7 @@ function makeEffect(i) {
                 if (c) acc += c();
             } else acc += sigs[randInt(N_SIGNALS)]();
         }
-        if (acc === 1234567) console.log("impossible");
+        sink = (sink + acc) | 0;
     });
     effects[i] = stop;
     effectDis[i] = stop;
@@ -77,6 +86,7 @@ for (let i = 0; i < N_EFFECTS; i++) makeEffect(i);
 
 const baseline = r.stats();
 let ops = 0;
+
 let errors = 0;
 let lastError = null;
 const start = performance.now();
@@ -141,8 +151,9 @@ function finish() {
     console.log("  ops:", ops.toLocaleString());
     console.log("  ops/sec:", perSec.toLocaleString(undefined, {maximumFractionDigits: 0}));
     console.log("  errors:", errors);
-    console.log("  baseline activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
+    console.log("  pre-soak activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
     console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
+        console.log("  post-teardown floor asserted: <=", N_SIGNALS + 8, "nodes / 0 links");
 
     let exitCode = 0;
     if (errors > 0) {
@@ -150,14 +161,18 @@ function finish() {
         exitCode = 1;
     }
     if (after.activeNodes > N_SIGNALS + 8) {
-        console.error("  FAIL: activeNodes leak — expected ≤", N_SIGNALS + 8, "got", after.activeNodes);
+        console.error("  FAIL: activeNodes leak -- expected <=", N_SIGNALS + 8, "got", after.activeNodes);
         exitCode = 1;
     }
     if (after.activeLinks !== 0) {
         console.error("  FAIL: activeLinks != 0 after teardown:", after.activeLinks);
         exitCode = 1;
     }
-    if (exitCode === 0) console.log("  PASS: zero errors, pool returned to baseline");
+    if (ops > 0 && sink === 0) {
+        console.error("  FAIL: JIT sink never advanced -- the work loops were optimised away");
+        exitCode = 1;
+    }
+    if (exitCode === 0) console.log("  PASS: zero errors, pool drained to its leaf-only floor");
     process.exit(exitCode);
 }
 

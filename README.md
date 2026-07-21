@@ -700,7 +700,7 @@ npm run bench
 
 ## Testing strategy
 
-Three tiers, all reproducible.
+Four tiers, all reproducible.
 
 ### Tier 1 -- Behavior (unit tests, fast)
 
@@ -759,12 +759,64 @@ npm run test:gc
 npm run bench
 ```
 
-### Tier 4 -- Torture soaks (crash detection under chaos)
+### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` contains three soak harnesses that build large randomised graphs (1,500 / 7,500 / 3,300 nodes) and run mixed fuzz workloads -- leaf writes, batched writes, computed rewires, effect rewires, nested-batch + untrack reads, and microtask-scheduled async flushes -- for 5-10 seconds. These are not perf benchmarks. The numbers they print (ops/sec) reflect random workload composition, not engine throughput; the existing `bench/benchmark.mjs` is the canonical perf harness. What the soaks DO assert, with a non-zero exit code on failure:
+`bench/torture/` holds eight scenarios in two groups, behind one runner. They are
+not perf benchmarks: the ops/sec figures reflect random workload composition, not
+engine throughput -- `bench/benchmark.mjs` remains the canonical perf harness.
 
-- zero thrown exceptions during the run, and
-- after teardown, `activeNodes` / `activeLinks` return to the leaf-only baseline (the dispose path is sound under sustained churn).
+```bash
+npm run torture              # everything
+npm run torture:semantic     # correctness only, ~10s, CI-shaped
+npm run torture:soak         # resource soaks only
+```
+
+```bash
+node bench/torture/run.mjs --list
+node bench/torture/run.mjs --seconds 30 --bail
+node bench/torture/run.mjs oracle glitch      # substring match on names
+```
+
+The runner spawns each scenario as a **child process** rather than importing it.
+Several assert on global pool accounting and on the default registry, so running
+two in one process would let the first one's residue poison the second's
+baseline. `--expose-gc` is passed unconditionally -- some scenarios force
+collection to settle finalizers, and without it they would silently degrade to
+asserting nothing.
+
+#### `semantic` -- deterministic, fast, asserts on **meaning**
+
+Run these on every commit. They pin values, wakeups, work and ordering.
+
+| scenario | pins |
+| -------- | ---- |
+| `oracle-fuzzer` | every computed against an independent uncached reference evaluator, over 400 seeds x 120 ops |
+| `glitch-hunter` | glitch freedom across diamonds, plus exact wakeup counts |
+| `work-accounting` | minimum body-execution counts across 10 fixed topologies -- no missing recompute, no surplus one |
+| `concurrent-storm` | eight reentrancy and flush-ordering contracts: self-write, `CycleError` on mutual loops, nested-batch boundaries, cascade ordering, cleanup writes, dispose-mid-flush, self-disposal, async interleaving |
+| `scheduler-storm` | deferred execution under 10,000 effects: the gen-bound thunk's ABA guard, `FLAG_QUEUED` coalescing, a throwing scheduler not taking the pass down |
+
+Why this group exists: the resource soaks below pass green on an engine whose
+computeds return stale values. Flipping the clean short-circuit in `pullComputed`
+from `<= 0` to `<= 1` keeps the pool perfectly balanced and throws nothing --
+`oracle-fuzzer` catches it on 400/400 seeds, and all three soaks report PASS.
+Separately, removing the `node.gen === gen` guard from the cached scheduler thunk
+is caught by `scheduler-storm` and **missed by all 405 unit tests**.
+
+Where no contract is documented, these files pin the *observed* behaviour and say
+so at the scenario, rather than asserting an invented one.
+
+#### `soak` -- wall-clock bound, asserts on **resources**
+
+Run these nightly or pre-publish. Large randomised graphs (1,500 / 7,500 / 3,300
+nodes) under mixed fuzz -- leaf writes, batched writes, computed and effect
+rewires, nested-batch and untrack reads, microtask-scheduled async flushes. Each
+exits non-zero unless:
+
+- zero exceptions were thrown during the run,
+- after teardown `activeNodes` is at or below its leaf-only floor and
+  `activeLinks` is exactly `0`, and
+- the JIT sink advanced -- proving the accumulator loops were not optimised away.
 
 ```bash
 node --expose-gc bench/torture/graph-fuzzer.mjs     # 10s random-DAG fuzz, 1500 nodes
@@ -772,13 +824,19 @@ node --expose-gc bench/torture/torture-soak.mjs     #  5s high-volume churn, 750
 node --expose-gc bench/torture/scheduler-bench.mjs  # 10s microtask-scheduled, 3300 nodes
 ```
 
-Run any of them with `TORTURE_SECONDS=N` for a longer soak. Indicative numbers from a development host (post-teardown pool returns to baseline in all three):
+Any of them takes `TORTURE_SECONDS=N` for a longer soak (the runner's `--seconds`
+sets it for all three). Indicative numbers from a development host:
 
-|                       | duration | ops      | errors | post-teardown nodes / links |
-| --------------------- | --------:| --------:| ------:| --------------------------- |
-| graph-fuzzer          |    10 s  |  7.6 M   |    0   | 500  / 0                    |
-| torture-soak          |     5 s  |  1.2 M   |    0   | 2500 / 0                    |
-| scheduler-bench       |    10 s  | 28.8 M   |    0   | 1000 / 0                    |
+|                       | duration | ops      | errors | post-teardown nodes / links | floor    |
+| --------------------- | --------:| --------:| ------:| --------------------------- | -------- |
+| graph-fuzzer          |    10 s  |  7.6 M   |    0   | 500  / 0                    | <= 508   |
+| torture-soak          |     5 s  |  1.2 M   |    0   | 2500 / 0                    | <= 2508  |
+| scheduler-bench       |    10 s  | 28.8 M   |    0   | 1000 / 0                    | <= 1008  |
+
+The floor is the assertion; the pre-soak figure is not. Teardown disposes the
+computeds and effects and leaves the signals alive, so post-teardown is *supposed*
+to sit far below the pre-soak node count. Each soak prints the floor it asserted
+against so the verdict can be checked against the numbers.
 
 ```bash
 npm run verify   # test + a sanity bench
@@ -855,6 +913,14 @@ npm run test:harness
 ```
 
 The setup script pins specific package versions via tarball install so the harness can be re-run reproducibly without depending on whatever happens to be in the public registry on the day. Treat the setup as a one-time per-checkout cost.
+
+> **This harness does not test the tree you are standing in.** `setup.sh` hard-pins `@zakkster/lite-signal@1.6.0-preview.2` from the registry and extracts it into the harness's own `node_modules`; nothing resolves to `../../Signal.js`. That is deliberate -- the point is to prove the contract holds **across the published package chain a consumer actually installs**, where `lite-profiler-signal` and `lite-devtools` meet an engine none of them were built against. It is emphatically *not* a gate on local changes. A green run here says nothing about uncommitted work in `Signal.js`, and because `npm run test:all` chains it, a passing `test:all` is **not** by itself clearance to publish.
+>
+> For the local engine, use `npm test` (in-tree, 405 tests), `npm run torture` (in-tree), and `npm run test:hardening` -- `test/ProfilerTests/` self-references in-tree and therefore *does* exercise the working copy.
+>
+> When the pinned version goes stale, bump it in `setup.sh` and re-check the two capability assertions in `harness.test.mjs` (`cap.owners`, `cap.mutationHook`), which are written against the 1.6 surface.
+
+Last verified run (engine `1.6.0-preview.2`, devtools 1.2.0, profiler 1.2.0): 5/5 passing; `capabilities: {"floor":"1.1.5","owners":true,"mutationHook":true,"burst":true}`; 7-node / 6-edge telemetry DAG discovered; `activeNodes 22 -> 22` across 2,000 driven frames with `poolCap` flat at 1024 -- the zero-GC contract holding end-to-end across three packages.
 
 ### Notes
 
@@ -1165,11 +1231,14 @@ Yes, if your computeFn reads its deps in the same order each invocation. The `cu
 ## npm scripts
 
 ```bash
-npm test          # behavior suite, ~1.3s
-npm run test:gc   # zero-gc suite, requires --expose-gc, ~3s
-npm run bench     # comparative benchmark vs alien-signals (results.txt), ~5min
-npm run bench-reactive  # 5-framework reactivity suite (resultsReactive.txt)
-npm run verify    # test + sanity bench; run before publishing
+npm test                 # behavior suite, ~1.3s
+npm run test:gc          # zero-gc suite, requires --expose-gc, ~3s
+npm run bench            # comparative benchmark vs alien-signals (results.txt), ~5min
+npm run bench-reactive   # 5-framework reactivity suite (resultsReactive.txt)
+npm run torture          # full torture suite, all 8 scenarios
+npm run torture:semantic # correctness scenarios only, ~10s
+npm run torture:soak     # resource soaks only, wall-clock bound
+npm run verify           # test + sanity bench; run before publishing
 ```
 
 ---

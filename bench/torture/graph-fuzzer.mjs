@@ -1,14 +1,14 @@
 /**
- * bench/torture/graph-fuzzer.mjs — random-DAG soak test.
+ * bench/torture/graph-fuzzer.mjs -- random-DAG soak test.
  *
- * Not a benchmark — a CRASH-DETECTION soak. Builds a 1,500-node random DAG
+ * Not a benchmark -- a CRASH-DETECTION soak. Builds a 1,500-node random DAG
  * and runs ten seconds of mixed fuzz operations (leaf writes, batched writes,
  * mid/top/effect rewiring, nested batch + untrack reads). The ops/sec number
  * is reported for context only; what matters is the assertions at the end:
  *
  *   - zero thrown exceptions during the run
  *   - activeNodes / activeLinks return to (or below) the pre-fuzz baseline
- *     after a final settle pass — i.e. the dispose path is sound under churn
+ *     after a final settle pass -- i.e. the dispose path is sound under churn
  *
  * Exit code: 0 on clean run, 1 on any error or stability assertion failure.
  *
@@ -16,7 +16,7 @@
  *
  * NOTE: uses an explicit registry with onCapacityExceeded:"grow" so the soak
  * shape (1,500 nodes) does not collide with the default 1,024-node ceiling.
- * The default top-level imports use a fixed-capacity default registry — the
+ * The default top-level imports use a fixed-capacity default registry -- the
  * top-level surface is for application code with bounded graphs, not soak.
  */
 import {performance} from "node:perf_hooks";
@@ -45,13 +45,22 @@ const mids = new Array(N_INTERMEDIATE);
 const tops = new Array(N_TOP_COMPUTEDS);
 const effectDis = new Array(N_EFFECTS);
 
+// JIT sink. The accumulator loops below exist to make the engine do real work;
+// without a live read of their result V8 is free to eliminate them and the soak
+// measures nothing. Previous revisions guarded a magic constant
+// (`if (acc === 1234567) console.log("impossible")`), but those constants are
+// REACHABLE -- the 1.4.0 soak run printed "impossible" for real -- so the sink
+// polluted stdout on a healthy run. Accumulating into a module-scoped int32 that
+// is read at teardown keeps the stores live without ever printing.
+let sink = 0;
+
 function makeMid(i) {
     if (mids[i]) r.dispose(mids[i]);
     mids[i] = r.computed(() => {
         const reads = 1 + randInt(6);
         let acc = 0;
         for (let j = 0; j < reads; j++) {
-            // Read leaves unconditionally when i===0 — no earlier mids exist
+            // Read leaves unconditionally when i===0 -- no earlier mids exist
             // (the original "randInt(i || 1)" idiom self-loops on i=0).
             if (i === 0 || randBool()) acc += leaves[randInt(N_BASE_SIGNALS)]();
             else {
@@ -101,7 +110,7 @@ function makeEffect(i) {
                 if (c) acc += c();
             }
         }
-        if (acc === 42_424_242) console.log("impossible");
+        sink = (sink + acc) | 0;
     });
 }
 
@@ -189,8 +198,9 @@ function finish() {
     console.log("  ops:", ops.toLocaleString());
     console.log("  ops/sec:", perSec.toLocaleString(undefined, {maximumFractionDigits: 0}));
     console.log("  errors:", errors);
-    console.log("  baseline activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
+    console.log("  pre-soak activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
     console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
+        console.log("  post-teardown floor asserted: <=", N_BASE_SIGNALS + 8, "nodes / 0 links");
 
     let exitCode = 0;
     if (errors > 0) {
@@ -199,17 +209,21 @@ function finish() {
     }
     // After teardown only signals (leaves) should still be alive. Computeds +
     // effects should be back to the pre-fuzz baseline (minus any leaves we
-    // didn't dispose — we leave the leaves alive on purpose).
+    // didn't dispose -- we leave the leaves alive on purpose).
     const expectedNodesFloor = N_BASE_SIGNALS;
     if (after.activeNodes > expectedNodesFloor + 8) {
-        console.error("  FAIL: activeNodes leak — expected ≤", expectedNodesFloor + 8, "got", after.activeNodes);
+        console.error("  FAIL: activeNodes leak -- expected <=", expectedNodesFloor + 8, "got", after.activeNodes);
         exitCode = 1;
     }
     if (after.effects !== initialEffects - N_EFFECTS) {
         console.error("  FAIL: effects didn't return to baseline (initial:", initialEffects, "after:", after.effects, ")");
         exitCode = 1;
     }
-    if (exitCode === 0) console.log("  PASS: zero errors, pool returned to baseline");
+    if (ops > 0 && sink === 0) {
+        console.error("  FAIL: JIT sink never advanced -- the work loops were optimised away");
+        exitCode = 1;
+    }
+    if (exitCode === 0) console.log("  PASS: zero errors, pool drained to its leaf-only floor");
     process.exit(exitCode);
 }
 

@@ -1,0 +1,18 @@
+{
+  "name": "profiler-devtools-harness",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@zakkster/lite-profiler": "^1.0.0",
+    "@zakkster/lite-profiler-signal": "^1.0.0",
+    "@zakkster/lite-stats-math": "^1.0.1",
+    "@zakkster/lite-throttle": "^1.1.0",
+    "@zakkster/lite-time": "^1.1.0",
+    "@zakkster/lite-watch-ex": "^1.1.0"
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=spec",
+    "test:gc": "node --expose-gc --test --test-reporter=spec",
+    "setup": "bash setup.sh"
+  }
+}

@@ -1,7 +1,7 @@
 /**
- * bench/torture/scheduler-bench.mjs — async-scheduler stress soak.
+ * bench/torture/scheduler-bench.mjs -- async-scheduler stress soak.
  *
- * Not a benchmark — a soak. 1,500 effects all use a microtask scheduler, so
+ * Not a benchmark -- a soak. 1,500 effects all use a microtask scheduler, so
  * every change defers their re-run. Concurrent writes during those pending
  * microtask drains stress the queue's ABA guard and the scheduler-thunk
  * caching path. Exit code 0 iff zero errors AND post-teardown pool clean.
@@ -57,7 +57,7 @@ for (let i = 0; i < N_EFFECTS; i++) {
                     if (c) acc += c();
                 } else acc += sigs[randInt(N_SIGNALS)]();
             }
-            if (acc === 999_999_999) console.log("impossible");
+            sink = (sink + acc) | 0;
         },
         {scheduler: microtaskScheduler}
     );
@@ -65,6 +65,14 @@ for (let i = 0; i < N_EFFECTS; i++) {
 
 const baseline = r.stats();
 let ops = 0;
+// JIT sink. The accumulator loops above exist to make the engine do real work;
+// without a live read of their result V8 is free to eliminate them and the soak
+// measures nothing. Previous revisions guarded a magic constant
+// (`if (acc === 1234567) console.log("impossible")`), but those constants are
+// REACHABLE -- the 1.4.0 soak run printed "impossible" for real -- so the sink
+// polluted stdout on a healthy run. Accumulating into a module-scoped int32 that
+// is read at teardown keeps the stores live without ever printing.
+let sink = 0;
 let errors = 0;
 let lastError = null;
 
@@ -138,8 +146,9 @@ function finish() {
         console.log("  ops:", ops.toLocaleString());
         console.log("  ops/sec:", perSec.toLocaleString(undefined, {maximumFractionDigits: 0}));
         console.log("  errors:", errors);
-        console.log("  baseline activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
+        console.log("  pre-soak activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
         console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
+        console.log("  post-teardown floor asserted: <=", N_SIGNALS + 8, "nodes / 0 links");
 
         let exitCode = 0;
         if (errors > 0) {
@@ -147,14 +156,18 @@ function finish() {
             exitCode = 1;
         }
         if (after.activeNodes > N_SIGNALS + 8) {
-            console.error("  FAIL: activeNodes leak — expected ≤", N_SIGNALS + 8, "got", after.activeNodes);
+            console.error("  FAIL: activeNodes leak -- expected <=", N_SIGNALS + 8, "got", after.activeNodes);
             exitCode = 1;
         }
         if (after.activeLinks !== 0) {
             console.error("  FAIL: activeLinks != 0 after teardown:", after.activeLinks);
             exitCode = 1;
         }
-        if (exitCode === 0) console.log("  PASS: zero errors, pool returned to baseline");
+        if (ops > 0 && sink === 0) {
+        console.error("  FAIL: JIT sink never advanced -- the work loops were optimised away");
+        exitCode = 1;
+    }
+    if (exitCode === 0) console.log("  PASS: zero errors, pool drained to its leaf-only floor");
         process.exit(exitCode);
     });
 }

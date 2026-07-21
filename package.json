@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-signal",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Zero-GC reactive graph. Monomorphic object pool, versioned push-pull propagation, 32-bit modular versioning. Built for hot paths and long-running processes.",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
   "license": "MIT",
@@ -37,7 +37,10 @@
     "bench": "node --expose-gc bench/benchmark.mjs",
     "bench-reactive": "node --expose-gc bench/benchmarkReactive.mjs",
     "verify": "npm test && npm run bench",
-    "gate": "node harness/VersionMatrix/pre-publish.mjs"
+    "gate": "node harness/VersionMatrix/pre-publish.mjs",
+    "torture": "node bench/torture/run.mjs",
+    "torture:semantic": "node bench/torture/run.mjs --group semantic",
+    "torture:soak": "node bench/torture/run.mjs --group soak"
   },
   "keywords": [
     "signal",

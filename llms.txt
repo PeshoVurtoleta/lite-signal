@@ -50,7 +50,22 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
 
 ## Version notes
 
-- **1.4.0-beta** (current): the **observability minor**. `stats()` gains three
+- **1.4.1** (current): the **verification-surface patch**. No engine change --
+  the only edit to `Signal.js` is the version string in its header banner, and
+  `Signal.d.ts` is untouched. `bench/torture/` gains five deterministic
+  correctness scenarios (`oracle-fuzzer`, `glitch-hunter`, `work-accounting`,
+  `concurrent-storm`, `scheduler-storm`), one runner (`bench/torture/run.mjs`)
+  with `semantic` / `soak` groups, and shared helpers. The three pre-existing
+  soaks assert only on liveness -- nothing threw, the pool came back -- and pass
+  green on an engine whose computeds return stale values; the semantic group
+  closes that gap. Mutation-verified: removing the `node.gen === gen` guard from
+  the cached scheduler thunk is caught by `scheduler-storm` and missed by all
+  405 unit tests. Also fixes a reachable JIT-sink sentinel that printed
+  `impossible` to stdout on a healthy 1.4.0 soak run, and a pass line that
+  claimed the pool "returned to baseline" when the assertion was a leaf-only
+  floor. Nothing here ships: `files[]` excludes `bench/`.
+
+- **1.4.0**: the **observability minor**. `stats()` gains three
   cumulative lifecycle counters -- `totalAllocations`, `totalDisposals`,
   `poolGrowths` -- the surface reserved for 1.4.0 in the 1.2.x/1.3.0 notes, now
   delivered. **The hot paths and public callable API are byte-identical to 1.3.0**;
@@ -598,11 +613,12 @@ function dumpOwnerTree(handle, depth = 0) {
 - `test/25-devtools-real-boot.test.mjs` -- 1.2.2: real `Devtools.js` boot against the engine, ghost-contract pin, `stats()` shape pin (10 tests).
 - `test/26-free-list-invariant.test.mjs` -- 1.2.2: the audit's clean-free-list invariant, asserted by inspecting freshly-allocated nodes (4 tests).
 - `test/ProfilerTests/`        -- version-portable engine hardening suite. Own `package.json`, own `node:test`. Imports `@zakkster/lite-signal` as bare specifier; self-references in-tree, resolves to the installed version when run standalone. Feature-gated cases activate automatically as the engine gains APIs. Run via `npm run test:hardening` (in-tree) or `./run-matrix.sh` (standalone matrix vs published lines).
-- `harness/ProfilerTools/`     -- combined integration harness: `@zakkster/lite-profiler-signal` + `@zakkster/lite-devtools` pointed at the same lite-signal registry. Verifies the cross-package zero-GC contract end-to-end (devtools inspects a profiler-driven graph non-perturbingly; the profiler allocates no new nodes in steady state). Own `package.json`, one-time setup via `bash setup.sh` (pins peer deps via tarball). Run via `npm run test:harness`. Both harnesses are opt-in: `npm test` from root is scoped to `'test/*.test.mjs'` and does NOT sweep them.
+- `harness/ProfilerTools/`     -- combined integration harness: `@zakkster/lite-profiler-signal` + `@zakkster/lite-devtools` pointed at the same lite-signal registry. Verifies the cross-package zero-GC contract end-to-end (devtools inspects a profiler-driven graph non-perturbingly; the profiler allocates no new nodes in steady state). Own `package.json`, one-time setup via `bash setup.sh`. IMPORTANT SCOPE NOTE: `setup.sh` hard-pins `@zakkster/lite-signal@1.6.0-preview.2` from the registry and extracts it into the harness's own `node_modules` -- nothing resolves to `../../Signal.js`, so this harness does NOT exercise the local working tree. It proves the cross-package contract across the PUBLISHED chain a consumer installs, not local changes; a green `npm run test:all` is therefore not by itself clearance to publish. For the local engine use `npm test`, `npm run torture`, and `npm run test:hardening` (`test/ProfilerTests/` self-references in-tree). Last verified: 5/5 passing, `activeNodes 22 -> 22` across 2,000 driven frames. The two capability assertions in `harness.test.mjs` (`cap.owners`, `cap.mutationHook`) are written against the 1.6 surface and must be rechecked when the pin is bumped. Run via `npm run test:harness`. Both harnesses are opt-in: `npm test` from root is scoped to `'test/*.test.mjs'` and does NOT sweep them.
 - `bench/benchmark.mjs`       -- anti-DCE throughput harness (ops/s; results.txt).
 - `bench/benchmarkReactive.mjs` -- cross-framework reactivity suite vs alien-signals, preact, vue-reactivity, solid (resultsReactive.txt).
 - `bench/dispose-recycle.mjs` -- 1.2.2 targeted microbench: create/dispose/recreate cycle (the free-list invariant audit target).
-- `bench/torture/` -- crash-detection soaks: `graph-fuzzer`, `scheduler-bench`, `torture-soak`. Exit 0 iff zero errors AND post-teardown pool clean.
+- `bench/torture/` -- eight scenarios behind one runner (`run.mjs`), two groups. `semantic` (deterministic, fast, asserts on MEANING; run in CI): `oracle-fuzzer` (every computed vs an independent uncached reference evaluator, 400 seeds x 120 ops), `glitch-hunter` (glitch freedom + exact wakeup counts), `work-accounting` (minimum body-execution counts over 10 topologies), `concurrent-storm` (8 reentrancy / flush-ordering contracts), `scheduler-storm` (gen-bound thunk ABA guard, FLAG_QUEUED coalescing, throwing scheduler containment). `soak` (wall-clock bound, asserts on RESOURCES; run nightly): `graph-fuzzer`, `scheduler-bench`, `torture-soak` -- exit 0 iff zero errors AND post-teardown pool at or below its leaf-only floor AND the JIT sink advanced. The runner spawns each scenario as a child process because several assert on global pool accounting, and passes `--expose-gc` unconditionally. Scripts: `npm run torture`, `torture:semantic`, `torture:soak`.
+- `bench/torture/helpers/index.mjs` -- shared torture infrastructure: seeded `mulberry32` (failures replay from their seed), `soakRegistry` / `fixedRegistry`, `createReport` (collects failures rather than throwing on the first), and `VALUE_POOL`, the adversarial value domain containing the pairs where candidate equality definitions disagree (`Object.is` vs `===` on NaN and -0/0; `===` vs `==` on 0/""/false/"0" and null/undefined). Dependency-free and side-effect-free by contract: importing it must not touch the default registry.
 - `bench/run-all.sh` + `bench/aggregate.mjs` -- cold-process-per-engine protocol + per-scenario aggregation.
 - `demo/index.html`           -- interactive visualization of the reactive graph.
 
