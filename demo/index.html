@@ -390,6 +390,76 @@
             margin-left: 3px;
         }
 
+        /* v1.2 introspection inspector (describe / forEachSource / ownerOf) */
+        .inspect {
+            background: var(--bg-2);
+            border: 1px solid var(--line);
+            padding: 10px 12px;
+        }
+
+        .inspect-empty {
+            font-size: 10px;
+            color: var(--text-faint);
+            line-height: 1.6;
+        }
+
+        .inspect-head {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .inspect-kind {
+            font-size: 11px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--green);
+            font-weight: 500;
+        }
+
+        .inspect-kind.k-computed {
+            color: var(--cyan);
+        }
+
+        .inspect-kind.k-effect {
+            color: var(--amber);
+        }
+
+        .inspect-id {
+            font-size: 10px;
+            color: var(--text-faint);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .inspect-val {
+            margin-left: auto;
+            font-size: 13px;
+            color: var(--text);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .inspect-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 11px;
+            padding: 2px 0;
+        }
+
+        .inspect-row .ik {
+            color: var(--text-faint);
+            letter-spacing: 0.08em;
+        }
+
+        .inspect-row .iv {
+            color: var(--text-dim);
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
         /* ─── Stage canvases ─────────────────────────────────────────── */
         canvas {
             display: block;
@@ -509,6 +579,49 @@
 
         .gauge .bar-meta .right {
             color: var(--text-dim);
+        }
+
+        /* v1.4 lifecycle-counter grid (stats() cumulative counters) */
+        .counter-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1px;
+            background: var(--line-strong);
+            border: 1px solid var(--line-strong);
+        }
+
+        .counter-grid .cg-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 12px 10px;
+            background: var(--bg-2);
+        }
+
+        .counter-grid .cg-k {
+            font-size: 9px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+        }
+
+        .counter-grid .cg-v {
+            font-size: 18px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+        }
+
+        .counter-grid .cg-cell.accent-green .cg-v {
+            color: var(--green);
+        }
+
+        .counter-grid .cg-cell.accent-magenta .cg-v {
+            color: var(--magenta);
+        }
+
+        .counter-grid .cg-cell.accent-cyan .cg-v {
+            color: var(--cyan);
         }
 
         /* Pool composition strip - shows live/free chunks */
@@ -757,7 +870,7 @@
         <div class="brand">
             <span class="mark">◐</span>
             <span class="pkg">@zakkster/lite-signal</span>
-            <span class="ver">v1.0.0</span>
+            <span class="ver">v1.4.1</span>
         </div>
         <div class="tagline"><span class="dot"></span>oscilloscope · live reactive graph</div>
     </header>
@@ -846,6 +959,28 @@
                             <div class="v" id="m-alloc">0 B</div>
                         </div>
                     </div>
+                </section>
+                <section>
+                    <h3>inspector · v1.2 introspection</h3>
+                    <div class="inspect">
+                        <div class="inspect-empty" id="graph-inspect-empty">click a node to introspect it via <code>describe()</code></div>
+                        <div class="inspect-body" id="graph-inspect-body" hidden>
+                            <div class="inspect-head">
+                                <span class="inspect-kind" id="gi-kind">—</span>
+                                <span class="inspect-id" id="gi-id">#—</span>
+                                <span class="inspect-val" id="gi-val">—</span>
+                            </div>
+                            <div class="inspect-row"><span class="ik">sources</span><span class="iv" id="gi-src">—</span></div>
+                            <div class="inspect-row"><span class="ik">observers</span><span class="iv" id="gi-obs">—</span></div>
+                            <div class="inspect-row"><span class="ik">owner</span><span class="iv" id="gi-owner">—</span></div>
+                        </div>
+                    </div>
+                    <p class="help-line">
+                        <code>describe()</code>, <code>forEachSource()</code>,
+                        <code>forEachObserver()</code> and <code>ownerOf()</code> are the
+                        non-perturbing devtools surface — reading topology without ever
+                        subscribing, recomputing, or mutating the graph.
+                    </p>
                 </section>
             </aside>
         </section>
@@ -956,6 +1091,31 @@
                             <span class="right" id="pool-link-rate">— / s</span>
                         </div>
                     </div>
+                    <div class="gauge">
+                        <h2>lifecycle counters <span class="qty" id="pool-live-set">live 0</span></h2>
+                        <div class="counter-grid">
+                            <div class="cg-cell accent-green">
+                                <span class="cg-k">allocations</span>
+                                <span class="cg-v" id="pool-alloc">0</span>
+                            </div>
+                            <div class="cg-cell accent-magenta">
+                                <span class="cg-k">disposals</span>
+                                <span class="cg-v" id="pool-disp">0</span>
+                            </div>
+                            <div class="cg-cell accent-cyan">
+                                <span class="cg-k">churn</span>
+                                <span class="cg-v" id="pool-churn">0%</span>
+                            </div>
+                            <div class="cg-cell">
+                                <span class="cg-k">pool growths</span>
+                                <span class="cg-v" id="pool-growths">0</span>
+                            </div>
+                        </div>
+                        <div class="bar-meta">
+                            <span>stats() · cumulative since build · reset by destroy()</span>
+                            <span class="right" id="pool-growth-note">sized to fit</span>
+                        </div>
+                    </div>
                 </div>
                 <div class="error-banner" id="error-banner">
                     <div class="label">capacity</div>
@@ -979,6 +1139,13 @@
                         <select id="pool-policy">
                             <option value="throw">throw (strict)</option>
                             <option value="grow">grow (up to 16× link ceiling)</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>prealloc</label>
+                        <select id="pool-prealloc">
+                            <option value="eager">eager (fill pool up front)</option>
+                            <option value="lazy">lazy (build on demand)</option>
                         </select>
                     </div>
                     <div class="btn-row">
@@ -1085,7 +1252,7 @@
 
     <!-- ───────── TELEMETRY STRIP ───────── -->
     <footer class="telemetry">
-        <div class="tele"><span class="k">version</span><span class="v">1.0.0</span></div>
+        <div class="tele"><span class="k">version</span><span class="v">1.4.1</span></div>
         <div class="tele"><span class="k">fps</span><span class="v accent" id="t-fps">—</span></div>
         <div class="tele"><span class="k">ops/sec</span><span class="v" id="t-ops">—</span></div>
         <div class="tele"><span class="k">active links</span><span class="v" id="t-links">0</span></div>
@@ -1236,6 +1403,47 @@
             nCompV: $("graph-n-comp-v"), nEffV: $("graph-n-eff-v")
         };
 
+        // v1.2 introspection inspector — describe / forEachSource / forEachObserver / ownerOf.
+        const insp = {
+            empty: $("graph-inspect-empty"), body: $("graph-inspect-body"),
+            kind: $("gi-kind"), id: $("gi-id"), val: $("gi-val"),
+            src: $("gi-src"), obs: $("gi-obs"), owner: $("gi-owner")
+        };
+
+        function fmtVal(v) {
+            if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(2);
+            if (v === undefined) return "undefined";
+            return String(v);
+        }
+
+        function resetInspect() {
+            insp.empty.hidden = false;
+            insp.body.hidden = true;
+        }
+
+        function inspect(node) {
+            if (!registry || !node.api) return;
+            const d = registry.describe(node.api);
+            if (!d) return;                 // stale handle (slot recycled) — gen-guarded away
+            insp.empty.hidden = true;
+            insp.body.hidden = false;
+            insp.kind.textContent = d.kind;
+            insp.kind.className = "inspect-kind k-" + d.kind;
+            insp.id.textContent = "#" + d.id;
+            insp.val.textContent = fmtVal(d.value);
+
+            let srcN = 0, srcId = -1;
+            registry.forEachSource(node.api, (s) => { srcN++; srcId = s.id; });
+            insp.src.textContent = srcN === 0 ? "none (leaf)" : srcN === 1 ? ("1 · #" + srcId) : (srcN + " edges");
+
+            let obsN = 0, obsId = -1;
+            registry.forEachObserver(node.api, (o) => { obsN++; obsId = o.id; });
+            insp.obs.textContent = obsN === 0 ? "none" : obsN === 1 ? ("1 · #" + obsId) : (obsN + " subs");
+
+            const owner = registry.ownerOf(node.api);
+            insp.owner.textContent = owner ? (owner.kind + " #" + owner.id) : "top-level";
+        }
+
         function resize() {
             const s = sizeCanvas(canvas);
             ctx = s.ctx;
@@ -1299,7 +1507,9 @@
                 const effectNode = pushNode("effect", null, 2, i / MathMax1Eff);
                 for (const d of deps) pushLink(d.node, effectNode);
 
-                registry.effect(() => {
+                // Keep the dispose handle: it's a first-class introspection handle,
+                // so clicking an effect node can describe() it like any other.
+                effectNode.api = registry.effect(() => {
                     let s = 0;
                     for (const d of deps) s += d.api();
                     SINK[slot] = s;
@@ -1312,6 +1522,7 @@
                 n.vy = 0;
             }
             dom.topology.textContent = `${nSig} signals · ${nComp} computeds · ${nEff} effects · ${links.length} edges`;
+            resetInspect();
         }
 
         function pushNode(kind, api, tier, frac) {
@@ -1433,7 +1644,10 @@
                     minD = d;
                 }
             }
-            if (hit && hit.kind === "signal") fireSignal(hit);
+            if (hit) {
+                if (hit.kind === "signal") fireSignal(hit);
+                inspect(hit);
+            }
         });
 
         function fireSignal(node) {
@@ -1818,8 +2032,11 @@
         let registry = null, spawned = [], cells = [];
         const dom = {
             strip: $("pool-node-strip"), mn: $("pool-mn"), ml: $("pool-ml"), policy: $("pool-policy"),
+            prealloc: $("pool-prealloc"),
             nodeQ: $("pool-node-q"), linkQ: $("pool-link-q"), nodeBar: $("pool-node-bar"), linkBar: $("pool-link-bar"),
-            breakdown: $("pool-node-breakdown"), errMsg: $("error-msg"), banner: $("error-banner")
+            breakdown: $("pool-node-breakdown"), errMsg: $("error-msg"), banner: $("error-banner"),
+            liveSet: $("pool-live-set"), alloc: $("pool-alloc"), disp: $("pool-disp"),
+            churn: $("pool-churn"), growths: $("pool-growths"), growthNote: $("pool-growth-note")
         };
 
         function buildStrip() {
@@ -1843,7 +2060,8 @@
             registry = createRegistry({
                 maxNodes: +dom.mn.value,
                 maxLinks: +dom.ml.value,
-                onCapacityExceeded: dom.policy.value
+                onCapacityExceeded: dom.policy.value,
+                prealloc: dom.prealloc.value
             });
             spawned = [];
             buildStrip();
@@ -1876,6 +2094,19 @@
             $("pool-node-bar").style.width = Math.min(100, (nodeUsed / nodeCap) * 100) + "%";
             $("pool-link-bar").style.width = Math.min(100, (st.activeLinks / linkCap) * 100) + "%";
             $("pool-node-breakdown").textContent = `${st.signals} · ${st.computeds} · ${st.effects}`;
+
+            // v1.4 cumulative lifecycle counters. live set = allocations - disposals,
+            // and the engine guarantees that equals activeNodes in a quiescent registry.
+            // churn = share of handed-out nodes already returned to the pool. poolGrowths
+            // stays 0 when the initial capacity was sized to fit the workload.
+            const liveSet = st.totalAllocations - st.totalDisposals;
+            const churn = st.totalAllocations > 0 ? Math.round(st.totalDisposals / st.totalAllocations * 100) : 0;
+            dom.liveSet.textContent = "live " + liveSet;
+            dom.alloc.textContent = st.totalAllocations;
+            dom.disp.textContent = st.totalDisposals;
+            dom.churn.textContent = churn + "%";
+            dom.growths.textContent = st.poolGrowths;
+            dom.growthNote.textContent = st.poolGrowths === 0 ? "sized to fit" : `grew ${st.poolGrowths}×`;
 
             for (let i = 0; i < cells.length; i++) {
                 cells[i].className = "cell";

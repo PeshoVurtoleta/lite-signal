@@ -50,7 +50,23 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
 
 ## Version notes
 
-- **1.4.1** (current): the **verification-surface patch**. No engine change --
+- **1.4.2** (current): the **verification-surface patch, round two**. No engine
+  change -- as in 1.4.1, the only edit to `Signal.js` is the banner version string,
+  `Signal.d.ts` untouched, `bench/torture/` excluded from `files[]`; for consumers
+  1.4.2 is byte-for-byte 1.4.1 plus a version number. It completes the torture
+  directory: 1.4.1 left it at eight scenarios, and this adds **eleven** more so one
+  runner drives the whole forward-compatible superset -- **19 scenarios (16 semantic
+  + 3 soak)** -- from this 1.4.x base through 1.9. On the 1.4.x engine ten semantic
+  run and six self-skip (`box` 1.5.0, `scope`/`owner` 1.6.0, `flush` 1.7.0,
+  `cleanup-return` 1.8.0, `dispose` 1.9.0 print `SKIP: <feature> requires <version>+`
+  and exit 0). The two that run on surfaces 1.4.x already has: `introspect-torture`
+  (the read-only `describe`/`forEach*`/`hasObservers`/`ownerOf` surface + ABA
+  gen-stamp guard) and `op-accounting` (structural work via the `onGraphMutation`
+  opcode lane); `lifecycle-torture` runs its `destroy` contract (its `createRoot`
+  half is 1.5.0+ and self-skips). Verified green: torture 19/19; engine byte-identical
+  to 1.4.1, so the unit suite is unaffected.
+
+- **1.4.1**: the **verification-surface patch**. No engine change --
   the only edit to `Signal.js` is the version string in its header banner, and
   `Signal.d.ts` is untouched. `bench/torture/` gains five deterministic
   correctness scenarios (`oracle-fuzzer`, `glitch-hunter`, `work-accounting`,
@@ -617,7 +633,7 @@ function dumpOwnerTree(handle, depth = 0) {
 - `bench/benchmark.mjs`       -- anti-DCE throughput harness (ops/s; results.txt).
 - `bench/benchmarkReactive.mjs` -- cross-framework reactivity suite vs alien-signals, preact, vue-reactivity, solid (resultsReactive.txt).
 - `bench/dispose-recycle.mjs` -- 1.2.2 targeted microbench: create/dispose/recreate cycle (the free-list invariant audit target).
-- `bench/torture/` -- eight scenarios behind one runner (`run.mjs`), two groups. `semantic` (deterministic, fast, asserts on MEANING; run in CI): `oracle-fuzzer` (every computed vs an independent uncached reference evaluator, 400 seeds x 120 ops), `glitch-hunter` (glitch freedom + exact wakeup counts), `work-accounting` (minimum body-execution counts over 10 topologies), `concurrent-storm` (8 reentrancy / flush-ordering contracts), `scheduler-storm` (gen-bound thunk ABA guard, FLAG_QUEUED coalescing, throwing scheduler containment). `soak` (wall-clock bound, asserts on RESOURCES; run nightly): `graph-fuzzer`, `scheduler-bench`, `torture-soak` -- exit 0 iff zero errors AND post-teardown pool at or below its leaf-only floor AND the JIT sink advanced. The runner spawns each scenario as a child process because several assert on global pool accounting, and passes `--expose-gc` unconditionally. Scripts: `npm run torture`, `torture:semantic`, `torture:soak`.
+- `bench/torture/` -- **19 scenarios (16 semantic + 3 soak)** behind one runner (`run.mjs`), two groups, forward-compatible through 1.9. Every scenario feature-detects and SKIPS cleanly below the engine version that introduces its feature (`SKIP: <feature> requires <version>+`, exit 0), so the whole directory rides this 1.4.x base forward. `semantic` (deterministic, fast, asserts on MEANING; run in CI) -- the **10 that execute on the 1.4.x engine**: `oracle-fuzzer` (every computed vs an independent uncached reference evaluator, 400 seeds x 120 ops), `glitch-hunter` (glitch freedom + exact wakeup counts), `work-accounting` (minimum body-execution counts over 10 topologies), `op-accounting` (structural work via the `onGraphMutation` opcode lane -- op5 identity, equality cutoff, link/node balance, 400-seed differential), `introspect-torture` (the read-only `describe`/`nodeId`/`forEach*`/`hasObservers`/`isTracking`/`ownerOf`/`observeObservers` surface: walk agreement vs the real edge set incl. dynamic rewiring, and the ABA gen-stamp guard), `lifecycle-torture` (`destroy` 1.4.0+ registry reset -- gen-bump staling, no-op stale writes, pool reuse, idempotence; its `createRoot` half is 1.5.0+ and self-skips), `concurrent-storm` (8 reentrancy / flush-ordering contracts, `CycleError` via `maxFlushPasses`), `scheduler-storm` (gen-bound thunk ABA guard, FLAG_QUEUED coalescing, throwing scheduler containment), `async-torture` (`watch`/`when`/`whenAsync` + a 300-seed storm), `capacity-torture` (the fail-closed pool boundary, `CapacityError`, `grow` crossing it, no partial value escapes); plus **6 that self-skip** until their feature exists: `box-torture` (1.5.0), `scope-torture` (1.6.0), `owner-torture` (1.6.0), `flush-torture` (1.7.0), `cleanup-return-torture` (1.8.0), `dispose-torture` (1.9.0). `soak` (wall-clock bound, asserts on RESOURCES; run nightly): `graph-fuzzer`, `scheduler-bench`, `torture-soak` -- exit 0 iff zero errors AND post-teardown pool at or below its leaf-only floor AND the JIT sink advanced. The runner spawns each scenario as a child process because several assert on global pool accounting, and passes `--expose-gc` unconditionally. Scripts: `npm run torture`, `torture:semantic`, `torture:soak`.
 - `bench/torture/helpers/index.mjs` -- shared torture infrastructure: seeded `mulberry32` (failures replay from their seed), `soakRegistry` / `fixedRegistry`, `createReport` (collects failures rather than throwing on the first), and `VALUE_POOL`, the adversarial value domain containing the pairs where candidate equality definitions disagree (`Object.is` vs `===` on NaN and -0/0; `===` vs `==` on 0/""/false/"0" and null/undefined). Dependency-free and side-effect-free by contract: importing it must not touch the default registry.
 - `bench/run-all.sh` + `bench/aggregate.mjs` -- cold-process-per-engine protocol + per-scenario aggregation.
 - `demo/index.html`           -- interactive visualization of the reactive graph.

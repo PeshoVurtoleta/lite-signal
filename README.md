@@ -761,9 +761,14 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds eight scenarios in two groups, behind one runner. They are
-not perf benchmarks: the ops/sec figures reflect random workload composition, not
-engine throughput -- `bench/benchmark.mjs` remains the canonical perf harness.
+`bench/torture/` holds **19 scenarios (16 semantic + 3 soak)** in two groups,
+behind one runner. They are not perf benchmarks: the ops/sec figures reflect
+random workload composition, not engine throughput -- `bench/benchmark.mjs`
+remains the canonical perf harness. Every scenario feature-detects and **skips
+cleanly** below the engine version that introduces its feature (`SKIP: <feature>
+requires <version>+`, exit 0), so the whole directory rides this 1.4.x base
+forward through 1.9. On the 1.4.x engine, **10 semantic scenarios execute and 6
+self-skip**.
 
 ```bash
 npm run torture              # everything
@@ -795,6 +800,17 @@ Run these on every commit. They pin values, wakeups, work and ordering.
 | `work-accounting` | minimum body-execution counts across 10 fixed topologies -- no missing recompute, no surplus one |
 | `concurrent-storm` | eight reentrancy and flush-ordering contracts: self-write, `CycleError` on mutual loops, nested-batch boundaries, cascade ordering, cleanup writes, dispose-mid-flush, self-disposal, async interleaving |
 | `scheduler-storm` | deferred execution under 10,000 effects: the gen-bound thunk's ABA guard, `FLAG_QUEUED` coalescing, a throwing scheduler not taking the pass down |
+| `op-accounting` | structural work read from the `onGraphMutation` opcode lane (op 1-5): the op5 identity, equality cutoff, diamond glitch-freedom by recompute count, link/node balance, laziness, a 400-seed op5-vs-wrapper differential |
+| `introspect-torture` | the read-only introspection surface (`describe`/`nodeId`/`forEach*`/`hasObservers`/`isTracking`/`ownerOf`/`observeObservers`): walk agreement vs the real edge set incl. dynamic rewiring, `hasObservers` transitions, and the ABA gen-stamp guard (a stale descriptor resolves to nothing, never a recycled resident) |
+| `lifecycle-torture` | `destroy` (1.4.0+) registry reset: handles staled via gen-bump, stale writes no-op, pool reusable, idempotent. Its `createRoot` half is 1.5.0+ and self-skips on this base |
+| `async-torture` | `watch`/`when`/`whenAsync` contracts + a 300-seed projection-guard storm |
+| `capacity-torture` | the fail-closed pool boundary: exact node/link ceilings, `CapacityError`, `grow` mode crossing the boundary, no partial value escapes |
+| `box-torture` (1.5.0+) | `signalBox`/`computedBox` interop + surface -- SKIP on 1.4.x |
+| `scope-torture` (1.6.0+) | `createScope` adoption + the disposal-crash fuzz -- SKIP on 1.4.x |
+| `owner-torture` (1.6.0+) | `getOwner`/`runWithOwner` capture-restore + ABA degradation -- SKIP on 1.4.x |
+| `flush-torture` (1.7.0+) | `flushStrategy` convergence + the value-never-defers invariant + `.subscribe()` -- SKIP on 1.4.x |
+| `cleanup-return-torture` (1.8.0+) | an effect's returned cleanup: timing, compose order, self-dispose guard, computed exclusion -- SKIP on 1.4.x |
+| `dispose-torture` (1.9.0+) | `Symbol.dispose` / `using` on lifecycle objects (five stamp sites) -- SKIP on 1.4.x |
 
 Why this group exists: the resource soaks below pass green on an engine whose
 computeds return stale values. Flipping the clean short-circuit in `pullComputed`
@@ -1235,7 +1251,7 @@ npm test                 # behavior suite, ~1.3s
 npm run test:gc          # zero-gc suite, requires --expose-gc, ~3s
 npm run bench            # comparative benchmark vs alien-signals (results.txt), ~5min
 npm run bench-reactive   # 5-framework reactivity suite (resultsReactive.txt)
-npm run torture          # full torture suite, all 8 scenarios
+npm run torture          # full torture suite, all 19 scenarios
 npm run torture:semantic # correctness scenarios only, ~10s
 npm run torture:soak     # resource soaks only, wall-clock bound
 npm run verify           # test + sanity bench; run before publishing

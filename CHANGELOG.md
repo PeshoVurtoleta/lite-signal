@@ -4,6 +4,64 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.4.2] -- 2026-07-28
+
+The verification-surface patch, round two. **The engine is unchanged**: as in
+1.4.1, the only edit to `Signal.js` is the version string in its header banner,
+and `Signal.d.ts` is untouched. Everything here lives in `bench/torture/`, which
+does not ship -- `files[]` excludes it. If you consume the package, 1.4.2 is
+byte-for-byte 1.4.1 plus a version number.
+
+1.4.1 added five semantic scenarios and left the torture directory at eight. This
+release completes it: eleven more scenarios land, and one runner now drives the
+whole forward-compatible superset -- **19 scenarios (16 semantic + 3 soak)** --
+across every version from this 1.4.x base through 1.9.
+
+### Added -- eleven torture scenarios completing the 19-scenario suite
+
+Each new scenario **feature-detects and skips cleanly** on an engine that predates
+its feature: it prints `SKIP: <feature> requires <version>+` and exits 0 rather
+than failing, which is what lets one directory ride every version on the rebuilt
+line. Three run fully on this 1.4.x base; six self-skip until their feature exists;
+two more run on the surfaces 1.4.x already has:
+
+- **`op-accounting.mjs`** -- structural work read from the `onGraphMutation`
+  opcode lane (op 1-5): the op5 identity (op5 == computed recomputes + effect
+  executions), equality cutoff, diamond glitch-freedom by recompute count,
+  link/node balance, laziness, and a 400-seed op5-vs-wrapper differential.
+- **`introspect-torture.mjs`** -- the read-only introspection surface
+  (`describe` / `nodeId` / `forEach*` / `hasObservers` / `isTracking` / `ownerOf` /
+  `observeObservers`): walk agreement against the real edge set including dynamic
+  rewiring, `hasObservers` transitions, `observeObservers` connect/disconnect
+  edges, and the ABA gen-stamp guard (a stale descriptor must resolve to nothing,
+  never a recycled resident).
+- **`lifecycle-torture.mjs`** -- `destroy` (1.4.0+) registry reset: handles staled
+  via gen-bump, stale writes no-op, pool reusable, idempotent. Its `createRoot`
+  half (1.5.0+) self-skips on this base, and the PASS line reflects only what ran.
+- **`async-torture.mjs`** -- `watch` / `when` / `whenAsync` contracts + a 300-seed
+  projection-guard storm.
+- **`capacity-torture.mjs`** -- the fail-closed pool boundary: exact node/link
+  ceilings, `CapacityError`, `grow` mode crossing the boundary, no partial value
+  escapes.
+- **`box-torture.mjs`** (1.5.0+), **`scope-torture.mjs`** (1.6.0+),
+  **`owner-torture.mjs`** (1.6.0+), **`flush-torture.mjs`** (1.7.0+),
+  **`cleanup-return-torture.mjs`** (1.8.0+), **`dispose-torture.mjs`** (1.9.0+) --
+  present and gen-guarded; each reports a clean SKIP on the 1.4.x engine.
+
+### Changed -- one runner for the whole suite
+
+`bench/torture/run.mjs` now registers all 19 scenarios in two groups (`semantic`,
+`soak`), child-process-isolated (several assert on global pool accounting). New
+flags: `--group semantic|soak`, `--list`. `npm run torture` /
+`torture:semantic` / `torture:soak` drive them.
+
+### Verified -- full suite green on the 1.4.2 engine (Node 22, `--expose-gc`)
+
+- **Torture:** 19/19 -- `torture:semantic` 16/16 (10 executed, 6 clean skips:
+  box 1.5.0, scope/owner 1.6.0, flush 1.7.0, cleanup-return 1.8.0, dispose 1.9.0),
+  `torture:soak` 3/3 (zero errors, every pool back to its leaf-only floor).
+- The engine is byte-for-byte 1.4.1; the unit suite is unaffected.
+
 ## [1.4.1] -- 2026-07-21
 
 The verification-surface patch. **The engine is unchanged**: the only edit to

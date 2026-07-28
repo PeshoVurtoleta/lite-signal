@@ -43,9 +43,20 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SCENARIOS = [
     { name: "oracle-fuzzer", group: "semantic", file: "oracle-fuzzer.mjs", about: "values vs an independent reference evaluator" },
     { name: "glitch-hunter", group: "semantic", file: "glitch-hunter.mjs", about: "glitch freedom + exact wakeup accounting" },
-    { name: "work-accounting", group: "semantic", file: "work-accounting.mjs", about: "minimum body-execution counts" },
-    { name: "concurrent-storm", group: "semantic", file: "concurrent-storm.mjs", about: "reentrancy, nesting, flush ordering" },
+    { name: "work-accounting", group: "semantic", file: "work-accounting.mjs", about: "minimum body-execution counts (wrappers)" },
+    { name: "op-accounting", group: "semantic", file: "op-accounting.mjs", about: "structural work via the onGraphMutation opcode lane" },
+    { name: "introspect-torture", group: "semantic", file: "introspect-torture.mjs", about: "describe/forEach*/hasObservers/ownerOf + ABA gen-stamp guard" },
+    { name: "lifecycle-torture", group: "semantic", file: "lifecycle-torture.mjs", about: "createRoot detachment + destroy registry reset" },
+    { name: "concurrent-storm", group: "semantic", file: "concurrent-storm.mjs", about: "reentrancy, nesting, flush ordering, CycleError" },
     { name: "scheduler-storm", group: "semantic", file: "scheduler-storm.mjs", about: "deferred execution, ABA thunks, coalescing" },
+    { name: "box-torture", group: "semantic", file: "box-torture.mjs", about: "signalBox/computedBox interop + surface (1.5.0+)" },
+    { name: "scope-torture", group: "semantic", file: "scope-torture.mjs", about: "createScope adoption + disposal-crash fuzz (1.6.0+)" },
+    { name: "owner-torture", group: "semantic", file: "owner-torture.mjs", about: "getOwner/runWithOwner capture-restore + ABA degradation (1.6.0+)" },
+    { name: "async-torture", group: "semantic", file: "async-torture.mjs", about: "watch/when/whenAsync contracts + fuzz" },
+    { name: "capacity-torture", group: "semantic", file: "capacity-torture.mjs", about: "the fail-closed pool boundary + CapacityError" },
+    { name: "flush-torture", group: "semantic", file: "flush-torture.mjs", about: "flushStrategy + value-never-defers + subscribe (1.7.0+)" },
+    { name: "cleanup-return-torture", group: "semantic", file: "cleanup-return-torture.mjs", about: "effect return cleanup + cursor-geometry pins (1.8.0+)" },
+    { name: "dispose-torture", group: "semantic", file: "dispose-torture.mjs", about: "Symbol.dispose / using on lifecycle objects (1.9.0+)" },
     { name: "graph-fuzzer", group: "soak", file: "graph-fuzzer.mjs", about: "1.5k-node random DAG churn" },
     { name: "scheduler-bench", group: "soak", file: "scheduler-bench.mjs", about: "microtask scheduler saturation" },
     { name: "torture-soak", group: "soak", file: "torture-soak.mjs", about: "7.5k-node continuous rewiring" },
@@ -88,7 +99,7 @@ function usage() {
 }
 
 if (list) {
-    for (const s of SCENARIOS) console.log(`  ${s.group.padEnd(9)} ${s.name.padEnd(18)} ${s.about}`);
+    for (const s of SCENARIOS) console.log(`  ${s.group.padEnd(9)} ${s.name.padEnd(22)} ${s.about}`);
     process.exit(0);
 }
 
