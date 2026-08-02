@@ -4,6 +4,75 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.4.3] -- 2026-08-02
+
+The verification-surface patch, round three. **The engine is unchanged**: as in
+1.4.1 and 1.4.2, the only edit to `Signal.js` is the version string in its header
+banner, and `Signal.d.ts` is untouched. Everything here lives in `bench/torture/`,
+which does not ship -- `files[]` excludes it. If you consume the package, 1.4.3 is
+byte-for-byte 1.4.2 plus a version number.
+
+1.4.2 completed the forward-compatible torture superset. This release adds the one
+scenario that was still missing: the zero-GC claim, gated. The headline promise --
+writing through an already-built reactive graph allocates nothing -- was, until
+now, asserted only by a hand-rolled `perf_hooks` scavenge counter that lived in a
+`futureVersions/` sketch and never ran in CI. That meter is deleted and replaced by
+a real gate driven by `@zakkster/lite-gc-profiler@^1.15.0`.
+
+### Added -- `zerogc-torture.mjs`, the zero-GC gate (suite now 20 scenarios)
+
+`bench/torture/zerogc-torture.mjs` turns "zero-GC" from a slogan into a
+re-runnable gate. It measures the steady-state hot path against three independent
+witnesses, gated separately because no single one sees everything:
+
+- **per-call RETAINED bytes** -- `measureAllocs` / `checkAllocs` at
+  `maxBytesPerCall: 0`, the literal zero-retention assertion. Because it measures
+  allocation surviving a forced collection (min across batches), it also proves
+  the create+dispose CHURN case: a callable handle allocates transiently, is
+  reclaimed, and retains 0 -- the pool absorbing the node.
+- **major GC count and longest pause** -- `measureOps` (`stabilize: 'deep'`) /
+  `checkNoGc` at `maxMajor: 0` / `maxPauseMs: 2`. A zero-alloc window forces no
+  major collection regardless of length; a nonzero count is transient garbage the
+  retained-bytes settling would hide.
+- **the engine's own `stats()` counters** -- steady scenarios: `poolGrowths` and
+  `totalAllocations` do not move across the window (no node pulled, pool never
+  grew); churn scenarios: `poolGrowths` stays 0 and `activeNodes` returns to its
+  baseline (every acquired node recycled, none leaked).
+
+The scenario states its non-goal as loudly as its goal: node CREATION is **not**
+zero-alloc (the callable API allocates two closures per `signal`, a `signalBox`
+allocates its wrapper); the pool removes the internal NODE allocation, never the
+public HANDLE. Five deterministic graph shapes are gated -- deep chain x16, wide
+fan-out x32, batched 8-signal writes, and create+dispose churn on both the
+callable and (self-skipping below 1.5.0) the box form. `ZEROGC_BREAK=1` arms an
+effect that pushes a fresh object into a module-level sink on every write:
+mutation-verification that `checkAllocs` rejects a planted allocation, and that
+reaching the PASS line with the break armed is itself a failure (a gate blind to a
+planted leak is blind to a real one). Registered in `run.mjs` as a `semantic`
+scenario; the suite is now **20 scenarios (17 semantic + 3 soak)**.
+
+### Removed -- the orphaned hand-rolled meter
+
+`futureVersions/zgc/` (the `perf_hooks` scavenge-counting gate, its `Watch.stub.mjs`,
+core, scenarios, and node:test wrapper) is deleted. Its scenario shapes are ported
+into `zerogc-torture.mjs`; its bespoke measurement is superseded by the profiler.
+Also removed: `bench/torture/index.mjs`, a stale non-ASCII duplicate of
+`bench/torture/helpers/index.mjs` that no scenario imported. Neither path ships
+(`files[]` excludes `bench/`).
+
+### Changed -- one devDependency
+
+`@zakkster/lite-gc-profiler@^1.15.0` added to `devDependencies` (dev-only; the
+package still has zero runtime dependencies and `files[]` ships no test code).
+
+### Verified -- full suite green on the 1.4.3 engine (Node 22, `--expose-gc`)
+
+- **Torture:** 20/20 -- `zerogc-torture` PASS (three witnesses green across all
+  five graph shapes; `churn-box` a clean skip on 1.4.x). `ZEROGC_BREAK=1` exits
+  non-zero and names `injected` (retained 32 B/call).
+- The engine is byte-for-byte 1.4.2; the unit suite is unaffected (425 total,
+  415 pass, 0 fail, 10 skip).
+
 ## [1.4.2] -- 2026-07-28
 
 The verification-surface patch, round two. **The engine is unchanged**: as in

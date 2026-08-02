@@ -761,13 +761,13 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds **19 scenarios (16 semantic + 3 soak)** in two groups,
+`bench/torture/` holds **20 scenarios (17 semantic + 3 soak)** in two groups,
 behind one runner. They are not perf benchmarks: the ops/sec figures reflect
 random workload composition, not engine throughput -- `bench/benchmark.mjs`
 remains the canonical perf harness. Every scenario feature-detects and **skips
 cleanly** below the engine version that introduces its feature (`SKIP: <feature>
 requires <version>+`, exit 0), so the whole directory rides this 1.4.x base
-forward through 1.9. On the 1.4.x engine, **10 semantic scenarios execute and 6
+forward through 1.9. On the 1.4.x engine, **11 semantic scenarios execute and 6
 self-skip**.
 
 ```bash
@@ -805,6 +805,7 @@ Run these on every commit. They pin values, wakeups, work and ordering.
 | `lifecycle-torture` | `destroy` (1.4.0+) registry reset: handles staled via gen-bump, stale writes no-op, pool reusable, idempotent. Its `createRoot` half is 1.5.0+ and self-skips on this base |
 | `async-torture` | `watch`/`when`/`whenAsync` contracts + a 300-seed projection-guard storm |
 | `capacity-torture` | the fail-closed pool boundary: exact node/link ceilings, `CapacityError`, `grow` mode crossing the boundary, no partial value escapes |
+| `zerogc-torture` | the zero-GC claim, gated by `@zakkster/lite-gc-profiler`: per-call **retained bytes** (`measureAllocs` at `maxBytesPerCall: 0`), **major-GC count + longest pause** (`measureOps`/`checkNoGc`, `stabilize: 'deep'`), and the engine's own `stats()` counters (`poolGrowths`/`totalAllocations` steady, `activeNodes` restored under churn) across five graph shapes. `ZEROGC_BREAK=1` plants a leak the gate must reject; `churn-box` self-skips below 1.5.0 |
 | `box-torture` (1.5.0+) | `signalBox`/`computedBox` interop + surface -- SKIP on 1.4.x |
 | `scope-torture` (1.6.0+) | `createScope` adoption + the disposal-crash fuzz -- SKIP on 1.4.x |
 | `owner-torture` (1.6.0+) | `getOwner`/`runWithOwner` capture-restore + ABA degradation -- SKIP on 1.4.x |
@@ -864,7 +865,7 @@ npm run verify   # test + a sanity bench
 
 Beyond the engine's own test tiers above, `@zakkster/lite-signal` ships **dedicated harnesses** that live in their own subdirectories with their own `package.json` and setup story. They are version-portable, integration-grade, or otherwise too specialised to belong in the in-tree engine suite -- and they are explicitly opt-in: a plain `npm test` does **not** run them. Each is a self-contained artifact you can run against any installed engine, or carry into a different repo to verify a claim independently.
 
-This section will grow. As future versions ship publications that need specific defensive validation (e.g. a `flushStrategy` ship, a TC39-polyfill ship, a zero-GC public gate, a profiler/observability ship), the corresponding harness lands here.
+This section will grow. As future versions ship publications that need specific defensive validation (e.g. a `flushStrategy` ship, a TC39-polyfill ship, a profiler/observability ship), the corresponding harness lands here. (The zero-GC public gate shipped in 1.4.3 as the `zerogc-torture` scenario in Tier 4 above, not as a separate harness.)
 
 ### `test/ProfilerTests/` -- version-portable hardening suite
 
@@ -1251,7 +1252,7 @@ npm test                 # behavior suite, ~1.3s
 npm run test:gc          # zero-gc suite, requires --expose-gc, ~3s
 npm run bench            # comparative benchmark vs alien-signals (results.txt), ~5min
 npm run bench-reactive   # 5-framework reactivity suite (resultsReactive.txt)
-npm run torture          # full torture suite, all 19 scenarios
+npm run torture          # full torture suite, all 20 scenarios
 npm run torture:semantic # correctness scenarios only, ~10s
 npm run torture:soak     # resource soaks only, wall-clock bound
 npm run verify           # test + sanity bench; run before publishing

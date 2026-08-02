@@ -57,6 +57,7 @@ const SCENARIOS = [
     { name: "flush-torture", group: "semantic", file: "flush-torture.mjs", about: "flushStrategy + value-never-defers + subscribe (1.7.0+)" },
     { name: "cleanup-return-torture", group: "semantic", file: "cleanup-return-torture.mjs", about: "effect return cleanup + cursor-geometry pins (1.8.0+)" },
     { name: "dispose-torture", group: "semantic", file: "dispose-torture.mjs", about: "Symbol.dispose / using on lifecycle objects (1.9.0+)" },
+    { name: "zerogc-torture", group: "semantic", file: "zerogc-torture.mjs", about: "zero-GC hot path via measureAllocs/measureOps + stats counters; ZEROGC_BREAK self-test" },
     { name: "graph-fuzzer", group: "soak", file: "graph-fuzzer.mjs", about: "1.5k-node random DAG churn" },
     { name: "scheduler-bench", group: "soak", file: "scheduler-bench.mjs", about: "microtask scheduler saturation" },
     { name: "torture-soak", group: "soak", file: "torture-soak.mjs", about: "7.5k-node continuous rewiring" },
