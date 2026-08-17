@@ -123,17 +123,46 @@ let ops = 0;
 let errors = 0;
 let lastError = null;
 
+// Value-correctness oracle. Liveness (nothing threw, pool drained) proves the
+// graph did not CRASH; it does not prove the engine returned the RIGHT numbers.
+// The leaves are the only deterministically reproducible nodes here -- the
+// computeds pick their sources at random per recompute, so only the signals can
+// be shadowed. `shadow[i]` mirrors leaves[i]'s last written value; peek() must
+// always equal it. Allocated ONCE, outside the churn loop; the tick check reads
+// a rotating WINDOW so the per-tick cost is bounded and no allocation occurs.
+const shadow = new Int32Array(N_BASE_SIGNALS);   // leaves all start at 0
+const ORACLE_WINDOW = 64;
+let oracleCursor = 0;
+let oracleMismatch = -1;      // first mismatching leaf index; -1 = clean
+let oracleGot = 0;            // value + shadow captured AT detection (not reprinted stale)
+let oracleWant = 0;
+let oracleChecks = 0;
+
+function checkOracle() {
+    for (let k = 0; k < ORACLE_WINDOW; k++) {
+        const i = (oracleCursor + k) % N_BASE_SIGNALS;
+        const got = leaves[i].peek();
+        if (got !== shadow[i] && oracleMismatch < 0) { oracleMismatch = i; oracleGot = got; oracleWant = shadow[i]; }
+    }
+    oracleCursor = (oracleCursor + ORACLE_WINDOW) % N_BASE_SIGNALS;
+    oracleChecks++;
+}
+
 function fuzzOp() {
     const mode = randInt(6);
     try {
         if (mode === 0) {
-            leaves[randInt(N_BASE_SIGNALS)].set(randInt(1_000_000));
+            const li = randInt(N_BASE_SIGNALS);
+            const v = randInt(1_000_000);
+            leaves[li].set(v); shadow[li] = v;
             ops++;
         } else if (mode === 1) {
             r.batch(() => {
                 const writes = 1 + randInt(16);
                 for (let i = 0; i < writes; i++) {
-                    leaves[randInt(N_BASE_SIGNALS)].set(randInt(1_000_000));
+                    const li = randInt(N_BASE_SIGNALS);
+                    const v = randInt(1_000_000);
+                    leaves[li].set(v); shadow[li] = v;
                     ops++;
                 }
             });
@@ -152,7 +181,9 @@ function fuzzOp() {
                 (function nested() {
                     if (--d < 0) return;
                     if (randBool()) {
-                        leaves[randInt(N_BASE_SIGNALS)].set(randInt(1_000_000));
+                        const li = randInt(N_BASE_SIGNALS);
+                        const v = randInt(1_000_000);
+                        leaves[li].set(v); shadow[li] = v;
                         ops++;
                     }
                     r.untrack(() => {
@@ -178,6 +209,7 @@ function tick() {
         return;
     }
     for (let i = 0; i < OPS_PER_TICK; i++) fuzzOp();
+    checkOracle();
     setImmediate(tick);
 }
 
@@ -202,9 +234,21 @@ function finish() {
     console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
         console.log("  post-teardown floor asserted: <=", N_BASE_SIGNALS + 8, "nodes / 0 links");
 
+    // Final full oracle sweep -- every leaf, not just the sampled window.
+    for (let i = 0; i < N_BASE_SIGNALS; i++) {
+        const got = leaves[i].peek();
+        if (got !== shadow[i] && oracleMismatch < 0) { oracleMismatch = i; oracleGot = got; oracleWant = shadow[i]; }
+    }
+    console.log("  oracle checks:", oracleChecks, "-> value mismatches:", oracleMismatch < 0 ? 0 : 1);
+
     let exitCode = 0;
     if (errors > 0) {
         console.error("  FAIL: errors > 0; first error =", lastError && lastError.message);
+        exitCode = 1;
+    }
+    if (oracleMismatch >= 0) {
+        console.error("  FAIL: value oracle -- leaf", oracleMismatch, "read", oracleGot,
+            "but shadow model says", oracleWant);
         exitCode = 1;
     }
     // After teardown only signals (leaves) should still be alive. Computeds +

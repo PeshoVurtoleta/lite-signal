@@ -199,4 +199,48 @@ const isCapacityError = (e) =>
     R.ok("grow-correctness", threw === null, `grow mode lost correctness across growth: ${threw && threw.message}`);
 }
 
+/* -- 9. grow mode still has a ceiling: the 16x link limit ------------------- */
+{
+    // "grow" is not unbounded. Link growth is capped at maxLinks * 16 (Signal.js
+    // ~:218 maxLinkLimit, ~:363 the throwing guard). At the ceiling grow becomes
+    // a fail-CLOSED throw exactly like "throw" mode: a CapacityError on the link
+    // pool, and the read edge re-throws rather than leaking a partial sum. This
+    // pins that growth terminates AT the ceiling -- the pool reaches 16x and not
+    // one chunk over.
+    const MAXLINKS = 8;
+    const CEIL = MAXLINKS * 16;   // 128
+    const r = createRegistry({ maxLinks: MAXLINKS, onCapacityExceeded: "grow" });
+    // A single computed with more sources than the ceiling can hold: 200 > 128.
+    const sigs = Array.from({ length: 200 }, (_, i) => r.signal(i + 1));
+    let c = null;
+    let err = null;
+    try { c = r.computed(() => sigs.reduce((a, s) => a + s(), 0)); c(); } catch (e) { err = e; }
+
+    R.ok("grow-ceiling", err !== null, "grow mode never hit its 16x link ceiling -- growth is unbounded");
+    R.ok("grow-ceiling", isCapacityError(err), `expected CapacityError at the ceiling, got ${err && err.constructor.name}`);
+    R.eq("grow-ceiling", err && err.kind, "links", "the ceiling error was not a links CapacityError");
+    R.eq("grow-ceiling", err && err.capacity, CEIL, `ceiling capacity was ${err && err.capacity}, expected ${CEIL}`);
+
+    // Growth terminated EXACTLY at the ceiling: the link ledger reached 16x and
+    // stopped there, not one chunk over. linkPoolCapacity mirrors the physical
+    // pool length (128, not 129+).
+    const st = r.stats();
+    R.eq("grow-ceiling", st.linkPoolCapacity, CEIL,
+        `link pool grew to ${st.linkPoolCapacity}, expected it to terminate AT ${CEIL}`);
+    R.ok("grow-ceiling", st.activeLinks <= CEIL,
+        `activeLinks ${st.activeLinks} exceeded the ceiling ${CEIL}`);
+
+    // Fail-closed read: the computed that overflowed the ceiling must re-throw,
+    // never return the partial sum of the sources it managed to link.
+    if (c !== null) {
+        let readResult = null;
+        let readThrew = null;
+        try { readResult = c(); } catch (e) { readThrew = e; }
+        R.ok("grow-ceiling", readThrew !== null,
+            `a ceiling-overflowed computed returned ${readResult} instead of throwing -- a PARTIAL value escaped`);
+        R.ok("grow-ceiling", isCapacityError(readThrew),
+            `the ceiling read threw ${readThrew && readThrew.constructor.name}, expected CapacityError`);
+    }
+}
+
 process.exit(R.finish("the fail-closed boundary held: throws where it must, no partial value ever escaped"));

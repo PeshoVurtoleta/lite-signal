@@ -76,17 +76,46 @@ let sink = 0;
 let errors = 0;
 let lastError = null;
 
+// Value-correctness oracle. Liveness proves the scheduler saturation did not
+// crash and the pool drained; it does not prove the signal values are right.
+// The computeds read RANDOM signals per recompute, so only the signals are
+// deterministically reproducible -- `shadow` mirrors each signal's last written
+// value and peek() must always equal it (peek is synchronous even though the
+// effects defer through the microtask scheduler). Allocated ONCE, outside the
+// churn loop; the tick check reads a rotating WINDOW, no per-tick allocation.
+const shadow = new Int32Array(N_SIGNALS);   // signals all start at 0
+const ORACLE_WINDOW = 64;
+let oracleCursor = 0;
+let oracleMismatch = -1;
+let oracleGot = 0;
+let oracleWant = 0;
+let oracleChecks = 0;
+
+function checkOracle() {
+    for (let k = 0; k < ORACLE_WINDOW; k++) {
+        const i = (oracleCursor + k) % N_SIGNALS;
+        const got = sigs[i].peek();
+        if (got !== shadow[i] && oracleMismatch < 0) { oracleMismatch = i; oracleGot = got; oracleWant = shadow[i]; }
+    }
+    oracleCursor = (oracleCursor + ORACLE_WINDOW) % N_SIGNALS;
+    oracleChecks++;
+}
+
 function fuzzOp() {
     const mode = randInt(5);
     try {
         if (mode === 0) {
-            sigs[randInt(N_SIGNALS)].set(randInt(1_000_000));
+            const si = randInt(N_SIGNALS);
+            const v = randInt(1_000_000);
+            sigs[si].set(v); shadow[si] = v;
             ops++;
         } else if (mode === 1) {
             r.batch(() => {
                 const writes = 1 + randInt(32);
                 for (let i = 0; i < writes; i++) {
-                    sigs[randInt(N_SIGNALS)].set(randInt(1_000_000));
+                    const si = randInt(N_SIGNALS);
+                    const v = randInt(1_000_000);
+                    sigs[si].set(v); shadow[si] = v;
                     ops++;
                 }
             });
@@ -100,14 +129,18 @@ function fuzzOp() {
                 }
             });
         } else if (mode === 3) {
-            sigs[randInt(N_SIGNALS)].set(randInt(1_000_000));
+            const si = randInt(N_SIGNALS);
+            const v = randInt(1_000_000);
+            sigs[si].set(v); shadow[si] = v;
             const c = comps[randInt(N_COMPUTEDS)];
             if (c) c();
             ops += 2;
         } else {
             const burst = 1 + randInt(64);
             for (let i = 0; i < burst; i++) {
-                sigs[randInt(N_SIGNALS)].set(randInt(1_000_000));
+                const si = randInt(N_SIGNALS);
+                const v = randInt(1_000_000);
+                sigs[si].set(v); shadow[si] = v;
                 ops++;
             }
         }
@@ -126,6 +159,7 @@ function tick() {
         return;
     }
     for (let i = 0; i < OPS_PER_TICK; i++) fuzzOp();
+    checkOracle();
     setImmediate(tick);
 }
 
@@ -150,9 +184,21 @@ function finish() {
         console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
         console.log("  post-teardown floor asserted: <=", N_SIGNALS + 8, "nodes / 0 links");
 
+        // Final full oracle sweep -- every signal, not just the sampled window.
+        for (let i = 0; i < N_SIGNALS; i++) {
+            const got = sigs[i].peek();
+            if (got !== shadow[i] && oracleMismatch < 0) { oracleMismatch = i; oracleGot = got; oracleWant = shadow[i]; }
+        }
+        console.log("  oracle checks:", oracleChecks, "-> value mismatches:", oracleMismatch < 0 ? 0 : 1);
+
         let exitCode = 0;
         if (errors > 0) {
             console.error("  FAIL: errors > 0; first =", lastError && lastError.message);
+            exitCode = 1;
+        }
+        if (oracleMismatch >= 0) {
+            console.error("  FAIL: value oracle -- signal", oracleMismatch, "read", oracleGot,
+                "but shadow model says", oracleWant);
             exitCode = 1;
         }
         if (after.activeNodes > N_SIGNALS + 8) {

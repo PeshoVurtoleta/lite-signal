@@ -761,13 +761,13 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds **20 scenarios (17 semantic + 3 soak)** in two groups,
+`bench/torture/` holds **22 scenarios (19 semantic + 3 soak)** in two groups,
 behind one runner. They are not perf benchmarks: the ops/sec figures reflect
 random workload composition, not engine throughput -- `bench/benchmark.mjs`
 remains the canonical perf harness. Every scenario feature-detects and **skips
 cleanly** below the engine version that introduces its feature (`SKIP: <feature>
 requires <version>+`, exit 0), so the whole directory rides this 1.4.x base
-forward through 1.9. On the 1.4.x engine, **11 semantic scenarios execute and 6
+forward through 1.9. On the 1.4.x engine, **13 semantic scenarios execute and 6
 self-skip**.
 
 ```bash
@@ -804,7 +804,9 @@ Run these on every commit. They pin values, wakeups, work and ordering.
 | `introspect-torture` | the read-only introspection surface (`describe`/`nodeId`/`forEach*`/`hasObservers`/`isTracking`/`ownerOf`/`observeObservers`): walk agreement vs the real edge set incl. dynamic rewiring, `hasObservers` transitions, and the ABA gen-stamp guard (a stale descriptor resolves to nothing, never a recycled resident) |
 | `lifecycle-torture` | `destroy` (1.4.0+) registry reset: handles staled via gen-bump, stale writes no-op, pool reusable, idempotent. Its `createRoot` half is 1.5.0+ and self-skips on this base |
 | `async-torture` | `watch`/`when`/`whenAsync` contracts + a 300-seed projection-guard storm |
-| `capacity-torture` | the fail-closed pool boundary: exact node/link ceilings, `CapacityError`, `grow` mode crossing the boundary, no partial value escapes |
+| `capacity-torture` | the fail-closed pool boundary: exact node/link ceilings, `CapacityError`, `grow` mode crossing the boundary AND its 16x link ceiling (`grow` throws at `maxLinks*16`, growth terminating exactly at the ceiling), no partial value escapes |
+| `error-torture` | throwing effect BODIES under flush: a single throw re-thrown unwrapped, two-or-more into an `AggregateError` carrying exactly those errors, survivors in the same pass still run, and the error buffer drains to baseline over 4096 throw/clean cycles |
+| `deep-chain-torture` | `pullComputed` recursion fails CLOSED with a `RangeError` at ramped depth (never pinned); the registry that threw stays usable, and the iterative effect-cascade PUSH path over an equally deep chain does not throw |
 | `zerogc-torture` | the zero-GC claim, gated by `@zakkster/lite-gc-profiler`: per-call **retained bytes** (`measureAllocs` at `maxBytesPerCall: 0`), **major-GC count + longest pause** (`measureOps`/`checkNoGc`, `stabilize: 'deep'`), and the engine's own `stats()` counters (`poolGrowths`/`totalAllocations` steady, `activeNodes` restored under churn) across five graph shapes. `ZEROGC_BREAK=1` plants a leak the gate must reject; `churn-box` self-skips below 1.5.0 |
 | `box-torture` (1.5.0+) | `signalBox`/`computedBox` interop + surface -- SKIP on 1.4.x |
 | `scope-torture` (1.6.0+) | `createScope` adoption + the disposal-crash fuzz -- SKIP on 1.4.x |
@@ -813,12 +815,15 @@ Run these on every commit. They pin values, wakeups, work and ordering.
 | `cleanup-return-torture` (1.8.0+) | an effect's returned cleanup: timing, compose order, self-dispose guard, computed exclusion -- SKIP on 1.4.x |
 | `dispose-torture` (1.9.0+) | `Symbol.dispose` / `using` on lifecycle objects (five stamp sites) -- SKIP on 1.4.x |
 
-Why this group exists: the resource soaks below pass green on an engine whose
-computeds return stale values. Flipping the clean short-circuit in `pullComputed`
-from `<= 0` to `<= 1` keeps the pool perfectly balanced and throws nothing --
-`oracle-fuzzer` catches it on 400/400 seeds, and all three soaks report PASS.
-Separately, removing the `node.gen === gen` guard from the cached scheduler thunk
-is caught by `scheduler-storm` and **missed by all 405 unit tests**.
+Why this group exists: the resource soaks below once passed green on an engine
+whose computeds return stale values. Flipping the clean short-circuit in
+`pullComputed` from `<= 0` to `<= 1` keeps the pool perfectly balanced and throws
+nothing -- `oracle-fuzzer` catches it on 400/400 seeds, and the soaks' *liveness*
+assertions all still reported PASS. As of 1.4.4 each soak also carries a
+value-correctness oracle (below), so a stale-value engine is now caught in the
+soak group too. Separately, removing the `node.gen === gen` guard from the cached
+scheduler thunk is caught by `scheduler-storm` and **missed by all 405 unit
+tests**.
 
 Where no contract is documented, these files pin the *observed* behaviour and say
 so at the scenario, rather than asserting an invented one.
@@ -832,8 +837,13 @@ exits non-zero unless:
 
 - zero exceptions were thrown during the run,
 - after teardown `activeNodes` is at or below its leaf-only floor and
-  `activeLinks` is exactly `0`, and
-- the JIT sink advanced -- proving the accumulator loops were not optimised away.
+  `activeLinks` is exactly `0`,
+- the JIT sink advanced -- proving the accumulator loops were not optimised away, and
+- (1.4.4+) the value oracle agrees: a once-allocated `Int32Array` shadow model,
+  updated in lockstep with every write and sampled on a rotating window each tick
+  plus a full sweep at teardown, matches every signal's value. It adds no per-tick
+  allocation, so the implicit pool-to-floor gate is untouched. The soaks now assert
+  value-correctness, not just liveness.
 
 ```bash
 node --expose-gc bench/torture/graph-fuzzer.mjs     # 10s random-DAG fuzz, 1500 nodes
@@ -1252,7 +1262,7 @@ npm test                 # behavior suite, ~1.3s
 npm run test:gc          # zero-gc suite, requires --expose-gc, ~3s
 npm run bench            # comparative benchmark vs alien-signals (results.txt), ~5min
 npm run bench-reactive   # 5-framework reactivity suite (resultsReactive.txt)
-npm run torture          # full torture suite, all 20 scenarios
+npm run torture          # full torture suite, all 22 scenarios
 npm run torture:semantic # correctness scenarios only, ~10s
 npm run torture:soak     # resource soaks only, wall-clock bound
 npm run verify           # test + sanity bench; run before publishing

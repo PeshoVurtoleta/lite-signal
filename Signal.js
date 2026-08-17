@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-signal v1.4.3
+ * @zakkster/lite-signal v1.4.4
  * --------------------
  * Hybrid Doubly-Linked-List Reactive Graph Engine -- decoupled (Signal1_3) base
  * with the two 1.1.3 performance fixes ported in:

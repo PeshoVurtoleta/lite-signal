@@ -4,6 +4,80 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.4.4] -- 2026-08-03
+
+The verification-surface patch, round four. **The engine is unchanged**: as in
+1.4.1/1.4.2/1.4.3, the only edit to `Signal.js` is the version string in its header
+banner, and `Signal.d.ts` is untouched. Everything here lives in `bench/torture/`
+and `test/`, neither of which ships the engine -- `files[]` excludes `bench/`. If
+you consume the package, 1.4.4 is byte-for-byte 1.4.3 plus a version number.
+
+1.4.3 gated the zero-GC claim. This round closes the remaining gaps at the ERROR
+edges -- the paths that only run when user code throws or a graph is pushed past a
+structural limit -- and turns the three soaks from liveness-only into
+value-correctness gates.
+
+### Added -- two semantic scenarios (suite now 22)
+
+- `bench/torture/error-torture.mjs` -- throwing effect BODIES under flush.
+  `flushEffects` buffers each per-effect throw into a pre-allocated buffer, keeps
+  the remaining queued effects running, and only then surfaces what it caught:
+  a single throw is re-thrown UNWRAPPED (the original error), two-or-more become a
+  single `AggregateError` carrying EXACTLY those errors in order. This is a stress
+  scenario, not a unit duplicate of `test/09-conformance`: it asserts what the unit
+  tests do not -- that survivors in the same pass still run, and that the buffer
+  returns to baseline under 4096 throw/clean cycles so nothing bleeds between
+  flushes (a clean flush after a throwing one throws nothing, `stats()` never
+  drifts).
+- `bench/torture/deep-chain-torture.mjs` -- `pullComputed` recursion, fail-closed.
+  `pullComputed` is call-stack recursive, so a deep computed chain read fails
+  CLOSED with a `RangeError` beyond the host stack rather than corrupting anything.
+  Depth is RAMPED, never pinned (the exact throwing depth is host-dependent): it
+  asserts only that some depth <= 100k throws a `RangeError`, then that the registry
+  that threw is STILL usable (a fresh small graph builds and evaluates correctly,
+  effects included) and that the iterative PUSH path -- an equally deep effect
+  cascade, flush-pass budget raised to match -- propagates end to end without
+  throwing, contrasting the heap-iterative scheduler against the stack-recursive
+  pull.
+
+### Added -- `test/27-throwing-equals.test.mjs`, a throwing user `equals`
+
+`equals` is user code the engine calls on the hot write/recompute path and does
+not sandbox. This file pins its behaviour at all three call sites: (a) the signal
+`set` pre-check -- the original error propagates and the signal is left unmutated,
+no downstream fires; (b) the batch revert check -- PINNED, not asserted-as-atomic:
+the throw at that site happens after `node.value` was written but before the
+version bump, so the net value is correct yet downstream FIRES (the throw stranded
+the version bump, defeating the revert), documented exactly so a future move to an
+atomic revert trips the pin; (c) computed re-eval -- caught, cached as
+`FLAG_HAS_ERROR`, re-thrown on every read until a dep change re-evaluates cleanly
+and clears it.
+
+### Changed -- capacity ceiling + soak value oracles
+
+- `bench/torture/capacity-torture.mjs` gains the 16x link grow ceiling: under
+  `grow`, link growth is capped at `maxLinks * 16` and throws `CapacityError`
+  with `kind: "links"` and `capacity` equal to the ceiling AT the ceiling --
+  growth terminates exactly at `16x` (`linkPoolCapacity === 128` for `maxLinks: 8`,
+  not one chunk over) -- and the overflowed computed still re-throws on read
+  rather than leaking a partial sum. Every pre-existing case is intact.
+- `graph-fuzzer.mjs`, `torture-soak.mjs`, `scheduler-bench.mjs` each gain a
+  value-correctness ORACLE. Each shadows its signals in a single `Int32Array`
+  allocated ONCE outside the churn loop, updated in lockstep with every write, and
+  asserts the engine's value equals the model on a rotating window each tick plus a
+  full sweep at teardown -- zero per-tick allocation, so the implicit pool-to-floor
+  gate is not regressed. All prior liveness assertions (0 errors, pool-to-floor,
+  JIT sink advanced) are preserved; the soaks now assert value-correctness, not
+  just liveness. Mutation-verified: corrupting one shadow write makes the soak exit
+  non-zero.
+
+### Verified -- full suite green on the 1.4.4 engine (Node 22, `--expose-gc`)
+
+- **Torture:** 22/22 -- `error-torture` and `deep-chain-torture` PASS; the three
+  soaks report `value mismatches: 0`.
+- The engine is byte-for-byte 1.4.3; the unit suite grows only by `test/27`
+  (7 new tests) and no prior test regressed.
+
 ## [1.4.3] -- 2026-08-02
 
 The verification-surface patch, round three. **The engine is unchanged**: as in
