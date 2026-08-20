@@ -1,5 +1,5 @@
 /**
- * bench/torture/concurrent-storm.mjs -- reentrancy, nesting and flush-order storm.
+ * bench/torture/concurrent-storm.mjs — reentrancy, nesting and flush-order storm.
  *
  * Everything here targets contracts llms.txt states explicitly, because those
  * are the ones a versioning or queue bug breaks quietly:
@@ -33,10 +33,10 @@ import { createRegistry } from "../../Signal.js";
 import { mulberry32, randInt, soakRegistry, createReport, flushMicrotasks } from "./helpers/index.mjs";
 
 const SEEDS = Number(process.env.STORM_SEEDS || 200);
-const R = createReport(`lite-signal concurrent storm -- reentrancy + flush ordering, ${SEEDS} seeds`);
+const R = createReport(`lite-signal concurrent storm — reentrancy + flush ordering, ${SEEDS} seeds`);
 const reg = () => soakRegistry(createRegistry);
 
-/* -- 1. Self-write: runs once, still propagates, stays responsive ----------- */
+/* ── 1. Self-write: runs once, still propagates, stays responsive ─────────── */
 {
     const r = reg();
     const s = r.signal(0);
@@ -68,7 +68,7 @@ const reg = () => soakRegistry(createRegistry);
     stopSelf(); stopOther();
 }
 
-/* -- 2. Mutual cross-effect loop trips the ceiling -------------------------- */
+/* ── 2. Mutual cross-effect loop trips the ceiling ────────────────────────── */
 {
     const r = soakRegistry(createRegistry, { maxFlushPasses: 20 });
     const a = r.signal(0);
@@ -92,10 +92,10 @@ const reg = () => soakRegistry(createRegistry);
             `expected a CycleError, got: ${threw.message}`);
     }
     R.ok("cross-effect-loop", runsA < 1000 && runsB < 1000,
-        `the loop ran ${runsA}/${runsB} times before stopping -- the ceiling is not bounding it`);
+        `the loop ran ${runsA}/${runsB} times before stopping — the ceiling is not bounding it`);
 }
 
-/* -- 3. Nested batches flush only at the outermost boundary ----------------- */
+/* ── 3. Nested batches flush only at the outermost boundary ───────────────── */
 {
     const r = reg();
     const s = r.signal(0);
@@ -119,7 +119,7 @@ const reg = () => soakRegistry(createRegistry);
     stop();
 }
 
-/* -- 4. Effects scheduled BY a pass drain in the NEXT pass ------------------ */
+/* ── 4. Effects scheduled BY a pass drain in the NEXT pass ────────────────── */
 {
     // Double-buffering means a cascade is ordered, not interleaved: everything
     // queued during pass N runs together in pass N+1.
@@ -145,7 +145,7 @@ const reg = () => soakRegistry(createRegistry);
     stopA(); stopB();
 }
 
-/* -- 5. Writes and reads inside cleanup ------------------------------------- */
+/* ── 5. Writes and reads inside cleanup ───────────────────────────────────── */
 {
     const r = reg();
     const s = r.signal(0);
@@ -180,7 +180,7 @@ const reg = () => soakRegistry(createRegistry);
     R.eq("cleanup-write", audit.peek(), cleanupReads.length, "one audit increment per cleanup pass");
 }
 
-/* -- 6. Disposing an effect from inside another effect mid-flush ------------ */
+/* ── 6. Disposing an effect from inside another effect mid-flush ──────────── */
 {
     const r = reg();
     const s = r.signal(0);
@@ -203,7 +203,7 @@ const reg = () => soakRegistry(createRegistry);
     R.ok("dispose-mid-flush", threw === null, `disposing mid-flush threw: ${threw && threw.message}`);
 }
 
-/* -- 7. Self-disposal from inside the effect body --------------------------- */
+/* ── 7. Self-disposal from inside the effect body ─────────────────────────── */
 {
     const r = reg();
     const s = r.signal(0);
@@ -220,7 +220,7 @@ const reg = () => soakRegistry(createRegistry);
     R.ok("self-dispose", threw === null, `self-disposal threw: ${threw && threw.message}`);
 }
 
-/* -- 8. Async writes interleaved with flushes ------------------------------- */
+/* ── 8. Async writes interleaved with flushes ─────────────────────────────── */
 
 async function asyncStorm() {
     const r = reg();
@@ -253,7 +253,7 @@ async function asyncStorm() {
     stop();
 }
 
-/* -- 9. Randomised mixed storm ---------------------------------------------- */
+/* ── 9. Randomised mixed storm ────────────────────────────────────────────── */
 
 function mixedStorm(seed) {
     const rnd = mulberry32(seed);
@@ -327,7 +327,7 @@ function mixedStorm(seed) {
     return null;
 }
 
-/* -- driver ----------------------------------------------------------------- */
+/* ── driver ───────────────────────────────────────────────────────────────── */
 
 await asyncStorm();
 

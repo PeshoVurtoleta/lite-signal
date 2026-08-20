@@ -13,8 +13,10 @@
  *     an abnormal (non-error) unwind clears it in `finally` -- so the next flush
  *     starts from a clean slate and retains nothing.
  *
- * (Confirm against Signal.js around :814 buffer append, :821-824 finally clear
- * on abnormal exit, :834-837 AggregateError aggregation.)
+ * (Confirmed against 1.5.0 Signal.js: :816 buffer append, :823-825 finally clear
+ * on abnormal exit, :829-839 single re-throw / AggregateError aggregation. The
+ * per-effect buffering, exact-order aggregation and buffer drain are byte-identical
+ * to 1.4.4 -- no behavioral divergence observed on 1.5.0.)
  *
  * This is a STRESS scenario, not a unit duplicate of test/09-conformance. It
  * asserts what the unit tests do not: that SURVIVING effects in the same pass

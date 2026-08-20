@@ -380,8 +380,6 @@
         <div class="tele-cell"><div class="k">saved reruns</div>  <div class="v revert" id="t-saved">0</div></div>
         <div class="tele-cell"><div class="k">owned kids</div>    <div class="v owner"  id="t-kids">0</div></div>
         <div class="tele-cell"><div class="k">last batch</div>    <div class="v warn"   id="t-bench">— ms</div></div>
-        <div class="tele-cell"><div class="k">allocations</div>   <div class="v accent" id="t-alloc">0</div></div>
-        <div class="tele-cell"><div class="k">disposals</div>     <div class="v revert" id="t-disp">0</div></div>
     </div>
 
     <!-- Graph viz -->
@@ -435,7 +433,7 @@
     <!-- Grid -->
     <div class="grid" id="grid" aria-label="reactive output grid"></div>
 
-    <div class="footnote">v1.4.1 · zero-GC reactive graph · MIT</div>
+    <div class="footnote">v1.2.0 · zero-GC reactive graph · MIT</div>
 
 </div>
 
@@ -950,15 +948,13 @@
         ops:   $('t-ops'),   rate:  $('t-rate'),
         heap:  $('t-heap'),  saved: $('t-saved'),
         kids:  $('t-kids'),  bench: $('t-bench'),
-        alloc: $('t-alloc'), disp:  $('t-disp'),
     };
     const telLast = {
         nodes: -1, links: -1, ops: -1, rateInt: -1,
         heapKBint: 0x7fffffff, saved: -1, kids: -1, benchMs: -1,
-        alloc: -1, disp: -1,
         heapAvail: -2,        // -2 = unset, 0 = n/a printed, 1 = numeric printed
     };
-    const ZERO = {activeNodes: 0, activeLinks: 0, totalAllocations: 0, totalDisposals: 0};
+    const ZERO = {activeNodes: 0, activeLinks: 0};
 
     function writeText(node, key, value) {
         if (telLast[key] !== value) { telLast[key] = value; node.textContent = value; }
@@ -972,11 +968,6 @@
         writeText(tel.links, 'links', st.activeLinks);
         writeText(tel.ops,   'ops',   effectRuns);
         writeText(tel.saved, 'saved', savedReruns);
-        // v1.4 cumulative lifecycle counters. Driving the graph (set/update) acquires
-        // no nodes, so allocations stay flat while you drive; the owner-tree cascade
-        // moves both counters together, leaving the live set (active nodes) unchanged.
-        writeText(tel.alloc, 'alloc', st.totalAllocations);
-        writeText(tel.disp,  'disp',  st.totalDisposals);
 
         pushRate(now);
         let rate = 0;

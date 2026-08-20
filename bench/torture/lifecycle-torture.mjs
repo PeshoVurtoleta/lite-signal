@@ -2,30 +2,35 @@
  * bench/torture/lifecycle-torture.mjs -- createRoot detachment + destroy reset
  * (createRoot: 1.5.0+, destroy: 1.4.0+).
  *
- * Found by the consolidated coverage audit: of the 32 exports, two were exercised
- * by NO scenario except in passing comments -- `createRoot` (never called at all)
- * and `destroy` (only reached indirectly via `registry[Symbol.dispose]()` in
- * dispose-torture, its DIRECT contract never asserted). Both are load-bearing
- * registry/root lifecycle primitives, so this closes them.
+ * Two load-bearing registry/root lifecycle primitives that a value oracle is
+ * blind to: `createRoot` (detachment) and `destroy` (full reset). This file
+ * asserts their DIRECT contracts.
  *
- * createRoot(fn): runs fn DETACHED -- no owner, no observer, no tracking. Unlike
- * createScope (which ADOPTS and hands back one cascade-disposer), createRoot only
- * DETACHES: nodes created inside SURVIVE and the caller disposes them by hand.
- * The distinction is the whole point, so this file asserts it directly:
+ * createRoot(fn): runs fn DETACHED -- no owner, no observer, no tracking. Nodes
+ * created inside SURVIVE and the caller disposes them by hand:
  *   - an effect created in createRoot keeps reacting after the call returns
- *     (it was NOT auto-disposed the way a scope child would be);
+ *     (it was NOT auto-disposed the way an owner's child would be);
  *   - reads in fn's direct body form NO dependency edge into an enclosing observer
  *     (the createRoot pairing nulls the observer, same as runWithOwner);
  *   - fn's return value passes through; nesting composes.
  *
  * destroy(): a full registry reset -- every node's gen is bumped (so every
- * outstanding handle goes stale), all state cleared, free lists rebuilt. Its
- * contract, never asserted directly:
+ * outstanding handle goes stale), all state cleared, free lists rebuilt:
  *   - after destroy, every prior handle is stale: nodeId/describe return
  *     undefined, and a stale .set() is a safe no-op (not a crash, and it drives
  *     no effect);
  *   - the registry is REUSABLE -- new signals/computeds/effects work normally;
- *   - destroy is idempotent.
+ *   - destroy is idempotent, and leaves stats().activeNodes === 0.
+ *
+ * PORT NOTE (1.5.0). 1.5.0's owner surface is getOwner/runWithOwner/createRoot;
+ * there is NO createScope. Scenario 2 (createRoot detaches even when nested) is
+ * RE-TARGETED to nest the createRoot inside an r.effect(...) body, where
+ * currentOwner is the enclosing effect (non-null). A createRoot that failed to
+ * null currentOwner would ADOPT the inner effect into the enclosing effect and
+ * cascade-dispose it on the effect's stop(); at top level currentOwner is
+ * already null and the assertion would be vacuous, so the effect nesting is what
+ * makes the detachment observable. 1.5.0 createRoot behaves as documented -- no
+ * divergence from 1.4.4 observed.
  *
  * Exit code: 0 iff every lifecycle contract held.
  *
@@ -59,35 +64,37 @@ if (HAS_ROOT) {
         const base = runs;
         s.set(1);
         R.ok("root-survives", runs - base >= 1,
-            "an effect created in createRoot did not survive the call (was auto-disposed like a scope child)");
+            "an effect created in createRoot did not survive the call (was auto-disposed like an owned child)");
         s.set(2);
         R.ok("root-survives", runs - base >= 2, "the detached effect stopped reacting");
     }
 
-    // 2. createRoot is DISTINCT from createScope: scope children cascade-dispose,
-    //    root children do not -- even when the createRoot is called INSIDE a scope.
-    //    (Nesting it inside a scope is essential: at top level currentOwner is
-    //    already null, so a broken detachment would be invisible. Inside a scope,
-    //    a createRoot that fails to null currentOwner would adopt its child into
-    //    the scope and the child would wrongly cascade-dispose.)
-    if (typeof reg().createScope === "function") {
+    // 2. createRoot DETACHES even when nested inside a live owner. Nesting it
+    //    inside an EFFECT body is essential: at top level currentOwner is already
+    //    null, so a broken detachment would be invisible. Inside an effect,
+    //    currentOwner is that effect -- a createRoot that fails to null it would
+    //    adopt its child into the effect, and the child would wrongly
+    //    cascade-dispose when the effect is stopped.
+    {
         const r = reg();
         const s = r.signal(0);
-        let scopeRuns = 0, rootRuns = 0;
-        const disposeScope = r.createScope((d) => {
-            r.effect(() => { s(); scopeRuns++; });                       // adopted by the scope
-            r.createRoot(() => { r.effect(() => { s(); rootRuns++; }); }); // DETACHED from the scope
-            return d;
+        let outerRuns = 0, rootRuns = 0;
+        let rootChildStop = null;
+        // The outer effect reads no signal -> runs once, never re-fires (which
+        // would rebuild the root child and confuse the count).
+        const outerStop = r.effect(() => {
+            outerRuns++;
+            r.createRoot(() => { rootChildStop = r.effect(() => { s(); rootRuns++; }); });
         });
-        const sb = scopeRuns, rb = rootRuns;
+        const rb = rootRuns;
         s.set(1);
-        R.ok("root-vs-scope", scopeRuns > sb && rootRuns > rb, "one of the two children failed to react");
-        disposeScope();                    // scope child dies; the detached root child lives
-        const sb2 = scopeRuns, rb2 = rootRuns;
+        R.ok("root-detaches", rootRuns > rb, "the detached root child failed to react to a write");
+        outerStop();                       // stop the enclosing effect
+        const rb2 = rootRuns;
         s.set(2);
-        R.eq("root-vs-scope", scopeRuns - sb2, 0, "scope child ran after its scope was disposed");
-        R.ok("root-vs-scope", rootRuns - rb2 >= 1,
-            "a createRoot child INSIDE a scope died when the scope was disposed -- createRoot did not detach (currentOwner not nulled)");
+        R.ok("root-detaches", rootRuns - rb2 >= 1,
+            "a createRoot child INSIDE an effect died when the effect was stopped -- createRoot did not detach (currentOwner not nulled)");
+        if (rootChildStop) rootChildStop();
     }
 
     // 3. Return-value passthrough.
@@ -130,7 +137,6 @@ if (HAS_DESTROY) {
         const a = r.signal(1);
         const c = r.computed(() => a() * 2);
         r.effect(() => c());
-        const hadId = typeof r.nodeId === "function" ? r.nodeId(a) : undefined;
         r.destroy();
         if (typeof r.nodeId === "function") {
             R.eq("post-destroy-stale", r.nodeId(a), undefined, "nodeId of a pre-destroy handle is still live (gen not bumped)");

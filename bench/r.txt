@@ -1,0 +1,88 @@
+zakkster@MacBook-Pro bench % node --expose-gc report.mjs
+==============================================================================================
+ @zakkster/lite-signal -- REACTIVITY MIRROR (cross-framework, Andrii's canonical adapter)
+==============================================================================================
+
+Protocol : isolated-per-row   reps: 10
+Host     : Apple M4 Pro  darwin/arm64  node v26.3.1
+Engine   : sha256 1b7f332d6e55edcce9cfe3afa525e14db95521bc69ead0cf748d6d505f7e6d7f
+Adapter  : {"maxNodes":131072,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"grow"}  (lazy prealloc, default eager flush -- his config verbatim)
+Generated: 2026-07-17T04:07:00.760Z
+
+Every row was measured in its OWN cold process (isolated-per-row), engines run in
+round-robin across reps, and a sentinel re-measure gated host drift. The counters
+(nodesRecomputed/edgesTraversed/sinkReads) match Andrii's published suite exactly
+(mirror.mjs --self-verify), so a lite-vs-alien delta here is identical work, not DCE.
+
+----------------------------------------------------------------------------------------------
+EXECUTION TIME (median across reps, ms; lower is better)
+----------------------------------------------------------------------------------------------
+test                                                            lite     alien   lite vs alien
+64x6 - 4 sources - dynamic - read 12% (dashboard selecti      194.36    172.65   -12.6%  alien
+24x8 - 3 sources - dynamic - read 40% (editor derived st      276.83    248.27   -11.5%  alien
+120x7 - 5 sources - dynamic - read 18% (kanban board)         164.88    147.62   -11.7%  alien
+40x10 - 4 sources - dynamic - read 60% (entity detail pa      361.62    329.88   -9.6%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources (layered       45.55     34.83   -30.8%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 3       44.73     33.96   -31.7%  alien
+256->512x32 - fanIn 8 - layered-dag - 8 sources - burst       601.03    354.94   -69.3%  alien
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm         4.62      3.90   -18.5%  alien
+32x8 - 4 sources - pull (pure pull)                             0.85      0.45   -90.0%  alien
+8x64 - 1 sources - pull (linear chain - 1 source - pull         0.93      0.69   -35.8%  alien
+64x4 - 8 sources - pull (wide tree - 8 sources - pull (b        0.91      0.40   -127.5%  alien
+32x8 - 4 sources - push (pure push)                            87.25     74.41   -17.3%  alien
+10x5 - 2 sources - read 20% (simple component)                134.33    114.93   -16.9%  alien
+10x10 - 6 sources - dynamic - read 20% (dynamic componen      114.44    110.23   -3.8%  alien
+1000x12 - 4 sources - dynamic (large web app)                 260.00    255.77   -1.7%  alien
+1000x5 - 25 sources (wide dense)                              314.92    357.82   +12.0%  lite
+5x500 - 3 sources (deep)                                       99.48     92.11   -8.0%  alien
+avoidablePropagation                                           94.03     64.91   -44.9%  alien
+broadPropagation                                              190.59    136.64   -39.5%  alien
+deepPropagation                                                71.84     44.17   -62.6%  alien
+diamond                                                       103.53     85.94   -20.5%  alien
+mux                                                           186.29    159.72   -16.6%  alien
+repeatedObservers                                              28.35     26.35   -7.6%  alien
+triangle                                                       43.81     32.58   -34.5%  alien
+unstable                                                       40.62     37.78   -7.5%  alien
+manyEffectsFromOneSource                                      118.33    105.88   -11.8%  alien
+manySourcesIntoOneComputedEffectWithDirect                     63.70     94.36   +32.5%  lite
+manySourcesIntoOneComputedEffect                               62.27     91.23   +31.7%  lite
+manySourcesIntoOneDirectEffect                                 32.26     29.61   -9.0%  alien
+molBench                                                      164.19    160.85   -2.1%  alien
+createDataSignals                                               9.11      2.32   -292.7%  alien
+createComputations0to1                                         13.56      2.16   -529.5%  alien
+createComputations1to1                                         14.07      5.97   -135.6%  alien
+createComputations2to1                                          2.79      2.46   -13.2%  alien
+createComputations4to1                                          1.64      2.02   +19.3%  lite
+createComputations1000to1                                       0.02      0.02   +0.0%  alien
+createComputations1to2                                         14.78      4.62   -220.3%  alien
+createComputations1to4                                         12.06      3.00   -302.0%  alien
+createComputations1to8                                         14.00      3.83   -265.9%  alien
+createComputations1to1000                                      12.54      2.08   -503.1%  alien
+updateComputations1to1                                          3.58      1.88   -90.7%  alien
+updateComputations2to1                                          1.50      0.93   -61.3%  alien
+updateComputations4to1                                          1.58      0.45   -253.9%  alien
+updateComputations1000to1                                       0.04      0.01   -300.0%  alien
+updateComputations1to2                                          2.24      0.91   -145.6%  alien
+updateComputations1to4                                          1.50      0.45   -233.3%  alien
+updateComputations1to1000                                       0.11      0.02   -450.0%  alien
+----------------------------------------------------------------------------------------------
+lite faster than alien on 4/47 shapes.
+
+HONEST FRAMING (the claim that reproduces):
+  lite-signal's differentiated position is ALLOCATION, not raw propagation speed.
+  On these shapes lite runs at parity-to-behind alien on throughput (weak on deep/
+  layered propagation -- the DEEP CHAIN / burst family), while allocating one to four
+  orders of magnitude less transient heap (see bench/benchmark.mjs heap columns, the
+  zero-GC microscope). The headline is 'competitive throughput with dramatically lower
+  GC pressure', not 'fastest dynamic-graph engine'.
+
+STANDING RULES (enforced by the harness, not by prose):
+  1. No number is published unless its file carries a machine stamp and the sweep
+     exited 0 (dead-sink / counter / checksum / expected / sentinel / stamp guards).
+  2. The mirror tracks Andrii verbatim; divergence for identical engine bytes is a
+     harness bug (run mirror.mjs --self-verify). Shape edits only by re-porting.
+  3. One shape name = one definition, repo-wide. Approximations deleted, not renamed.
+  4. lite's config is fixed per file and echoed by the stamp. sab is a production
+     feature, not a benchmark knob.
+  5. Cross-protocol / cross-host comparisons cite (stamp, protocol) or are not made.
+

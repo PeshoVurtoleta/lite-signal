@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * bench/torture/run.mjs -- one entry point for the whole torture suite.
+ * bench/torture/run.mjs — one entry point for the whole torture suite.
  *
  * Replaces six separate `node --expose-gc bench/torture/<file>.mjs` invocations
  * (and the ad-hoc shell loops people were writing around them) with a single
@@ -33,39 +33,39 @@ import { dirname, join } from "node:path";
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /**
- * `semantic` scenarios are deterministic, fast and assert on MEANING -- values,
+ * `semantic` scenarios are deterministic, fast and assert on MEANING — values,
  * wakeups, work, ordering. They belong in CI on every commit.
  *
- * `soak` scenarios are wall-clock bound and assert on RESOURCES -- nothing threw,
+ * `soak` scenarios are wall-clock bound and assert on RESOURCES — nothing threw,
  * the pool came back. They belong in a nightly or pre-publish job; running them
  * per-commit buys little and costs minutes.
  */
 const SCENARIOS = [
     { name: "oracle-fuzzer", group: "semantic", file: "oracle-fuzzer.mjs", about: "values vs an independent reference evaluator" },
     { name: "glitch-hunter", group: "semantic", file: "glitch-hunter.mjs", about: "glitch freedom + exact wakeup accounting" },
-    { name: "work-accounting", group: "semantic", file: "work-accounting.mjs", about: "minimum body-execution counts (wrappers)" },
-    { name: "op-accounting", group: "semantic", file: "op-accounting.mjs", about: "structural work via the onGraphMutation opcode lane" },
-    { name: "introspect-torture", group: "semantic", file: "introspect-torture.mjs", about: "describe/forEach*/hasObservers/ownerOf + ABA gen-stamp guard" },
-    { name: "lifecycle-torture", group: "semantic", file: "lifecycle-torture.mjs", about: "createRoot detachment + destroy registry reset" },
-    { name: "concurrent-storm", group: "semantic", file: "concurrent-storm.mjs", about: "reentrancy, nesting, flush ordering, CycleError" },
+    { name: "work-accounting", group: "semantic", file: "work-accounting.mjs", about: "minimum body-execution counts" },
+    { name: "concurrent-storm", group: "semantic", file: "concurrent-storm.mjs", about: "reentrancy, nesting, flush ordering" },
     { name: "scheduler-storm", group: "semantic", file: "scheduler-storm.mjs", about: "deferred execution, ABA thunks, coalescing" },
     { name: "box-torture", group: "semantic", file: "box-torture.mjs", about: "signalBox/computedBox interop + surface (1.5.0+)" },
     { name: "scope-torture", group: "semantic", file: "scope-torture.mjs", about: "createScope adoption + disposal-crash fuzz (1.6.0+)" },
-    { name: "owner-torture", group: "semantic", file: "owner-torture.mjs", about: "getOwner/runWithOwner capture-restore + ABA degradation (1.6.0+)" },
+    { name: "owner-torture", group: "semantic", file: "owner-torture.mjs", about: "getOwner/runWithOwner capture-restore + ABA degradation" },
     { name: "async-torture", group: "semantic", file: "async-torture.mjs", about: "watch/when/whenAsync contracts + fuzz" },
-    { name: "capacity-torture", group: "semantic", file: "capacity-torture.mjs", about: "the fail-closed pool boundary + CapacityError + the 16x grow ceiling" },
+    { name: "capacity-torture", group: "semantic", file: "capacity-torture.mjs", about: "fail-closed pool boundary + CapacityError + the 16x grow ceiling" },
     { name: "error-torture", group: "semantic", file: "error-torture.mjs", about: "throwing effect bodies: per-effect buffering, AggregateError, buffer drain" },
     { name: "deep-chain-torture", group: "semantic", file: "deep-chain-torture.mjs", about: "pullComputed recursion fail-closed (RangeError) vs iterative push path" },
-    { name: "flush-torture", group: "semantic", file: "flush-torture.mjs", about: "flushStrategy + value-never-defers + subscribe (1.7.0+)" },
-    { name: "cleanup-return-torture", group: "semantic", file: "cleanup-return-torture.mjs", about: "effect return cleanup + cursor-geometry pins (1.8.0+)" },
+    { name: "flush-torture", group: "semantic", file: "flush-torture.mjs", about: "flushStrategy eager/sab/manual + subscribe (1.7.0+)" },
+    { name: "cleanup-return-torture", group: "semantic", file: "cleanup-return-torture.mjs", about: "effect cleanup return + compose order (1.8.0+)" },
     { name: "dispose-torture", group: "semantic", file: "dispose-torture.mjs", about: "Symbol.dispose / using on lifecycle objects (1.9.0+)" },
     { name: "zerogc-torture", group: "semantic", file: "zerogc-torture.mjs", about: "zero-GC hot path via measureAllocs/measureOps + stats counters; ZEROGC_BREAK self-test" },
+    { name: "op-accounting", group: "semantic", file: "op-accounting.mjs", about: "structural work via onGraphMutation opcode lane" },
+    { name: "introspect-torture", group: "semantic", file: "introspect-torture.mjs", about: "describe/forEach*/hasObservers/ownerOf + ABA gen-stamp guard" },
+    { name: "lifecycle-torture", group: "semantic", file: "lifecycle-torture.mjs", about: "createRoot detachment + destroy registry reset" },
     { name: "graph-fuzzer", group: "soak", file: "graph-fuzzer.mjs", about: "1.5k-node random DAG churn" },
     { name: "scheduler-bench", group: "soak", file: "scheduler-bench.mjs", about: "microtask scheduler saturation" },
     { name: "torture-soak", group: "soak", file: "torture-soak.mjs", about: "7.5k-node continuous rewiring" },
 ];
 
-/* -- argv ------------------------------------------------------------------- */
+/* ── argv ─────────────────────────────────────────────────────────────────── */
 
 const argv = process.argv.slice(2);
 let group = null;
@@ -109,7 +109,7 @@ if (list) {
 let selected = SCENARIOS;
 if (group !== null) {
     if (group !== "semantic" && group !== "soak") {
-        console.error(`unknown group "${group}" -- expected "semantic" or "soak"`);
+        console.error(`unknown group "${group}" — expected "semantic" or "soak"`);
         process.exit(2);
     }
     selected = selected.filter((s) => s.group === group);
@@ -122,7 +122,7 @@ if (selected.length === 0) {
     process.exit(2);
 }
 
-/* -- run -------------------------------------------------------------------- */
+/* ── run ──────────────────────────────────────────────────────────────────── */
 
 // --expose-gc is required, not optional: several scenarios force collection to
 // settle finalizers, and without it they would silently degrade to asserting
@@ -150,14 +150,14 @@ for (const scenario of selected) {
 const dt = ((performance.now() - t0) / 1000).toFixed(1);
 const failed = results.filter((r) => r.code !== 0);
 
-console.log(`\n${"-".repeat(64)}`);
+console.log(`\n${"─".repeat(64)}`);
 for (const r of results) {
     console.log(`  ${r.code === 0 ? "pass" : "FAIL"}  ${r.group.padEnd(9)} ${r.name}`);
 }
 const skipped = selected.length - results.length;
 console.log(
     `  ${results.length - failed.length}/${results.length} passed in ${dt}s` +
-    (skipped > 0 ? ` (${skipped} not run -- bailed)` : "")
+    (skipped > 0 ? ` (${skipped} not run — bailed)` : "")
 );
 
 process.exit(failed.length === 0 ? 0 : 1);

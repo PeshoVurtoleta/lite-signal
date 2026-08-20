@@ -1,5 +1,5 @@
 /**
- * bench/torture/scope-torture.mjs -- ownership, adoption and disposal (1.6.0).
+ * bench/torture/scope-torture.mjs — ownership, adoption and disposal (1.6.0).
  *
  * 1.6.0 adds `createScope` and hardens the disposal path. Both are lifetime
  * machinery, and lifetime bugs are the class a value oracle cannot see: the
@@ -10,7 +10,7 @@
  *
  *   1. The 1.6.0 crash repro, fuzzed. The changelog fix is for disposing a
  *      source from inside an observer that linked it on the PREVIOUS run but has
- *      not re-read it on the CURRENT one -- the cursor is parked on a link that
+ *      not re-read it on the CURRENT one — the cursor is parked on a link that
  *      disposal frees, and `severTail` then walks from freed memory. The exact
  *      repro is one scenario; a randomised generator that disposes live,
  *      linked-but-unread sources mid-flush is the rest, because an off-by-one in
@@ -26,7 +26,7 @@
  *
  *   3. Pool accounting under churn. A scope disposer that leaked one link per
  *      teardown, or double-freed one node, is invisible to every value and
- *      wakeup oracle -- it shows up only as a pool that does not return to
+ *      wakeup oracle — it shows up only as a pool that does not return to
  *      baseline. This uses a HARD-ceiling registry, because a growable pool
  *      turns a leak into an invisible bleed.
  *
@@ -45,14 +45,14 @@ const { createRegistry, setDefaultRegistry } = Signal;
 const createScope = Signal.createScope;
 
 if (typeof createScope !== "function") {
-    console.log("lite-signal scope torture -- SKIP: createScope requires 1.6.0+");
+    console.log("lite-signal scope torture — SKIP: createScope requires 1.6.0+");
     process.exit(0);
 }
 
 const SEEDS = Number(process.env.SCOPE_SEEDS || 300);
-const R = createReport(`lite-signal scope torture -- ownership + disposal, ${SEEDS} seeds`);
+const R = createReport(`lite-signal scope torture — ownership + disposal, ${SEEDS} seeds`);
 
-/* -- 1. The 1.6.0 disposal crash, exact repro ------------------------------- */
+/* ── 1. The 1.6.0 disposal crash, exact repro ─────────────────────────────── */
 {
     const r = soakRegistry(createRegistry);
     const gate = r.signal(true);
@@ -69,7 +69,7 @@ const R = createReport(`lite-signal scope torture -- ownership + disposal, ${SEE
         `disposing a linked-but-unread source crashed: ${threw && threw.message}`);
 }
 
-/* -- 2. Fuzzed disposal-during-retracking ----------------------------------- */
+/* ── 2. Fuzzed disposal-during-retracking ─────────────────────────────────── */
 
 function disposalFuzz(seed) {
     const rnd = mulberry32(seed);
@@ -126,7 +126,7 @@ if (fuzzCrashes > 0) {
         `first at seed ${firstCrash.seed}: ${firstCrash.err.message}`);
 }
 
-/* -- 3. createScope adoption contract --------------------------------------- */
+/* ── 3. createScope adoption contract ─────────────────────────────────────── */
 {
     const r = soakRegistry(createRegistry);
     const base = r.stats().activeNodes;
@@ -145,11 +145,11 @@ if (fuzzCrashes > 0) {
     dispose();
     const after = r.stats().activeNodes - base;
     // The plain signal is orphaned (created directly, not adopted); everything
-    // else -- computed, effect, owner -- is reaped.
+    // else — computed, effect, owner — is reaped.
     R.eq("adoption", after, 1, "dispose should reap the adopted computed, effect and owner, leaving only the orphan signal");
 }
 
-/* -- 4. The signals + computeds + effects === activeNodes invariant --------- */
+/* ── 4. The signals + computeds + effects === activeNodes invariant ───────── */
 {
     const r = soakRegistry(createRegistry);
     const disposers = [];
@@ -166,7 +166,7 @@ if (fuzzCrashes > 0) {
     for (const d of disposers) d();
 }
 
-/* -- 5. A scope survives its creating consumer's re-run --------------------- */
+/* ── 5. A scope survives its creating consumer's re-run ───────────────────── */
 {
     // The reconciler-critical property: a scope created inside an effect must
     // NOT be torn down when that effect re-runs. Otherwise a keyed list would
@@ -204,12 +204,12 @@ if (fuzzCrashes > 0) {
     consumer();
 }
 
-/* -- 6. A scope created inside a scope is detached, not adopted -------------- */
+/* ── 6. A scope created inside a scope is detached, not adopted ────────────── */
 {
     // This is the SAME detach guarantee that lets a scope survive its consumer's
     // re-run, applied one level up: a scope is never adopted by an enclosing
     // scope. Its own disposer owns its lifetime. (An earlier draft asserted the
-    // opposite -- that the outer disposer should cascade into the inner scope --
+    // opposite — that the outer disposer should cascade into the inner scope —
     // which contradicts the documented contract.)
     const r = soakRegistry(createRegistry);
     const base = r.stats().activeNodes;
@@ -228,7 +228,7 @@ if (fuzzCrashes > 0) {
     const peak = r.stats().activeNodes - base;
     outer();                                        // tears down only outer's own children
     const afterOuter = r.stats().activeNodes - base;
-    R.ok("nested-detach", afterOuter > 0, "the inner scope was adopted by the outer -- detach guarantee broken");
+    R.ok("nested-detach", afterOuter > 0, "the inner scope was adopted by the outer — detach guarantee broken");
     R.ok("nested-detach", afterOuter < peak, "disposing the outer scope freed none of its own children");
 
     innerDisposer();                                // the inner scope's own disposer
@@ -239,7 +239,7 @@ if (fuzzCrashes > 0) {
     R.ok("nested-detach", threw === null, `a repeated dispose threw: ${threw && threw.message}`);
 }
 
-/* -- 7. Pool balance under scope churn (HARD ceiling) ----------------------- */
+/* ── 7. Pool balance under scope churn (HARD ceiling) ─────────────────────── */
 
 function churnPool() {
     // Fixed ceiling: a growable pool would hide a per-teardown link leak as an
@@ -274,13 +274,13 @@ function churnPool() {
 {
     const { threw, base, end } = churnPool();
     R.ok("pool-churn", threw === null,
-        `scope churn exhausted a fixed pool -- a teardown is leaking: ${threw && threw.message}`);
+        `scope churn exhausted a fixed pool — a teardown is leaking: ${threw && threw.message}`);
     // activeLinks must return to baseline: every link a scope built, it freed.
     R.eq("pool-churn", end.activeLinks, base.activeLinks,
-        `activeLinks climbed from ${base.activeLinks} to ${end.activeLinks} over 200 scope rounds -- leaked links`);
+        `activeLinks climbed from ${base.activeLinks} to ${end.activeLinks} over 200 scope rounds — leaked links`);
 }
 
-/* -- 8. runWithOwner re-attachment adopts into the scope owner --------------- */
+/* ── 8. runWithOwner re-attachment adopts into the scope owner ─────────────── */
 if (typeof Signal.runWithOwner === "function" && typeof Signal.getOwner === "function") {
     const r = soakRegistry(createRegistry);
     let threw = null;
@@ -289,12 +289,12 @@ if (typeof Signal.runWithOwner === "function" && typeof Signal.getOwner === "fun
         // CRITICAL: getOwner / runWithOwner MUST be called as registry methods
         // (r.getOwner / r.runWithOwner), matching the registry that owns the
         // scope. The module-level Signal.getOwner() reads the DEFAULT registry's
-        // current owner, which -- since the scope lives in `r`, not the default --
+        // current owner, which — since the scope lives in `r`, not the default —
         // is undefined; runWithOwner(undefined, fn) then runs `fn` ROOTED (a null
         // handle degrades to rooted execution, per the documented contract), so
         // the effect attaches to nothing and the scope disposer cannot reap it.
         // An earlier draft made exactly this mistake and misread the resulting
-        // orphan as the engine failing to reap -- it was the test using the wrong
+        // orphan as the engine failing to reap — it was the test using the wrong
         // registry. Pinned here so the correct behaviour stays asserted.
         let capturedOwner = null;
         const dispose = r.createScope(function (d) {
@@ -324,14 +324,14 @@ if (typeof Signal.runWithOwner === "function" && typeof Signal.getOwner === "fun
     } catch (err) { threw = err; }
     R.ok("runWithOwner", threw === null, `runWithOwner re-attachment threw: ${threw && threw.message}`);
 } else {
-    R.note("runWithOwner/getOwner not both present -- re-attachment scenario skipped");
+    R.note("runWithOwner/getOwner not both present — re-attachment scenario skipped");
 }
 
-/* -- 8b. The registry-mismatch footgun is real and must degrade safely ------ */
+/* ── 8b. The registry-mismatch footgun is real and must degrade safely ────── */
 if (typeof Signal.runWithOwner === "function" && typeof Signal.getOwner === "function") {
     // The mistake above, made deliberately: capture the owner via the WRONG
     // registry (the module default) and confirm it degrades to rooted execution
-    // -- no crash, no adoption -- rather than corrupting either registry. This is
+    // — no crash, no adoption — rather than corrupting either registry. This is
     // the safety net that made the earlier confusion merely a wrong test rather
     // than a crash.
     const r = soakRegistry(createRegistry);
@@ -340,7 +340,7 @@ if (typeof Signal.runWithOwner === "function" && typeof Signal.getOwner === "fun
     try {
         let wrongOwner = null;
         const dispose = r.createScope(function (d) {
-            wrongOwner = Signal.getOwner();   // DEFAULT registry -- mismatched on purpose
+            wrongOwner = Signal.getOwner();   // DEFAULT registry — mismatched on purpose
             return d;
         });
         R.eq("mismatch-safety", wrongOwner, undefined,

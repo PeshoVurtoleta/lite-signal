@@ -1,13 +1,13 @@
 /**
- * bench/torture/op-accounting.mjs -- structural work accounting via the engine's
+ * bench/torture/op-accounting.mjs — structural work accounting via the engine's
  * own onGraphMutation opcode lane (1.5.0+). NO timing, NO benchmarks.
  *
  * The lesson from the mark-lane review: do not measure wall-clock to catch a
- * work regression -- count deterministic work. The engine already exposes a
+ * work regression — count deterministic work. The engine already exposes a
  * first-party counter lane through `onGraphMutation`, and NOTHING in the suite
  * uses it. `work-accounting.mjs` counts body runs with its own wrapper closures,
  * which is correct for asserting VALUES but blind to a whole class of bug: a
- * recompute the engine performs that a wrapper on a single node cannot see -- a
+ * recompute the engine performs that a wrapper on a single node cannot see — a
  * double-pull, a glitchy re-eval, or a markEpoch short-circuit that fails to fire
  * and silently recomputes a clean node. Those show up only as a divergence
  * between the engine's op-5 total and the sum of wrapper counts.
@@ -74,13 +74,13 @@ const { createRegistry } = Signal;
         }
     } catch { ok = false; }
     if (!ok) {
-        console.log("op-accounting -- SKIP: onGraphMutation opcode lane not available");
+        console.log("op-accounting — SKIP: onGraphMutation opcode lane not available");
         process.exit(0);
     }
 }
 
 const SEEDS = Number(process.env.OP_SEEDS || 400);
-const R = createReport(`lite-signal op-accounting -- structural work via onGraphMutation, ${SEEDS} seeds`);
+const R = createReport(`lite-signal op-accounting — structural work via onGraphMutation, ${SEEDS} seeds`);
 const reg = () => createRegistry({ maxNodes: 4096, maxLinks: 16384, onCapacityExceeded: "grow" });
 
 // A counter harness bound to a registry: tallies opcodes with a scoped window.
@@ -98,7 +98,7 @@ function counters(r) {
     return c;
 }
 
-/* -- 0. Pin the op-5 identity: op5 == computed recomputes + effect executions -- */
+/* ── 0. Pin the op-5 identity: op5 == computed recomputes + effect executions ── */
 {
     const r = reg();
     let comp = 0, eff = 0;
@@ -115,7 +115,7 @@ function counters(r) {
     ct.off(); stop();
 }
 
-/* -- 1. Re-read caching: op5 stays flat on re-read (behaviour pin) ----------- */
+/* ── 1. Re-read caching: op5 stays flat on re-read (behaviour pin) ─────────── */
 {
     // NOTE: this pins the OBSERVABLE (no recompute on re-read), but it does NOT
     // prove the clean short-circuit specifically -- the first pullComputed guard
@@ -134,7 +134,7 @@ function counters(r) {
     ct.off();
 }
 
-/* -- 2. Equality cutoff: an equal write must not recompute downstream ------- */
+/* ── 2. Equality cutoff: an equal write must not recompute downstream ─────── */
 {
     const r = reg();
     const a = r.signal(1);
@@ -166,7 +166,7 @@ function counters(r) {
     ct.off(); stop();
 }
 
-/* -- 3. Diamond: exactly one recompute per node per write (glitch-free) ----- */
+/* ── 3. Diamond: exactly one recompute per node per write (glitch-free) ───── */
 {
     const r = reg();
     let bodies = 0;
@@ -186,7 +186,7 @@ function counters(r) {
     ct.off(); stop();
 }
 
-/* -- 4. Link balance across dynamic rewiring (leak signature) --------------- */
+/* ── 4. Link balance across dynamic rewiring (leak signature) ─────────────── */
 {
     // A computed that switches which source it reads must RELEASE the old link
     // as it acquires the new one. Over many toggles, net links must not grow.
@@ -209,11 +209,11 @@ function counters(r) {
     // net links added-minus-removed must stay small and bounded, never growing
     // with the 200 iterations. A leak shows as net climbing ~linearly.
     R.ok("link-balance", netMax <= 8,
-        `net link count peaked at ${netMax} over 200 rewirings -- links are leaking (op3=${ct.n3}, op4=${ct.n4})`);
+        `net link count peaked at ${netMax} over 200 rewirings — links are leaking (op3=${ct.n3}, op4=${ct.n4})`);
     ct.off(); stop();
 }
 
-/* -- 5. Node balance: dispose frees the node it created --------------------- */
+/* ── 5. Node balance: dispose frees the node it created ───────────────────── */
 {
     const r = reg();
     const ct = counters(r);
@@ -227,11 +227,11 @@ function counters(r) {
         r.dispose(s);
     }
     // Every node created in a round is disposed in the same round: op1 == op2.
-    R.eq("node-balance", ct.n1, ct.n2, `created ${ct.n1} nodes but disposed ${ct.n2} -- a node leak`);
+    R.eq("node-balance", ct.n1, ct.n2, `created ${ct.n1} nodes but disposed ${ct.n2} — a node leak`);
     ct.off();
 }
 
-/* -- 6. Laziness: an UNOBSERVED computed does not recompute on write -------- */
+/* ── 6. Laziness: an UNOBSERVED computed does not recompute on write ──────── */
 {
     const r = reg();
     let bodies = 0;
@@ -241,12 +241,12 @@ function counters(r) {
     const ct = counters(r);
     bodies = 0; ct.reset();
     a.set(1); a.set(2); a.set(3);          // writes, but c is NOT observed and NOT read
-    R.eq("laziness", ct.n5, 0, "an unobserved, unread computed recomputed on write -- laziness broken");
+    R.eq("laziness", ct.n5, 0, "an unobserved, unread computed recomputed on write — laziness broken");
     R.eq("laziness", bodies, 0, "unobserved computed body ran without a read");
     ct.off();
 }
 
-/* -- 7. Differential: op5 total == wrapper bodies + effect execs, fuzzed ---- */
+/* ── 7. Differential: op5 total == wrapper bodies + effect execs, fuzzed ──── */
 
 function fuzzSeed(seed) {
     const rnd = mulberry32(seed);
@@ -311,7 +311,7 @@ for (let seed = 1; seed <= SEEDS; seed++) {
 if (fuzzFail > 0) {
     const d = firstFail.threw
         ? `seed ${firstFail.seed} threw: ${firstFail.threw}`
-        : `seed ${firstFail.seed}: op5=${firstFail.op5} but wrapper bodies=${firstFail.bodies}+effects=${firstFail.effs}=${firstFail.bodies + firstFail.effs} -- a phantom or skipped recompute`;
+        : `seed ${firstFail.seed}: op5=${firstFail.op5} but wrapper bodies=${firstFail.bodies}+effects=${firstFail.effs}=${firstFail.bodies + firstFail.effs} — a phantom or skipped recompute`;
     R.fail("op5-differential", `${fuzzFail}/${SEEDS} seeds broke the op5 identity; ${d}`);
 }
 

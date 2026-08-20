@@ -11,20 +11,6 @@ const manifest = JSON.parse(readFileSync('./manifest.json', 'utf8'));
 const candidate = process.argv.slice(2).filter((a) => !a.startsWith('--'))[0];
 if (!candidate) { console.error('usage: node gate.mjs <candidate-label>'); process.exit(2); }
 
-// --- semver precedence (no deps) -- for the successor guard below --------------
-function parseSemver(v){const[c,pre]=String(v).split('-');const[maj,min,pat]=c.split('.').map(Number);return{maj,min,pat,pre:pre?pre.split('.'):[]};}
-function cmpSemver(a,b){const A=parseSemver(a),B=parseSemver(b);
-  if(A.maj!==B.maj)return A.maj-B.maj; if(A.min!==B.min)return A.min-B.min; if(A.pat!==B.pat)return A.pat-B.pat;
-  if(!A.pre.length&&!B.pre.length)return 0; if(!A.pre.length)return 1; if(!B.pre.length)return -1;
-  const n=Math.max(A.pre.length,B.pre.length);
-  for(let i=0;i<n;i++){const x=A.pre[i],y=B.pre[i];
-    if(x===undefined)return -1; if(y===undefined)return 1;
-    const xn=/^\d+$/.test(x),yn=/^\d+$/.test(y);
-    if(xn&&yn){const d=Number(x)-Number(y); if(d)return d;}
-    else if(xn)return -1; else if(yn)return 1; else{ if(x<y)return -1; if(x>y)return 1; }}
-  return 0;}
-const candVersion = candidate.replace(/^candidate-/, '');
-
 const { floor, rolling, workloads } = manifest;
 const TF = manifest.tolerances.floor, TR = manifest.tolerances.rolling;
 const load = (v, w) => { const p = `./baselines/${v}/${w}.json`; return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null; };
@@ -38,23 +24,12 @@ const candHash = engHash(candidate), floorHash = engHash(floor), rollingHash = e
 const short = (h) => (h ? h.slice(0, 8) : '--------');
 const floorIdentical = !!(candHash && floorHash && candHash === floorHash);
 const rollingIdentical = !!(candHash && rollingHash && candHash === rollingHash);
-// Successor guard: a candidate cannot regress against a version RELEASED AFTER it.
-// If a baseline is version-numerically newer than the candidate (e.g. cutting stable
-// 1.4.0 while 1.5.0-alpha.1 exists on the rolling axis), comparing them measures the
-// candidate against its own future -- the expected slowdown is not a regression. Skip
-// that axis with a note, exactly like the identical-code skip.
-const floorIsSuccessor = cmpSemver(candVersion, floor) < 0;
-const rollingIsSuccessor = cmpSemver(candVersion, rolling) < 0;
-const skipFloor = floorIdentical || floorIsSuccessor;
-const skipRolling = rollingIdentical || rollingIsSuccessor;
 
 console.error(`\ngate: candidate ${candidate}`);
 console.error(`  floor   ${floor}      ${JSON.stringify(TF)}`);
 console.error(`  rolling ${rolling}    ${JSON.stringify(TR)}\n`);
 if (rollingIdentical) console.error(`  note: candidate is byte-identical to rolling ${rolling} (sha ${short(candHash)}) -- rolling axis skipped; identical code cannot regress\n`);
 if (floorIdentical) console.error(`  note: candidate is byte-identical to floor ${floor} (sha ${short(candHash)}) -- floor axis skipped; identical code cannot regress\n`);
-if (rollingIsSuccessor && !rollingIdentical) console.error(`  note: rolling ${rolling} is NEWER than candidate ${candVersion} -- rolling axis skipped; a version cannot regress against its own successor\n`);
-if (floorIsSuccessor && !floorIdentical) console.error(`  note: floor ${floor} is NEWER than candidate ${candVersion} -- floor axis skipped; a version cannot regress against its own successor\n`);
 console.error('workload               vs floor   vs rolling   verdict');
 console.error('---------------------  ---------  -----------  -------');
 
@@ -92,12 +67,12 @@ for (const w of workloads) {
     const cand = load(candidate, w);
     if (!cand) { console.error(`  ${w.padEnd(21)} MISSING candidate capture`); failed++; continue; }
     const fb = load(floor, w), rb = load(rolling, w);
-    const fc = (fb && !skipFloor) ? checkRegression(fb, cand, TF) : { ok: true, regressions: [] };
-    const rc = (rb && !skipRolling) ? checkRegression(rb, cand, TR) : { ok: true, regressions: [] };
+    const fc = (fb && !floorIdentical) ? checkRegression(fb, cand, TF) : { ok: true, regressions: [] };
+    const rc = (rb && !rollingIdentical) ? checkRegression(rb, cand, TR) : { ok: true, regressions: [] };
     const ok = fc.ok && rc.ok;
     if (!ok) failed++;
-    const fcL = skipFloor ? 'SKIP' : (fc.ok ? 'PASS' : 'FAIL');
-    const rcL = skipRolling ? 'SKIP' : (rc.ok ? 'PASS' : 'FAIL');
+    const fcL = floorIdentical ? 'SKIP' : (fc.ok ? 'PASS' : 'FAIL');
+    const rcL = rollingIdentical ? 'SKIP' : (rc.ok ? 'PASS' : 'FAIL');
     console.error(`  ${w.padEnd(21)}  ${fcL.padEnd(9)}  ${rcL.padEnd(11)}  ${ok ? 'PASS' : 'FAIL'}`);
     for (const [base, x] of [...fc.regressions.map((r) => ['floor', r]), ...rc.regressions.map((r) => ['rolling', r])]) {
         console.error(`      ! [${base}] ${x.metric}: ${x.baseline.toFixed(4)} -> ${x.candidate.toFixed(4)} (+${(x.change * 100).toFixed(1)}% > ${(x.tolerance * 100).toFixed(0)}%)`);

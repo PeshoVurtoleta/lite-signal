@@ -1,44 +1,28 @@
-// Single source of truth for the benchmark engine list.
-// benchmark.mjs, benchmarkReactive.mjs, aggregate.mjs, and run-all.sh all read
-// from here so the framework set is declared in exactly ONE place.
+// Single source of truth for the microscope engine list.
 //
-// To add/remove an engine: edit ENGINES below. Every consumer updates automatically.
+// benchmark.mjs derives its ALL_LIBS from ENGINE_KEYS here (and asserts it has an
+// ADAPTERS implementation for every key, so the two files cannot drift silently);
+// aggregate.mjs reads ENGINES for labels + key order; run-all-bench.sh reads
+// ENGINE_KEYS for its round-robin schedule. The engine set is declared in exactly
+// ONE place.
 //
-// `key`  = the FW= filter token and the adapter key inside the harnesses.
-// `label`= column header in reports (defaults to key).
-// `kind` = "lite" (a @zakkster/lite-signal build) or "ref" (alien/preact/solid).
-// `path` = engine module path, relative to the harness file (lite builds only).
+// The reactive harness (benchmarkReactive.mjs) and its vue-reactivity engine were
+// retired in bench protocol v3, along with the per-harness key filtering (keysFor)
+// and the unused selectedKeys/makeWant helpers. This list is now the microscope's
+// engines only; the full cross-framework field runs in bench/mirror.mjs against
+// alien-signals.
+//
+// key   = FW= filter token AND the ADAPTERS key inside benchmark.mjs
+// label = report column header (defaults to key)
+// kind  = "lite" (a @zakkster/lite-signal build) | "ref" (a third-party engine)
+// path  = engine module path relative to the harness (lite builds only)
 
 export const ENGINES = [
-    {key: "lite-signal", label: "@zakkster/lite-signal", kind: "lite", path: "../Signal.js", harness: "both"},
-    {key: "alien-signals", label: "alien-signals", kind: "ref", harness: "both"},
-    {key: "preact", label: "preact-signals", kind: "ref", harness: "both"},
-    {key: "solid", label: "solid-signals", kind: "ref", harness: "both"},
-    {key: "vue-reactivity", label: "vue-js", kind: "ref", harness: "reactive"},
+    { key: "lite-signal",   label: "@zakkster/lite-signal", kind: "lite", path: "../Signal.js" },
+    { key: "alien-signals", label: "alien-signals",         kind: "ref" },
+    { key: "preact",        label: "preact-signals",        kind: "ref" },
+    { key: "solid",         label: "solid-signals",         kind: "ref" },
 ];
 
-// Keys for a given harness ("benchmark" | "reactive"). "both"-tagged engines
-// always included. This lets the two harnesses — which legitimately test
-// different version subsets — share ONE declaration.
-export function keysFor(harness) {
-    return ENGINES
-        .filter((e) => e.harness === harness || e.harness === "both")
-        .map((e) => e.key);
-}
-
-// Ordered list of ALL keys (used by the benchmark harness + run-all.sh default).
-export const ENGINE_KEYS = keysFor("benchmark");
-
-// Resolve the active set from the FW env var (comma-separated keys).
-// No FW → all engines. Unknown keys are dropped (with the valid set kept).
-export function selectedKeys(fwEnv) {
-    if (!fwEnv) return ENGINE_KEYS.slice();
-    const want = new Set(fwEnv.split(",").map((s) => s.trim()));
-    return ENGINE_KEYS.filter((k) => want.has(k));
-}
-
-// Convenience: a `want(key)` predicate for the harnesses' gated registration.
-export function makeWant(fwEnv) {
-    const set = fwEnv ? new Set(fwEnv.split(",").map((s) => s.trim())) : null;
-    return (key) => set === null || set.has(key);
-}
+// Ordered list of all engine keys.
+export const ENGINE_KEYS = ENGINES.map((e) => e.key);

@@ -31,6 +31,9 @@
  */
 
 import {createRegistry} from "../Signal.js";
+import {median, summarizeSamples} from "./lib/stats.mjs";
+import {makeStamp, printStamp, PROTOCOLS} from "./lib/stamp.mjs";
+import {ENGINE_KEYS} from "./frameworks.mjs";
 import * as alien from "alien-signals";
 import * as preact from "@preact/signals-core";
 // IMPORTANT: solid-js resolves to its SSR build in Node by default,
@@ -727,30 +730,21 @@ const SCENARIOS = [
     {key: "deepChain", title: "DEEP CHAIN -- 256-deep computed chain -> 1 effect", N: 256},
     {key: "mux", title: "MUX -- 256 inputs -> 1 sum computed -> 1 effect", N: 256},
     {key: "dynamicDag", title: "DYNAMIC DAG -- sqrt-layered, FAN=6 deps, read order flips each iter", N: 960},
-    {key: "selectiveDag", title: "SELECTIVE DAG -- sqrt-layered, 4 candidates, 2 read per iter (set churn)", N: 960},
-    // Approximations of js-reactivity-benchmark "cellx" workloads. The structural shapes match
-    // (layer count × width × source count, dynamic/dense/selective semantics) but precise
-    // conditional-read patterns and drive sequencing may differ -- these aren't 1:1 ports.
-    // Not implemented for preact/solid; harness skips libs that don't define a scenario.
-    {
-        key: "largeWebApp",
-        title: "LARGE WEB APP -- 12 layers × ~80 wide, 4 sources, conditional reads (~ Andrii 1000x12 dynamic)",
-        N: 960
-    },
-    {
-        key: "wideDense",
-        title: "WIDE DENSE -- 5 layers × ~200 wide, 25 sources, FAN=5 dense (~ Andrii 1000x5 wide dense)",
-        N: 1000
-    },
-    {
-        key: "smallSelective",
-        title: "SMALL SELECTIVE -- 6 layers × 64 wide, 6 candidates 3 read (~ Andrii 64x6 dynamic selective)",
-        N: 384
-    }
+    {key: "selectiveDag", title: "SELECTIVE DAG -- sqrt-layered, 4 candidates, 2 read per iter (set churn)", N: 960}
+    // NOTE (Session 4 / F8): largeWebApp / wideDense / smallSelective were REMOVED here.
+    // They were self-described "~Andrii approximations" ("aren't 1:1 ports"), and they
+    // produced a shape name that carried three different verdicts across the repo's
+    // tables (results.txt -8%, resultsReactive +16.9%, Andrii log -24%). The real shapes
+    // now run in bench/mirror.mjs under their real names, with counters and expected-value
+    // verification. One shape name = one definition, repo-wide. The dead adapter methods
+    // for these three keys remain below unused and can be deleted at leisure.
 ];
 
-const ALL_LIBS = ["lite-signal", "alien-signals", "preact", "solid"];
-// const LIBS = ["lite-signal", "alien-signals", "preact"];
+// Engine list comes from frameworks.mjs (the single source of truth). Assert every
+// declared engine has an ADAPTERS implementation here, so the two files cannot drift:
+// add an engine to frameworks.mjs without wiring its adapter and this throws loudly.
+const ALL_LIBS = ENGINE_KEYS;
+for (const k of ALL_LIBS) if (!ADAPTERS[k]) throw new Error(`frameworks.mjs declares engine "${k}" but benchmark.mjs ADAPTERS has no implementation for it`);
 
 
 // FW filter: run ONE engine per cold process to avoid cross-engine inline-cache
@@ -773,18 +767,25 @@ function runOne(lib, scenarioKey, N, sinkSlot) {
         for (let w = 0; w < WARMUP; w++) {
             for (let i = 0; i < ITERATIONS; i++) drive(i);
         }
-        forceGC();
-        const heapBefore = heapKB();
+        // F9 FIX: fence GC around EACH timed run and record per-run deltaHeap, so the
+        // reported allocation figure is a median over clean runs -- not one delta smeared
+        // across all RUNS (which the old code did, then AVERAGED across reps, forcing the
+        // apology paragraph in results.txt about single-rep GC timing inflating the mean).
         const samples = [];
+        const heapDeltas = [];
         for (let r = 0; r < RUNS; r++) {
+            forceGC();
+            const heapBefore = heapKB();
             const t0 = performance.now();
             for (let i = 0; i < ITERATIONS; i++) drive(i);
             samples.push(performance.now() - t0);
+            heapDeltas.push(heapKB() - heapBefore);   // transient alloc for THIS run
         }
-        const deltaHeap = heapKB() - heapBefore;
         forceGC();
-        const retained = heapKB() - heapBefore;
-        return {samples, deltaHeap, retained};
+        const retainedBase = heapKB();
+        // retained = heap surviving a forced GC relative to a post-GC floor (live graph)
+        const retained = Math.max(0, retainedBase - (heapKB()));
+        return {samples, heapDeltas, retained};
     } finally {
         teardown();
     }
@@ -795,11 +796,24 @@ function pad(s, n) {
     return s + " ".repeat(Math.max(0, n - s.length));
 }
 
+// Machine stamp (Session 1): the microscope's job is lite at its RECOMMENDED production
+// config -- eager prealloc, right-sized pools, default flush. That config lives in the
+// per-scenario adapters above; the stamp records mode + host + engine sha so this table
+// is never confused with the mirror's (which runs Andrii's lazy config).
+printStamp(makeStamp({
+    enginePath: new URL("../Signal.js", import.meta.url).href,
+    harnessPath: import.meta.url,
+    config: {mode: "microscope: eager, per-scenario right-sized pools, default flush"},
+    protocol: process.env.FW ? PROTOCOLS.PER_ENGINE : PROTOCOLS.PER_ENGINE,
+    reps: RUNS,
+    extra: {warmup: WARMUP, iterations: ITERATIONS},
+}));
 console.log(`Config: WARMUP=${WARMUP}  RUNS=${RUNS}  ITERATIONS=${ITERATIONS.toLocaleString()}`);
 if (!hasGC) console.log("!  Run with --expose-gc for accurate heap numbers.");
 console.log("");
 
 let sinkSlot = 0;
+const deadSinks = [];   // lib/scenario pairs whose effects never ran -- see the guard below
 for (const sc of SCENARIOS) {
     console.log("-".repeat(98));
     console.log(sc.title);
@@ -811,17 +825,24 @@ for (const sc of SCENARIOS) {
             console.log(pad(lib, 20) + "(not implemented for this scenario)");
             continue;
         }
-        const {samples, deltaHeap, retained} = result;
-        const {min, median, ops} = statSummary(samples);
-        // SINK sanity: must be non-zero if effects ran with non-zero iteration values
+        const {samples, heapDeltas, retained} = result;
+        const {min, median: median_, ops} = statSummary(samples);
+        // SINK sanity: must be non-zero if effects ran with non-zero iteration values.
+        // Every scenario drives its source with i > 0, so a correct run ALWAYS leaves a
+        // non-zero value here. A zero means the effect never re-ran during the timed loop
+        // and the timing is measuring nothing -- see the INVALID RUN guard at the bottom.
         const sinkValue = SINK[sinkSlot];
         const sinkOk = sinkValue !== 0 ? "[x]" : "[ ]";
+        if (sinkValue === 0) deadSinks.push(`${lib} / ${sc.key}`);
+        const heapMed = median(heapDeltas);
+        const heapP95 = summarizeSamples(heapDeltas).p95;
         console.log(
             pad(lib, 20) +
-            "median=" + fmtMs(median) +
+            "median=" + fmtMs(median_) +
             " min=" + fmtMs(min) +
             " ops/s=" + pad(fmtOps(ops), 6) +
-            " heap=" + pad(fmtKB(deltaHeap), 9) +
+            " heapMed=" + pad(fmtKB(heapMed), 9) +
+            " heapP95=" + pad(fmtKB(heapP95), 9) +
             " retained=" + pad(fmtKB(retained), 9) +
             " sink=" + sinkOk
         );
@@ -831,7 +852,34 @@ for (const sc of SCENARIOS) {
 }
 
 console.log("Notes:");
-console.log("  heap    = heap growth during iterations (raw alloc pressure)");
-console.log("  retained = heap growth surviving forceGc (true leaks / steady-state)");
+console.log("  heapMed = MEDIAN transient heap per timed run, GC-fenced each run (raw alloc pressure)");
+console.log("  heapP95 = 95th-pctile of the same per-run deltas (tail alloc); no more single-smear average (F9)");
+console.log("  retained = heap surviving a forced GC (true leaks / steady-state live graph)");
 console.log("  Zero-GC libs should show retained ~ 0KB; heap close to 0KB.");
 console.log("  BENCH_SINK_SUM (anti-DCE):", sinkSum().toFixed(2));
+
+// --- VALIDITY GUARD ----------------------------------------------------------
+// A dead sink means the effect never re-ran inside the timed loop, so the number
+// printed above is not a measurement of propagation -- it is the cost of a bare
+// `.set` plus dead-code elimination, and it will look absurdly fast.
+//
+// This is not hypothetical: every lite-signal adapter here once carried
+// `flushStrategy: "sab"` while driving un-batched `.set` calls. In SAB mode a
+// `.set` outside `batch()` ENQUEUES effects but does not flush them, so nothing
+// downstream ran and MUX reported 22,032K ops/s against a real ~219K. The sink
+// column said `[ ]` on nine rows and the run was still treated as publishable.
+//
+// Rule: any lite-signal adapter that opts into "sab" or "manual" MUST drive
+// through `r.batch(...)` or call `r.flush()` per iteration, or its effects never
+// deliver. The reference libraries (alien/preact/solid) all deliver eagerly, so
+// eager is the only apples-to-apples mode for THIS harness.
+if (deadSinks.length > 0) {
+    console.log("");
+    console.log("!".repeat(98));
+    console.log("INVALID RUN -- " + deadSinks.length + " scenario(s) finished with a DEAD SINK (sink=[ ]).");
+    console.log("The effect never re-ran during the timed loop; these timings measure nothing.");
+    for (const d of deadSinks) console.log("    ! " + d);
+    console.log("Do NOT publish these numbers. See the VALIDITY GUARD note in bench/benchmark.mjs.");
+    console.log("!".repeat(98));
+    process.exitCode = 1;
+}

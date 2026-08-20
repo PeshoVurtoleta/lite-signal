@@ -1,5 +1,5 @@
 /**
- * bench/torture/helpers/index.mjs -- shared torture infrastructure.
+ * bench/torture/helpers/index.mjs — shared torture infrastructure.
  *
  * Extracted because every soak had grown its own copy of the RNG, its own
  * registry boilerplate and its own bespoke pass/fail printing, which meant a
@@ -10,11 +10,11 @@
  * accounting and an import that quietly allocated would poison the baseline.
  */
 
-/* -- determinism ------------------------------------------------------------ */
+/* ── determinism ──────────────────────────────────────────────────────────── */
 
 /**
  * Seeded PRNG. Every scenario draws from one of these so a failure is
- * reproducible from its seed alone -- a torture file that cannot replay its own
+ * reproducible from its seed alone — a torture file that cannot replay its own
  * failure is a bug report you cannot act on.
  */
 export function mulberry32(seed) {
@@ -42,7 +42,7 @@ export function shuffle(rnd, arr) {
     return arr;
 }
 
-/* -- adversarial value domain ----------------------------------------------- */
+/* ── adversarial value domain ─────────────────────────────────────────────── */
 
 /**
  * Values chosen so that the candidate equality definitions DISAGREE:
@@ -63,14 +63,14 @@ export function toNum(v) {
     return Number.isFinite(n) ? (n | 0) : 0;
 }
 
-/* -- registries ------------------------------------------------------------- */
+/* ── registries ───────────────────────────────────────────────────────────── */
 
 /**
  * A registry sized for soak shapes.
  *
  * Torture graphs intentionally exceed the default 1,024-node ceiling, which is
  * sized for application code with bounded graphs. `grow` is correct HERE and
- * wrong in a leak test -- see `fixedRegistry`.
+ * wrong in a leak test — see `fixedRegistry`.
  */
 export function soakRegistry(createRegistry, opts = {}) {
     return createRegistry({
@@ -91,7 +91,7 @@ export function fixedRegistry(createRegistry, maxNodes = 4096, maxLinks = 16384)
     return createRegistry({ maxNodes, maxLinks, onCapacityExceeded: "throw" });
 }
 
-/* -- scenario harness ------------------------------------------------------- */
+/* ── scenario harness ─────────────────────────────────────────────────────── */
 
 /**
  * Collects failures instead of throwing on the first one, so a run reports every
@@ -121,7 +121,7 @@ export function createReport(title) {
             return true;
         },
 
-        /** Contextual line printed on success -- counts, throughput, coverage. */
+        /** Contextual line printed on success — counts, throughput, coverage. */
         note(line) { notes.push(line); },
 
         get failureCount() { return failures.length; },
@@ -153,7 +153,7 @@ function fmt(v) {
     return String(v);
 }
 
-/* -- async ------------------------------------------------------------------ */
+/* ── async ────────────────────────────────────────────────────────────────── */
 
 /** Drain the microtask queue. */
 export const flushMicrotasks = () => Promise.resolve().then(() => {});

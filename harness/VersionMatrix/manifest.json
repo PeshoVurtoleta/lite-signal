@@ -1,12 +1,11 @@
 {
   "floor": "1.3.0",
-  "rolling": "1.3.0",
+  "rolling": "1.5.0-alpha.1",
   "history": ["1.3.0", "1.4.0-beta.1", "1.5.0-alpha.1", "1.6.0-preview.2"],
   "workloads": ["reactive-graph-mix", "deep-chain", "broadcast-fanout", "dynamic-dep-churn"],
   "tolerances": {
     "floor":   { "frame.avg": 0.10, "frame.p99": 0.30, "phase.write.p99": 0.30 },
     "rolling": { "frame.avg": 0.05, "frame.p99": 0.18, "phase.write.p99": 0.18 }
   },
-  "evidence": { "maxSpreadPct": 15, "maxCaptureSpanMinutes": 30, "minReps": 3 },
-  "_notes": "ROLLING now tracks the STABLE predecessor of the candidate, not the highest prerelease. For the 1.4.0 stable cut, both axes anchor on 1.3.0 (floor generous 10%, rolling tight 5%). After 1.4.0 ships, advance rolling to 1.4.0 for the next stable cut. The successor guard in gate.mjs additionally auto-skips any axis whose baseline is version-numerically NEWER than the candidate (a version cannot regress against its own future), so back-releasing a stable while prereleases exist no longer produces phantom failures. Tolerances calibrated against measured self-noise (npm run calibrate: frame.avg <=3.4%, frame.p99 up to 14%). NOTE: baselines must carry >=3 reps (minReps) -- a single-rep floor is not evidence; the evidence guard will exit 3 (RECAPTURE) rather than judge against it."
+  "_notes": "Calibrated against measured self-noise (npm run calibrate: frame.avg <=3.4%, frame.p99 up to 14%). frame.avg is the tight stable anchor (5% rolling, safely above its ~3% noise). p99 gates sit above the 14% p99 self-noise so they only fire on gross tail regressions. A p99 FAIL should be confirmed with a re-run, since p99 has a wider run-to-run band."
 }

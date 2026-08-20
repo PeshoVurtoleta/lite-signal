@@ -1,18 +1,18 @@
 /**
- * bench/torture/glitch-hunter.mjs -- glitch freedom + wakeup accounting.
+ * bench/torture/glitch-hunter.mjs — glitch freedom + wakeup accounting.
  *
  * oracle-fuzzer.mjs proves the engine SETTLES on the right values. That is not
  * the whole contract. Two failure modes survive a perfect value oracle:
  *
- *   GLITCHES -- a transiently inconsistent read. In a diamond (s -> a, s -> b,
+ *   GLITCHES — a transiently inconsistent read. In a diamond (s -> a, s -> b,
  *   {a,b} -> c) a naive engine can run `c` after `a` has been recomputed but
  *   before `b` has, so `c` briefly observes two different epochs of the same
  *   source. The final value is still correct once everything settles, so a
- *   settled-value oracle never sees it -- but any effect that WROTE somewhere
+ *   settled-value oracle never sees it — but any effect that WROTE somewhere
  *   during that window (a DOM node, a log, a network call) already acted on a
  *   state that never logically existed.
  *
- *   SPURIOUS WAKEUPS -- an effect re-running when nothing it reads has changed.
+ *   SPURIOUS WAKEUPS — an effect re-running when nothing it reads has changed.
  *   Values stay correct, so again the oracle is blind; the cost is silent
  *   wasted work, and the usual cause is a dependency the engine failed to
  *   unsubscribe when a branch stopped being read. On a big graph that is the
@@ -37,7 +37,7 @@ const SEEDS = Number(process.env.GLITCH_SEEDS || 300);
 const failures = [];
 const fail = (name, detail) => failures.push({ name, detail });
 
-/* -- 1. Glitch freedom on randomised diamonds ---------------------------------
+/* ── 1. Glitch freedom on randomised diamonds ─────────────────────────────────
  *
  * Every leaf carries {epoch, v}. A batch bumps the epoch once and rewrites some
  * subset of leaves. Any derived node that observes two different epochs among
@@ -115,7 +115,7 @@ function glitchSeed(seed) {
     return observed;
 }
 
-/* -- 2. Wakeup accounting --------------------------------------------------- */
+/* ── 2. Wakeup accounting ─────────────────────────────────────────────────── */
 
 function wakeupChecks() {
     const r = createRegistry({ maxNodes: 4096, maxLinks: 16384, onCapacityExceeded: "grow" });
@@ -262,7 +262,7 @@ function wakeupChecks() {
     }
 }
 
-/* -- driver ----------------------------------------------------------------- */
+/* ── driver ───────────────────────────────────────────────────────────────── */
 
 const t0 = performance.now();
 
@@ -294,7 +294,7 @@ try {
 }
 
 const dt = ((performance.now() - t0) / 1000).toFixed(2);
-console.log(`lite-signal glitch hunter -- ${SEEDS} diamond seeds + wakeup accounting (${dt}s)`);
+console.log(`lite-signal glitch hunter — ${SEEDS} diamond seeds + wakeup accounting (${dt}s)`);
 
 if (failures.length === 0) {
     console.log("  PASS: no glitch observed, every wakeup count exact");

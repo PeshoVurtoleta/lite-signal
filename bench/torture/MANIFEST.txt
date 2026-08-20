@@ -1,0 +1,40 @@
+lite-signal torture suite — complete set (16 scenarios)
+========================================================
+
+13 semantic (deterministic, fast, CI) + 3 soak. Full superset through 1.9.
+Every scenario feature-detects and skips cleanly below its feature; runs green
+from 1.4.x forward.
+
+    npm run torture ; npm run torture:semantic ; npm run torture:soak
+    node bench/torture/run.mjs --list
+
+SEMANTIC
+  oracle-fuzzer            values vs an independent reference evaluator
+  glitch-hunter            glitch freedom + exact wakeup accounting
+  work-accounting          minimum body-execution counts (wrapper-based)
+  op-accounting            structural work via the engine's onGraphMutation
+                           opcode lane (op 1-5); op5 identity, equality cutoff,
+                           link/node balance, laziness, 400-seed op5 differential
+  concurrent-storm         reentrancy, nesting, flush ordering
+  scheduler-storm          deferred execution, ABA thunks, coalescing
+  box-torture              signalBox / computedBox interop + surface   (1.5.0+)
+  scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0+)
+  async-torture            watch / when / whenAsync contracts + fuzz
+  capacity-torture         the fail-closed pool boundary
+  flush-torture            flushStrategy eager/sab/manual + subscribe  (1.7.0+)
+  cleanup-return-torture   effect return cleanup + compose order       (1.8.0+)
+  dispose-torture          Symbol.dispose / using on lifecycle objects (1.9.0+)
+
+SOAK (originals, unchanged): graph-fuzzer, scheduler-bench, torture-soak
+
+op-accounting uses the engine's OWN opcode counters instead of wall-clock — the
+lesson from the 1.13 mark-lane review: count deterministic work, don't time it.
+It runs from 1.4.0 (needs only onGraphMutation). See op-accounting-review/
+FINDINGS.md for the instrumentation gap it uncovered: 1.5.0's clean short-circuit
+saves dep-COMPARISONS, which no opcode emits — the analogue of the pre-1.13
+missing mark lane. Recommendation there: add a "compare lane" (op 11/12) so the
+short-circuit's benefit becomes a counted fact and its regression becomes
+catchable.
+
+FEATURE GATES: box->1.5, scope->1.6, flush->1.7, cleanup-return->1.8,
+dispose->1.9. op-accounting and all others: 1.4.0+.

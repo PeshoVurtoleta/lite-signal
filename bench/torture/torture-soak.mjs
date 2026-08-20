@@ -1,7 +1,7 @@
 /**
- * bench/torture/torture-soak.mjs -- high-volume churn soak.
+ * bench/torture/torture-soak.mjs — high-volume churn soak.
  *
- * Not a benchmark -- a soak. Continuously writes, rewires effects, and
+ * Not a benchmark — a soak. Continuously writes, rewires effects, and
  * rewires computeds against a 7,500-node graph for five seconds. The
  * ops/sec is contextual; the assertion is that nothing crashes and that
  * after teardown the pool returns to its leaf-only baseline.
@@ -16,7 +16,7 @@
  *
  * The uploaded original had a known bug: computedDis was wired to a no-op
  * comment ("if you expose dispose, call it here") even though dispose IS
- * exposed -- so computeds leaked across rewires. Fixed below.
+ * exposed — so computeds leaked across rewires. Fixed below.
  */
 import {performance} from "node:perf_hooks";
 import {createRegistry} from "../../Signal.js";
@@ -43,11 +43,10 @@ const computeds = new Array(N_COMPUTEDS);
 
 // JIT sink. The accumulator loops below exist to make the engine do real work;
 // without a live read of their result V8 is free to eliminate them and the soak
-// measures nothing. Previous revisions guarded a magic constant
-// (`if (acc === 1234567) console.log("impossible")`), but those constants are
-// REACHABLE -- the 1.4.0 soak run printed "impossible" for real -- so the sink
-// polluted stdout on a healthy run. Accumulating into a module-scoped int32 that
-// is read at teardown keeps the stores live without ever printing.
+// measures nothing. A magic-constant guard (if (acc === N) console.log(...)) is
+// wrong: those constants are REACHABLE and pollute stdout on a healthy run.
+// Accumulating into a module-scoped int32 that is read at teardown keeps the
+// stores live without ever printing.
 let sink = 0;
 
 function makeEffect(i) {
@@ -86,13 +85,12 @@ for (let i = 0; i < N_EFFECTS; i++) makeEffect(i);
 
 const baseline = r.stats();
 let ops = 0;
-
 let errors = 0;
 let lastError = null;
 
 // Value-correctness oracle. Liveness proves the churn did not crash; it does not
 // prove the values are right. The computeds here read RANDOM signals per
-// recompute, so only the signals are deterministically reproducible -- `shadow`
+// recompute, so only the signals are deterministically reproducible -- shadow
 // mirrors each signal's last written value and peek() must always equal it.
 // Allocated ONCE, outside the churn loop; the tick check reads a rotating WINDOW
 // so there is no per-tick allocation and the cost stays bounded.
@@ -183,9 +181,8 @@ function finish() {
     console.log("  ops:", ops.toLocaleString());
     console.log("  ops/sec:", perSec.toLocaleString(undefined, {maximumFractionDigits: 0}));
     console.log("  errors:", errors);
-    console.log("  pre-soak activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
+    console.log("  baseline activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
     console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
-        console.log("  post-teardown floor asserted: <=", N_SIGNALS + 8, "nodes / 0 links");
 
     // Final full oracle sweep -- every signal, not just the sampled window.
     for (let i = 0; i < N_SIGNALS; i++) {
@@ -205,7 +202,7 @@ function finish() {
         exitCode = 1;
     }
     if (after.activeNodes > N_SIGNALS + 8) {
-        console.error("  FAIL: activeNodes leak -- expected <=", N_SIGNALS + 8, "got", after.activeNodes);
+        console.error("  FAIL: activeNodes leak — expected ≤", N_SIGNALS + 8, "got", after.activeNodes);
         exitCode = 1;
     }
     if (after.activeLinks !== 0) {
@@ -216,7 +213,7 @@ function finish() {
         console.error("  FAIL: JIT sink never advanced -- the work loops were optimised away");
         exitCode = 1;
     }
-    if (exitCode === 0) console.log("  PASS: zero errors, pool drained to its leaf-only floor");
+    if (exitCode === 0) console.log("  PASS: zero errors, pool returned to baseline");
     process.exit(exitCode);
 }
 

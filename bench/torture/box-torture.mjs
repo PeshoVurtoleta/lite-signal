@@ -1,23 +1,23 @@
 /**
- * bench/torture/box-torture.mjs -- signalBox / computedBox (1.5.0).
+ * bench/torture/box-torture.mjs — signalBox / computedBox (1.5.0).
  *
  * The boxes are documented as "the same ReactiveNode and zero-GC read/write
  * path as the callable forms, full interop in one graph". That claim is the
- * whole point of the API -- and it is exactly the kind of claim that rots
+ * whole point of the API — and it is exactly the kind of claim that rots
  * quietly, because a divergence between the two representations produces
  * correct-looking behaviour in any test that uses only one of them.
  *
  * So the centrepiece here is not a box-specific unit test. It is the same
  * differential fuzz that `oracle-fuzzer.mjs` runs, with every node in the graph
  * randomly realised as EITHER a callable or a box. The reference evaluator does
- * not know which is which. If the two representations ever disagree -- on
- * values, on equality, on dynamic dependency tracking -- a mixed graph is where
+ * not know which is which. If the two representations ever disagree — on
+ * values, on equality, on dynamic dependency tracking — a mixed graph is where
  * it shows, and a single-representation suite never would.
  *
  * The rest of the file pins the surface contracts the callable forms do not
  * have: `subscribe` (immediate fire, untracked callback, idempotent disposer),
  * `update`, and the allocation-light representation itself. That last one is a
- * design law, not an implementation detail -- llms.txt is explicit that the
+ * design law, not an implementation detail — llms.txt is explicit that the
  * prototype is shared "from the start -- never setPrototypeOf (which would
  * deopt the method-call ICs to megamorphic)". A test that pins zero own
  * properties and a stable shared prototype is the only thing standing between
@@ -41,17 +41,17 @@ const signalBox = Signal.signalBox;
 const computedBox = Signal.computedBox;
 
 if (typeof signalBox !== "function" || typeof computedBox !== "function") {
-    console.log("lite-signal box torture -- SKIP: signalBox/computedBox require 1.5.0+");
+    console.log("lite-signal box torture — SKIP: signalBox/computedBox require 1.5.0+");
     process.exit(0);
 }
 import { mulberry32, randInt, pickValue, toNum, soakRegistry, createReport } from "./helpers/index.mjs";
 
 const SEEDS = Number(process.env.BOX_SEEDS || 300);
 const OPS = Number(process.env.BOX_OPS || 80);
-const R = createReport(`lite-signal box torture -- signalBox/computedBox, ${SEEDS} mixed-representation seeds`);
+const R = createReport(`lite-signal box torture — signalBox/computedBox, ${SEEDS} mixed-representation seeds`);
 const reg = () => soakRegistry(createRegistry);
 
-/* -- 1. Mixed-representation differential fuzz ------------------------------ */
+/* ── 1. Mixed-representation differential fuzz ────────────────────────────── */
 
 function buildModel(rnd, { leaves, tiers, perTier }) {
     const model = { leaves: [], nodes: [] };
@@ -231,14 +231,14 @@ if (fuzzFailures > 0) {
         ? `seed ${firstFuzz.seed} threw: ${firstFuzz.threw.message}`
         : (() => {
             const m = firstFuzz.mismatches[0];
-            return `seed ${firstFuzz.seed}: node #${m.i} (${m.kind}, ${m.boxed ? "box" : "callable"}) ${m.label} -- ` +
+            return `seed ${firstFuzz.seed}: node #${m.i} (${m.kind}, ${m.boxed ? "box" : "callable"}) ${m.label} — ` +
                 `got ${String(m.got)}, reference ${String(m.want)}`;
         })();
     R.fail("mixed-interop", `${fuzzFailures}/${SEEDS} seeds disagreed; ${d}`);
 }
 R.note(`${SEEDS} seeds x ${OPS} ops over graphs mixing callables and boxes at every node`);
 
-/* -- 2. Allocation-light representation is a design law --------------------- */
+/* ── 2. Allocation-light representation is a design law ───────────────────── */
 {
     const a = signalBox(1);
     const b = signalBox(2);
@@ -249,7 +249,7 @@ R.note(`${SEEDS} seeds x ${OPS} ops over graphs mixing callables and boxes at ev
     R.eq("allocation-light", Object.getOwnPropertyNames(c).length, 0,
         "a computedBox grew own properties");
     R.ok("allocation-light", Object.getPrototypeOf(a) === Object.getPrototypeOf(b),
-        "two signalBoxes no longer share one prototype -- method-call ICs will go megamorphic");
+        "two signalBoxes no longer share one prototype — method-call ICs will go megamorphic");
 
     const proto = Object.getPrototypeOf(a);
     const names = Object.getOwnPropertyNames(proto).filter((n) => n !== "constructor").sort();
@@ -259,10 +259,10 @@ R.note(`${SEEDS} seeds x ${OPS} ops over graphs mixing callables and boxes at ev
     R.ok("allocation-light", cnames.join(",") === "get,peek,subscribe",
         `computedBox prototype surface changed: ${cnames.join(",")}`);
     R.ok("allocation-light", !("set" in c) && !("update" in c),
-        "computedBox exposes a writer -- it is derived and must not");
+        "computedBox exposes a writer — it is derived and must not");
 }
 
-/* -- 3. subscribe contract -------------------------------------------------- */
+/* ── 3. subscribe contract ────────────────────────────────────────────────── */
 {
     const r = reg();
     const b = r.signalBox(1);
@@ -349,7 +349,7 @@ R.note(`${SEEDS} seeds x ${OPS} ops over graphs mixing callables and boxes at ev
     try { unBad(); unGood(); } catch { /* teardown */ }
 }
 
-/* -- 4. update() and equality ----------------------------------------------- */
+/* ── 4. update() and equality ─────────────────────────────────────────────── */
 {
     const r = reg();
     const b = r.signalBox(10);
@@ -372,7 +372,7 @@ R.note(`${SEEDS} seeds x ${OPS} ops over graphs mixing callables and boxes at ev
     const base = runs;
     target.set(500);                 // if update() tracked, this wakes the effect
     R.eq("update", runs, base,
-        "update() tracked its read -- the effect became a dependent of a box it only wrote");
+        "update() tracked its read — the effect became a dependent of a box it only wrote");
     outer.set(2);
     R.ok("update", runs > base, "the effect stopped responding to its real dependency");
     stop();
@@ -389,7 +389,7 @@ R.note(`${SEEDS} seeds x ${OPS} ops over graphs mixing callables and boxes at ev
     un();
 }
 
-/* -- 5. Boxes wake observers exactly like callables ------------------------- */
+/* ── 5. Boxes wake observers exactly like callables ───────────────────────── */
 {
     const r = reg();
     // Same topology twice, once per representation. The run counts must match.

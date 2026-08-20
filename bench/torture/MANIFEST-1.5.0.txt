@@ -1,0 +1,44 @@
+lite-signal torture suite -- 1.5.0 engine behaviour
+====================================================
+
+Target engine: 1.5.0 (verified on 1.5.0-rc.1; forward-compatible through 1.9).
+Shipped scenario count: 16 (13 semantic + 3 soak) -- the full superset.
+
+This file documents how the shipped superset behaves ON THE 1.5.0 ENGINE.
+For the version-agnostic catalogue of all 16 scenarios and their feature
+gates, see MANIFEST.txt. run.mjs carries the same 16 either way; the split
+below is purely which ones have a feature to exercise at 1.5.0.
+
+Run:
+    npm run torture              # everything
+    npm run torture:semantic     # the 13 semantic scenarios (9 run, 4 skip here)
+    npm run torture:soak         # the 3 wall-clock soaks (nightly)
+    node bench/torture/run.mjs --list
+
+Semantic -- EXECUTE on 1.5.0 (9)
+    oracle-fuzzer      values vs an independent reference evaluator
+    glitch-hunter      glitch freedom + exact wakeup accounting
+    work-accounting    minimum body-execution counts (wrapper-based)
+    concurrent-storm   reentrancy, nesting, flush ordering
+    scheduler-storm    deferred execution, ABA thunks, coalescing
+    box-torture        signalBox / computedBox interop + surface   (1.5.0 feature)
+    async-torture      watch / when / whenAsync contracts + fuzz
+    capacity-torture   the fail-closed pool boundary
+    op-accounting      structural work via the onGraphMutation opcode lane
+
+Semantic -- SKIP cleanly on 1.5.0 (4; each activates on its own engine version)
+    scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0)
+    flush-torture            flushStrategy eager/sab/manual + subscribe  (1.7.0)
+    cleanup-return-torture   effect return cleanup + compose order       (1.8.0)
+    dispose-torture          Symbol.dispose / using on lifecycle objects (1.9.0)
+
+Soak (3)
+    graph-fuzzer, scheduler-bench, torture-soak
+
+Every scenario feature-detects and reports a clean SKIP below the version that
+introduces its feature, so run.mjs stays green from 1.4.x forward and the 1.5.0
+RC ships the whole superset without referencing a feature the engine lacks.
+
+Verified green on 1.5.0-rc.1 (Node 22, --expose-gc):
+    torture:semantic  13/13 pass  (9 executed, 4 clean skips)
+    torture:soak       3/3 pass   (zero errors, pools back to leaf-only floor)

@@ -43,7 +43,7 @@ export type Dispose = () => void;
  * a {@link Computed}, or an effect's {@link Dispose} function. Passing an
  * unrelated value is a safe no-op.
  */
-export type Disposable<T = unknown> = Signal<T> | Computed<T> | Dispose;
+export type Disposable<T = unknown> = Signal<T> | Computed<T> | SignalBox<T> | ComputedBox<T> | Dispose;
 
 // --- Reactive primitive shapes ------------------------------------------------
 
@@ -71,6 +71,38 @@ export interface Computed<T> {
     subscribe(fn: (value: T) => void): Dispose;
 }
 
+/**
+ * Allocation-light, non-callable signal (1.5.0). A plain object on a shared
+ * prototype rather than a callable function -- cheaper to construct than
+ * {@link Signal} (no closure allocation), with an identical zero-GC read/write
+ * path. Interoperates freely with callable handles in the same graph.
+ */
+export interface SignalBox<T> {
+    /** Read the current value, tracking the read if inside an effect or computed. */
+    get(): T;
+    /** Overwrite the value. No-op if equal under the box's equality predicate. */
+    set(value: T): void;
+    /** Read the value WITHOUT tracking. */
+    peek(): T;
+    /** Functional update: `set(fn(currentValue))`. Reads the current value without tracking. */
+    update(fn: (current: T) => T): void;
+    /** Subscribe to value changes. Fires immediately with the current value; the callback runs untracked. */
+    subscribe(fn: (value: T) => void): Dispose;
+}
+
+/**
+ * Allocation-light, non-callable computed (1.5.0). The derived counterpart to
+ * {@link SignalBox}: `{ get, peek, subscribe }`, no `set` / `update`.
+ */
+export interface ComputedBox<T> {
+    /** Resolve the value, tracking the read if inside an effect or computed. */
+    get(): T;
+    /** Resolve the value WITHOUT tracking. */
+    peek(): T;
+    /** Subscribe to value changes. Fires immediately with the current value; the callback runs untracked. */
+    subscribe(fn: (value: T) => void): Dispose;
+}
+
 // --- Diagnostics --------------------------------------------------------------
 
 export interface RegistryStats {
@@ -90,14 +122,15 @@ export interface RegistryStats {
     /** Node-pool capacity ledger. Doubles under the `"grow"` policy; under `"lazy"`
      *  prealloc it may exceed the count of physically constructed nodes. */
     nodePoolCapacity: number;
-    /** Physical count of node objects actually constructed in this registry (1.4.5).
-     *  Under `"eager"` this equals `nodePoolCapacity`; under `"lazy"` it starts at 0
-     *  and grows on demand. Distinguishes a real eager pool from a `prealloc` typo
-     *  that silently fell through to lazy. */
+    /** TRUE node-pool population: the number of `ReactiveNode`s physically constructed
+     *  (`nodePool.length`), distinct from the `nodePoolCapacity` ledger. Under
+     *  `prealloc:"lazy"` (or a silently-flipped `prealloc` typo) this stays 0 until
+     *  first demand while capacity reads the ledger -- so a mis-set `prealloc` is
+     *  observable here rather than telemetry-blind. Added in the 1.4.5 backport. */
     nodePoolPopulation: number;
-    /** Physical count of link objects actually constructed in this registry (1.4.5).
-     *  Under `"eager"` this equals `linkPoolCapacity`; under `"lazy"` it starts at 0
-     *  and grows on demand. */
+    /** TRUE link-pool population: the number of `ReactiveLink`s physically constructed
+     *  (`linkPool.length`), distinct from the `linkPoolCapacity` ledger. Added in the
+     *  1.4.5 backport. */
     linkPoolPopulation: number;
     /** Number of nodes currently allocated (signals + computeds + alive effects). */
     activeNodes: number;
@@ -150,7 +183,7 @@ export interface ObserveObserversHooks {
 export type Unobserve = () => void;
 
 /** Anything carrying a node identity that the introspection surface can read. */
-export type ReactiveHandle = Signal<any> | Computed<any>;
+export type ReactiveHandle = Signal<any> | Computed<any> | SignalBox<any> | ComputedBox<any>;
 
 // --- Graph-mutation hook (1.2.1) ----------------------------------------------
 
@@ -230,10 +263,68 @@ export interface Registry {
     signal<T>(initial: T, opts?: SignalOptions<T>): Signal<T>;
     computed<T>(fn: () => T, opts?: ComputedOptions<T>): Computed<T>;
     effect(fn: () => void, opts?: EffectOptions): Dispose;
+    /** Allocation-light, non-callable signal (1.5.0). See {@link SignalBox}. */
+    signalBox<T>(initial: T, opts?: SignalOptions<T>): SignalBox<T>;
+    /** Allocation-light, non-callable computed (1.5.0). See {@link ComputedBox}. */
+    computedBox<T>(fn: () => T, opts?: ComputedOptions<T>): ComputedBox<T>;
+    /**
+     * Run `fn` in a detached ownership scope (1.5.0). Effects/computeds created
+     * directly in `fn` are NOT adopted by the enclosing owner, so they survive
+     * the enclosing effect's re-runs and disposal -- the caller owns their
+     * lifecycle (`fn` typically returns a disposer or the created handle). Both
+     * ownership and tracking are detached for the duration of `fn`; inner
+     * effect/computed bodies still establish their own scopes. The ownership
+     * escape hatch for lazily spawning a long-lived node from inside a consumer
+     * effect (e.g. a query watcher). Returns whatever `fn` returns.
+     */
+    createRoot<T>(fn: () => T): T;
+    /**
+     * Return the currently-active owner as an opaque, gen-stamped handle
+     * (`undefined` if called outside any effect/computed body). Companion to
+     * {@link runWithOwner}: capture the current lifecycle scope now, restore
+     * it later (typically across an async boundary). Introduced in 1.5.0-beta.2.
+     *
+     * The handle is a plain descriptor object (same shape as {@link describe}
+     * returns) stamped with an internal generation counter. It is safe to
+     * hold across async boundaries: if the captured owner is disposed and
+     * its pool slot is subsequently recycled by an unrelated effect/computed,
+     * the generation counter no longer matches and {@link runWithOwner}
+     * treats the handle as stale (degrades to rooted execution). This is the
+     * ABA guard already used by `describe` / `nodeId` / `forEachOwned`.
+     *
+     * The handle does NOT keep the owner alive -- it is a snapshot, not a
+     * reference. Node lifetime is controlled by the owner tree, not by
+     * outstanding handles.
+     */
+    getOwner(): Owner;
+    /**
+     * Run `fn` with `ownerHandle` as the current lifecycle owner. Effects
+     * or computeds created directly in `fn` are adopted by that owner and
+     * cascade-dispose when the owner re-runs or is disposed. Introduced in
+     * 1.5.0-beta.2.
+     *
+     * Degradation semantics for handles that cannot be re-attached:
+     * - `null` / `undefined` -> rooted execution (createRoot semantics for
+     *   ownership; created children survive, caller disposes them).
+     * - stale handle (owner disposed, slot recycled) -> rooted execution.
+     *   Never adopts into the unrelated new resident of the recycled slot;
+     *   never adopts into a corpse (a disposed owner whose slot is not yet
+     *   recycled).
+     * - handle for a live signal (not an effect/computed) -> rooted
+     *   execution (signals cannot own).
+     *
+     * Nulls the tracking observer for the duration of `fn` (the same pairing
+     * as {@link createRoot}): reads directly inside `fn` do NOT link into any
+     * enclosing observer. Inner effect/computed bodies still establish their
+     * own owner + observer scopes.
+     *
+     * Returns whatever `fn` returns.
+     */
+    runWithOwner<T>(ownerHandle: Owner, fn: () => T): T;
     /**
      * Universal disposal for anything created by this registry: signals,
-     * computeds, or effect dispose handles. Cross-registry calls are silent
-     * no-ops (each registry owns its own private node-identity Symbol).
+     * computeds, boxes, or effect dispose handles. Cross-registry calls are
+     * silent no-ops (each registry owns its own private node-identity Symbol).
      * Passing an unrelated value is also a safe no-op.
      */
     dispose(api: Disposable): void;
@@ -304,6 +395,24 @@ export function setDefaultRegistry(registry: Registry): void;
 export function signal<T>(initial: T, opts?: SignalOptions<T>): Signal<T>;
 export function computed<T>(fn: () => T, opts?: ComputedOptions<T>): Computed<T>;
 export function effect(fn: () => void, opts?: EffectOptions): Dispose;
+/** Allocation-light, non-callable signal (1.5.0), bound to the default registry. See {@link SignalBox}. */
+export function signalBox<T>(initial: T, opts?: SignalOptions<T>): SignalBox<T>;
+/** Allocation-light, non-callable computed (1.5.0), bound to the default registry. See {@link ComputedBox}. */
+export function computedBox<T>(fn: () => T, opts?: ComputedOptions<T>): ComputedBox<T>;
+/** Run `fn` in a detached ownership scope (1.5.0), bound to the default registry. See {@link Registry.createRoot}. */
+export function createRoot<T>(fn: () => T): T;
+/**
+ * An owner handle -- an opaque descriptor returned by {@link getOwner},
+ * safe to hold across async boundaries. A stale, null, or non-tracker
+ * handle degrades cleanly in {@link runWithOwner} (rooted execution)
+ * rather than adopting into an unrelated recycled slot. See
+ * {@link Registry.getOwner} for the ABA-guard mechanics. 1.5.0-beta.2+.
+ */
+export type Owner = NodeDescriptor | undefined;
+/** Capture the current owner as an opaque, gen-stamped handle (1.5.0-beta.2), bound to the default registry. See {@link Registry.getOwner}. */
+export function getOwner(): Owner;
+/** Run `fn` under a captured owner handle (1.5.0-beta.2), bound to the default registry. See {@link Registry.runWithOwner}. */
+export function runWithOwner<T>(ownerHandle: Owner, fn: () => T): T;
 /** Universal disposal -- see {@link Registry.dispose}. */
 export function dispose(api: Disposable): void;
 export function batch<T>(fn: () => T): T;

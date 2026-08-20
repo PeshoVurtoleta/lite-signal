@@ -1,70 +1,43 @@
-# lite-signal — 100% coverage notes (1.4.0-rc)
+# lite-signal — 100% coverage notes (1.5.0-beta)
 
 Numbers below were produced with `c8@11` on Node 22:
 
 ```bash
 npx c8 --reporter=text node --test 'test/*.test.mjs'
+# lcov + text: npm run test:report
 ```
 
 Codify is the project's canonical coverage runner — reconfirm the table and the
 uncovered-line set against a codify run before tagging; the reachability analysis
 and ignore manifest here are tool-independent, but the exact percentages are not.
-(This file replaces a stale 1.3.0-era artifact that still claimed 100% branch and
-used the old `NN-name_test.mjs` filenames.)
+(This file replaces a stale 1.1.x-era artifact that still listed 1.1.3/1.1.4/1.2.0
+engines and the old `NN-name_test.mjs` filenames.)
 
-| engine    | tests | pass | fail | skip | stmts | branch | funcs | lines |
-|-----------|------:|-----:|-----:|-----:|------:|-------:|------:|------:|
-| 1.4.0-rc  |  425  | 415  |  0   |  10  |  100  |  100   |  100  |  100  |
+| engine       | tests | pass | fail | skip | stmts | branch | funcs | lines |
+|--------------|------:|-----:|-----:|-----:|------:|-------:|------:|------:|
+| 1.5.0-beta   |  454  | 453  |  0   |  1   |  100  |  100   |  100  |  100  |
 
-The 10 skips are the 9 `{skip:true}` `signalBox` tests staged in `24-signalbox` (the API
-lands in 1.5.0) plus the 1 architecturally-N/A SSR case in `17-reactivity`.
+The 1 skip is the architecturally-N/A SSR case in `17-reactivity` (lite has no DOM
+layer). The 9 `24-signalbox` tests are active on 1.5.0 (the primitives shipped);
+`25-devtools-real-boot` needs `@zakkster/lite-devtools` installed (the harness
+setup tarball-installs it) or its 10 tests report `cancelledByParent` and c8 exits
+non-zero — that is an environment gap, not an engine fault.
 
 `npm test` is scoped to `'test/*.test.mjs'`, so the opt-in harnesses
-(`test/ProfilerTests/`, `harness/ProfilerTools/`, `harness/VersionMatrix/`) are not swept in
-and are not part of these numbers.
+(`test/ProfilerTests/`, `harness/ProfilerTools/`, `harness/VersionMatrix/`) are not
+part of these numbers.
 
 ---
 
-## What closed the 98.26% → 100% branch gap
+## What this pass fixed and closed (98.x → 100%)
 
-The rc reported six uncovered lines in `Signal.js`: `333, 383, 415, 826, 1115, 1241`
-(seven branch arms — 415 carried two). They split three ways.
+1.5.0-beta shipped at `97.35%` branch coverage, and — critically — carried a
+crash reachable from the plain public API. Both are addressed here.
 
-### Reachable — closed by tests in `12-coverage.test.mjs`
+### The crash (shared with the 1.4.0 line)
 
-| line | branch | test |
-|------|--------|------|
-| **333** | `allocateLink`: `if (target.flags === 0) return null` | *eligibility gate on a target disposed mid-run* |
-| **826** | `executeEffect`: `FLAG_COMPUTING` cycle throw | *synchronous re-entrancy guard* |
-| **1115** | `computed` read closure: `if (node.gen !== birthGen) return undefined` | *stale-handle read* |
-
-**333 — the shape that reaches it.** `disposeNode` only nulls the tracking context when
-`currentObserver === node`, so a plain self-dispose cannot get here: the reads after it are
-already no-ops. The gate is reached when an effect disposes itself from inside a *nested*
-pull (`currentObserver` is the computed, not the effect). When `pullComputed` unwinds it
-restores `currentObserver` to the now-dead effect node, and the next read in the rest of the
-body hits `allocateLink` with `target.flags === 0`. The computed must be created *outside*
-the effect, or the owner cascade tears it down mid-pull and the shape never forms.
-
-**826 — the write path genuinely cannot reach this.** `markDownstream` refuses to re-queue a
-node carrying `FLAG_COMPUTING`, which is why the 1.1.x/1.2.0 notes called this branch
-unreachable and ignored it. That reasoning covered writes, not the **scheduler trampoline**:
-`node.scheduler(node.schedulerThunk)` hands the run thunk to user code, and nothing stops
-that code from invoking it from inside the body it is already running. That re-enters
-`executeEffect` with `FLAG_COMPUTING` set and throws. The guard is load-bearing, not dead —
-the old ignore was hiding a real path. The outer `finally` still clears the flag and restores
-the tracking context, so the registry survives the throw (asserted).
-
-**1115 — distinct from the pins in `21-perf-pins`.** That suite pins `peek()` on a stale
-computed handle (`sharedComputedPeek`); the gen guard on the **read** closure is a separate
-branch and needed its own case.
-
-### Reachable only through a defect — fixed, then removed
-
-**415** (`freeLink`: `link.source !== null ? link.source.id : -1`, and the same for `.target`).
-
-The only path that reached those `-1` arms **crashed two lines later**, and it is reachable
-from the plain public API:
+`disposeNode`'s sub-list teardown freed a link while an observer's re-tracking
+cursor (`activeObserverCurrentDep`) was still parked on it:
 
 ```js
 const a = r.signal(0), b = r.signal(0);
@@ -73,58 +46,69 @@ r.effect(() => {
     runs++;
     a();
     if (runs === 1) b();          // run 1 links [a, b]
-    if (runs === 2) r.dispose(b); // run 2: cursor is parked on link(b), never consumed
+    if (runs === 2) r.dispose(b); // run 2: cursor parked on link(b), never consumed
 });
 a.set(1);
-// TypeError: Cannot set properties of null (setting 'headSub')   Signal.js:418
+// TypeError: Cannot set properties of null (setting 'headSub')   Signal.js:420
 ```
 
-On the re-run the body reads `a` (cursor advances to `link(b)`) and then disposes `b`
-*without reading it*. `disposeNode`'s sub-list walk splices `link(b)` out and returns it to
-the free list — but `activeObserverCurrentDep` is still pointing at it. `severTail` then
-walks from a freed link whose `prevDep` is `null`, wipes the observer's `headDep` (orphaning
-every surviving dep), and double-frees the link; `freeLink` null-derefs on `source.headSub`.
+On the re-run the body reads `a` (cursor advances to `link(b)`), then disposes `b`
+*without reading it*. `disposeNode` splices `link(b)` out and returns it to the free
+list, but `activeObserverCurrentDep` still points at it; `severTail` then walks from
+a freed link, wipes the observer's `headDep`, and double-frees the link.
 
-**Root-cause fix** — `disposeNode`, in the sub-list teardown loop:
+**Fix** — one line in `disposeNode`'s sub-list loop:
 
 ```js
 if (activeObserverCurrentDep === sLink) activeObserverCurrentDep = nDep;
 ```
 
-O(1), disposal path only, no steady-state cost. With the cursor repaired at the source,
-`freeLink` can never see a freed link, so the two defensive ternaries were dead weight and
-were replaced by the already-passed params (`mutationHook(4, source.id, target.id)`) —
-equivalent, branch-free, and two fewer branches in the count.
+O(1), disposal path only, no steady-state cost. With the cursor repaired at the
+source, `freeLink`'s `link.source !== null ? ... : -1` defensive ternaries became
+dead and were replaced by the passed params (`mutationHook(4, source.id, target.id)`)
+— equivalent and branch-free. Pinned by *disposeNode: cursor repair when a source
+dies under a parked cursor* in `12-coverage.test.mjs`.
 
-Pinned as a regression by *disposeNode: cursor repair when a source dies under a parked
-cursor* in `12-coverage.test.mjs`.
+### Reachable branches — closed by tests in `12-coverage.test.mjs`
+
+| line | branch | test |
+|------|--------|------|
+| **335** | `allocateLink`: `if (target.flags === 0) return null` | *eligibility gate on a target disposed mid-run* |
+| **828** | `executeEffect`: `FLAG_COMPUTING` cycle throw (via the scheduler trampoline, not the write path) | *synchronous re-entrancy guard* |
+| **1117** | `computed` read closure: stale-handle `gen` guard | *computed: stale-handle read* |
+
+### New-surface branches (1.5.0 box + owner API) — closed in `12-coverage.test.mjs`
+
+| line(s) | surface | test |
+|---------|---------|------|
+| **1200 / 1216 / 1229** | `boxUpdate` / `boxComputedGet` / `boxComputedPeek` stale-handle guards | *signalBox / computedBox: stale-handle guards* |
+| **1284** | `computedBox` `opts.equals` arm | *computedBox: custom equals gates downstream recompute* |
+| **1775 / 1786** | top-level `getOwner()` / `runWithOwner()` delegators (previously uncovered functions) | *top-level getOwner / runWithOwner route to the default registry* |
+
+`signalBox`'s `equals` (1259) and its `boxGet`/`boxSet` stale guards (1162/1175) were
+already covered by `24-signalbox`; only the computed-box and update paths were open.
 
 ### Provably unreachable — `/* c8 ignore */`, proof inline
 
-**383** — `currentLinkCapacity = doubled > maxLinkLimit ? maxLinkLimit : doubled`.
-`maxLinkLimit === initialLinkCapacity * 16`, and `currentLinkCapacity` is only ever assigned
-a power-of-2 multiple of that same initial capacity — so `16m` sits **on** the doubling chain
-(`m, 2m, 4m, 8m, 16m`). The `CapacityError` guard above (`linkPool.length >= maxLinkLimit`)
-plus the chunk arithmetic (`chunk = limit - linkPool.length`) cap `linkPool.length` **at**
-`maxLinkLimit`, so `doubled` terminates at exactly `16m` and can never exceed it. Attempting
-to force it throws `CapacityError: links capacity (160) exceeded` instead. Retained as a clamp.
+**385** — the `doubled > maxLinkLimit` link-ledger clamp. `maxLinkLimit ===
+initialLinkCapacity * 16`, and `currentLinkCapacity` is only ever a power-of-2
+multiple of that same initial capacity, so `16m` sits *on* the doubling chain
+(`m, 2m, 4m, 8m, 16m`). The `CapacityError` guard plus the chunk math cap
+`linkPool.length` at `maxLinkLimit`, so `doubled` terminates at exactly `16m`.
+Forcing it throws `CapacityError` instead.
 
-**1241** — `if (batchEpoch === 0) batchEpoch = 1`. `batchEpoch` is bumped only in `batch()`
-(and reset to 1 by `destroy()`), so reaching 0 costs 4,294,967,295 top-level `batch()` calls.
-Retained because the `revertEpoch` comparisons at 1071/1077 treat `0` as "no capture".
-(This is item 5 of the historical 1.1.x/1.2.0 ignore manifest; the directive was lost in the
-1.3/1.4 rebuild, which is why it resurfaced here.)
+**1399** — `if (batchEpoch === 0) batchEpoch = 1`. `batchEpoch` is bumped only in
+`batch()` (reset to 1 by `destroy()`), so reaching 0 costs 4,294,967,295 top-level
+`batch()` calls. Retained because `revertEpoch` comparisons treat `0` as
+"no capture".
 
-`Watch.js` keeps its single pre-existing ignore on the `if (fired) return` guard in `when()`
-(`stop()` precludes re-entry).
+`Watch.js` keeps its single pre-existing ignore on the `when()` re-entry guard.
 
 ---
 
 ## Known asymmetry (pinned, not changed)
 
 `disposeNode`'s sub-list teardown inlines the link free rather than routing through
-`freeLink`. Consequence: disposing a **source** node emits opcode `2` (node-dispose) but no
-opcode `4` (link-remove) for its outgoing edges — a hook consumer infers those edges died
-with the node. Opcode `4` fires only for edges severed by a dep-set flip (`allocateLink` /
-`severTail`). Both behaviours are now asserted in the cursor-repair test, so a future
-refactor of that loop has to be a deliberate contract change rather than a silent one.
+`freeLink`, so disposing a **source** emits opcode `2` (node-dispose) but no opcode
+`4` (link-remove) for its outgoing edges. Opcode `4` fires only for edges severed by
+a dep-set flip. Both behaviours are asserted in the cursor-repair test.

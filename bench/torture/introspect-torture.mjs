@@ -1,13 +1,12 @@
 /**
- * bench/torture/introspect-torture.mjs -- the read-only introspection surface (1.6.0).
+ * bench/torture/introspect-torture.mjs -- the read-only introspection surface.
  *
- * 1.6.0 (and the 1.2.1 keystone it builds on) exposes a diagnostic surface that
- * lite-devtools / lite-studio build on: describe, nodeId, hasObservers,
- * isTracking, forEachObserver, forEachSource, forEachOwned, ownerOf,
- * observeObservers. The whole suite exercised NONE of it. These are read-only, so
- * they cannot corrupt a value -- which is exactly why a value oracle is blind to
- * them, and why a wrong hasObservers or a forEachSource that skips a link is a
- * silent correctness bug in every tool that trusts it.
+ * 1.5.0 exposes a diagnostic surface that lite-devtools / lite-studio build on:
+ * describe, nodeId, hasObservers, isTracking, forEachObserver, forEachSource,
+ * forEachOwned, ownerOf, observeObservers. These are read-only, so they cannot
+ * corrupt a value -- which is exactly why a value oracle is blind to them, and
+ * why a wrong hasObservers or a forEachSource that skips a link is a silent
+ * correctness bug in every tool that trusts it.
  *
  * Two properties carry the real risk, and both are load-bearing for devtools:
  *
@@ -27,11 +26,17 @@
  *      node's: a silent, confusing, data-corrupting bug.
  *
  * Also pinned: hasObservers transitions (acquires/loses its last observer),
- * isTracking inside vs outside a reactive body, ownerOf resolving the scope owner,
- * forEachOwned enumerating a scope's adopted children, and observeObservers
+ * isTracking inside vs outside a reactive body, ownerOf resolving an owner,
+ * forEachOwned enumerating an owner's adopted children, and observeObservers
  * firing on observer add/remove.
  *
- * Skips cleanly if the introspection surface is absent.
+ * PORT NOTE (1.5.0). 1.5.0's owner surface is getOwner/runWithOwner/createRoot --
+ * there is NO createScope. Section 7 (ownerOf/forEachOwned), which the 1.4.4
+ * source drove through createScope, is RE-TARGETED here to capture an owner via
+ * r.getOwner() INSIDE an r.effect(...) body (where currentOwner is the effect
+ * node) and adopt a child computed+effect under it. ownerOf(child) then resolves
+ * that effect and forEachOwned enumerates the adopted children -- the same
+ * property, exercised through the surface 1.5.0 actually ships. No section skips.
  *
  * Exit code: 0 iff every introspection contract held.
  *
@@ -168,35 +173,45 @@ if (typeof reg().onGraphMutation === "function") {
     R.eq("isTracking", insideUntrack, false, "isTracking() true inside untrack()");
 }
 
-/* -- 7. ownerOf / forEachOwned on a scope ----------------------------------- */
-if (typeof reg().createScope === "function" && typeof reg().forEachOwned === "function") {
+/* -- 7. ownerOf / forEachOwned via an EFFECT-body owner (1.5.0 re-target) ---- */
+// 1.5.0 has no createScope. The owner that adopts effects/computeds is any
+// live effect/computed node: inside an effect body currentOwner IS that effect,
+// so r.getOwner() there captures it and children created under it (directly, or
+// via runWithOwner) are adopted. Disposing the effect cascade-disposes them.
+if (typeof reg().forEachOwned === "function" && typeof reg().ownerOf === "function" &&
+    typeof reg().getOwner === "function") {
     const r = reg();
-    let innerC = null, innerE = null;
-    const dispose = r.createScope((d) => {
+    let innerC = null, innerE = null, capturedOwner;
+    // The outer effect body reads no signal, so it runs exactly once and never
+    // re-fires (which would rebuild and re-adopt the children mid-walk).
+    const ownerStop = r.effect(() => {
+        capturedOwner = r.getOwner();
         innerC = r.computed(() => 1);
         innerE = r.effect(() => { innerC(); });
-        return d;
     });
-    // forEachOwned on the scope owner should enumerate the adopted computed + effect.
-    // The owner handle is the disposer's node; ownerOf(innerC) should resolve to it.
-    const ownerDesc = typeof r.ownerOf === "function" ? r.ownerOf(innerC) : undefined;
-    R.ok("ownerOf", ownerDesc !== undefined, "ownerOf(adopted computed) did not resolve the scope owner");
+    R.ok("owner-capture", capturedOwner !== undefined,
+        "getOwner() inside an effect body returned no owner handle");
+
+    // ownerOf(child) should resolve the enclosing effect that adopted it.
+    const ownerDesc = r.ownerOf(innerC);
+    R.ok("ownerOf", ownerDesc !== undefined, "ownerOf(adopted computed) did not resolve the effect owner");
 
     if (ownerDesc !== undefined) {
         let owned = 0;
         r.forEachOwned(ownerDesc, () => owned++);
-        R.ok("forEachOwned", owned >= 2, `forEachOwned enumerated ${owned} children, expected >=2 (computed+effect)`);
+        // The effect body deterministically adopts BOTH children (the inner
+        // computed and the inner effect), so the count is exactly 2 on 1.5.0.
+        R.eq("forEachOwned", owned, 2,
+            `forEachOwned enumerated ${owned} children, expected exactly 2 (adopted computed + effect)`);
     }
-    dispose();
+    ownerStop();   // cascade-dispose the adopted children
 }
 
 /* -- 8. observeObservers fires on observer add/remove ----------------------- */
 if (typeof reg().observeObservers === "function") {
     const r = reg();
     // The hooks fire on the 0->1 (onConnect) and 1->0 (onDisconnect) transitions,
-    // not on every individual add/remove. (An earlier draft guessed
-    // onObserverAdded/onObserverRemoved and failed against the real contract --
-    // the engine was right; the test had the wrong hook names.)
+    // not on every individual add/remove.
     const s = r.signal(0);
     let connects = 0, disconnects = 0;
     const un = r.observeObservers(s, {
@@ -253,12 +268,6 @@ function fuzzSeed(seed) {
     const leaves = Array.from({ length: L }, (_, i) => r.signal(i));
     // A computed whose dep set is steered by a selector signal, so it rewires.
     const sel = r.signal(0);
-    const picks = () => {
-        const k = 2 + (sel.peek() % 3);
-        const set = [];
-        for (let i = 0; i < k; i++) set.push(leaves[(sel.peek() + i) % L]);
-        return set;
-    };
     const c = r.computed(() => {
         const s = sel();
         const k = 2 + (s % 3);

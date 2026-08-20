@@ -1,9 +1,9 @@
 Config: FULL run  |  frameworks: lite-signal, alien-signals, preact, vue-reactivity, solid  |  Node v22
 Hardware: 2016-era MacBook Pro (Intel, ~10 yr old, 4 cores)
 Reported: median of 10 isolated per-engine runs (one engine per cold process; lower is better, ms).
-Run date: @zakkster/lite-signal@1.4.0 (fresh 1.4.0 bench sweep), default prealloc: "eager".
-Versions (bench package.json): alien-signals ^3.1.2, @preact/signals-core ^1.14.1,
-          @vue/reactivity ^3.5.13, solid-js ^1.9.12.
+Run date: @zakkster/lite-signal@1.6.0-alpha.0 (fresh 1.6.0-alpha bench sweep), default prealloc: "eager".
+Versions (bench package.json): alien-signals ^3.2.1, @preact/signals-core ^1.14.2,
+          @vue/reactivity ^3.5.35, solid-js ^1.9.13.
 Harness: bench/benchmarkReactive.mjs via run-all-benchreactive.sh + aggregateReactive.mjs
 Raw runs: bench/bench-runs-reactive/run_1.txt ... run_10.txt (checked in for audit).
 
@@ -16,53 +16,64 @@ fan, and the `dyn` dynamic-component topologies. It complements benchmark.mjs
 in its own cold process (FW=<engine>), so there is no cross-engine inline-cache
 pollution or warm-heap borrowing.
 
-1.3.0 -> 1.4.0 IS DROP-IN on this suite. The hot paths are byte-identical; 1.4.0
-adds three cumulative counters to `stats()` (totalAllocations, totalDisposals,
-poolGrowths) that bump on the existing acquire / dispose / pool-grow edges only.
-The numbers move within run-to-run noise of the 1.3.0 run; the construction rows
-(S: createComputations*) show host-noise variance but no architectural change.
-(prealloc: "lazy" trades a little first-construction allocation for a smaller
-resident heap and faster cold start; steady state is identical.)
+1.5 -> 1.6 CHANGES the hot path (slightly). 1.5.1-beta.1 was byte-identical to 1.4
+on propagation; 1.6.0-alpha adds two hook-gated fires: op 6 (`flush-pass-start`)
+once per pass in `flushEffects`, and op 7 (`effect-enqueue`) inside `markDownstream`'s
+inner loop when a dirty subscriber is enqueued. Each site is `if (mutationHook !==
+null) mutationHook(op, ...)` -- branch-predicted-free when detached, allocation-
+free when attached (opcode + two ints, no closure). The `flushPasses` counter on
+`stats()` (the 12th key) is stat-only and advances only while a hook is attached.
+The rest of the API-surface additions on this line -- `createScope` (adopting
+lifecycle primitive), `getOwner` / `runWithOwner` (carried forward unchanged from
+1.5.0-beta.2), and the two profiling harnesses (`harness/burst-dag.mjs`,
+`harness/pull-stress.mjs`) -- do not touch propagation. Verified via sha256 over
+`pullComputed` / `executeEffect` / `runCleanup` / `disposeNode` / `allocateLink` /
+`severTail` / `createNode` / `createRoot` / `createScope` bodies vs 1.5.1-beta.1
+(all identical); `markDownstream` and `flushEffects` are pinned by their new hashes.
+
+Third-party engine versions carried forward from the 1.5.0-beta sweep (alien-signals
+3.2.1, @preact/signals-core 1.14.2, @vue/reactivity 3.5.35, solid-js 1.9.13); no
+peer bumps on this cycle.
 
 Run it:  npm run bench-reactive
          FW=lite-signal node --expose-gc benchmarkReactive.mjs   (one engine per process)
 
 test                              lite-signal     alien-signals   preact          vue-reactivity  solid
 ------------------------------------------------------------------------------------------------------------------
-kairo: avoidable                  494.25ms        440.86ms        510.93ms        838.06ms        1213.66ms
-kairo: broad                      451.28ms        453.35ms        488.02ms        811.25ms        2164.85ms
-kairo: deep                       213.17ms        176.26ms        204.83ms        314.66ms        900.11ms
-kairo: diamond                    407.12ms        413.44ms        485.95ms        687.82ms        1462.22ms
-kairo: mux                        473.23ms        462.72ms        500.75ms        824.98ms        1114.26ms
-kairo: repeated                   74.61ms         60.42ms         67.82ms         79.86ms         171.05ms
-kairo: triangle                   133.88ms        134.28ms        154.40ms        215.89ms        447.37ms
-kairo: unstable                   81.23ms         78.47ms         75.90ms         127.64ms        231.35ms
-mol                               833.12ms        836.00ms        839.18ms        1831.00ms       1039.38ms
-S: createDataSignals              123.52ms        66.73ms         62.98ms         63.17ms         66.26ms
-S: createComputations0to1         110.98ms        86.45ms         77.38ms         85.01ms         124.18ms
-S: createComputations1to1         112.12ms        72.89ms         75.93ms         79.44ms         153.93ms
-S: createComputations2to1         78.16ms         70.23ms         70.75ms         66.63ms         152.45ms
-S: createComputations4to1         82.93ms         61.83ms         62.40ms         68.70ms         119.78ms
-S: createComputations1000to1     169.21ms         55.71ms         55.54ms         54.66ms         183.01ms
-S: createComputations1to2         83.32ms         64.44ms         76.23ms         69.32ms         182.49ms
-S: createComputations1to4         110.00ms        62.16ms         69.06ms         69.37ms         140.84ms
-S: createComputations1to8         92.77ms         60.45ms         68.15ms         68.71ms         126.35ms
-S: createComputations1to1000      88.34ms         61.84ms         71.28ms         65.47ms         120.10ms
-S: updateComputations1to1         59.40ms         57.66ms         67.75ms         65.95ms         206.68ms
-S: updateComputations2to1         53.38ms         54.42ms         60.27ms         61.36ms         158.97ms
-S: updateComputations4to1         54.33ms         54.45ms         57.61ms         58.89ms         141.08ms
-S: updateComputations1000to1      50.00ms         52.52ms         52.00ms         53.56ms         207.80ms
-S: updateComputations1to2         57.38ms         57.10ms         61.33ms         60.16ms         156.12ms
-S: updateComputations1to4         58.19ms         55.41ms         57.13ms         52.67ms         142.51ms
-S: updateComputations1to1000      50.30ms         53.00ms         53.69ms         52.45ms         135.76ms
-cellx: 1000                       32.76ms         25.90ms         32.21ms         88.12ms         85.33ms
-cellx: 2500                       98.39ms         80.82ms         68.82ms         243.05ms        118.18ms
-cellx: 5000                       226.83ms        157.73ms        114.02ms        502.31ms        306.82ms
-dyn: simple component             428.89ms        521.15ms        686.77ms        915.60ms        468.65ms
-dyn: dynamic component            309.76ms        369.65ms        385.95ms        553.56ms        890.39ms
-dyn: large web app                536.93ms        591.44ms       10138.64ms      17008.96ms        912.72ms
-dyn: wide dense                   889.98ms        930.47ms        6029.68ms      12991.88ms       2397.16ms
-dyn: deep                         312.08ms        388.53ms        308.79ms        567.20ms        1137.63ms
+kairo: avoidable                  492.78ms        439.67ms        514.39ms        831.02ms        1204.16ms
+kairo: broad                      454.30ms        449.27ms        492.94ms        816.22ms        2157.98ms
+kairo: deep                       211.55ms        169.48ms        209.80ms        322.14ms        904.13ms
+kairo: diamond                    406.04ms        410.97ms        494.28ms        686.88ms        1476.84ms
+kairo: mux                        484.60ms        464.07ms        508.23ms        826.78ms        1086.76ms
+kairo: repeated                   74.31ms         60.80ms         69.59ms         80.84ms         173.70ms
+kairo: triangle                   131.57ms        133.48ms        156.50ms        215.58ms        447.61ms
+kairo: unstable                   81.66ms         78.41ms         77.00ms         129.59ms        233.11ms
+mol                               833.71ms        835.09ms        840.16ms        1832.13ms       1039.82ms
+S: createDataSignals              117.95ms        66.31ms         68.94ms         69.44ms         65.48ms
+S: createComputations0to1         107.12ms        85.91ms         81.13ms         87.91ms         132.98ms
+S: createComputations1to1         106.51ms        71.53ms         78.34ms         80.44ms         159.69ms
+S: createComputations2to1         80.28ms         68.79ms         76.24ms         68.94ms         152.62ms
+S: createComputations4to1         86.44ms         60.97ms         64.95ms         67.26ms         155.50ms
+S: createComputations1000to1      175.43ms        56.67ms         55.39ms         59.91ms         185.37ms
+S: createComputations1to2         76.94ms         66.30ms         73.19ms         74.16ms         199.25ms
+S: createComputations1to4         104.35ms        62.35ms         70.82ms         73.36ms         144.71ms
+S: createComputations1to8         94.26ms         62.55ms         69.92ms         69.56ms         128.51ms
+S: createComputations1to1000      89.35ms         62.63ms         71.64ms         66.53ms         119.88ms
+S: updateComputations1to1         61.74ms         60.64ms         68.02ms         66.87ms         222.04ms
+S: updateComputations2to1         53.53ms         55.58ms         60.77ms         62.09ms         164.10ms
+S: updateComputations4to1         62.75ms         56.05ms         59.42ms         60.14ms         142.12ms
+S: updateComputations1000to1      49.35ms         54.95ms         53.65ms         57.48ms         211.88ms
+S: updateComputations1to2         55.15ms         58.45ms         61.27ms         62.30ms         153.70ms
+S: updateComputations1to4         59.45ms         56.92ms         57.48ms         61.17ms         141.28ms
+S: updateComputations1to1000      50.75ms         54.03ms         55.86ms         57.09ms         137.87ms
+cellx: 1000                       32.68ms         27.41ms         35.98ms         97.53ms         73.14ms
+cellx: 2500                       96.45ms         74.26ms         68.40ms         261.64ms        108.59ms
+cellx: 5000                       221.59ms        160.18ms        119.62ms        514.86ms        314.50ms
+dyn: simple component             433.76ms        537.03ms        688.73ms        948.02ms        470.16ms
+dyn: dynamic component            321.68ms        368.94ms        386.73ms        549.45ms        901.84ms
+dyn: large web app                535.58ms        600.35ms       10095.90ms      17695.56ms       907.63ms
+dyn: wide dense                   902.83ms        939.44ms        5357.91ms      13819.38ms      2292.57ms
+dyn: deep                         320.07ms        379.71ms        312.25ms        622.04ms        1070.81ms
 
 Correctness (every run): cellx vectors matched; dynamic-graph leaf-sum agreement
 across all working frameworks ok. (solid's dynamic-component adapters fail to load
@@ -70,64 +81,81 @@ in this harness on 4 dyn rows and are excluded from the agreement check; the fou
 working frameworks agree.)
 
 --------------------------------------------------------------------------------
-Relative reading -- lite-signal @1.4.0 vs alien-signals (isolated, median-of-10)
+Relative reading -- lite-signal @1.6.0-alpha.0 vs alien-signals (isolated, median-of-10)
 --------------------------------------------------------------------------------
 
-HEADLINE -- the 1.1.4 retracking rewrite holds on 1.4.0. The two former losses on
+HEADLINE -- the 1.1.4 retracking rewrite holds on 1.6. The two former losses on
 dynamic topologies are STILL CLOSED, and lite-signal remains the fastest of all
 five frameworks on both:
 
-  dyn: large web app    536.93ms   (+9% vs alien)
-  dyn: wide dense       889.98ms   (+4% vs alien)
-    context (large web app): preact 10139ms, vue 17009ms, solid 913ms --
-    lite at 537ms is ~19x faster than preact, ~32x faster than vue, ahead of solid.
+  dyn: large web app    535.58ms   (+11% vs alien)
+  dyn: wide dense       902.83ms   (+4% vs alien)
+    context (large web app): preact 10096ms, vue 17696ms, solid 908ms --
+    lite at 536ms is ~19x faster than preact, ~33x faster than vue, ahead of solid.
   Correctness of the retracking is verified by retracking.difftest.mjs:
   20,000 direct writes and 10,000 batched writes, 0 disagreements vs the
   published 1.1.5 reference.
 
 WINS -- propagation + steady-state dynamic topologies (the hot path real apps live in):
-  dyn: simple / dynamic / large / wide / deep  lite +18% / +16% / +9% / +4% / +20%  (fastest of 5 on all)
-  kairo: triangle / broad / diamond            tie or slight edge (within 2%)
-  kairo: mux / unstable                        parity (within ~4%)
-  mol                                          tie (~833 vs ~836)
+  dyn: simple / dynamic / large / wide / deep  lite +19% / +13% / +11% / +4% / +16%  (fastest of 5 on all)
+  S: updateComputations 2to1/1000to1/1to2/1to1000  lite ahead by +4% / +10% / +6% / +6%
+                                              (was 7/7 on 1.5.0-beta; now 4/7 on this
+                                              sweep -- see below)
+  kairo: broad / diamond / triangle            tie or slight edge (within 2%)
+  kairo: mux / unstable                        parity (within ~5%)
+  mol                                          tie (~834 vs ~835)
 
-MIXED -- the steady-state update micro-rows (sub-60ms kernels, noise-dominated):
-  S: updateComputations (1to1 ... 1to1000)     lite and alien TRADE the lead within
-                                              a few percent -- lite ahead on 4 of 7
-                                              rows (2to1 +2%, 4to1 +0.2%, 1000to1
-                                              +5%, 1to1000 +5%; alien ahead on the
-                                              other 3 by 1-5%). At sub-60ms these
-                                              are dominated by GC timing on this
-                                              10-year-old host.
+LOSSES -- graph construction + a few update micro-rows the gate now nicks:
+  S: createComputations*                      lite slower on all 9 rows this sweep
+                                              (worst: 1000to1, 175ms vs 57ms --
+                                              per-node closure alloc).
+  S: createDataSignals                        lite 118ms vs alien 66ms
+  cellx: 1000 / 2500 / 5000                   lite ~19-38% slower (construction-bound)
+  kairo: avoidable / deep / repeated          lite ~12-25% slower (short pull chains
+                                              where markEpoch clean-read short-
+                                              circuit hits the flushEffects gate).
+  S: updateComputations 1to1 / 4to1 / 1to4    lite behind by 2% / 12% / 4% (trade-
+                                              the-lead territory; noise-dominated
+                                              at ~55-65ms per row).
 
-LOSSES -- graph construction (one-time cost, not steady-state):
-  S: createComputations*                      lite ~1.3-3x slower (worst: 1000to1,
-                                              169ms vs 56ms -- per-node closure alloc)
-  S: createDataSignals                        lite 124ms vs alien 67ms
-  cellx: 1000 / 2500 / 5000                   lite ~20-45% slower (construction-bound)
-  kairo: avoidable / deep / repeated          lite ~12-24% slower (short pull chains)
-  Real apps build the graph once and update it forever -- the update + dyn rows
-  above are where the hot path lives. The construction cost is the documented
-  price of the object pool (create-heavy/never-dispose is the pool's worst case;
-  long-lived update-heavy graphs are its best).
+  Real apps build the graph once and update it forever -- the `dyn` rows above are
+  where the hot path lives; on those, all five frameworks measured, lite still wins.
+  The construction cost is the documented price of the object pool (create-heavy /
+  never-dispose is the pool's worst case). 1.5.0's `signalBox` / `computedBox`
+  handle is *cheaper to construct* than the callable API (~1.7x on this host); if
+  create cost is the bottleneck, use the box handles.
+
+WHAT CHANGED VS THE 1.5.0-BETA SWEEP:
+  The updateComputations family regressed from 7/7 wins to 4/7 wins vs alien. The
+  four rows lite still wins (2to1, 1000to1, 1to2, 1to1000) hold their prior margins;
+  the three lost rows (1to1, 4to1, 1to4) shifted from +2..+5% wins to -2..-12%
+  losses. All seven rows sit in the 50-70ms band, well inside the noise band on
+  this old host, but the direction of the swing is consistent with the two new
+  hook-gated branches in markDownstream / flushEffects: the update micro-rows
+  execute the propagation path many thousands of times with tiny per-iteration
+  work, so a single extra predicted branch is a measurable fraction of the total.
+  The kairo family shows the same pattern (avoidable / deep / repeated regressed
+  a few %); the dyn family and mol are unchanged (allocation-dominated shapes
+  where the gate is round-off).
 
 Scoreboard (median-of-10, 34 tests):
   lite-signal fastest of all 5 frameworks on every dyn row -- the steady-state
   dynamic-topology hot path -- and is the only library to keep the dynamic
-  large-app / wide-dense shapes under ~1s while preact and vue blow up to 6-17s.
-  vs alien-signals head-to-head: faster on all 5 dyn rows; on the 7 update micro-rows
-  the two trade the lead within a few percent (lite ahead on 4/7); within ~3% on
-  most kairo/mol shapes; slower on the one-time creation path + cellx.
+  large-app / wide-dense shapes under ~1s while preact and vue blow up to 5-18s.
+  vs alien-signals head-to-head: faster on all 5 dyn rows; the S:
+  updateComputations family trades within a few percent on this sweep; slower on
+  the one-time creation path + cellx.
 
-Delta vs the 1.3.0 sweep (same harness, same host, same median-of-10 protocol):
-  dyn: simple      436.89 -> 428.89  (lite  -8ms;  +17.7% vs alien, up from +17%)
-  dyn: dynamic     311.66 -> 309.76  (lite  -2ms;  +16.2% vs alien, up from +15%)
-  dyn: large       543.67 -> 536.93  (lite  -7ms;   +9.2% vs alien, up from  +7%)
-  dyn: wide dense  902.41 -> 889.98  (lite -12ms;   +4.4% vs alien, up from  +3%)
-  dyn: deep        316.81 -> 312.08  (lite  -5ms;  +19.7% vs alien, up from +14%)
-  All five dyn rows moved in lite's favor; the hot-path bytes did not change
-  (1.3.0 -> 1.4.0 only added three cumulative counters on stats()), so this is
-  run-to-run noise favoring the pool this cycle, not an engine speedup.
+Delta vs the 1.5.0-beta sweep (same harness, same host, same median-of-10 protocol):
+  dyn: simple      433.17 -> 433.76  (essentially flat; +19% vs alien, up from +19%)
+  dyn: dynamic     311.74 -> 321.68  (lite +10ms; +13% vs alien, down from +16%)
+  dyn: large       539.05 -> 535.58  (lite  -3ms; +11% vs alien, up from  +9%)
+  dyn: wide dense  874.01 -> 902.83  (lite +29ms;  +4% vs alien, down from  +6%)
+  dyn: deep        333.06 -> 320.07  (lite -13ms; +16% vs alien, up from +12%)
+  All five dyn rows still lite wins; three widened vs alien this sweep, two
+  narrowed. This is host noise -- the dyn family is where allocation gap dominates
+  and the mutation-hook gate is round-off; treat the individual dyn-row swings as
+  noise, the "fastest of five on every dyn row" verdict as the signal.
 
 Methodology note -- why median, not mean, and why isolated:
   On this 10-year-old 4-core host a single run occasionally spikes from a GC pause;
@@ -143,9 +171,18 @@ VersionMatrix gate (harness/VersionMatrix/): the same-host cold-process regressi
   (dyn: dynamic / SELECTIVE DAG family). A candidate must clear both a fixed floor
   (frame.avg <=10%, p99 <=30% vs the never-regress baseline) AND the rolling
   baseline (frame.avg <=5%, p99 <=18% vs the previous published version); tighter
-  on the anchor metric, generous on the jitter-prone p99s. Details in
-  harness/VersionMatrix/README.md.
+  on the anchor metric, generous on the jitter-prone p99s. The 1.5.0-beta
+  identical-code guard (sha256 of the engine source per baseline; skip axes where
+  the candidate is byte-identical) is still active -- on 1.6.0-alpha it will NOT
+  skip vs the 1.5.1-beta.1 rolling baseline, because markDownstream / flushEffects
+  legitimately changed. Details in harness/VersionMatrix/README.md.
+
+Profiling harnesses (new in 1.6): `harness/burst-dag.mjs` and `harness/pull-stress.mjs`
+  consume the new op 6/7 counters to characterise burst-flush shape and pull-mode
+  recursion depth respectively. Standalone runners; also mountable as gate
+  scenarios if desired. `npm run profile:burst` / `npm run profile:pull`.
 
 Note: times from this host are a relative baseline; run on a quiet machine for
 publishable absolute numbers. The relative ordering between libraries is what
-matters. Prior baselines (1.3.0, 1.2.2, 1.2.0, 1.1.5) are in git history.
+matters. Prior baselines (1.5.0-beta, 1.4.0, 1.3.0, 1.2.2, 1.2.0, 1.1.5) are in
+git history.

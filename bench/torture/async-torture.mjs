@@ -1,24 +1,24 @@
 /**
- * bench/torture/async-torture.mjs -- watch / when / whenAsync.
+ * bench/torture/async-torture.mjs — watch / when / whenAsync.
  *
  * These three are the public async surface, and every one of them makes a
  * precise, falsifiable promise that the differential fuzzers cannot see because
  * they never call them:
  *
- *   watch(source, cb, opts) -- fires cb(newValue, oldValue, stop) when the
+ *   watch(source, cb, opts) — fires cb(newValue, oldValue, stop) when the
  *     PROJECTED value changes under Object.is. The projection guard is the
  *     subtle part: a raw dependency mutation that leaves the projected value
  *     unchanged must NOT fire. `oldValue` must be the previous projection.
  *     `stop` must work from inside the callback. The disposer is idempotent.
  *
- *   when(pred, cb) -- fires cb exactly once when pred first goes truthy, then
+ *   when(pred, cb) — fires cb exactly once when pred first goes truthy, then
  *     auto-disposes. Synchronous if pred is already truthy. Never fires twice.
  *
- *   whenAsync(pred) -- resolves once when pred first goes truthy. Never rejects.
+ *   whenAsync(pred) — resolves once when pred first goes truthy. Never rejects.
  *     Never re-settles. A held reference must not keep firing.
  *
- * A bug in any of these produces correct-looking graph values -- the signals are
- * all fine -- while the callback fires the wrong number of times, with the wrong
+ * A bug in any of these produces correct-looking graph values — the signals are
+ * all fine — while the callback fires the wrong number of times, with the wrong
  * arguments, or after it was supposed to stop. That is invisible to a value
  * oracle and to a wakeup counter that only knows about effects.
  *
@@ -40,7 +40,7 @@ const { createRegistry, setDefaultRegistry, signal } = Signal;
 const { watch, when, whenAsync } = Signal;
 
 if (typeof watch !== "function" || typeof when !== "function" || typeof whenAsync !== "function") {
-    console.log("lite-signal async torture -- SKIP: watch/when/whenAsync not all present");
+    console.log("lite-signal async torture — SKIP: watch/when/whenAsync not all present");
     process.exit(0);
 }
 
@@ -50,9 +50,9 @@ const savedDefault = (() => { try { return null; } catch { return null; } })();
 setDefaultRegistry(soakRegistry(createRegistry, { maxNodes: 1 << 16, maxLinks: 1 << 18 }));
 
 const SEEDS = Number(process.env.ASYNC_SEEDS || 300);
-const R = createReport(`lite-signal async torture -- watch/when/whenAsync, ${SEEDS} seeds`);
+const R = createReport(`lite-signal async torture — watch/when/whenAsync, ${SEEDS} seeds`);
 
-/* -- 1. watch: values, oldValue, projection guard --------------------------- */
+/* ── 1. watch: values, oldValue, projection guard ─────────────────────────── */
 {
     const s = signal(1);
     const log = [];
@@ -64,7 +64,7 @@ const R = createReport(`lite-signal async torture -- watch/when/whenAsync, ${SEE
     R.eq("watch-immediate", log.length, 1, "immediate:true did not fire on registration");
     R.eq("watch-immediate", log[0][0], 1, "immediate fire delivered the wrong new value");
     if (log[0][1] !== undefined) {
-        R.note(`watch immediate oldValue is ${String(log[0][1])}, but Signal.d.ts documents \`undefined\` -- reconcile before 1.5.0`);
+        R.note(`watch immediate oldValue is ${String(log[0][1])}, but Signal.d.ts documents \`undefined\` — reconcile before 1.5.0`);
     }
 
     s.set(2);
@@ -113,7 +113,7 @@ const R = createReport(`lite-signal async torture -- watch/when/whenAsync, ${SEE
     R.eq("watch-nan", log.length, 2, `NaN projection guard miscounted: ${log.map(String).join(",")}`);
 }
 
-/* -- 2. when: once, synchronous-if-truthy, cancellable ---------------------- */
+/* ── 2. when: once, synchronous-if-truthy, cancellable ────────────────────── */
 {
     let fired = 0;
     when(() => true, () => fired++);
@@ -141,7 +141,7 @@ const R = createReport(`lite-signal async torture -- watch/when/whenAsync, ${SEE
     R.ok("when-cancel", threw === null, `repeated cancel threw: ${threw && threw.message}`);
 }
 {
-    // A predicate that toggles truthy->falsy->truthy must still fire only once,
+    // A predicate that toggles truthy→falsy→truthy must still fire only once,
     // on the FIRST truthy, and not re-arm.
     const g = signal(1);
     let fired = 0;
@@ -151,7 +151,7 @@ const R = createReport(`lite-signal async torture -- watch/when/whenAsync, ${SEE
     R.eq("when-no-rearm", fired, 1, "when re-armed after firing");
 }
 
-/* -- 3. whenAsync: resolves once, never rejects, never re-settles ----------- */
+/* ── 3. whenAsync: resolves once, never rejects, never re-settles ─────────── */
 
 async function whenAsyncContracts() {
     {
@@ -191,7 +191,7 @@ async function whenAsyncContracts() {
     }
 }
 
-/* -- 4. Randomised mixed storm ---------------------------------------------- */
+/* ── 4. Randomised mixed storm ────────────────────────────────────────────── */
 
 function watchStorm(seed) {
     const rnd = mulberry32(seed);
@@ -232,7 +232,7 @@ function watchStorm(seed) {
     return null;
 }
 
-/* -- driver ----------------------------------------------------------------- */
+/* ── driver ───────────────────────────────────────────────────────────────── */
 
 await whenAsyncContracts();
 

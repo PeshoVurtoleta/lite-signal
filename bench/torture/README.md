@@ -475,7 +475,7 @@ allocation against the JS heap?"
 
 ## Torture soaks (`bench/torture/`)
 
-`torture/` holds eight scenarios in two groups, a shared `helpers/` module and a
+`torture/` holds sixteen scenarios in two groups, a shared `helpers/` module and a
 runner. **None are benchmarks.**
 
 ```bash
@@ -617,6 +617,14 @@ These three close that gap, each on a different axis:
 | `oracle-fuzzer.mjs` | Are the values right? | An independent, uncached, recursive reference evaluator that shares no code with the engine. Random DAGs with skip edges, static fan-in, dynamic `select` branches and identity pass-throughs; adversarial leaf domain (`-0`, `NaN`, `""`, `null`, `undefined`) so equality semantics are actually exercised. Failures print the seed and a replay log. |
 | `glitch-hunter.mjs` | Did anything observe an inconsistent intermediate state, and did exactly the right things wake up? | Epoch-stamped values (a mixed-epoch read is the engine caught mid-propagation) plus exact wakeup counts for dynamic deps, batch coalescing, no-op writes, diamonds, `untrack`, cleanup ordering and disposal. |
 | `concurrent-storm.mjs` | Do the documented reentrancy and flush-ordering contracts hold? | The self-write exception (a self-cycle runs once, still propagates to other observers, stays responsive to later external writes), `A->B->A` tripping `CycleError`, nested batches flushing only at the outermost boundary, cascades draining in the *next* pass, writes and reads inside cleanup, dispose mid-flush, self-disposal, and a 200-write async storm. |
+| `dispose-torture.mjs` | Does `Symbol.dispose` stamp the right lifecycle objects, exclude callables, and dispose equivalently? | The 1.9.0 `using`/`Symbol.dispose` feature: the five stamped sites (registry, effect stop, signalBox, computedBox, createScope disposer), the deliberate *exclusion* of callable value handles (asserting the stamp's ABSENCE — `using s = signal()` must not dispose the node), per-site equivalence to the plain disposer, idempotence, prototype-stamping for boxes (no per-instance cost), and post-destroy non-resurrection. Skips on pre-1.9.0 / pre-Node-20. |
+| `cleanup-return-torture.mjs` | Does an effect's returned cleanup honour timing, compose order, and the self-dispose guard? | The 1.8.0 cleanup-return path: a returned cleanup runs before re-run and on dispose, composes AFTER imperative `onCleanup(fn)` in forward call order, is suppressed by the self-dispose gen-guard, and leaves computeds' function-values untouched. Flagship is a differential — `return fn` must be observationally identical to `onCleanup(fn)` as the last statement — across 400 seeds. Skips on pre-1.8.0. |
+| `op-accounting.mjs` | Does the engine do exactly the work it should, counted from its own opcode lane? | Uses `onGraphMutation` (op 1-5) as ground truth instead of wall-clock: pins the op5 identity (op5 == computed recomputes + effect executions), equality cutoff, diamond glitch-freedom by recompute count, link add/remove balance across rewiring (leak signature), node balance across churn, laziness, and a 400-seed op5-vs-wrapper differential. Documents the 1.5.0 instrumentation gap (the clean short-circuit saves dep-comparisons, which no opcode emits — the analogue of the pre-1.13 missing mark lane). Runs 1.4.0+. |
+| `flush-torture.mjs` | Do the flush strategies converge, and does `.subscribe()` honour its contract under each? | The three `flushStrategy` modes (`eager`/`sab`/`manual`) and `r.flush()`, checked by a cross-strategy differential: the same graph and op sequence under all three must reach identical settled values once drained — they differ only in *when* draining happens. Plus per-strategy scheduling (eager flushes on `.set()`, sab only at batch exit, manual only on `flush()`), re-entrant/empty `flush()`, and `.subscribe()` on callable signals and computeds (immediate fire, equal-write suppression, untracked callback detected via the subscription's own re-fire, idempotent unsub, deferred delivery under manual). Skips on pre-1.7.0. |
+| `async-torture.mjs` | Do `watch` / `when` / `whenAsync` honour their contracts? | `watch`'s `Object.is` projection guard (a raw dep mutation with an unchanged projection must not fire), correct `oldValue`, `stop` from inside the callback, NaN-projection edges, plus a 300-seed differential storm against an independent shadow of the projected sequence; `when` fires exactly once then auto-disposes, synchronous when already truthy, cancellable, no re-arm; `whenAsync` resolves once, never rejects, never re-settles. |
+| `capacity-torture.mjs` | Does the fail-closed boundary hold? | Exact node and link ceilings; `CapacityError` on both pools; a node that hit the ceiling mid-build RE-THROWS on read rather than leaking a partial value (the fail-closed guarantee at the read edge); the registry stays consistent and correctly evaluates a fresh graph after a throw; `grow` mode crosses the same boundary without throwing and stays correct across repeated growth. |
+| `scope-torture.mjs` | Do ownership and disposal survive churn without crashing or leaking? | The 1.6.0 disposal crash (disposing a source linked-but-unread from inside its observer), both as the exact repro and as a 300-seed fuzz of that pattern mid-flush; the `createScope` adoption contract (computeds/effects adopted, plain signals not, owner counts as one effect, `signals+computeds+effects === activeNodes` holds); a scope surviving its consumer's re-run; nested-scope detachment; `runWithOwner` re-attachment adopting into the scope owner (asserted: the scope disposer reaps a re-attached effect) plus the registry-mismatch footgun degrading safely to rooted execution; and pool balance over 200 scope rounds on a *hard-ceiling* registry. Skips on pre-1.6.0. |
+| `box-torture.mjs` | Are `signalBox`/`computedBox` indistinguishable from callables? | The same differential fuzz as `oracle-fuzzer`, with every node randomly realised as a callable *or* a box and a reference evaluator that knows neither. Plus the surface the callables lack: `subscribe` (immediate fire, untracked callback, idempotent disposer, unsubscribe-during-notify, throwing subscriber), `update`, custom `equals`, wakeup parity against an identical callable topology, and the allocation-light representation itself (zero own properties, one shared prototype). Skips cleanly on 1.4.x, where the API does not exist. |
 | `scheduler-storm.mjs` | Do deferred effects behave under saturation? | Gen-bound thunk identity and reuse; a thunk held past dispose; the ABA case where a recycled slot's new resident must not fire from the old thunk; write-storm coalescing while a scheduler defers; a scheduler that never invokes `run`, invokes it synchronously, invokes it twice, or throws on re-schedule; 10k deferred effects drained with a write landing mid-drain; dispose arriving mid-drain. |
 | `work-accounting.mjs` | Did it do the *minimum* work? | Exact body-execution counts for ten topologies — isolation, read memoisation, equality cutoff, diamonds, batching, a 200-deep chain, a 100-wide fan-out, abandoned branches and laziness. |
 
@@ -633,6 +641,26 @@ torture file was run against each:
 | self-write guard removed (effect re-queues itself) | blind | blind | blind | blind — caught **only** by `concurrent-storm` |
 | ABA gen guard removed from the scheduler thunk | blind | blind | blind | blind — caught **only** by `scheduler-storm` |
 | `FLAG_QUEUED` cleared early (deferral stops coalescing) | blind | blind | blind | blind — caught **only** by `scheduler-storm` |
+| box reads stop tracking | blind | blind | blind | blind — caught **only** by `box-torture` |
+| per-instance own methods instead of a shared prototype | blind | blind | blind | blind — caught **only** by `box-torture` |
+| `update()` reads through the tracked path | blind | blind | blind | blind — caught **only** by `box-torture` |
+| 1.6.0 cursor-repair reverted (dispose linked-but-unread source) | blind | blind | blind | blind — caught **only** by `scope-torture` |
+| watch projection guard removed (`Object.is` dropped) | blind | blind | blind | blind — caught **only** by `async-torture` |
+| watch new/old callback args swapped | blind | blind | blind | blind — caught **only** by `async-torture` |
+| node capacity ceiling off-by-one | blind | blind | blind | blind — caught **only** by `capacity-torture` |
+| link-pool `throw` policy silently disabled | blind | blind | blind | blind — caught **only** by `capacity-torture` |
+| `runWithOwner` ignores its owner handle (no adoption) | blind | blind | blind | blind — caught **only** by `scope-torture` |
+| sab strategy stops flushing at batch exit | blind | blind | blind | blind — caught **only** by `flush-torture` |
+| manual strategy auto-flushes on `.set()` | blind | blind | blind | blind — caught **only** by `flush-torture` |
+| `r.flush()` becomes a no-op | blind | blind | blind | blind — caught **only** by `flush-torture` |
+| `.subscribe()` callback tracks (not untracked) | blind | blind | blind | blind — caught **only** by `flush-torture` |
+| cleanup-return prepended before imperative onCleanup | blind | blind | blind | blind — caught **only** by `cleanup-return-torture` |
+| array cleanup fires in reverse (LIFO) order | blind | blind | blind | blind — caught **only** by `cleanup-return-torture` |
+| box `Symbol.dispose` becomes a no-op | blind | blind | blind | caught by `dispose-torture` |
+| effect `Symbol.dispose` points to the wrong function | blind | blind | blind | caught by `dispose-torture` |
+| registry `Symbol.dispose` stamp removed | blind | blind | blind | caught by `dispose-torture` |
+| box stamp becomes per-instance (own property) | blind | blind | blind | caught by `dispose-torture` |
+| callable exclusion broken (value handle stamped) | — | — | — | caught by `dispose-torture` (and, as collateral shape damage, several others) |
 
 The soaks caught 1 of 5; the semantic files caught 5 of 5. The two groups are
 complementary, not redundant: the soaks own resource behaviour (the stale-deps
@@ -663,3 +691,15 @@ A dynamic-churn scenario was considered and rejected as largely redundant:
 `glitch-hunter` already pins abandoned-branch wakeups. The uncovered part is
 rewiring at scale under an oracle, which belongs as a density knob on
 `oracle-fuzzer` rather than a fourth file with most of its coverage duplicated.
+
+
+### Version compatibility
+
+Every scenario is written against the 1.4.x public surface and runs unchanged on
+1.5.0-rc.1 and 1.6.0-alpha.3 — the whole suite was executed against all three.
+On the 1.5.0 engine the semantic group is 9 executed + 4 clean skips (13/13),
+and the soak group is 3/3.
+`box-torture.mjs` feature-detects `signalBox`/`computedBox` (1.5.0+) and
+`scope-torture.mjs` feature-detects `createScope` (1.6.0+); each reports a clean
+skip rather than failing to load on branches that predate it, so the runner
+stays green from 1.4.x forward.

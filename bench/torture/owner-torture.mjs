@@ -1,52 +1,48 @@
 /**
- * bench/torture/owner-torture.mjs -- getOwner / runWithOwner capture-restore (1.5.0+,
- * load-bearing on every rebuilt-line cut including 1.9.0).
+ * bench/torture/owner-torture.mjs -- getOwner / runWithOwner capture-restore (1.5.0+).
  *
  * getOwner() captures the current lifecycle owner as an opaque, gen-stamped
  * handle; runWithOwner(handle, fn) reinstates it so effects/computeds created
  * directly in fn are ADOPTED by that owner (and cascade-dispose when it does).
- * The changelog is emphatic these are "carried through 1.5.0/1.6/1.7/1.8/1.9
- * unchanged... on every future cut" -- i.e. load-bearing forever -- yet the suite
- * only exercised the happy-path adoption (scope-torture scenario 8). The
- * safety-critical behaviours were unchecked:
+ * These are load-bearing on every rebuilt-line cut, yet the base suite only
+ * exercised happy-path adoption. The safety-critical behaviours checked here:
  *
  *   1. THE ABA DEGRADATION. Handles are gen-stamped with the same describeNode /
  *      liveNode machinery as describe/nodeId/ownerOf. If the captured owner is
- *      disposed and its pool slot recycled by an unrelated node via the LIFO free
- *      list, the handle's gen no longer matches -- and runWithOwner must degrade to
- *      ROOTED execution rather than adopting the continuation into the recycled
- *      slot's NEW resident. A broken guard here silently re-parents effects onto a
- *      stranger's owner, so they cascade-dispose at the wrong time: a lifetime bug
- *      no value oracle can see.
+ *      disposed and its pool slot recycled by an unrelated node, the handle's gen
+ *      no longer matches -- and runWithOwner must degrade to ROOTED execution
+ *      rather than adopting the continuation into the recycled slot's NEW resident
+ *      (Signal.js:1496 sets currentOwner=null when liveNode returns undefined).
  *
  *   2. ADOPTION vs ROOTING, observably distinguished. A live-owner adoption means
  *      the adopted effect STOPS when the owner is disposed; a rooted effect KEEPS
- *      running. This file drives both and asserts the observable difference,
- *      rather than just "no crash".
+ *      running. This file drives both and asserts the observable difference.
  *
- *   3. DEP ISOLATION. runWithOwner nulls the tracking observer for fn's direct
- *      body (same pairing as createRoot), so reads inside fn cannot form
- *      accidental cross-async dependency edges into the surrounding observer.
+ *   3. DEP ISOLATION. runWithOwner nulls the tracking observer AND disables
+ *      isTrackingDeps for fn's direct body (Signal.js:1497-1498), so reads inside
+ *      fn cannot form accidental dependency edges into the surrounding observer.
  *
  *   4. runWithOwner(undefined) runs rooted; nested runWithOwner composes; two
  *      getOwner() calls in one body agree; getOwner() at top level is undefined.
+ *
+ * PORT NOTE (1.5.0). 1.5.0's owner surface is getOwner/runWithOwner/createRoot --
+ * there is NO createScope. The 1.4.4 source built its owner scopes with
+ * createScope; here every scope is built from the primitive 1.5.0 ships: an
+ * EFFECT is the unit of ownership. Inside an effect body currentOwner IS that
+ * effect, so r.getOwner() captures it and children created under it (directly or
+ * via runWithOwner) are adopted; the effect's stop() is the cascade-disposer.
+ * `ownerScope(r, fn)` below is that shape.
  *
  * MUTATION FINDINGS (recorded honestly). The ADOPTION contract is the reachable,
  * catchable core: breaking runWithOwner so it never adopts (always roots) is
  * caught by scenarios 2 and 6 (an adopted effect must cascade-dispose with its
  * owner; a rooted one must not). The ABA gen-guard and the dep-isolation are
  * DEFENSE-IN-DEPTH, each protected by a redundant second guard, so no single-line
- * mutant reaches them from the public API:
- *   - dep isolation nulls currentObserver AND disables isTrackingDeps; either one
- *     alone blocks the leak, so only removing BOTH could leak (and even then the
- *     read fast-path guards further) -- the same over-determined correctness seen
- *     in 1.7's value-never-defers;
- *   - the ABA guard fires only when a disposed owner's slot is recycled into a NEW
- *     owner (effect/computed) before restore; the pool hands out fresh slots first,
- *     so this is not forceable via the black-box API. Flagged, not faked -- the
- *     guard should exist, but its trigger is unreachable, so these scenarios PIN
- *     the observable behaviour (graceful rooted degradation) rather than claim to
- *     catch the guard's removal.
+ * mutant reaches them from the public API. On 1.5.0 the ABA guard's TRIGGER (a
+ * disposed owner's slot recycled into a NEW owner before restore) is reachable
+ * only if the seed fuzz actually forces that exact recycle ordering; the pool
+ * hands out fresh slots first, so scenario 3 PINS the observable behaviour
+ * (graceful rooted degradation) rather than claiming to catch the guard's removal.
  *
  * Skips if getOwner/runWithOwner are absent.
  *
@@ -65,11 +61,10 @@ const { createRegistry } = Signal;
     let ok = false;
     try {
         const r = createRegistry({ maxNodes: 32, onCapacityExceeded: "grow" });
-        ok = typeof r.getOwner === "function" && typeof r.runWithOwner === "function" &&
-             typeof r.createScope === "function";
+        ok = typeof r.getOwner === "function" && typeof r.runWithOwner === "function";
     } catch { ok = false; }
     if (!ok) {
-        console.log("lite-signal owner torture -- SKIP: owner-capture via createScope requires 1.6.0+");
+        console.log("lite-signal owner torture -- SKIP: getOwner/runWithOwner require 1.5.0+");
         process.exit(0);
     }
 }
@@ -78,18 +73,26 @@ const SEEDS = Number(process.env.OWNER_SEEDS || 300);
 const R = createReport(`lite-signal owner torture -- getOwner/runWithOwner capture-restore, ${SEEDS} seeds`);
 const reg = () => createRegistry({ maxNodes: 4096, maxLinks: 16384, onCapacityExceeded: "grow" });
 
+// An effect is the unit of ownership on 1.5.0. Run `fn` as an effect body (fn may
+// call r.getOwner() to capture that effect, and create/adopt children under it)
+// and return the effect's stop() -- the cascade-disposer. The body must read no
+// signal so the effect runs exactly once and never re-fires mid-scenario.
+function ownerScope(r, fn) {
+    return r.effect(() => { fn(); });
+}
+
 /* -- 1. getOwner: undefined at top level, a handle inside a body ------------ */
 {
     const r = reg();
     R.eq("top-level", r.getOwner(), undefined, "getOwner() returned a handle at the top level");
 
     let inside = "unset";
-    const dispose = r.createScope((d) => { inside = r.getOwner(); return d; });
-    R.ok("inside-body", inside !== undefined && inside !== null, "getOwner() inside a scope returned no handle");
+    const dispose = ownerScope(r, () => { inside = r.getOwner(); });
+    R.ok("inside-body", inside !== undefined && inside !== null, "getOwner() inside an owner scope returned no handle");
 
     // Two captures in one body agree (same owner).
     let a = null, b = null;
-    const d2 = r.createScope((d) => { a = r.getOwner(); b = r.getOwner(); return d; });
+    const d2 = ownerScope(r, () => { a = r.getOwner(); b = r.getOwner(); });
     R.ok("stable-capture", a !== undefined && b !== undefined, "one of two getOwner() calls returned nothing");
     dispose(); d2();
 }
@@ -99,11 +102,9 @@ const reg = () => createRegistry({ maxNodes: 4096, maxLinks: 16384, onCapacityEx
     const r = reg();
     const s = r.signal(0);
     let runs = 0;
-    let ownerDispose;
-    ownerDispose = r.createScope((d) => {
+    const ownerDispose = ownerScope(r, () => {
         const owner = r.getOwner();
         r.runWithOwner(owner, () => { r.effect(() => { s(); runs++; }); });
-        return d;
     });
     const base = runs;
     s.set(1);
@@ -118,7 +119,7 @@ const reg = () => createRegistry({ maxNodes: 4096, maxLinks: 16384, onCapacityEx
 {
     const r = reg();
     let captured = null;
-    const d = r.createScope((dd) => { captured = r.getOwner(); return dd; });
+    const d = ownerScope(r, () => { captured = r.getOwner(); });
     d();                                             // dispose the owner
     // Recycle the freed slot via the LIFO free list.
     const recyc = [];
@@ -179,13 +180,12 @@ const reg = () => createRegistry({ maxNodes: 4096, maxLinks: 16384, onCapacityEx
     // Nested: capture inside a restored body and restore again.
     let nestOk = true;
     try {
-        const d = r.createScope((dd) => {
+        const d = ownerScope(r, () => {
             const o1 = r.getOwner();
             r.runWithOwner(o1, () => {
                 const o2 = r.getOwner();
                 r.runWithOwner(o2, () => { const e = r.effect(() => {}); e(); });
             });
-            return dd;
         });
         d();
     } catch (e) { nestOk = false; }
@@ -200,12 +200,10 @@ const reg = () => createRegistry({ maxNodes: 4096, maxLinks: 16384, onCapacityEx
     const r = reg();
     const s = r.signal(0);
     let directRuns = 0, adoptedRuns = 0;
-    let ownerDispose;
-    ownerDispose = r.createScope((d) => {
+    const ownerDispose = ownerScope(r, () => {
         r.effect(() => { s(); directRuns++; });               // direct child
         const owner = r.getOwner();
         r.runWithOwner(owner, () => { r.effect(() => { s(); adoptedRuns++; }); }); // adopted child
-        return d;
     });
     const db = directRuns, ab = adoptedRuns;
     s.set(1);
@@ -224,11 +222,11 @@ function fuzzSeed(seed) {
     const r = reg();
     const handles = [];
 
-    // Build a handful of scopes, capturing each owner.
+    // Build a handful of owner scopes, capturing each owner.
     const scopes = [];
     const n = 2 + randInt(rnd, 4);
     for (let i = 0; i < n; i++) {
-        scopes.push(r.createScope((d) => { handles.push(r.getOwner()); return d; }));
+        scopes.push(ownerScope(r, () => { handles.push(r.getOwner()); }));
     }
     // Dispose a random subset (staling their handles).
     for (let i = 0; i < scopes.length; i++) {

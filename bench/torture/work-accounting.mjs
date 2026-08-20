@@ -1,5 +1,5 @@
 /**
- * bench/torture/work-accounting.mjs -- does the engine do the MINIMUM work?
+ * bench/torture/work-accounting.mjs — does the engine do the MINIMUM work?
  *
  * The other files in this directory answer "did it crash", "did the pool
  * balance", "is the value right" and "did the right things wake up". One class
@@ -37,7 +37,7 @@ const check = (name, got, want, note) => {
 
 const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCapacityExceeded: "grow" });
 
-/* -- 1. An untouched subgraph must not be recomputed ------------------------ */
+/* ── 1. An untouched subgraph must not be recomputed ──────────────────────── */
 {
     const r = newRegistry();
     const a = r.signal(1);
@@ -55,7 +55,7 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("isolation", bRuns - b0, 0, "writing `a` must not recompute cb");
 }
 
-/* -- 2. Re-reading a settled computed is free ------------------------------- */
+/* ── 2. Re-reading a settled computed is free ─────────────────────────────── */
 {
     const r = newRegistry();
     const s = r.signal(1);
@@ -67,7 +67,7 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("read-memo", runs - base, 0, "50 reads with no intervening write");
 }
 
-/* -- 3. A write that changes nothing must not recompute downstream ---------- */
+/* ── 3. A write that changes nothing must not recompute downstream ────────── */
 {
     const r = newRegistry();
     const s = r.signal(5);
@@ -80,7 +80,7 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("no-op-write", runs - base, 0, "rewriting the identical value");
 }
 
-/* -- 4. An equal-valued computed must not propagate ------------------------- */
+/* ── 4. An equal-valued computed must not propagate ───────────────────────── */
 {
     // s changes, so `mid` MUST re-run -- but its output is unchanged, so `top`
     // has nothing to react to. Cutting propagation on value equality (not just
@@ -99,7 +99,7 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("equality-cutoff", topRuns - t0, 0, "top must NOT re-run (its input is unchanged)");
 }
 
-/* -- 5. A diamond evaluates each node once per settled change --------------- */
+/* ── 5. A diamond evaluates each node once per settled change ─────────────── */
 {
     const r = newRegistry();
     const src = r.signal(1);
@@ -116,7 +116,7 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("diamond", sinkRuns - s0, 1, "sink must evaluate once, not once per arm");
 }
 
-/* -- 6. A batch collapses N writes into one pass ---------------------------- */
+/* ── 6. A batch collapses N writes into one pass ──────────────────────────── */
 {
     const r = newRegistry();
     const sigs = Array.from({ length: 10 }, (_, i) => r.signal(i));
@@ -134,7 +134,7 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("batch", runs - base, 1, "10 writes inside one batch");
 }
 
-/* -- 7. Deep chains cost O(depth), not O(depth^2) --------------------------- */
+/* ── 7. Deep chains cost O(depth), not O(depth^2) ─────────────────────────── */
 {
     const r = newRegistry();
     const DEPTH = 200;
@@ -157,7 +157,7 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("deep-chain", total, DEPTH, `one write through a ${DEPTH}-deep chain`);
 }
 
-/* -- 8. A wide fan-out touches only the changed cone ------------------------ */
+/* ── 8. A wide fan-out touches only the changed cone ──────────────────────── */
 {
     const r = newRegistry();
     const WIDTH = 100;
@@ -179,7 +179,7 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("fan-out", coldRuns - c0, 0, "the untouched cone must stay cold");
 }
 
-/* -- 9. A dynamic branch stops paying for the branch it abandoned ----------- */
+/* ── 9. A dynamic branch stops paying for the branch it abandoned ─────────── */
 {
     const r = newRegistry();
     const cond = r.signal(true);
@@ -199,7 +199,7 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("dynamic-branch", sinkRuns - s0, 0, "...nor wake the sink");
 }
 
-/* -- 10. An unobserved computed is not evaluated eagerly -------------------- */
+/* ── 10. An unobserved computed is not evaluated eagerly ──────────────────── */
 {
     const r = newRegistry();
     const s = r.signal(1);
@@ -210,11 +210,11 @@ const newRegistry = () => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCa
     check("laziness", runs, 0, "a computed nobody reads must never run");
 }
 
-/* -- driver ----------------------------------------------------------------- */
+/* ── driver ───────────────────────────────────────────────────────────────── */
 
 const t0 = performance.now();
 const dt = ((performance.now() - t0) / 1000).toFixed(2);
-console.log(`lite-signal work accounting -- 10 topologies, exact body-run counts (${dt}s)`);
+console.log(`lite-signal work accounting — 10 topologies, exact body-run counts (${dt}s)`);
 if (failures.length === 0) {
     console.log("  PASS: every scenario did exactly the minimum work");
     process.exit(0);

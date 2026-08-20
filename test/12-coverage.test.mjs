@@ -566,30 +566,36 @@ describe("multi-cleanup: array conversion and array execution", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 1.4.0-rc branch closure.
+// 1.5.0-beta coverage closure.
 //
-// c8 on the rc flagged six lines in Signal.js. Three are reachable and are
-// closed by the tests below (:333, :826, :1115). One (:415) was reachable ONLY
-// through the dangling-cursor defect the fourth test now pins as a regression --
-// with disposeNode's CURSOR REPAIR in place those defensive ternaries are dead
-// and were removed. The remaining two (:383 link-ledger clamp, :1241 batchEpoch
-// wraparound) are provably unreachable and carry `/* c8 ignore */` with the
-// proof inline; see COVERAGE-NOTES.md.
+// Four ported from the 1.4.0-rc pass -- branch gaps this engine shares with the
+// 1.4.0 line (line numbers shifted): allocateLink dead-target (:335),
+// executeEffect scheduler-reentrancy (:828), computed stale-handle read (:1117),
+// and the disposeNode cursor-repair regression that removed the dead freeLink
+// `-1` ternaries (:417). The rest close 1.5.0-new surface: the box stale-handle
+// guards (boxUpdate/boxComputedGet/boxComputedPeek), the computedBox `equals`
+// option, and the top-level getOwner/runWithOwner delegators. The two
+// provably-unreachable clamps (:385 link ledger, :1399 batchEpoch wraparound)
+// carry `/* c8 ignore */` with proofs inline; see COVERAGE-NOTES.md.
 // ---------------------------------------------------------------------------
 
-describe("allocateLink: eligibility gate on a target disposed mid-run (Signal.js:333)", () => {
+const HAS_BOX = typeof LiteSignal.signalBox === "function";
+const HAS_OWNER_API =
+    typeof LiteSignal.getOwner === "function" && typeof LiteSignal.runWithOwner === "function";
+
+describe("allocateLink: eligibility gate on a target disposed mid-run", () => {
     it("an observer torn down inside a nested pull links nothing for the rest of its body", () => {
         const a = r.signal(0);
         const b = r.signal(0);
         let stop = null;
         let armed = false;
 
-        // Created OUTSIDE the effect on purpose, so it is not owner-adopted: the
-        // effect can dispose ITSELF from inside this computed's body without the
-        // owner cascade tearing the computed down mid-pull. That is the shape that
-        // reaches the gate -- disposeNode only nulls the tracking context when
-        // `currentObserver === node`, and here currentObserver is `killer`. When
-        // pullComputed unwinds it restores currentObserver to the now-DEAD effect.
+        // Created OUTSIDE the effect so it is not owner-adopted: the effect can
+        // dispose ITSELF from inside this computed's body without the owner cascade
+        // tearing the computed down mid-pull. disposeNode only nulls the tracking
+        // context when currentObserver === node, and here currentObserver is
+        // `killer`; when pullComputed unwinds it restores currentObserver to the
+        // now-DEAD effect, so the next read hits allocateLink with target.flags === 0.
         const killer = r.computed(() => {
             if (armed && stop !== null) stop();
             return 1;
@@ -601,16 +607,14 @@ describe("allocateLink: eligibility gate on a target disposed mid-run (Signal.js
             a();
             if (runs === 2) {
                 armed = true;
-                killer();   // <- effect node is disposed in here; flags go to 0
-                b();        // <- allocateLink(b, deadEffect): target.flags === 0 -> null
+                killer();
+                b();   // allocateLink(b, deadEffect): target.flags === 0 -> null
             }
         });
         assert.equal(runs, 1);
 
         a.set(1);
-        assert.equal(runs, 2, "the effect did re-run and did reach the post-dispose read");
-
-        // The gate held: no phantom edge was spliced onto the pool-bound node.
+        assert.equal(runs, 2, "the effect re-ran and reached the post-dispose read");
         assert.equal(r.hasObservers(b), false, "no phantom subscriber on b");
         assert.equal(r.stats().effects, 0, "the effect really is disposed");
         assert.equal(r.stats().activeLinks, 0, "every link went back to the pool");
@@ -620,7 +624,7 @@ describe("allocateLink: eligibility gate on a target disposed mid-run (Signal.js
     });
 });
 
-describe("executeEffect: synchronous re-entrancy guard (Signal.js:826)", () => {
+describe("executeEffect: synchronous re-entrancy guard", () => {
     it("a scheduler whose thunk is re-invoked from the body throws CycleError", () => {
         const s = r.signal(0);
         let run = null;
@@ -628,15 +632,14 @@ describe("executeEffect: synchronous re-entrancy guard (Signal.js:826)", () => {
 
         // The write path cannot reach this guard -- markDownstream refuses to re-queue
         // a node carrying FLAG_COMPUTING. The scheduler trampoline can: it hands the
-        // run thunk to user code, and nothing stops that code from calling it again
-        // from inside the very body it is already running.
+        // run thunk to user code, which calls it from inside the body it is running.
         assert.throws(
             () => r.effect(
                 () => {
                     s();
                     if (run !== null && !reentered) {
                         reentered = true;
-                        run();   // <- re-enters executeEffect while FLAG_COMPUTING is set
+                        run();   // re-enters executeEffect while FLAG_COMPUTING is set
                     }
                 },
                 {scheduler: (thunk) => { run = thunk; thunk(); }},
@@ -645,9 +648,7 @@ describe("executeEffect: synchronous re-entrancy guard (Signal.js:826)", () => {
         );
         assert.equal(reentered, true, "the body really did re-enter");
 
-        // The outer executeEffect's finally still ran: no node left stuck COMPUTING,
-        // no tracking context leaked.
-        assert.equal(r.isTracking(), false);
+        assert.equal(r.isTracking(), false, "tracking context restored after the throw");
         const live = r.signal(1);
         let ok = 0;
         r.effect(() => { ok++; live(); });
@@ -656,23 +657,19 @@ describe("executeEffect: synchronous re-entrancy guard (Signal.js:826)", () => {
     });
 });
 
-describe("computed: stale-handle read (Signal.js:1115)", () => {
+describe("computed: stale-handle read", () => {
     it("reading a disposed computed returns undefined and creates no dependency", () => {
         const s = r.signal(2);
         const c = r.computed(() => s() * 10);
         assert.equal(c(), 20);
 
         r.dispose(c);
-
-        // 21-perf-pins pins peek() on a stale computed; the gen guard on the READ
-        // closure is a separate branch -- this is the one that closes it.
         assert.equal(c(), undefined, "stale computed handle reads undefined");
         assert.equal(c.peek(), undefined);
 
         let runs = 0;
-        r.effect(() => { runs++; c(); });   // stale read from INSIDE a live observer
+        r.effect(() => { runs++; c(); });   // stale read from inside a live observer
         assert.equal(runs, 1);
-
         s.set(3);
         assert.equal(runs, 1, "the stale read wired up no phantom subscription");
         assert.equal(r.stats().computeds, 0);
@@ -682,19 +679,17 @@ describe("computed: stale-handle read (Signal.js:1115)", () => {
 describe("disposeNode: cursor repair when a source dies under a parked cursor", () => {
     it("disposing a not-yet-retracked dep from the observer's own body does not corrupt the dep list", () => {
         const removals = [];
-        r.onGraphMutation((op, sourceId, targetId) => {
-            if (op === 4) removals.push([sourceId, targetId]);
-        });
+        r.onGraphMutation((op, sourceId, targetId) => { if (op === 4) removals.push([sourceId, targetId]); });
 
         const a = r.signal(0);
         const b = r.signal(0);
         let runs = 0;
 
         // Run 1 links [a, b]. On run 2 the body reads `a` (cursor advances to link(b))
-        // and then disposes `b` WITHOUT reading it -- so the re-tracking cursor is left
-        // parked on the exact link that disposeNode is about to splice out and free.
-        // Pre-fix: severTail walked from that freed link, wiped headDep, and double-freed
-        // it -> "TypeError: Cannot set properties of null (setting 'headSub')".
+        // then disposes `b` WITHOUT reading it -- the re-tracking cursor is left parked
+        // on the exact link disposeNode is about to splice out and free. Pre-fix:
+        // severTail walked from that freed link, wiped headDep, and double-freed it
+        // -> "TypeError: Cannot set properties of null (setting 'headSub')".
         r.effect(() => {
             runs++;
             a();
@@ -705,25 +700,18 @@ describe("disposeNode: cursor repair when a source dies under a parked cursor", 
 
         a.set(1);
         assert.equal(runs, 2, "the re-run completed instead of throwing");
-
-        // The surviving dep must still be wired: a is live, the effect still tracks it.
         assert.equal(r.hasObservers(a), true, "link(a) survived -- headDep was not wiped");
         a.set(2);
         assert.equal(runs, 3, "the effect still reacts through its surviving dep");
-
-        assert.equal(r.stats().activeLinks, 1, "only link(a) is outstanding -- link(b) was freed exactly once");
+        assert.equal(r.stats().activeLinks, 1, "only link(a) is outstanding");
         assert.equal(r.stats().signals, 1, "b is gone, a survives");
 
-        // Documented asymmetry (NOT changed by this fix): disposeNode's sub-list teardown
-        // inlines the free rather than routing through freeLink, so disposing a SOURCE
-        // emits opcode 2 (node-dispose) but no opcode 4 (link-remove) for its outgoing
-        // edges -- a consumer infers those edges died with the node. Opcode 4 fires only
-        // for edges severed by a dep-set flip (allocateLink / severTail). Pinned here so
-        // a future refactor of that loop has to be a deliberate contract change.
+        // Documented asymmetry (unchanged): disposeNode's sub-list teardown inlines the
+        // free rather than routing through freeLink, so disposing a SOURCE emits opcode 2
+        // (node-dispose) but no opcode 4 (link-remove) for its outgoing edges. Opcode 4
+        // fires only for a dep-set flip. Pinned so a future refactor is a deliberate change.
         assert.equal(removals.length, 0, "source disposal reports opcode 2, not per-edge opcode 4");
 
-        // And the payloads that DO come out of freeLink carry real ids -- never the -1
-        // sentinel the removed defensive ternaries used to emit.
         const flip = [];
         r.onGraphMutation((op, sourceId, targetId) => { if (op === 4) flip.push([sourceId, targetId]); });
         const x = r.signal(1);
@@ -733,5 +721,77 @@ describe("disposeNode: cursor repair when a source dies under a parked cursor", 
         gate.set(false);                       // dep-set flip: severs link(x) via freeLink
         assert.equal(flip.length, 1);
         assert.ok(flip[0][0] > 0 && flip[0][1] > 0, "opcode 4 payload is (source.id, target.id)");
+    });
+});
+
+describe("signalBox / computedBox: stale-handle guards", {skip: !HAS_BOX}, () => {
+    it("update / get / peek on a disposed box return undefined and no-op (no recycled-slot corruption)", () => {
+        // boxUpdate stale guard: dispose a signalBox, then update() must no-op and
+        // peek() must read undefined (the ABA guard on the recycled slot).
+        const sb = r.signalBox(1);
+        assert.equal(sb.get(), 1);
+        r.dispose(sb);
+        sb.update((v) => v + 100);   // must not throw, must not write the recycled slot
+        assert.equal(sb.peek(), undefined, "boxUpdate no-op'd on the stale handle");
+
+        // boxComputedGet + boxComputedPeek stale guards.
+        const cb = r.computedBox(() => 7);
+        assert.equal(cb.get(), 7);
+        r.dispose(cb);
+        assert.equal(cb.get(), undefined, "boxComputedGet returns undefined when stale");
+        assert.equal(cb.peek(), undefined, "boxComputedPeek returns undefined when stale");
+
+        // The registry survives: a fresh box works and reuses the pool.
+        const sb2 = r.signalBox(9);
+        let seen = 0;
+        r.effect(() => { seen++; sb2.get(); });
+        sb2.set(10);
+        assert.equal(seen, 2, "a fresh box on a recycled slot behaves normally");
+    });
+});
+
+describe("computedBox: custom equals gates downstream recompute", {skip: !HAS_BOX}, () => {
+    it("a computedBox equals predicate suppresses propagation for 'equal' outputs", () => {
+        const s = r.signal(1);
+        let evals = 0;
+        // The equals-opts arm of computedBox's constructor (opts.equals provided).
+        const c = r.computedBox(
+            () => { evals++; return s() < 0 ? "neg" : "pos"; },
+            {equals: (a, b) => a === b},
+        );
+        let downstream = 0;
+        r.effect(() => { downstream++; c.get(); });
+        assert.equal(downstream, 1);
+
+        s.set(2);   // still "pos" -> equals blocks propagation
+        assert.equal(downstream, 1, "equal output did not re-run the reader");
+
+        s.set(-3);  // "neg" -> propagates
+        assert.equal(downstream, 2, "changed output re-ran the reader");
+        assert.ok(evals >= 3, "the box body did recompute on each dep change");
+    });
+});
+
+describe("top-level getOwner / runWithOwner route to the default registry", {skip: !HAS_OWNER_API}, () => {
+    it("captures the active owner and re-enters its lifecycle scope on the default registry", () => {
+        const own = createRegistry();
+        setDefaultRegistry(own);
+
+        let captured;
+        const stop = effect(() => { captured = LiteSignal.getOwner(); });   // top-level getOwner()
+        assert.notEqual(captured, undefined, "getOwner returned a handle inside an effect body");
+
+        let inner = null;
+        let innerRuns = 0;
+        LiteSignal.runWithOwner(captured, () => {            // top-level runWithOwner()
+            inner = effect(() => { innerRuns++; });
+        });
+        assert.equal(innerRuns, 1, "the adopted inner effect ran once");
+
+        stop();   // disposing the captured owner cascade-disposes the adopted child
+        assert.equal(typeof inner, "function");
+        assert.equal(own.stats().effects, 0, "runWithOwner adoption made the child cascade with its owner");
+
+        destroy();
     });
 });

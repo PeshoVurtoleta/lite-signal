@@ -4,463 +4,616 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [1.4.5] -- 2026-08-18
+## [1.5.0] -- 2026-08-21
 
-The createRegistry validation patch. Until now `createRegistry(config)` read five
-options and validated none of them -- 20 of 25 malformed configs built without a
-word and the rest failed later, deep in the node allocator, naming an internal
-`nextFree` field rather than the option you got wrong. This closes the door. All
-of it is constructor-cold: **the engine's hot path is byte-for-byte unchanged and
-the zero-GC steady state does not move** (read/set/flush allocate 0 B/op as before).
+**Stable 1.5.0.** Graduates `1.5.0-rc.3` to the release line with **no further engine
+change** -- `Signal.js` / `Signal.d.ts` are byte-identical to rc.3 past the version
+header, and the zero-GC gates (`bench/torture/run.mjs` 22/22) are unchanged. This is
+the first stable to carry the **1.4.5 `createRegistry` input validation** (folded in
+at rc.3; see below) on top of the 1.5.0 surface: `signalBox` / `computedBox`,
+`createRoot`, and `getOwner` / `runWithOwner`. Drop-in over 1.4.5 for the callable
+API; the only observable delta on existing code is `stats()` growing 11 -> 13 keys
+(purely additive). The full rc/beta history is retained below.
 
-### Fixed
+## [1.5.0-rc.3] -- 2026-08-20
 
-- **`prealloc:"eager"` with an absurd capacity no longer kills the process.**
-  `{maxNodes: Infinity}` and `{maxNodes: 1e9}` (a plausible typo for `1e5`) used to
-  run an unbounded construction loop and SIGABRT the process with an uncatchable
-  "Ineffective mark-compacts near heap limit" -- not a throw, so `try/catch` could
-  not see it and a supervisor got a crashed worker instead of an error. Eager
-  construction now refuses by name above a `(maxNodes + maxLinks) > (1 << 24)`
-  ceiling, throwing a `TypeError` prefixed `createRegistry: "maxNodes"` (or
-  `"maxLinks"`) that suggests `prealloc:"lazy"` for an unbounded on-demand ledger.
-- **Fractional and non-positive capacities are rejected at construction.**
-  `{maxNodes: -1}`, `0`, `null`, `NaN` used to build a registry that died on first
-  use with `TypeError: Cannot read properties of undefined (reading 'nextFree')`;
-  `{maxNodes: 1.5}` was accepted and surfaced later as a `CapacityError`. All now
-  throw `createRegistry: "maxNodes"` (finite integer >= 1) at the call that made
-  the mistake.
+Backports the **1.4.5 `createRegistry` input validation** (all four findings) onto
+the rc.2 engine. This is the first engine change since the RC line began -- the hot
+paths are still byte-identical to 1.4.0; only `createRegistry`'s *cold* construction
+path gained validation, so the zero-GC gates (`bench/torture/run.mjs` 22/22) are
+unchanged. If you had a typo in your registry config, you will now hear about it.
 
-### Changed
+### Added -- createRegistry validates its config (fail closed)
 
-- **Every option is validated by name.** `maxNodes` / `maxLinks` / `maxFlushPasses`
-  must be finite integers >= 1; `prealloc` exactly `"eager"` or `"lazy"`;
-  `onCapacityExceeded` exactly `"throw"` or `"grow"`; `config` itself a plain object
-  or `undefined` (`null`, `42`, `"eager"` are rejected). A bad value throws a
-  `TypeError` prefixed `createRegistry: "<option>"`.
-- **Unknown keys throw with a did-you-mean hint.** `{maxNods: 32}` and
-  `{preAlloc: "lazy"}` used to build a default registry and run -- the misspelled
-  key silently ignored, so the capacity or the population strategy you asked for
-  never took effect. They now throw and suggest the intended key. If you had a typo,
-  you will now hear about it at construction instead of debugging it as production
-  jitter. A one-character `prealloc` typo in particular used to flip an eager pool
-  to lazy silently, selling back the zero-GC latency contract eager exists to buy.
-- **`stats()` returns 13 keys** (was 11): adds `nodePoolPopulation` and
-  `linkPoolPopulation`, the PHYSICAL count of constructed pool objects, distinct
-  from the `*Capacity` ledgers. Under `"eager"` population equals capacity; under
-  `"lazy"` it starts at 0 and grows on demand. This is the instrument that lets a
-  caller confirm an eager pool actually preallocated -- previously `stats()`
-  reported only the ledger and was blind to a `prealloc` typo. No existing key
-  removed or changed; two free array-length reads, no allocation.
+- **Bounded eager construction.** `prealloc:"eager"` with a non-finite or absurd
+  capacity (`maxNodes:Infinity`, `maxNodes:1e9`) previously ran an unbounded
+  construction loop and killed the process with an **uncatchable SIGABRT**. It now
+  throws a `TypeError` **by name**, before allocating, gated on `(maxNodes+maxLinks)`
+  against a ceiling of `1<<24` (16,777,216) objects. `prealloc:"lazy"` keeps its
+  unbounded on-demand ledger, untouched.
+- **Per-option validation by name.** `maxNodes` / `maxLinks` / `maxFlushPasses` must
+  be finite integers `>= 1`; `prealloc` must be exactly `"eager"` | `"lazy"`;
+  `onCapacityExceeded` must be exactly `"throw"` | `"grow"`. Each bad value throws a
+  `TypeError` prefixed `createRegistry: "<option>"` at construction -- not a delayed
+  internal `nextFree` TypeError on first use.
+- **Config-shape gate.** A non-object, `null`, or array `config` throws
+  `createRegistry: "config"` rather than dying later.
+- **Unknown-key rejection with did-you-mean.** An unrecognized key throws with a
+  Levenshtein suggestion (`maxNods` -> `maxNodes`, `preAlloc` -> `prealloc`) instead
+  of being silently ignored.
+- **`stats()` gains `nodePoolPopulation` / `linkPoolPopulation`** -- the TRUE count
+  of physically constructed nodes/links (`nodePool.length` / `linkPool.length`),
+  distinct from the `*Capacity` ledgers. A silently mis-set `prealloc` is now
+  observable (population 0 under lazy) instead of telemetry-blind. **This is the one
+  observable API change: `stats()` grows 11 -> 13 keys, purely additive** -- no
+  existing key changed; only an exact key-*count* assertion is affected (updated
+  in `test/03-pool.test.mjs`).
 
 ### Tests
 
-- `test/28-config-validation.test.mjs` -- the full 25-config matrix: every
-  malformed row throws a `TypeError` naming the option (never reaching the internal
-  `nextFree` path), every accepted row is explicitly listed, plus the retained
-  heap-delta / population check that `"eager"` at `maxNodes:200000` retains >20 MB
-  with `nodePoolPopulation === 200000` and `"lazy"` retains ~0 with
-  `nodePoolPopulation === 0`.
-- `test/28-config-oom.child.mjs` -- the three OOM rows (`maxNodes:Infinity`,
-  `maxNodes:1e9`, `maxLinks:Infinity`) run as isolated child processes under
-  `--max-old-space-size=256`, each asserting a caught named `TypeError` and a clean
-  exit (the fix must not SIGABRT).
+`test/30-config-validation.test.mjs` adds the full 25-config matrix, the did-you-mean
+cases, the eager ceiling, the population contract, and the three OOM rows as isolated
+child-process cases (`test/30-config-oom.child.mjs`) proving the fixed engine throws
++ exits 0 under a 256 MB cap where the unvalidated engine died.
 
-## [1.4.4] -- 2026-08-03
+## [1.5.0-rc.2] -- 2026-08-18
 
-The verification-surface patch, round four. **The engine is unchanged**: as in
-1.4.1/1.4.2/1.4.3, the only edit to `Signal.js` is the version string in its header
-banner, and `Signal.d.ts` is untouched. Everything here lives in `bench/torture/`
-and `test/`, neither of which ships the engine -- `files[]` excludes `bench/`. If
-you consume the package, 1.4.4 is byte-for-byte 1.4.3 plus a version number.
+Version-only bump over rc.1; engine byte-identical past the header. Superseded by
+rc.3, the first entry to carry an engine change.
 
-1.4.3 gated the zero-GC claim. This round closes the remaining gaps at the ERROR
-edges -- the paths that only run when user code throws or a graph is pushed past a
-structural limit -- and turns the three soaks from liveness-only into
-value-correctness gates.
+## [1.5.0-rc.1] -- 2026-07-27
 
-### Added -- two semantic scenarios (suite now 22)
+Release candidate for 1.5.0. Promotes `1.5.0-beta.8` with **no engine change** --
+`Signal.js` and `Signal.d.ts` are FROZEN: byte-identical to beta.8, hot paths
+byte-identical to 1.4.0. What this RC finalises is the *torture surface*: it is
+brought to full **parity with 1.4.4** at **22 scenarios (19 semantic + 3 soak)**.
+This work is **verification-only** -- the added test/bench material OBSERVES the
+frozen engine and pins its ACTUAL behaviour; nothing in the engine moved.
 
-- `bench/torture/error-torture.mjs` -- throwing effect BODIES under flush.
-  `flushEffects` buffers each per-effect throw into a pre-allocated buffer, keeps
-  the remaining queued effects running, and only then surfaces what it caught:
-  a single throw is re-thrown UNWRAPPED (the original error), two-or-more become a
-  single `AggregateError` carrying EXACTLY those errors in order. This is a stress
-  scenario, not a unit duplicate of `test/09-conformance`: it asserts what the unit
-  tests do not -- that survivors in the same pass still run, and that the buffer
-  returns to baseline under 4096 throw/clean cycles so nothing bleeds between
-  flushes (a clean flush after a throwing one throws nothing, `stats()` never
-  drifts).
-- `bench/torture/deep-chain-torture.mjs` -- `pullComputed` recursion, fail-closed.
-  `pullComputed` is call-stack recursive, so a deep computed chain read fails
-  CLOSED with a `RangeError` beyond the host stack rather than corrupting anything.
-  Depth is RAMPED, never pinned (the exact throwing depth is host-dependent): it
-  asserts only that some depth <= 100k throws a `RangeError`, then that the registry
-  that threw is STILL usable (a fresh small graph builds and evaluates correctly,
-  effects included) and that the iterative PUSH path -- an equally deep effect
-  cascade, flush-pass budget raised to match -- propagates end to end without
-  throwing, contrasting the heap-iterative scheduler against the stack-recursive
-  pull.
+### Changed -- the torture suite is now at full 1.4.4 parity (22 scenarios)
 
-### Added -- `test/27-throwing-equals.test.mjs`, a throwing user `equals`
+The `bench/torture/` runner (`run.mjs`) now registers **22** scenarios in two
+groups -- **19 semantic + 3 soak** -- up from the sixteen (13 semantic + 3 soak)
+the earlier RC listed. Six scenarios are finalised here, ported from 1.4.4 and
+re-pointed / re-targeted to the surface 1.5.0 actually ships:
 
-`equals` is user code the engine calls on the hot write/recompute path and does
-not sandbox. This file pins its behaviour at all three call sites: (a) the signal
-`set` pre-check -- the original error propagates and the signal is left unmutated,
-no downstream fires; (b) the batch revert check -- PINNED, not asserted-as-atomic:
-the throw at that site happens after `node.value` was written but before the
-version bump, so the net value is correct yet downstream FIRES (the throw stranded
-the version bump, defeating the revert), documented exactly so a future move to an
-atomic revert trips the pin; (c) computed re-eval -- caught, cached as
-`FLAG_HAS_ERROR`, re-thrown on every read until a dep change re-evaluates cleanly
-and clears it.
+- `owner-torture` -- getOwner/runWithOwner capture-restore, live adoption +
+  cascade-dispose, ABA stale-handle -> rooted degradation, dep isolation. 1.5.0
+  has no `createScope`, so every owner scope is built from an **effect as the
+  unit of ownership** (getOwner() inside an effect body captures that effect;
+  its stop() cascade-disposes adopted children).
+- `error-torture` -- throwing effect bodies: per-effect buffering, exact-order
+  `AggregateError`, single-throw re-thrown unwrapped, buffer drain flat over
+  4096 throw/clean cycles. Confirmed byte-identical to 1.4.4 (Signal.js :816 /
+  :823-825 / :829-839).
+- `deep-chain-torture` -- `pullComputed` recursion fails closed with a
+  **RangeError** at depth; the iterative push path stays open at equal depth.
+- `zerogc-torture` -- the zero-GC hot path made falsifiable via
+  `@zakkster/lite-gc-profiler` (a **dev-only** dependency; `dependencies` stays
+  empty). `ZEROGC_BREAK=1` self-test confirmed to reject a planted allocation.
+- `introspect-torture` -- describe/forEach*/hasObservers/ownerOf + the ABA
+  gen-stamp guard. Section 7 (ownerOf/forEachOwned) re-targeted off `createScope`
+  onto an effect-body owner.
+- `lifecycle-torture` -- createRoot detachment + destroy registry reset; the
+  root-vs-owner scenario nests `createRoot` inside an effect body so detachment
+  is observable. `destroy()` leaves `stats().activeNodes === 0`.
 
-### Changed -- capacity ceiling + soak value oracles
+**First-time execution on the 1.5.0 engine.** Several lanes that only ever
+SKIPPED on earlier cuts now EXECUTE here for the first time: `box-torture`
+(signalBox/computedBox), the **`churn-box`** lane inside `zerogc-torture`
+(signalBox create+dispose churn -- retains 0 B/call, `poolGrowths` delta 0,
+`activeNodes` back to baseline), and the owner/root lifecycle scenarios
+(`lifecycle-torture` + `owner-torture` via getOwner/runWithOwner/createRoot).
 
-- `bench/torture/capacity-torture.mjs` gains the 16x link grow ceiling: under
-  `grow`, link growth is capped at `maxLinks * 16` and throws `CapacityError`
-  with `kind: "links"` and `capacity` equal to the ceiling AT the ceiling --
-  growth terminates exactly at `16x` (`linkPoolCapacity === 128` for `maxLinks: 8`,
-  not one chunk over) -- and the overflowed computed still re-throws on read
-  rather than leaking a partial sum. Every pre-existing case is intact.
-- `graph-fuzzer.mjs`, `torture-soak.mjs`, `scheduler-bench.mjs` each gain a
-  value-correctness ORACLE. Each shadows its signals in a single `Int32Array`
-  allocated ONCE outside the churn loop, updated in lockstep with every write, and
-  asserts the engine's value equals the model on a rotating window each tick plus a
-  full sweep at teardown -- zero per-tick allocation, so the implicit pool-to-floor
-  gate is not regressed. All prior liveness assertions (0 errors, pool-to-floor,
-  JIT sink advanced) are preserved; the soaks now assert value-correctness, not
-  just liveness. Mutation-verified: corrupting one shadow write makes the soak exit
-  non-zero.
+Every scenario feature-detects and **skips cleanly** below the version that
+introduces its feature. On the 1.5.0 engine the runner executes **15 semantic
+scenarios** and reports a clean SKIP for the four feature-gated later-version
+ones: `scope-torture` (1.6.0 `createScope`), `flush-torture` (1.7.0
+`flushStrategy`), `cleanup-return-torture` (1.8.0 effect-return cleanup), and
+`dispose-torture` (1.9.0 `Symbol.dispose`). Each of the three soaks now carries
+an `Int32Array` value-correctness oracle (allocated once, a rotating sampled
+window per tick with zero per-tick allocation, a full sweep at teardown).
 
-### Verified -- full suite green on the 1.4.4 engine (Node 22, `--expose-gc`)
+**Final verification for this RC (`--expose-gc`):**
 
-- **Torture:** 22/22 -- `error-torture` and `deep-chain-torture` PASS; the three
-  soaks report `value mismatches: 0`.
-- The engine is byte-for-byte 1.4.3; the unit suite grows only by `test/27`
-  (7 new tests) and no prior test regressed.
+| group | result |
+| ----- | ------ |
+| `torture:semantic` | 19/19 pass -- 15 executed, 4 clean skips (scope/flush/cleanup-return/dispose) |
+| `torture:soak` | 3/3 pass -- zero errors, every pool back to its leaf-only floor, oracle sweeps 0 mismatches |
 
-## [1.4.3] -- 2026-08-02
+The mutation-evidence table in `bench/torture/README.md` is unchanged and still
+holds: the soaks catch 1 of 5 injected engine defects, the semantic files catch
+5 of 5, and each of the feature-scoped mutants is caught only by its dedicated
+scenario.
 
-The verification-surface patch, round three. **The engine is unchanged**: as in
-1.4.1 and 1.4.2, the only edit to `Signal.js` is the version string in its header
-banner, and `Signal.d.ts` is untouched. Everything here lives in `bench/torture/`,
-which does not ship -- `files[]` excludes it. If you consume the package, 1.4.3 is
-byte-for-byte 1.4.2 plus a version number.
+### Changed -- README and llms.txt torture sections corrected
 
-1.4.2 completed the forward-compatible torture superset. This release adds the one
-scenario that was still missing: the zero-GC claim, gated. The headline promise --
-writing through an already-built reactive graph allocates nothing -- was, until
-now, asserted only by a hand-rolled `perf_hooks` scavenge counter that lived in a
-`futureVersions/` sketch and never ran in CI. That meter is deleted and replaced by
-a real gate driven by `@zakkster/lite-gc-profiler@^1.15.0`.
+Both root docs now describe the **22-scenario suite (19 semantic + 3 soak)**, the
+15-run / 4-skip split on the 1.5.0 engine, the six scenarios finalised in this RC,
+and the feature gates -- matching `bench/torture/run.mjs`. The unit test count is
+updated for the new `test/29-throwing-equals` (7 tests).
 
-### Added -- `zerogc-torture.mjs`, the zero-GC gate (suite now 20 scenarios)
+### Added -- test/29-throwing-equals
 
-`bench/torture/zerogc-torture.mjs` turns "zero-GC" from a slogan into a
-re-runnable gate. It measures the steady-state hot path against three independent
-witnesses, gated separately because no single one sees everything:
+A new `test/29-throwing-equals.test.mjs` (7 `it()` across three call sites)
+pins the behaviour of a user `equals` predicate that THROWS at each of the three
+LOGICAL sites the engine invokes it on the callable surface: signal-set pre-check
+(Signal.js :1096), batch-revert check (:1103), and computed re-eval (:977). A
+raw grep shows five physical `eq()` calls because 1.5.0's `signalBox` mirrors the
+callable set path with its own pre-check/revert pair (:1201 / :1208); they
+collapse to the same three logical sites and are byte-identical in logic. No
+behavioral divergence from 1.4.4 was observed -- every assertion holds identically.
 
-- **per-call RETAINED bytes** -- `measureAllocs` / `checkAllocs` at
-  `maxBytesPerCall: 0`, the literal zero-retention assertion. Because it measures
-  allocation surviving a forced collection (min across batches), it also proves
-  the create+dispose CHURN case: a callable handle allocates transiently, is
-  reclaimed, and retains 0 -- the pool absorbing the node.
-- **major GC count and longest pause** -- `measureOps` (`stabilize: 'deep'`) /
-  `checkNoGc` at `maxMajor: 0` / `maxPauseMs: 2`. A zero-alloc window forces no
-  major collection regardless of length; a nonzero count is transient garbage the
-  retained-bytes settling would hide.
-- **the engine's own `stats()` counters** -- steady scenarios: `poolGrowths` and
-  `totalAllocations` do not move across the window (no node pulled, pool never
-  grew); churn scenarios: `poolGrowths` stays 0 and `activeNodes` returns to its
-  baseline (every acquired node recycled, none leaked).
+### Notes -- unit suite and the devtools real-boot rig
 
-The scenario states its non-goal as loudly as its goal: node CREATION is **not**
-zero-alloc (the callable API allocates two closures per `signal`, a `signalBox`
-allocates its wrapper); the pool removes the internal NODE allocation, never the
-public HANDLE. Five deterministic graph shapes are gated -- deep chain x16, wide
-fan-out x32, batched 8-signal writes, and create+dispose churn on both the
-callable and (self-skipping below 1.5.0) the box form. `ZEROGC_BREAK=1` arms an
-effect that pushes a fresh object into a module-level sink on every write:
-mutation-verification that `checkAllocs` rejects a planted allocation, and that
-reaching the PASS line with the break armed is itself a failure (a gate blind to a
-planted leak is blind to a real one). Registered in `run.mjs` as a `semantic`
-scenario; the suite is now **20 scenarios (17 semantic + 3 soak)**.
+The unit suite is **461 tests: 460 pass + 1 skip, 0 fail** (the architectural SSR
+N/A in `17-reactivity`) in the full workspace, i.e. with the sibling
+`@zakkster/lite-devtools` resolvable, and now includes the 7-test
+`test/29-throwing-equals`. `test/25-devtools-real-boot.test.mjs` is a 10-test
+real-rig that boots the installed Devtools against the local engine; a bare
+checkout without that sibling cannot resolve the specifier and reports 10 fewer.
+No engine test regressed; the gap is purely the sibling package's presence.
+`@zakkster/lite-gc-profiler` is added to `devDependencies` for `zerogc-torture`;
+it is dev-only and `dependencies` stays empty (zero runtime deps).
 
-### Removed -- the orphaned hand-rolled meter
+Nothing new ships in the tarball: `files[]` still excludes `bench/`, so this RC's
+publishable surface (`Signal.js`, `Signal.d.ts`, `Watch.js`, docs) is identical
+in bytes to beta.8 apart from the version strings. Drop-in over 1.5.0-beta.8.
 
-`futureVersions/zgc/` (the `perf_hooks` scavenge-counting gate, its `Watch.stub.mjs`,
-core, scenarios, and node:test wrapper) is deleted. Its scenario shapes are ported
-into `zerogc-torture.mjs`; its bespoke measurement is superseded by the profiler.
-Also removed: `bench/torture/index.mjs`, a stale non-ASCII duplicate of
-`bench/torture/helpers/index.mjs` that no scenario imported. Neither path ships
-(`files[]` excludes `bench/`).
+## [1.5.0-beta.8] -- 2026-07-22
 
-### Changed -- one devDependency
+### Added -- `box-torture`, and the torture suite reaches the box surface
 
-`@zakkster/lite-gc-profiler@^1.15.0` added to `devDependencies` (dev-only; the
-package still has zero runtime dependencies and `files[]` ships no test code).
+The 1.4.1 torture reorganization -- one runner (`bench/torture/run.mjs`), the
+`semantic` / `soak` split, the shared `helpers/`, and the five semantic
+scenarios -- is the floor this release builds on. 1.5.0 adds a sixth semantic
+scenario, `box-torture`, targeting the new `signalBox` / `computedBox` surface.
 
-### Verified -- full suite green on the 1.4.3 engine (Node 22, `--expose-gc`)
+The boxes are documented as the same `ReactiveNode` and the same zero-GC
+read/write path as the callable forms, with full interop in one graph. That is
+precisely the kind of claim that rots silently: a divergence between the two
+representations produces correct-looking behaviour in any test that exercises
+only one of them. So `box-torture` does not lead with box-specific unit
+assertions. Its centrepiece is the same differential fuzz `oracle-fuzzer` runs --
+a random DAG checked against an independent uncached reference evaluator -- with
+**every node independently realised as either a callable or a box**. The
+reference does not know which is which. If the two representations ever disagree
+on a value, on equality, or on dynamic dependency tracking, a mixed graph is
+where it surfaces and a single-representation suite never would. The remainder
+pins the surface the callables do not have (`subscribe` immediate-fire /
+untracked-callback / idempotent-disposer, `update`) and the allocation-light
+representation itself (zero own enumerable data beyond the two internal handle
+slots, a stable shared prototype, never `setPrototypeOf`) -- the last being a
+design law, not an implementation detail.
 
-- **Torture:** 20/20 -- `zerogc-torture` PASS (three witnesses green across all
-  five graph shapes; `churn-box` a clean skip on 1.4.x). `ZEROGC_BREAK=1` exits
-  non-zero and names `injected` (retained 32 B/call).
-- The engine is byte-for-byte 1.4.2; the unit suite is unaffected (425 total,
-  415 pass, 0 fail, 10 skip).
-
-## [1.4.2] -- 2026-07-28
-
-The verification-surface patch, round two. **The engine is unchanged**: as in
-1.4.1, the only edit to `Signal.js` is the version string in its header banner,
-and `Signal.d.ts` is untouched. Everything here lives in `bench/torture/`, which
-does not ship -- `files[]` excludes it. If you consume the package, 1.4.2 is
-byte-for-byte 1.4.1 plus a version number.
-
-1.4.1 added five semantic scenarios and left the torture directory at eight. This
-release completes it: eleven more scenarios land, and one runner now drives the
-whole forward-compatible superset -- **19 scenarios (16 semantic + 3 soak)** --
-across every version from this 1.4.x base through 1.9.
-
-### Added -- eleven torture scenarios completing the 19-scenario suite
-
-Each new scenario **feature-detects and skips cleanly** on an engine that predates
-its feature: it prints `SKIP: <feature> requires <version>+` and exits 0 rather
-than failing, which is what lets one directory ride every version on the rebuilt
-line. Three run fully on this 1.4.x base; six self-skip until their feature exists;
-two more run on the surfaces 1.4.x already has:
-
-- **`op-accounting.mjs`** -- structural work read from the `onGraphMutation`
-  opcode lane (op 1-5): the op5 identity (op5 == computed recomputes + effect
-  executions), equality cutoff, diamond glitch-freedom by recompute count,
-  link/node balance, laziness, and a 400-seed op5-vs-wrapper differential.
-- **`introspect-torture.mjs`** -- the read-only introspection surface
-  (`describe` / `nodeId` / `forEach*` / `hasObservers` / `isTracking` / `ownerOf` /
-  `observeObservers`): walk agreement against the real edge set including dynamic
-  rewiring, `hasObservers` transitions, `observeObservers` connect/disconnect
-  edges, and the ABA gen-stamp guard (a stale descriptor must resolve to nothing,
-  never a recycled resident).
-- **`lifecycle-torture.mjs`** -- `destroy` (1.4.0+) registry reset: handles staled
-  via gen-bump, stale writes no-op, pool reusable, idempotent. Its `createRoot`
-  half (1.5.0+) self-skips on this base, and the PASS line reflects only what ran.
-- **`async-torture.mjs`** -- `watch` / `when` / `whenAsync` contracts + a 300-seed
-  projection-guard storm.
-- **`capacity-torture.mjs`** -- the fail-closed pool boundary: exact node/link
-  ceilings, `CapacityError`, `grow` mode crossing the boundary, no partial value
-  escapes.
-- **`box-torture.mjs`** (1.5.0+), **`scope-torture.mjs`** (1.6.0+),
-  **`owner-torture.mjs`** (1.6.0+), **`flush-torture.mjs`** (1.7.0+),
-  **`cleanup-return-torture.mjs`** (1.8.0+), **`dispose-torture.mjs`** (1.9.0+) --
-  present and gen-guarded; each reports a clean SKIP on the 1.4.x engine.
-
-### Changed -- one runner for the whole suite
-
-`bench/torture/run.mjs` now registers all 19 scenarios in two groups (`semantic`,
-`soak`), child-process-isolated (several assert on global pool accounting). New
-flags: `--group semantic|soak`, `--list`. `npm run torture` /
-`torture:semantic` / `torture:soak` drive them.
-
-### Verified -- full suite green on the 1.4.2 engine (Node 22, `--expose-gc`)
-
-- **Torture:** 19/19 -- `torture:semantic` 16/16 (10 executed, 6 clean skips:
-  box 1.5.0, scope/owner 1.6.0, flush 1.7.0, cleanup-return 1.8.0, dispose 1.9.0),
-  `torture:soak` 3/3 (zero errors, every pool back to its leaf-only floor).
-- The engine is byte-for-byte 1.4.1; the unit suite is unaffected.
-
-## [1.4.1] -- 2026-07-21
-
-The verification-surface patch. **The engine is unchanged**: the only edit to
-`Signal.js` is the version string in its header banner, and `Signal.d.ts` is
-untouched. Everything here lives in `bench/torture/`, which does not ship --
-`files[]` excludes it. If you consume the package, 1.4.1 is byte-for-byte 1.4.0
-plus a version number.
-
-What changed is what the repo can *prove* about that engine. The torture
-directory used to answer two questions -- did anything throw, and did the pool
-come back -- and both are liveness questions. Neither reads a value and asks
-whether it is right. This release adds five scenarios that assert on meaning,
-and fixes the three existing soaks, which had been lying in small ways.
-
-### Added -- five semantic torture scenarios
-
-The three pre-1.4.1 soaks (`graph-fuzzer`, `scheduler-bench`, `torture-soak`)
-pass green on an engine whose computeds return stale values. That is not a
-hypothesis. Flipping the clean short-circuit in `pullComputed` from `<= 0` to
-`<= 1` -- a one-character edit, exactly the shape a perf tweak makes -- keeps the
-pool perfectly balanced, throws nothing, and all three soaks report PASS. The
-new scenarios exist to close that gap.
-
-- **`oracle-fuzzer.mjs`** -- differential correctness. Drives a random DAG and,
-  after every operation, compares **every** computed against an independent
-  reference evaluator that recomputes from the leaves with no caching, no
-  versioning and no short-circuit. The reference shares no code with the engine,
-  so a bug in the engine's invalidation cannot hide in the oracle too. Node
-  shapes cover static fan-in (`sum`), dynamic dependency sets (`select`, which
-  reads a selector then exactly one dep, so the source set moves between
-  evaluations), and value passthrough (`identity`, which preserves `-0` and `NaN`
-  where a `sum` would normalise them away). Failures print the seed and a
-  minimised operation log so they replay.
-- **`glitch-hunter.mjs`** -- glitch freedom across diamond topologies plus exact
-  wakeup accounting. An engine may not expose an intermediate state in which two
-  branches of a diamond disagree about which epoch they reflect.
-- **`work-accounting.mjs`** -- minimum body-execution counts across 10 fixed
-  topologies. Pins that the engine does *exactly* the necessary work: no
-  recompute of an unaffected node, and no skipped recompute of an affected one.
-  Both directions fail loudly.
-- **`concurrent-storm.mjs`** -- reentrancy, nesting and flush ordering against
-  eight documented contracts: self-write termination, mutual A->B->A loops
-  tripping `CycleError` rather than hanging, nested batches flushing only at the
-  outermost boundary, effects scheduled *by* a pass draining in the *next* pass,
-  writes and reads inside cleanup, dispose-mid-flush, self-disposal from inside
-  a body, and async writes interleaved with flushes.
-- **`scheduler-storm.mjs`** -- deferred-execution hazards under saturation. The
-  cached `schedulerThunk` is gen-bound; `dispose` bumps `gen`, so a `run` the
-  scheduler is still holding must become a silent no-op and must **not** fire the
-  new resident once that pool slot is recycled. That is a textbook ABA hazard and
-  the guard is one `===` away from being wrong. Also pins that `FLAG_QUEUED` is
-  cleared only inside `executeEffect` (which is what makes a microtask scheduler
-  coalesce N writes into one run), and that a throwing scheduler does not take
-  the rest of the flush pass down with it.
-
-Where no contract is documented, these files **pin the observed behaviour** and
-say so at the scenario, rather than asserting an invented one.
-
-#### Measured discrimination
-
-Each scenario was validated by mutating the engine and confirming the scenario
-fails, then restoring. Recorded because a torture suite nobody has mutation-
-tested is decoration:
+Mutation-verified, and the mixed-graph dimension is not decorative:
 
 | mutant | caught by | missed by |
 | ------ | --------- | --------- |
-| `pullComputed` short-circuit `<= 0` -> `<= 1` | oracle-fuzzer (400/400 seeds), glitch-hunter, work-accounting | all three legacy soaks |
-| drop `node.gen === gen` from the cached thunk | scheduler-storm | **the entire 405-test unit suite** |
-| `batch` flushing at every boundary, not the outermost | concurrent-storm | -- (unit suite catches it too) |
+| `boxGet` skips dependency tracking | box-torture (299/300 seeds) + unit `24-signalbox` | -- |
+| `computedBox` default equality `Object.is` -> `===` | **box-torture only** (33/300 seeds) | unit `24-signalbox` (12/12 pass), callable-only `oracle-fuzzer` (400/400 pass) |
 
-The ABA row is the reason this release exists: 405 unit tests pass on an engine
-whose stale thunks fire into recycled pool slots.
+The second row is the reason the scenario exists. A `computedBox` that silently
+downgrades its default equality is invisible to the box unit suite and to the
+callable fuzzer; only a graph that mixes both representations and fuzzes the
+`-0` / `NaN` value boundary at a box-computed node position catches it.
 
-### Added -- one entry point, two groups
+`24-signalbox` moves from `{skip:true}` (its state on the 1.4.x line, where the
+API did not exist) to fully live. The unit count rises to **453 passing** (1
+skip, the architectural SSR N/A in `17-reactivity`), up from 405 on 1.4.1.
 
-`bench/torture/run.mjs` replaces the ad-hoc shell loops people were writing
-around six separate `node --expose-gc bench/torture/<file>.mjs` invocations.
+### Changed -- torture sources are ASCII (again)
 
-```bash
-npm run torture              # everything
-npm run torture:semantic     # correctness only, ~10s, CI-shaped
-npm run torture:soak         # resource soaks only
-node bench/torture/run.mjs --list
-node bench/torture/run.mjs --seconds 30 --bail
-node bench/torture/run.mjs oracle glitch    # substring match on names
-```
+`bench/torture/box-torture.mjs` shipped with em dashes and box-drawing
+characters, and `helpers/index.mjs` had regained them. `Signal.js` is pure ASCII
+and the ecosystem source rule permits only the sanctioned multiplication and
+micro signs, so both were normalised (`--`, `<=`, `-`). The published surface is
+unaffected either way -- `files[]` excludes `bench/`.
 
-Scenarios are split into **`semantic`** (deterministic, fast, assert on meaning
--- belong in CI on every commit) and **`soak`** (wall-clock bound, assert on
-resources -- belong in a nightly or pre-publish job). Each scenario stays a
-standalone executable module, and the runner **spawns them as child processes**
-rather than importing them. That is deliberate: several assert on global pool
-accounting and on the default registry, so running two in one process would let
-the first one's residue poison the second's baseline. Process isolation is the
-only thing that makes those assertions mean anything.
+### Changed -- benchmark harness rewritten (bench protocol v3, breaking)
 
-`--expose-gc` is passed by the runner unconditionally. It is not optional:
-several scenarios force collection to settle finalizers, and without it they
-would silently degrade to asserting nothing rather than failing loudly.
+`bench/` is rebuilt around three instruments with fixed, non-shared configs and a
+machine-generated `#STAMP` on every output (engine + harness sha256, the live
+registry config echoed from the same frozen object handed to `createRegistry`,
+host, node): the **microscope** (`benchmark.mjs` -- lite's recommended eager config
+on six first-party shapes), the **mirror** (`mirror.mjs` + `sweep.mjs` -- Andrii's
+canonical adapter verbatim, cross-framework rows diffing 1:1 against his log), and
+**version economics** (`harness/toe-to-toe`). Hand-written result headers are
+abolished; nothing is publishable without a `#STAMP`. See `bench/README.md`.
 
-### Added -- shared torture infrastructure
+### Deprecated -- `bench-reactive-legacy`
 
-`bench/torture/helpers/index.mjs` collects what every soak had grown its own
-copy of: the seeded `mulberry32` PRNG (so a failure replays from its seed
-alone), the `soakRegistry` / `fixedRegistry` constructors, and `createReport`,
-which **collects failures instead of throwing on the first one** -- torture
-output is read once, usually in CI, and "fix, rerun, discover the next one" is a
-slow loop.
+The pre-v3 five-framework reactivity suite (`benchmarkReactive.mjs`) is retained one
+release as `bench-reactive-legacy` and will be **removed after 1.5.1**. Use the
+mirror for cross-framework standing.
 
-It also holds `VALUE_POOL`, the adversarial value domain. An earlier draft of
-the oracle used integers only, and a mutant that swapped the default equality
-from `Object.is` to `==` sailed straight through, because on integers the two
-agree. The pool now contains the pairs where the candidate definitions
-disagree: `Object.is` vs `===` differ on `NaN` and on `-0`/`0`; `===` vs `==`
-differ on `0`/`""`/`false`/`"0"` and `null`/`undefined`. Equality decides whether
-a write propagates at all, so it has to be fuzzed with values that can tell the
-definitions apart.
+### Added -- Coveralls coverage badge
 
-The module is deliberately dependency-free and side-effect-free: importing it
-must not touch the default registry, or an import would quietly allocate and
-poison the pool baselines the scenarios assert on.
+README carries a Coveralls badge; lcov is produced by `npm run test:report`
+(`coveralls-next` in devDependencies).
 
-### Fixed -- the soaks printed `impossible` on a healthy run
 
-All three legacy soaks used a magic-constant guard as a JIT sink
-(`if (acc === 1234567) console.log("impossible")`) to stop V8 eliminating the
-accumulator loops that make the engine do real work. Those constants are
-**reachable**: a 1.4.0 soak run printed `impossible` for real, because the
-accumulator genuinely landed on the sentinel. The sink polluted stdout on a
-passing run, which is how a CI log teaches people to ignore it.
+### Fixed -- dangling re-tracking cursor on source disposal (crash)
 
-Replaced with a module-scoped int32 sink accumulated in the loop and read at
-teardown. It never prints -- and it now carries an assertion the old form could
-not: **if the sink never advances, the run fails**, because that means the work
-loops were optimised away and the soak measured nothing. Previously that failure
-mode was undetectable.
+Disposing a signal/computed from inside an observer that had linked it on the
+previous run, but had not yet re-read it on the current run, crashed with
+`TypeError: Cannot set properties of null (setting 'headSub')`. `disposeNode`'s
+sub-list teardown freed the link while the observer's re-tracking cursor
+(`activeObserverCurrentDep`) was still parked on it; `severTail` then walked from
+a freed link, wiped the observer's `headDep`, and double-freed the link. Reachable
+from the plain public API (see `COVERAGE-NOTES.md` for the repro). Fixed with a
+one-line cursor repair in `disposeNode` (advance the cursor to the next surviving
+dep before the free); O(1), disposal path only, no steady-state cost. The now-dead
+`freeLink` `-1` defensive ternaries were removed with it. Pinned by a regression
+test in `test/12-coverage.test.mjs`.
 
-### Fixed -- "pool returned to baseline" was not what was being asserted
+### Changed -- branch coverage closed to 100%
 
-The soaks printed a `baseline` (e.g. `7500 / 17992`), a post-teardown figure
-(`2500 / 0`), and then declared that the pool had "returned to baseline". Those
-numbers never match and were never supposed to: teardown disposes the computeds
-and effects and leaves only the signals alive, so the real assertion is a
-leaf-only floor of `N_SIGNALS + 8`. The verdict did not describe the check.
+Branch coverage on `Signal.js` went `97.35% -> 100%`. Three reachable branches
+gained tests (`allocateLink` dead-target gate, `executeEffect` scheduler
+re-entrancy, `computed` stale-handle read), the new box + owner surface gained
+tests (box stale-handle guards, `computedBox` `equals`, top-level `getOwner` /
+`runWithOwner` delegators), and the two provably-unreachable clamps (link-ledger,
+`batchEpoch` wraparound) carry `/* c8 ignore */` with proofs. See
+`COVERAGE-NOTES.md`; reconfirm under codify.
 
-- the pre-run stat is now labelled `pre-soak`, not `baseline`;
-- the floor actually asserted on is printed
-  (`post-teardown floor asserted: <= 2508 nodes / 0 links`), so a reader can
-  check the verdict against the numbers instead of trusting it;
-- the pass line reads `pool drained to its leaf-only floor`.
+### Tooling -- harness reorganization (no engine change)
 
-### Fixed -- `helpers/` resolution
+The loose `harness/` probes are now routed through a single dispatcher
+(`harness/run.mjs`) and exposed as npm scripts: `harness:field`,
+`harness:dispose`, `harness:churn`, `harness:owner`, `harness:creation`, and
+`harness:all` (field + dispose + churn in sequence). `harness:field` is the
+portable fieldkit verify + cold-child A/B bench; the rest map one-to-one to the
+existing probe files. Paths resolve from the dispatcher, so the working
+directory no longer matters.
 
-The helpers module was committed at `bench/torture/index.mjs` while the
-scenarios -- and the module's own header docstring -- referenced
-`bench/torture/helpers/index.mjs`. Four of the five semantic scenarios died with
-`ERR_MODULE_NOT_FOUND` before executing a single assertion, leaving the suite at
-1/5 with three stack traces in the log. Moved to the path everything already
-expected. `run.mjs` propagated the failure correctly; nothing else would have
-caught it, because the torture suite is not wired into `npm test` or
-`npm run gate`.
+The empirical owner-recycling reproducer is documented at its real home,
+`harness/owner-hazard-repro.mjs`; the earlier `Publications/...` citations in
+README / CHANGELOG / llms.txt pointed at a path the file was never in, and are
+corrected. The broken parent/child link in the createComputations matrix
+(`creation-isolated.mjs` now resolves `andrii-isolated-child.mjs`) is repaired.
 
-### Changed -- torture sources are ASCII
+Six settled one-off probes -- the five from the 1.2.0 -> 1.2.1 construction-
+shape regression hunt, plus the superseded `repro-set-after-dispose.mjs` (its
+invariant now pinned by `test/07-dispose` and `test/26-free-list-invariant`) --
+are parked in `harness/attic/` with a README explaining each. `Signal.js` is
+untouched and the published `files[]` whitelist is unchanged, so installed
+tarballs are byte-identical; this is a repo-tooling change only.
 
-`bench/torture/*.mjs` carried em dashes, less-than-or-equal glyphs, and 1,820
-box-drawing characters. `Signal.js` is pure ASCII and `bench/benchmark.mjs` uses
-only the sanctioned multiplication sign, which made the torture directory the
-lone outlier against the ecosystem's ASCII-only source rule. Normalised to
-`--`, `<=` and `-`. The directory's `README.md` is left as it is, consistent
-with `bench/README.md`.
+## [1.5.0-beta.2] -- 2026-07-XX
 
-### Added -- `harness/ProfilerTools/` is now checked in
+The re-attach companion to `createRoot`: **`getOwner`** and **`runWithOwner`**
+ship on the same additive-surface story as 1.5.0. **No engine change.** The
+hot-path function bodies (`pullComputed`, `markDownstream`, `executeEffect`,
+`flushEffects`, `allocateLink`, `severTail`, `createNode`, `runCleanup`,
+`disposeNode`) are **verified byte-identical to 1.5.0-beta.1** via sha256 over
+their extracted bodies. The new primitives are ~20 lines of user-API code plus
+two top-level bindings; every read of `currentOwner` still happens at the same
+sites (creation, effect body save/restore, cleanup), and the propagation path
+remains owner-free per the `markDownstream` invariant comment. Drop-in over
+1.5.0-beta.1.
 
-The combined profiler + devtools integration harness has been described in the
-README and wired into `test:harness` / `test:all` since 1.4.0, but its four files
-were never committed. They land here: `harness.test.mjs`, `package.json`,
-`setup.sh`, `README.md`. Verified working -- 5/5 passing, a 7-node / 6-edge
-telemetry DAG discovered through devtools, and `activeNodes 22 -> 22` across
-2,000 driven frames, which is the zero-GC contract holding end-to-end across
-three packages rather than on a microbench.
+### Added -- `getOwner()` and `runWithOwner(ownerHandle, fn)`
 
-Its scope is now stated explicitly in the README and `llms.txt`, because it was
-previously ambiguous and the ambiguity was dangerous: **`setup.sh` hard-pins
-`@zakkster/lite-signal@1.6.0-preview.2` from the registry and nothing resolves
-to `../../Signal.js`.** The harness does not test the working tree. Since
-`npm run test:all` chains it, a passing `test:all` is not by itself clearance to
-publish -- `npm test`, `npm run torture` and `npm run test:hardening` are the
-legs that exercise local changes.
+`getOwner()` returns an **opaque, gen-stamped handle** for the current
+lifecycle owner (or `undefined` outside any effect/computed body).
+`runWithOwner(handle, fn)` runs `fn` with that handle re-installed as the
+current owner: effects and computeds created directly in `fn` are adopted
+by that owner and cascade-dispose when it re-runs or is disposed. Nulls
+the tracking observer for the duration of `fn` (Solid semantics, matching
+`createRoot`'s pairing) so accidental cross-async edges cannot form.
 
-### Not changed
+The handles use the same `describeNode` / `liveNode` ABA-guard machinery
+that `describe` / `nodeId` / `forEachOwned` / `ownerOf` have used since
+1.2.1: a returned descriptor carries an internal `NODE_GEN` stamp, and
+`runWithOwner` resolves via `liveNode()` which checks that the stamp
+still matches the pool slot's current gen. Stale, null, undefined, or
+non-tracker handles all **degrade to rooted execution** -- `currentOwner`
+set to `null`, `fn` runs, created children survive without adoption, and
+the caller is responsible for their disposal (the same contract as
+`createRoot`).
 
-- `Signal.js` behaviour, `Signal.d.ts`, the public API, the hot path, bundle
-  size, and the 1.4.0 `stats()` surface.
-- `npm test` still runs `test/*.test.mjs` only: **405 passing**, unchanged.
-- The torture suite remains opt-in and unpublished.
+### Fixed -- the two hazards the gen guard exists to prevent
+
+The design was originally sketched with raw node pointers -- `getOwner()
+{ return currentOwner; }` and `runWithOwner(node, fn) { const p =
+currentOwner; currentOwner = node; ... }`. That shape is broken in this
+engine because nodes are pooled and the LIFO free list recycles a
+disposed owner's slot into whatever effect/computed is allocated next.
+Two failure modes were empirically reproduced against a 1.5.0-beta
+engine patched with the raw-pointer alternative
+(`harness/owner-hazard-repro.mjs`):
+
+- **Recycled-slot cascade death.** Owner A captured; A disposed; effect B
+  allocated (LIFO -> same slot); `runWithOwner(captured)` silently
+  adopts the continuation into B; B's re-run cascade-disposes it.
+  Measured on the unsafe engine: continuation ran 1 time before
+  stranger disposal, 1 time after (should have been 2, then 3).
+- **Corpse adoption = engine crash.** Same capture, slot NOT yet
+  recycled; `runWithOwner(captured, () => effect(...))` splices a child
+  into a disposed owner's `firstOwned` list; the next disposal walk
+  recurses without termination. Measured: `RangeError: Maximum call
+  stack size exceeded` at `runCleanup` / `disposeNode`. Not a leak, a
+  crash.
+
+Both hazards are pinned in `test/28-run-with-owner.test.mjs` and both
+fail on the raw-pointer sketch; both pass on the shipped
+`describeNode` / `liveNode` implementation. The safe implementation
+degrades both hazards to rooted execution (the continuation runs and
+survives independently of any stranger's lifecycle -- the only honest
+semantics for "the scope you captured no longer exists").
+
+### Added -- `test/28-run-with-owner.test.mjs`
+
+**16 tests**, structured to catch the failure modes above rather than
+just the microtask happy path:
+
+- Basic shape (7 tests): `getOwner()` returns undefined outside any
+  effect/computed and a descriptor inside; `runWithOwner` adopts a
+  nested effect into the captured owner, nulls the tracking observer
+  for reads directly in `fn`, returns whatever `fn` returns, restores
+  previous owner/observer/tracking on return AND on throw, and nests
+  correctly (inner switches, outer unwinds).
+- Degradation (3 tests): `null` / `undefined` / a signal handle all
+  degrade to rooted execution and the created effect works normally
+  (fires on updates, disposable).
+- Hazard pins (3 tests, plus a composed test): the recycled-slot cascade
+  and the corpse-adoption case, each with allocation pressure applied
+  BEFORE `runWithOwner` (a stranger effect is created to force slot
+  recycling), so the ABA guard is genuinely exercised. A follow-up
+  composed test asserts the continuation survives both the stranger's
+  re-runs and its disposal.
+
+Full test suite on 1.5.0-beta.2: **455 total** (439 pre-existing +
+16 new), 444 pass, 0 fail, 1 skip (SSR N/A), 10 cancelled (the
+`25-devtools-real-boot` cases that need `@zakkster/lite-devtools`
+installed as a peer -- pre-existing, unrelated).
+
+### Added -- `harness/owner-hazard-repro.mjs`
+
+A standalone reproducer for the two hazards, callable against any engine
+(`node owner-hazard-repro.mjs <path-to-Signal.js>`). Prints
+`VERDICT: SAFE` on the shipping implementation, `VERDICT: CORRUPTED` +
+a stack overflow on the raw-pointer sketch. Kept in `harness/`
+alongside the other run-on-demand probes rather than under `test/` so it can
+travel to other engines (a candidate 1.6, or a rejected candidate you
+want to confirm) without dragging the whole test tree along.
+
+### Verified -- no hot-path change vs 1.5.0-beta.1
+
+sha256 over the extracted function bodies of `pullComputed`,
+`markDownstream`, `executeEffect`, `flushEffects`, `allocateLink`,
+`severTail`, `createNode`, `runCleanup`, and `disposeNode` matches
+1.5.0-beta.1 byte-for-byte. `currentOwner` is written by exactly the
+sites that wrote it before (creation adoption, effect-body save/restore,
+cleanup), plus the two new user-API primitives. Propagation
+(`markDownstream`) remains owner-free per its documented invariant.
+
+### Not shipped
+
+- Watch.js needs no changes -- `watch` / `when` / `whenAsync` create
+  effects through the normal path and inherit correct adoption under
+  `runWithOwner` automatically. Verified against the safe engine.
+- `runWithOwner` deliberately does NOT accept a callable `signal`
+  handle as an "owner" (signals cannot own). It falls through to
+  rooted execution instead, matching the shape of every other
+  handle-taking introspection API.
+
+## [1.5.0-beta.1] -- 2026-06-XX
+
+The API-surface minor: two new **non-callable, allocation-light** reactive
+primitives, `signalBox` and `computedBox`, land alongside the existing callable
+`signal` / `computed`; and **`createRoot`** lands as the ownership escape hatch
+the owner tree was designed for. They wrap the same `ReactiveNode` machinery and
+interoperate freely in one graph -- a box can depend on a callable and vice
+versa -- so this is an additive surface, not a second engine. Drop-in over 1.4.0:
+the callable API, hot paths, and `stats()` shape are unchanged; the boxes are new
+exports and the `24-signalbox` suite (staged `{skip:true}` since 1.3.0) now runs
+and passes. The 1.3.0 eager pool default carries forward (`prealloc: "eager"`).
+
+### Added -- `signalBox(initial, opts?)` and `computedBox(fn, opts?)`
+
+Non-callable variants that return a plain object on a shared prototype instead of
+a callable function:
+
+- **`signalBox`** returns `{ get, set, peek, update, subscribe }`.
+- **`computedBox`** returns `{ get, peek, subscribe }` (no `set` / `update` --
+  it is derived).
+
+Both are exported as registry methods *and* as top-level helpers bound to the
+default registry, mirroring `signal` / `computed`. The `opts.equals` custom
+equality option is supported on both, same default (`Object.is`).
+
+**Why a second shape.** The callable API (`count()`, `count.set(x)`) is the most
+ergonomic surface, but constructing a callable means building a function object
+and hanging methods/state off it. For code that creates *many* short-lived
+reactive cells, or that wants a plain serializable-looking handle, the box trades
+call ergonomics for cheaper construction:
+
+- **Box creation is faster than callable** -- on this host, 10,000 `signalBox`
+  in ~10ms vs ~18ms for 10,000 callable `signal` (about 1.7x cheaper),
+  because `Object.create(proto)` is cheaper than allocating a closure with
+  attached properties.
+- **The hot read/write path stays zero-GC** -- 200,000 box writes through a
+  256-wide graph allocate nothing and grow the pool zero times. The box is a
+  thin handle over the same pooled node; only the *handle object* differs from
+  the callable, and it is created once.
+
+### Engineering note -- monomorphic boxes via `Object.create`, not `setPrototypeOf`
+
+Each box is built with `Object.create(SIGNAL_BOX_PROTO)` (resp.
+`COMPUTED_BOX_PROTO`) and then has its two own properties (`NODE_PTR`,
+`NODE_GEN`) added in a fixed order. This is deliberate: using `setPrototypeOf`
+on an already-constructed object transitions it to dictionary mode and forces the
+method-call inline caches at `box.get()` / `box.set()` to megamorphic. Building on
+the shared prototype from the start keeps every box monomorphic, so the method
+calls stay inline-cached and fast. This is the same class of V8-closure-tax
+avoidance the engine applies throughout; a rejected earlier prototype that used
+`setPrototypeOf` regressed box method calls and was not shipped.
+
+### Interop -- one graph, two handle shapes
+
+A box and a callable handle wrap the same kind of `ReactiveNode`. Verified both
+directions: a callable `computed` that reads `box.get()` tracks the box as a
+dependency and updates correctly; a `computedBox` that reads a callable
+`signal()` does the same. Glitch-freedom, batching, ownership/auto-disposal, and
+the introspection surface all apply uniformly -- a box node is indistinguishable
+from a callable node to the graph, the owner tree, and devtools.
+
+### Added -- `test/24-signalbox_test.mjs` activated (12 tests)
+
+The suite that was committed-but-skipped since 1.3.0 now runs against the real
+implementation. The 9 originally-staged tests cover box get/set/peek/update,
+computedBox derive + memoize, peek-does-not-track, subscribe fires-and-untracks,
+box<->callable interop both directions, batch coalescing across boxes, dispose
+stopping updates with ABA-safety, and the `equals` short-circuit. The 3
+box-coverage additions for 1.5.0 cover `computedBox.peek` (track-free read on
+the derived shape), the set-then-revert net no-op in a batch (pre-batch revert
+applies to box writes too), and the top-level `signalBox` / `computedBox`
+helpers binding to the default registry with full callable interop. All 12 pass.
+
+### Added -- `createRoot(fn)` (ownership escape hatch)
+
+`createRoot` runs `fn` in a **detached ownership scope**: effects and computeds
+created inside `fn` are not adopted by the enclosing owner, so they survive the
+enclosing effect's re-runs and disposal. The caller owns their lifecycle (there
+is no parent to auto-dispose them -- `fn` typically returns a disposer or the
+created handle). Exported as a registry method and a top-level helper, mirroring
+`signal` / `computed` / `untrack`.
+
+**Why it exists.** The owner tree's defining behavior is that owned children
+dispose with their parent -- correct and intended (pinned by the cleanup-ordering
+tests since 1.2.0). But that makes one pattern a footgun: lazily spawning a
+*long-lived* node from *inside* a consumer effect. The spawned node is adopted by
+the consumer, so the consumer's next re-run cascade-disposes it. This is not an
+engine defect -- it is the ownership model working as designed -- but until now
+there was no sanctioned way to opt a child *out* of ownership. `createRoot` is
+that opt-out. The engine head comment has named `runWithOwner` / `createRoot` as
+the intended future API for exactly this since the owner/observer split shipped
+in 1.2.0 (`currentOwner` and `currentObserver` were made distinct pointers
+precisely so ownership could be detached without affecting tracking); 1.5.0
+delivers the first of the two.
+
+**What it detaches.** For the duration of `fn`, both `currentOwner` and
+`currentObserver` (and the tracking flag) are nulled, so neither ownership nor a
+reactive dependency leaks from `fn`'s direct body into the enclosing scope. Inner
+effect / computed bodies still establish their own owner+observer scopes as
+usual -- only the boundary at `fn` is detached. Mirrors Solid's `createRoot` on
+the lifecycle axis.
+
+**Who needs it.** Any consumer that lazily creates a watcher/subscription inside
+a reactive scope and expects it to outlive that scope -- `lite-query`'s
+query-watcher being the first in the ecosystem. Those consumers wrap the spawn in
+`createRoot(() => effect(...))` and dispose it themselves; the watcher then
+survives consumer re-runs.
+
+### Verified
+
+- **Full suite green** against the 1.5.0 engine: 439 tests, 438 pass, 0 fail,
+  1 skip (only the architecturally-N/A SSR case in `17-reactivity`; the 9
+  `24-signalbox` tests are now active and the suite carries +3 box-coverage
+  additions for a 12-test file, +7 `createRoot` tests in
+  `test/27-create-root_test.mjs`). **Coverage** (c8@11,
+  Node 22): `Signal.js` 100% statements / 97.35% branches / 100% functions / 100%
+  lines; `Watch.js` 100% across all four.
+- **Box hot path is zero-GC**: 200,000 writes through a 256-wide box graph,
+  0 heap growth, 0 pool growths after warm-up -- identical steady-state profile
+  to the callable API.
+- **Box creation is allocation-light**: measurably cheaper construction than the
+  callable equivalent (~1.7x on this host), the design goal of the second shape.
+- **Interop confirmed**: callable-reads-box and box-reads-callable both track and
+  update correctly in a single graph; `stats()` counts box nodes in `signals` /
+  `computeds` exactly as callable nodes.
+- **`stats()` shape unchanged** from 1.4.0 (11 keys); boxes allocate nodes
+  through the same `createNode` path, so the 1.4.0 lifecycle counters
+  (`totalAllocations` etc.) account for box nodes automatically.
+- **`createRoot` detaches ownership without leaking**: a watcher effect spawned
+  inside a consumer effect via `createRoot` survives the consumer's re-run (fires
+  on later dependency changes where, unwrapped, it would have been cascade-
+  disposed), and an explicit disposer on the detached effect still stops it
+  cleanly -- detachment costs no auto-cleanup but introduces no leak. Verified
+  against the exact lazy-watcher pattern `lite-query` uses.
+
+### Added -- VersionMatrix identical-code guard (harness/VersionMatrix/)
+
+The regression gate (`harness/VersionMatrix/`, wired into `prepublishOnly` since
+1.4.0) gains an **identical-code guard**: each capture records the sha256 of the
+engine source (`baselines/<label>/engine.sha256`). If the candidate's hash matches
+a baseline's, that axis is running the *same bytes* -- any measured delta is host
+noise, not a regression -- so the gate marks it `SKIP` rather than let variance
+flag a phantom. This is what saves you when you re-version without a code change:
+a `1.5.0-beta.0` that is byte-identical to a published `1.5.0-alpha.1` cannot
+regress against it, and the gate says so structurally instead of failing on a
+noisy median. Genuine code changes produce a different hash and are gated
+normally. Everything else about the harness -- cold-process-per-version,
+LCG-deterministic input, two baselines (floor `1.3.0` + rolling), calibrated
+tolerances (`frame.avg` 5% rolling / 10% floor, `frame.p99` and `phase.write.p99`
+18% / 30%), four workloads mapping to public bench claims -- carries forward
+from 1.4.0. Details in `harness/VersionMatrix/README.md`.
+
+### Verified -- fresh 1.5.0-beta bench sweep (Apple M4 Pro / Node 26)
+
+Both v3 instruments were re-run in full on the 1.5.0-beta engine on **Apple
+M4 Pro darwin/arm64, Node 26.3.1** (a step up from the 1.4.0 sweep's 2016
+Intel MacBook / Node 22 host), with `#STAMP`-verified outputs committed to
+`bench/rb.txt` (microscope aggregate, 4 engines across the six first-party
+shapes) and `bench/r.txt` (mirror sweep, Andrii's canonical adapter verbatim,
+lite vs alien across 47 rows, isolated-per-row, 10 reps). The M4 Pro host has
+a lower run-to-run noise floor than the old Intel host, so the sub-percent
+parity band tightens and the honest wins/losses stand out cleanly.
+
+- **Microscope aggregate (rb.txt):** on the six v3 microscope shapes, lite
+  wins vs alien on **MUX +34.6%** (fan-in), **SELECTIVE DAG +20.0%**, and
+  **DYNAMIC DAG +18.4%** -- the allocation-heavy dynamic shapes stay lite's
+  home turf; the wins narrow versus the older Intel sweep (fast machine has
+  less GC pause to hide behind, so alien's raw propagation surfaces more) but
+  the ordering is intact. **BROADCAST is a true tie** (-1.2%, both under the
+  GC delta floor). Alien ahead on **KAIROS -15.7%** (1000 shared-source
+  computeds -- alien's flatter representation prices in the walk cheaper on
+  M4-class silicon) and **DEEP CHAIN -76.9%** (256-deep chain -- the same
+  architectural weak spot the honest framing has always named; recursive
+  JS-stack computed resolution loses to alien's flatter chain on hot new
+  cores by a wider margin than on old Intel). Speed wins vs alien: **3/6**;
+  heap wins: **5/6** with the sixth being a shared-zero on BROADCAST.
+- **Microscope heap (the actual story):** on every shape where GC pressure
+  exists at all, lite allocates **one to four orders of magnitude less
+  transient heap than alien** -- DEEP CHAIN 0.5 KB vs 1062 KB (>2000x, on
+  the shape lite loses on time), MUX 0 KB vs 781 KB, KAIROS 23 KB vs 802 KB
+  (34.8x), DYNAMIC DAG 3.1 MB vs 60.7 MB (19.5x), SELECTIVE DAG 7.7 MB vs
+  78.0 MB (10.2x). Against preact-signals and solid-signals the heap gap is
+  even wider on the fan-in / fan-out family; solid allocates ~17 MB on MUX
+  and ~15 MB on SELECTIVE DAG where lite allocates 0 KB and 7.7 MB on the
+  same shapes. The differentiated position is ALLOCATION, not raw
+  propagation speed -- competitive-to-winning throughput with dramatically
+  lower GC pressure, and that is the headline that reproduces across hosts.
+- **Mirror sweep (r.txt):** Andrii's canonical 47-shape suite re-run
+  isolated-per-row lite vs alien on M4 Pro reproduces the same honest
+  framing: lite runs **parity-to-behind alien on throughput** across the
+  suite (wins outright on 4/47 -- `1000x5 - 25 sources (wide dense)` +12%,
+  `manySourcesIntoOneComputedEffectWithDirect` +32.5%,
+  `manySourcesIntoOneComputedEffect` +31.7%, and `createComputations4to1`
+  +19.3%), weak on the deep/layered-burst family. Every row carries a
+  `#STAMP` and the counters (`nodesRecomputed` / `edgesTraversed` /
+  `sinkReads`) match Andrii's published suite exactly (`mirror.mjs
+  --self-verify`), so a lite-vs-alien delta here is identical work, not DCE.
+- **Andrii Volynets js-reactivity-benchmark position holds at 4th of 15**
+  with geomean **79.3ms** (raw log `bench/AndriiVolynetsReactiveBench.log`,
+  Andrii's own host); lite is ahead of 5th-place Preact Signals (99.8) by
+  ~21%. Top-3 count: **25/47** (up from 23 on 1.4.0);
+  outright-fastest-of-15 wins fluctuate at the top of a very tight
+  leaderboard where alien-signals / reflex / lite trade sub-percent margins
+  per shape (5 on 1.4.0, **2 on 1.5.0-beta** -- `createComputations4to1`
+  and `1000x5 - 25 sources (wide dense)`), plus 9 second-place finishes.
+  The stable metric across every published sweep is the geomean rank at #4
+  of 15.
+- **Third-party version bumps** used in the local head-to-head vs 1.4.0:
+  alien-signals 3.1.2 -> 3.2.1, @preact/signals-core 1.14.1 -> 1.14.2,
+  @vue/reactivity 3.5.13 -> 3.5.35, solid-js 1.9.12 -> 1.9.13. Any
+  within-lib delta between the two sweeps reflects those bumps + the
+  Intel -> M4 Pro host change, not lite-signal changes: 1.4.0 -> 1.5.0
+  hot-path bytes are byte-identical (1.5.0 adds only the non-callable box
+  handle shape, which affects construction cost and handle ergonomics but
+  not the pooled-node read/write path).
 
 ## [1.4.0] -- 2026-06-XX
 
@@ -518,76 +671,36 @@ with the rest of registry state, so a reused registry reports lifecycle numbers
 for its current epoch only. Grown pool *capacity* is retained across `destroy()`
 as before (the reset keeps the arena warm); only the cumulative counts reset.
 
-### Added -- dedicated test harness layout
+### Added -- VersionMatrix regression gate (harness/VersionMatrix/)
 
-The repo now ships **three opt-in test harnesses** alongside the in-tree engine
-suite, each in its own subdirectory with its own `package.json` and setup story.
-They do **not** run on `npm test`; they opt in through dedicated scripts,
-including the VersionMatrix gate (run on demand via `npm run gate`). The
-default `npm test` is now scoped
-via a Node 22 native glob -- `'test/*.test.mjs'` -- so only the 26 root engine
-test files are discovered. Subdirectory test files (e.g.
-`test/ProfilerTests/test/*.test.mjs`) and out-of-tree test files
-(`harness/ProfilerTools/harness.test.mjs`) are no longer accidentally swept into
-the default run.
-
-- **`test/ProfilerTests/`** -- a **version-portable hardening suite** for the
-  engine. Imports `@zakkster/lite-signal` as a bare specifier; self-references
-  through this repo's own package name when run from inside the tree, resolves
-  to the installed version when run standalone (`./run-matrix.sh`). Feature-
-  gated: older engines skip the cases for APIs they do not have yet, newer
-  cases light up automatically. Pins the diamond / dynamic-dep / cleanup-order /
-  cascade-dispose invariants that quietly break reactive engines under retune.
-- **`harness/ProfilerTools/`** -- a **combined integration harness** that points
-  `@zakkster/lite-profiler-signal` and `@zakkster/lite-devtools` at the same
-  registry and verifies the cross-package zero-GC contract end-to-end (devtools
-  inspects a profiler-driven graph non-perturbingly and confirms via the same
-  `stats()` it monitors that the profiler allocates no new nodes in steady
-  state). Setup is one-time (`bash setup.sh`) and pins specific package
-  versions via tarball install so the harness re-runs reproducibly.
-- **`harness/VersionMatrix/`** -- a **cold-process regression gate** run on
-  demand via `npm run gate`. Each version-x-workload is profiled in its own `node`
-  invocation (so V8 never carries inline caches or JIT state from one version
-  into another), fed an identical LCG write sequence (delta = engine change,
-  not input), and reduced to a per-metric median-of-N. Two baselines gate every
-  publish -- a **floor** (never moves; "we shall not regress below this line")
-  and a **rolling** baseline (previous published version); a candidate must
-  clear BOTH. Tolerances calibrated against measured self-noise (`npm run
-  calibrate`): `frame.avg` is the stable anchor at 5% rolling / 10% floor
-  (self-noise <=~3%); `frame.p99` and `phase.write.p99` sit at 18% / 30%
-  (self-noise up to ~14%, so a p99 fail should be re-run to confirm). Four
-  workloads map to the public bench claims: `reactive-graph-mix` (KAIROS / mol
-  pattern), `deep-chain` (the DEEP CHAIN weak spot), `broadcast-fanout` (the
-  BROADCAST fan-out), and `dynamic-dep-churn` (the DYNAMIC / SELECTIVE DAG
-  wins). Committed median baselines under `harness/VersionMatrix/baselines/`
-  are the public evidence surface (each carrying `env` metadata: CPU, node,
-  date); the gate itself always re-captures floor / rolling / candidate in the
-  same job so it never diffs across hosts. Manifest at `manifest.json` pins the
-  floor (`1.3.0`), the rolling reference, and the workload list; adding a new
-  version to the matrix is a documented 3-step recipe in
-  `harness/VersionMatrix/README.md`.
-
-New root scripts: `test:hardening`, `test:hardening:gc`, `test:harness`,
-`test:all`, `gate` (the on-demand VersionMatrix regression gate). The README's
-"Test harnesses" section documents all three subdirectories, the setup story,
-and the expectation that more dedicated harnesses will land as future
-publications need targeted defensive validation.
+A **same-host, cold-process regression gate** for the engine ships alongside the
+observability counters, wired into `prepublishOnly` -- a candidate that regresses
+beyond calibrated tolerances aborts `npm publish` before it starts. Each
+version-x-workload is profiled in its own `node` invocation (V8 never carries
+inline caches or JIT state across versions), fed an identical LCG write sequence
+(delta = engine change, not input), and reduced to a per-metric median-of-N
+(default 5). **Two baselines** gate every publish: a **floor** (never moves;
+"we shall not regress below this line") and a **rolling** baseline (previous
+published version); a candidate must clear BOTH. Tolerances calibrated against
+measured self-noise (`npm run calibrate`): `frame.avg` is the stable anchor at
+5% vs rolling / 10% vs floor (self-noise <=~3%); `frame.p99` and
+`phase.write.p99` sit at 18% / 30% (self-noise up to ~14%, so a p99 fail should
+be re-run to confirm). Four workloads map to public bench claims:
+`reactive-graph-mix` (KAIROS / mol pattern), `deep-chain` (the DEEP CHAIN weak
+spot), `broadcast-fanout` (the BROADCAST fan-out), and `dynamic-dep-churn` (the
+DYNAMIC / SELECTIVE DAG wins). Committed median baselines under
+`harness/VersionMatrix/baselines/` are the public evidence surface (each
+carrying `env` metadata: CPU, node, date); the gate itself always re-captures
+floor / rolling / candidate in the same job so it never diffs across hosts.
+Manifest at `manifest.json` pins the floor (`1.3.0`), the rolling reference, and
+the workload list. Details in `harness/VersionMatrix/README.md`. (The 1.5.0-beta
+identical-code guard extending this gate lands in the 1.5.0 entry above.)
 
 ### Verified
 
-- **Full suite green** against the 1.4.0 engine: 425 tests, 415 pass, 0 fail,
-  10 skip (this counts the four branch-closure tests added to `12-coverage` for the
-  1.4.0-rc coverage pass; re-verify against your own runner). The 10 skips are the 9 `{skip:true}` `signalBox` tests in `24-signalbox`
-  (staged for 1.5.0) plus 1 architecturally-N/A SSR case in `17-reactivity`. The
-  eager-default and the counter additions changed no existing test outcome; 6 new
-  counter tests in `03-pool` cover the new surface.
-- **Coverage** (c8@11, Node 22): `Signal.js` 100% statements / 100% branches /
-  100% functions / 100% lines; `Watch.js` 100% across all four. The three counter
-  bumps sit on already-covered acquire / dispose / grow edges. The rc coverage pass
-  closed the last branch gap (98.26% -> 100%): three reachable branches gained tests,
-  two provably-unreachable clamps got `/* c8 ignore */` with proofs, and one branch
-  pair reachable only through a now-fixed dangling-cursor crash was removed with the
-  fix. See `COVERAGE-NOTES.md`; reconfirm under codify.
+- **Full suite green** against the 1.4.0 engine: 429 tests, 419 pass, 0 fail,
+  10 skip (9 signalBox-staged-for-1.5.0 plus 1 architecturally-N/A SSR skip). The eager-default and the counter additions
+  changed no existing test outcome.
 - **Counter correctness** confirmed directly: after building a signal ->
   computed -> effect graph, `totalAllocations` equals the node count and
   `totalDisposals` tracks effect/computed teardown; forcing a pool past its
@@ -600,33 +713,6 @@ publications need targeted defensive validation.
   new shape-and-initial-zeros test in `03-pool` -- the first explicit pin for
   the `stats()` surface (the 1.2.x / 1.3.0 entries described the absence of the
   counters in prose; 1.4.0 codifies the new shape as a test assertion).
-- **Fresh 1.4.0 bench sweep published** in `bench/results.txt` (isolated
-  propagation, 9 scenarios) and `bench/resultsReactive.txt` (cross-framework
-  reactivity, median-of-10, 34 tests) -- the 1.3.0 numbers were carried
-  forward provisionally in the 1.4.0-beta notes ("a fresh run will be
-  published when available"); those runs are now committed. The 10 raw
-  reactive-suite runs sit under `bench/bench-runs-reactive/run_1.txt` ...
-  `run_10.txt` so anyone can re-median them independently. On the propagation
-  bench, lite is still +48% / +44% / +35% / +30% on the four allocation-heavy
-  scenarios (SELECTIVE DAG / DYNAMIC DAG / MUX / SMALL SELECTIVE), parity on
-  the three stable app shapes (KAIROS / LARGE WEB APP / WIDE DENSE, within
-  3-5%), and behind on BROADCAST (-11%) and DEEP CHAIN (-29%; the DEEP CHAIN
-  gap widened this cycle -- alien's 256-deep pipeline got faster, not because
-  lite regressed). On the reactive suite, lite is the fastest of five
-  frameworks on all five dyn rows (large web app +9%, wide dense +4%, simple
-  +18%, dynamic +16%, deep +20%) and trades within a few percent on
-  updateComputations (lite ahead on 4 of 7). The Andrii Volynets js-reactivity-
-  benchmark position holds at **4th of 15** with geomean **76.3ms** (raw log
-  `bench/AndriiVolynetsReactiveBench.log` -- all 15 x 47 rows checked in for
-  audit); lite is ahead of 5th-place Preact Signals (78.4) by ~3%. The
-  outright-fastest-of-15 shape count moved from three (`manyEffectsFromOneSource`,
-  `manySourcesIntoOneComputedEffect`, `manySourcesIntoOneComputedEffectWithDirect`)
-  in the 1.3.0 log to five in the 1.4.0 log (`manyEffectsFromOneSource`,
-  `manySourcesIntoOneComputedEffectWithDirect`, `molBench`,
-  `updateComputations2to1`, and the `32x8 - 4 sources - pull` DAG); top-3
-  count moved from 21/47 to 23/47. Both movements are within the run-to-run
-  band of the 10-year-old measurement host, not engine changes -- the hot
-  paths did not move.
 
 ## [1.3.0] -- 2026-06-XX
 
@@ -707,8 +793,9 @@ in 1.3.0.
 ### Verified
 
 - **Full suite green** against the 1.3.0 engine: 423 tests, 413 pass, 0 fail,
-  10 skip (9 signalBox-staged-for-1.5.0 in `24-signalbox` plus 1 architecturally-N/A
-  SSR case in `17-reactivity`). The eager-default flip changed no test outcome.
+  10 skip (9 `24-signalbox` tests `{skip:true}` on 1.3.x -- those primitives
+  land in 1.5.0 -- plus 1 architecturally-N/A SSR skip). The eager-default flip
+  changed no test outcome.
 - **Behavior-preservation difftest**: 20,000 direct + 10,000 batched writes
   against the published 1.1.5 reference, 0 disagreements. Pool growth, chunked
   refill, and the intrusive mark stack do not alter observable propagation.

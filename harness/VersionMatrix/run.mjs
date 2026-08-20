@@ -19,7 +19,6 @@ const label = positional[0];
 const wname = positional[1];
 let enginePath = '@zakkster/lite-signal';
 let rep = null;
-const fresh = args.includes('--fresh');
 for (const a of args) { let m = /^--engine=(.+)$/.exec(a); if (m) enginePath = m[1]; m = /^--rep=(\d+)$/.exec(a); if (m) rep = m[1]; }
 
 if (!label || !wname) {
@@ -31,12 +30,6 @@ if (!label || !wname) {
 
 const E = await import(/^[./]/.test(enginePath) ? pathToFileURL(resolve(enginePath)).href : enginePath);
 mkdirSync('./baselines/' + label, { recursive: true });
-if (fresh) {
-    const { readdirSync, rmSync } = await import('node:fs');
-    for (const f of readdirSync('./baselines/' + label)) {
-        if (f === `${wname}.json` || (f.startsWith(wname + '.rep') && f.endsWith('.json'))) rmSync(`./baselines/${label}/${f}`);
-    }
-}
 const env = envMeta();
 
 {

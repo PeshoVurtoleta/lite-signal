@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-signal v1.4.5
+ * @zakkster/lite-signal v1.5.0
  * --------------------
  * Hybrid Doubly-Linked-List Reactive Graph Engine -- decoupled (Signal1_3) base
  * with the two 1.1.3 performance fixes ported in:
@@ -48,11 +48,13 @@
  * -- OWNER vs OBSERVER --
  *   `currentObserver` = the node whose READS establish dependencies (tracking).
  *   `currentOwner`    = the node that OWNS anything created right now (lifecycle).
- *   Today they move together, so behaviour is unchanged -- but they are distinct
- *   pointers so future runWithOwner/createRoot can attach ownership without
- *   establishing reactive dependencies (and untrack can suppress tracking
- *   without orphaning created nodes). createNode and onCleanup key off the
- *   OWNER; the read fast-path and allocateLink key off the OBSERVER.
+ *   They move together by default, but are distinct pointers so ownership can be
+ *   detached without affecting tracking. createRoot (1.5.0) uses this: it nulls
+ *   the OWNER (and OBSERVER) for the duration of a callback so nodes created
+ *   inside survive the enclosing scope's re-runs; runWithOwner (re-attaching to a
+ *   chosen owner) remains future work on the same split. untrack suppresses
+ *   tracking without orphaning created nodes. createNode and onCleanup key off
+ *   the OWNER; the read fast-path and allocateLink key off the OBSERVER.
  */
 
 const FLAG_COMPUTED = 1 << 0;
@@ -173,6 +175,40 @@ export class CapacityError extends Error {
     }
 }
 
+/**
+ * Create an isolated reactive registry.
+ *
+ * Use this when you need multiple independent reactive graphs (e.g. one per
+ * Twitch Extension viewer, one per worker, one per test). The top-level
+ * helpers ({@link signal}, {@link effect}, ...) delegate to a single shared
+ * default registry; call {@link setDefaultRegistry} to swap that for your own.
+ *
+ * @param {object} [config]
+ * @param {number} [config.maxNodes=1024]            Initial node-pool capacity (ledger).
+ * @param {number} [config.maxLinks=maxNodes*4]      Initial link-pool capacity (ledger).
+ * @param {"eager"|"lazy"} [config.prealloc="eager"]
+ *        Pool population strategy. `"eager"` constructs the full `maxNodes` /
+ *        `maxLinks` pools up front -- deterministic latency, zero allocation
+ *        inside any subsequent hot path (the contract for render loops, game
+ *        ticks, and extension frame budgets), at the cost of a larger resident
+ *        heap that every major GC traces. `"lazy"` treats the capacities as
+ *        ledgers and constructs nodes/links on first demand, recycling through
+ *        the free lists thereafter -- smaller heap, faster cold start, lighter
+ *        GC marking, identical zero-GC steady state after warm-up. Choose eager
+ *        for hard-real-time, lazy for footprint-sensitive or short-lived registries.
+ * @param {"throw"|"grow"} [config.onCapacityExceeded="throw"]
+ *        `"throw"` fails fast with a {@link CapacityError} when a pool is full.
+ *        `"grow"` extends the pool on a free-list miss. Growth is chunked and
+ *        incremental -- contiguous runs of up to 1024 links / 256 nodes per
+ *        miss, not a single doubling burst -- so any one growth pause stays
+ *        bounded; the capacity ledger still doubles (`stats()` semantics
+ *        unchanged). Link growth is bounded by a hard ceiling of `maxLinks * 16`.
+ *        Each chunk increments `stats().poolGrowths`.
+ * @param {number} [config.maxFlushPasses=100]       Cycle-protection: max effect-queue
+ *                                                   drain passes before throwing an
+ *                                                   Error prefixed `"CycleError:"`.
+ * @returns {Registry}
+ */
 /** The only config keys {@link createRegistry} recognizes. Anything else is
  *  rejected at construction with a did-you-mean hint (fail closed on an
  *  unverified state -- an unknown key is an error, never a silent ignore). */
@@ -187,8 +223,8 @@ const EAGER_CONSTRUCT_CEILING = 1 << 24;
 
 /**
  * Levenshtein edit distance between two short strings. Cold: called only on the
- * constructor error path, over the five known option names, so its per-call
- * array allocation never touches any hot path.
+ * constructor error path, over the known option names, so its per-call array
+ * allocation never touches any hot path.
  * @param {string} a
  * @param {string} b
  * @returns {number}
@@ -255,117 +291,68 @@ function requirePositiveInt(v, name) {
     }
 }
 
-/**
- * Create an isolated reactive registry.
- *
- * Use this when you need multiple independent reactive graphs (e.g. one per
- * Twitch Extension viewer, one per worker, one per test). The top-level
- * helpers ({@link signal}, {@link effect}, ...) delegate to a single shared
- * default registry; call {@link setDefaultRegistry} to swap that for your own.
- *
- * @param {object} [config]
- * @param {number} [config.maxNodes=1024]            Initial node-pool capacity (ledger).
- * @param {number} [config.maxLinks=maxNodes*4]      Initial link-pool capacity (ledger).
- * @param {"eager"|"lazy"} [config.prealloc="eager"]
- *        Pool population strategy. `"eager"` constructs the full `maxNodes` /
- *        `maxLinks` pools up front -- deterministic latency, zero allocation
- *        inside any subsequent hot path (the contract for render loops, game
- *        ticks, and extension frame budgets), at the cost of a larger resident
- *        heap that every major GC traces. `"lazy"` treats the capacities as
- *        ledgers and constructs nodes/links on first demand, recycling through
- *        the free lists thereafter -- smaller heap, faster cold start, lighter
- *        GC marking, identical zero-GC steady state after warm-up. Choose eager
- *        for hard-real-time, lazy for footprint-sensitive or short-lived registries.
- * @param {"throw"|"grow"} [config.onCapacityExceeded="throw"]
- *        `"throw"` fails fast with a {@link CapacityError} when a pool is full.
- *        `"grow"` extends the pool on a free-list miss. Growth is chunked and
- *        incremental -- contiguous runs of up to 1024 links / 256 nodes per
- *        miss, not a single doubling burst -- so any one growth pause stays
- *        bounded; the capacity ledger still doubles (`stats()` semantics
- *        unchanged). Link growth is bounded by a hard ceiling of `maxLinks * 16`.
- *        Each chunk increments `stats().poolGrowths`.
- * @param {number} [config.maxFlushPasses=100]       Cycle-protection: max effect-queue
- *                                                   drain passes before throwing an
- *                                                   Error prefixed `"CycleError:"`.
- * @returns {Registry}
- */
 export function createRegistry(config) {
     const NODE_PTR = Symbol("node_ptr");
     const NODE_GEN = Symbol("node_gen");
 
-    // Config-shape gate (cold). Accept `undefined` or a non-null, non-array
-    // object; reject `null`, `42`, `"eager"`, arrays and every other non-object
-    // BY NAME rather than dying later on `config.maxNodes` / an internal
-    // `nextFree` read.
+    // --- 1.4.5 backport: createRegistry input validation (all cold, constructor-only).
+    // Config-shape gate: accept `undefined` or a non-null, non-array object; reject
+    // `null`, primitives and arrays BY NAME rather than dying later on `config.maxNodes`
+    // or an internal `nextFree` read (fail closed on an unverified state).
     if (config !== undefined && (config === null || typeof config !== "object" || Array.isArray(config))) {
         throw new TypeError(
             'createRegistry: "config" must be a plain object or undefined, received ' + received(config) + '.'
         );
     }
-
-    // Per-option validation (cold). Each option is validated BY NAME so a bad
-    // value throws `createRegistry: "<option>"` at construction, not a delayed
-    // internal TypeError on first use. All of this is constructor-cold: zero
-    // hot-path bytes.
-    let currentNodesCapacity = 1024;
-    let currentLinkCapacity;
-    let policy = "throw";
-    let maxFlushPasses = 100;
-    let prealloc = "eager";
     if (config !== undefined) {
-        if (config.maxNodes !== undefined) {
-            requirePositiveInt(config.maxNodes, "maxNodes");
-            currentNodesCapacity = config.maxNodes;
+        // Per-option validation BY NAME -- a bad value throws `createRegistry: "<option>"`
+        // at construction, not a delayed internal TypeError on first use.
+        if (config.maxNodes !== undefined) requirePositiveInt(config.maxNodes, "maxNodes");
+        if (config.maxLinks !== undefined) requirePositiveInt(config.maxLinks, "maxLinks");
+        if (config.maxFlushPasses !== undefined) requirePositiveInt(config.maxFlushPasses, "maxFlushPasses");
+        if (config.prealloc !== undefined && config.prealloc !== "eager" && config.prealloc !== "lazy") {
+            throw new TypeError(
+                'createRegistry: "prealloc" must be "eager" or "lazy", received ' + received(config.prealloc) + '.'
+            );
         }
-        currentLinkCapacity = currentNodesCapacity * 4;
-        if (config.maxLinks !== undefined) {
-            requirePositiveInt(config.maxLinks, "maxLinks");
-            currentLinkCapacity = config.maxLinks;
-        }
-        if (config.maxFlushPasses !== undefined) {
-            requirePositiveInt(config.maxFlushPasses, "maxFlushPasses");
-            maxFlushPasses = config.maxFlushPasses;
-        }
-        if (config.prealloc !== undefined) {
-            if (config.prealloc !== "eager" && config.prealloc !== "lazy") {
-                throw new TypeError(
-                    'createRegistry: "prealloc" must be "eager" or "lazy", received ' + received(config.prealloc) + '.'
-                );
-            }
-            prealloc = config.prealloc;
-        }
-        if (config.onCapacityExceeded !== undefined) {
-            if (config.onCapacityExceeded !== "throw" && config.onCapacityExceeded !== "grow") {
-                throw new TypeError(
-                    'createRegistry: "onCapacityExceeded" must be "throw" or "grow", received ' + received(config.onCapacityExceeded) + '.'
-                );
-            }
-            policy = config.onCapacityExceeded;
+        if (config.onCapacityExceeded !== undefined && config.onCapacityExceeded !== "throw" && config.onCapacityExceeded !== "grow") {
+            throw new TypeError(
+                'createRegistry: "onCapacityExceeded" must be "throw" or "grow", received ' + received(config.onCapacityExceeded) + '.'
+            );
         }
         // Unknown-key rejection with a did-you-mean hint (`preAlloc` -> `prealloc`,
         // `maxNods` -> `maxNodes`). Own enumerable keys only; cold path.
-        const keys = Object.keys(config);
-        for (let i = 0; i < keys.length; i++) {
-            const k = keys[i];
-            if (ALLOWED_KEYS.indexOf(k) === -1) {
-                const hint = suggestKey(k);
+        const badKeys = Object.keys(config);
+        for (let bi = 0; bi < badKeys.length; bi++) {
+            const bk = badKeys[bi];
+            if (ALLOWED_KEYS.indexOf(bk) === -1) {
+                const hint = suggestKey(bk);
                 throw new TypeError(
-                    'createRegistry: "' + k + '" is not a recognized option' +
+                    'createRegistry: "' + bk + '" is not a recognized option' +
                     (hint !== null ? ' (did you mean "' + hint + '"?)' : '') +
                     '. Allowed: ' + ALLOWED_KEYS.join(", ") + '.'
                 );
             }
         }
-    } else {
-        currentLinkCapacity = currentNodesCapacity * 4;
     }
+    // --- end 1.4.5 backport.
+
+    let currentNodesCapacity = (config !== undefined && config.maxNodes !== undefined) ? config.maxNodes : 1024;
+    let currentLinkCapacity = (config !== undefined && config.maxLinks !== undefined) ? config.maxLinks : currentNodesCapacity * 4;
+    const policy = (config !== undefined && config.onCapacityExceeded !== undefined) ? config.onCapacityExceeded : "throw";
+    const maxFlushPasses = (config !== undefined && config.maxFlushPasses !== undefined) ? config.maxFlushPasses : 100;
     const maxLinkLimit = currentLinkCapacity * 16;
 
-    // Eager-construction ceiling (cold). `"eager"` builds `(maxNodes + maxLinks)`
+    // Lazy pool population (P1): maxNodes / maxLinks are capacity ledgers,
+    // not eager construction counts. Nodes/links are constructed on first
+    // demand and recycled through the free lists thereafter -- the zero-GC
+    // steady state is identical after warm-up, but the heap no longer carries
+    // never-used live objects for every major GC to mark.
+    const prealloc = (config !== undefined && config.prealloc !== undefined) ? config.prealloc : "eager";
+    // Eager-construction ceiling (cold): `"eager"` builds `(maxNodes + maxLinks)`
     // objects up front; a finite-but-absurd capacity (e.g. `1e9`) would OOM the
     // process with an uncatchable SIGABRT, not a throw. Refuse BY NAME before
-    // allocating. Named for the larger driver so the message satisfies the
-    // per-option regex. `"lazy"` keeps its unbounded ledger (untouched).
+    // allocating. Named for the larger driver. `"lazy"` keeps its unbounded ledger.
     if (prealloc === "eager" && (currentNodesCapacity + currentLinkCapacity) > EAGER_CONSTRUCT_CEILING) {
         const driver = currentLinkCapacity > currentNodesCapacity ? "maxLinks" : "maxNodes";
         throw new TypeError(
@@ -376,13 +363,6 @@ export function createRegistry(config) {
             'or lower the capacity.'
         );
     }
-
-    // Lazy pool population (P1): maxNodes / maxLinks are capacity ledgers,
-    // not eager construction counts. Nodes/links are constructed on first
-    // demand and recycled through the free lists thereafter -- the zero-GC
-    // steady state is identical after warm-up, but the heap no longer carries
-    // never-used live objects for every major GC to mark.
-    // `prealloc` was validated and resolved above (config-cold).
     const nodePool = [];
     let freeNodeHead = null;
     const linkPool = [];
@@ -1316,6 +1296,162 @@ export function createRegistry(config) {
         return read;
     }
 
+    // --- 1.5: signalBox / computedBox -- non-callable, allocation-light API ------
+    //
+    // The callable signal()/computed() pay an irreducible per-primitive cost: a
+    // `read` closure + (for signals) a `set` closure, both capturing `node` and
+    // `birthGen`. That is the price of the ergonomic `count()` / `count.set(x)`
+    // surface, and it is why creation can't reach alien-signals territory on the
+    // callable path (Andrii's analysis; confirmed empirically).
+    //
+    // signalBox() trades the call ergonomics for allocation: it returns a PLAIN
+    // OBJECT whose methods live on a shared prototype, so creation allocates one
+    // object and writes two own props (NODE_PTR, NODE_GEN) -- zero closures. The
+    // graph machinery underneath is identical; a box and a callable handle wrap
+    // the same kind of ReactiveNode and interoperate freely in one graph.
+    //
+    //   const s = registry.signalBox(0);
+    //   s.get();  s.set(1);  s.peek();  s.update(n => n+1);  s.subscribe(fn);
+    //
+    // Hot-path note: get()/set() resolve the node via this[NODE_PTR] (one prop
+    // load) instead of a lexical capture. On a monomorphic box shape V8 compiles
+    // that to a pointer-offset load; the cost vs the callable closure is in the
+    // low single digits on read-heavy graphs and is the explicit, documented
+    // tradeoff for the creation win.
+
+    function boxGet() {
+        const node = this[NODE_PTR];
+        if (node.gen !== this[NODE_GEN]) return undefined;   // stale: slot recycled (ABA guard)
+        if (isTrackingDeps && currentObserver !== null) {
+            const expected = activeObserverCurrentDep;
+            if (expected !== null && expected.source === node) {
+                activeObserverCurrentDep = expected.nextDep;
+            } else {
+                allocateLink(node, currentObserver);
+            }
+        }
+        return node.value;
+    }
+    function boxSet(value) {
+        const node = this[NODE_PTR];
+        if (node.gen !== this[NODE_GEN]) return;
+        const eq = node.equals;
+        if (eq && eq(node.value, value)) return;
+        if (batchDepth > 0 && node.revertEpoch !== batchEpoch) {
+            node.preBatchValue = node.value;
+            node.preBatchVersion = node.version;
+            node.revertEpoch = batchEpoch;
+        }
+        node.value = value;
+        if (batchDepth > 0 && node.revertEpoch === batchEpoch && eq && eq(node.preBatchValue, value)) {
+            node.version = node.preBatchVersion;
+            return;
+        }
+        globalVersion = (globalVersion + 1) | 0;
+        node.version = globalVersion;
+        markDownstream(node);
+        if (batchDepth === 0) flushEffects();
+    }
+    function boxPeek() {
+        const node = this[NODE_PTR];
+        if (node.gen !== this[NODE_GEN]) return undefined;
+        return node.value;
+    }
+    function boxUpdate(fn) {
+        const node = this[NODE_PTR];
+        if (node.gen !== this[NODE_GEN]) return;
+        boxSet.call(this, fn(node.value));
+    }
+    // Subscribe drives an effect that reads this box's value untracked-in-callback.
+    // Mirrors sharedSubscribe but calls get() through `this` (boxes aren't callable).
+    function boxSubscribe(fn) {
+        const box = this;
+        return effect(() => {
+            const val = box.get();
+            const prevTracking = isTrackingDeps;
+            isTrackingDeps = false;
+            try { fn(val); } finally { isTrackingDeps = prevTracking; }
+        });
+    }
+    function boxComputedGet() {
+        const node = this[NODE_PTR];
+        if (node.gen !== this[NODE_GEN]) return undefined;
+        if (isTrackingDeps && currentObserver !== null) {
+            const expected = activeObserverCurrentDep;
+            if (expected !== null && expected.source === node) {
+                activeObserverCurrentDep = expected.nextDep;
+            } else {
+                allocateLink(node, currentObserver);
+            }
+        }
+        return pullComputed(node);
+    }
+    function boxComputedPeek() {
+        const node = this[NODE_PTR];
+        if (node.gen !== this[NODE_GEN]) return undefined;
+        return pullComputed(node);
+    }
+
+    // Shared prototypes -- methods defined once per registry, inherited by every box.
+    const SIGNAL_BOX_PROTO = {
+        get: boxGet,
+        set: boxSet,
+        peek: boxPeek,
+        update: boxUpdate,
+        subscribe: boxSubscribe,
+    };
+    const COMPUTED_BOX_PROTO = {
+        get: boxComputedGet,
+        peek: boxComputedPeek,
+        subscribe: boxSubscribe,
+    };
+
+    /**
+     * Allocation-light, non-callable signal. Returns a plain object on a shared
+     * prototype: `{ get, set, peek, update, subscribe }`. Interoperates with
+     * callable signal()/computed() in the same graph.
+     * @template T
+     * @param {T} initial
+     * @param {object} [opts]
+     * @param {(a:T,b:T)=>boolean} [opts.equals=Object.is]
+     * @returns {SignalBox<T>}
+     */
+    function signalBox(initial, opts) {
+        const node = createNode(initial, FLAG_SIGNAL);
+        node.equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
+        node.version = globalVersion;
+        statSignals++;
+        // Object.create(proto) allocates the box already on the shared prototype's
+        // map -- no setPrototypeOf transition (which deopts the object to dictionary
+        // mode and blows the method-call ICs to megamorphic). Own props are then
+        // added in a stable order, keeping every box monomorphic.
+        const box = Object.create(SIGNAL_BOX_PROTO);
+        box[NODE_PTR] = node;
+        box[NODE_GEN] = node.gen;
+        return box;
+    }
+
+    /**
+     * Allocation-light, non-callable computed. Returns `{ get, peek, subscribe }`
+     * on a shared prototype.
+     * @template T
+     * @param {() => T} fn
+     * @param {object} [opts]
+     * @param {(a:T,b:T)=>boolean} [opts.equals=Object.is]
+     * @returns {ComputedBox<T>}
+     */
+    function computedBox(fn, opts) {
+        const node = createNode(undefined, FLAG_COMPUTED);
+        node.computeFn = fn;
+        node.equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
+        statComputeds++;
+        const box = Object.create(COMPUTED_BOX_PROTO);
+        box[NODE_PTR] = node;
+        box[NODE_GEN] = node.gen;
+        return box;
+    }
+
+
     /**
      * Create an eagerly-run side effect that re-executes whenever its tracked
      * dependencies change. The body runs synchronously on creation.
@@ -1424,7 +1560,7 @@ export function createRegistry(config) {
             batchEpoch = (batchEpoch + 1) | 0;
             // 2^32 wraparound sentinel: batchEpoch is bumped ONLY here (and reset to 1 by
             // destroy()), so reaching 0 costs 4,294,967,295 top-level batch() calls. Kept
-            // because revertEpoch comparisons at 1071/1077 treat 0 as "no capture".
+            // because revertEpoch comparisons treat 0 as "no capture".
             /* c8 ignore next -- 2^32 wraparound; unreachable without ~4.3e9 batches */
             if (batchEpoch === 0) batchEpoch = 1;
         }
@@ -1470,6 +1606,59 @@ export function createRegistry(config) {
     }
 
     /**
+     * Run `fn` in a detached ownership scope: nodes (effects / computeds)
+     * created inside `fn` are NOT adopted by the enclosing owner, so they
+     * survive the enclosing effect's re-runs and disposal. Use this for
+     * long-lived reactive work spawned lazily from inside a consumer effect
+     * (e.g. a query watcher created on first read) -- without it, the
+     * enclosing effect owns the watcher and cascade-disposes it on its next
+     * run. The caller is responsible for disposing anything created here
+     * (there is no owner to do it automatically).
+     *
+     * Detaches BOTH ownership and tracking for the duration of `fn`, so reads
+     * performed directly in `fn` (outside any inner effect/computed body) do
+     * not link the enclosing observer either. Inner effect/computed bodies
+     * establish their own owner+observer scopes as usual.
+     *
+     * Mirrors Solid's `createRoot` for the lifecycle axis. Returns whatever
+     * `fn` returns (typically a disposer or the created handle).
+     */
+    function getOwner() {
+        return currentOwner !== null ? describeNode(currentOwner) : undefined;
+    }
+    function runWithOwner(ownerHandle, fn) {
+        const node = liveNode(ownerHandle);
+        const prevOwner = currentOwner;
+        const prevObserver = currentObserver;
+        const prevTracking = isTrackingDeps;
+        currentOwner = (node !== undefined && (node.flags & (FLAG_COMPUTED | FLAG_EFFECT)) !== 0) ? node : null;
+        currentObserver = null;
+        isTrackingDeps = false;
+        try {
+            return fn();
+        } finally {
+            currentOwner = prevOwner;
+            currentObserver = prevObserver;
+            isTrackingDeps = prevTracking;
+        }
+    }
+    function createRoot(fn) {
+        const prevOwner = currentOwner;
+        const prevObserver = currentObserver;
+        const prevTracking = isTrackingDeps;
+        currentOwner = null;
+        currentObserver = null;
+        isTrackingDeps = false;
+        try {
+            return fn();
+        } finally {
+            currentOwner = prevOwner;
+            currentObserver = prevObserver;
+            isTrackingDeps = prevTracking;
+        }
+    }
+
+    /**
      * Register a function to run when the enclosing effect/computed re-runs or
      * is disposed. Cascade order on disposal is inside-out: an effect's owned
      * children's cleanups run BEFORE this one (#238 / #241 / #243).
@@ -1491,18 +1680,15 @@ export function createRegistry(config) {
      * Snapshot of registry counters. Useful for diagnostics and tests --
      * e.g. asserting that `activeNodes` returns to a baseline after teardown.
      *
-     * Returns 13 keys: ten live gauges (`signals`, `computeds`, `effects`,
+     * Returns 11 keys: eight live gauges (`signals`, `computeds`, `effects`,
      * `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`,
-     * `linkPoolCapacity`, plus `nodePoolPopulation` / `linkPoolPopulation` added
-     * in 1.4.5 -- the PHYSICAL count of constructed pool objects, which under
-     * `"eager"` equals capacity and under `"lazy"` starts at 0 and grows on
-     * demand, so a caller can tell a real eager pool from a `prealloc` typo that
-     * silently fell through to lazy) plus three cumulative lifecycle counters
-     * added in 1.4.0 (`totalAllocations`, `totalDisposals`, `poolGrowths`). The counters are
+     * `linkPoolCapacity`) plus three cumulative lifecycle counters added in 1.4.0
+     * (`totalAllocations`, `totalDisposals`, `poolGrowths`). The counters are
      * monotonic over the registry's life and reset only by {@link destroy}; sample
      * them over time to derive allocation rate, pool-reuse ratio, and graph churn
      * without the engine computing rates itself. In a quiescent registry
-     * `totalAllocations - totalDisposals === activeNodes`.
+     * `totalAllocations - totalDisposals === activeNodes`. Box nodes
+     * (`signalBox` / `computedBox`) are counted exactly as callable nodes.
      * @returns {RegistryStats}
      */
     function stats() {
@@ -1514,13 +1700,10 @@ export function createRegistry(config) {
             pooledLinks: currentLinkCapacity - activeLinks,
             linkPoolCapacity: currentLinkCapacity,
             nodePoolCapacity: currentNodesCapacity,
-            // 1.4.5: PHYSICAL population (constructed objects), distinct from the
-            // capacity ledger above. `nodePool.length` / `linkPool.length` are the
-            // exact count ever constructed in this registry: eager fills the pool to
-            // capacity at construction (population === capacity), lazy starts at 0 and
-            // grows on demand. This is the instrument that distinguishes a real eager
-            // pool from a `prealloc` typo silently falling through to lazy. Two free
-            // array-length reads, no allocation.
+            // 1.4.5 backport: TRUE pool population (nodePool.length / linkPool.length),
+            // distinct from the *Capacity ledgers above. Under prealloc:"lazy" (or a
+            // silently-flipped `prealloc` typo) population stays 0 while capacity reads
+            // the ledger -- so a mis-set prealloc is now observable, not telemetry-blind.
             nodePoolPopulation: nodePool.length,
             linkPoolPopulation: linkPool.length,
             activeNodes,
@@ -1705,7 +1888,7 @@ export function createRegistry(config) {
         while (l !== null) { const nx = l.nextDep; fn(describeNode(l.source)); l = nx; }
     }
 
-    return {signal, computed, effect, dispose, batch, untrack, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};
+    return {getOwner, runWithOwner, signal, computed, effect, signalBox, computedBox, dispose, batch, untrack, createRoot, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};
 }
 
 // -----------------------------------------------------------------
@@ -1726,6 +1909,14 @@ export function computed(fn, opts) {
     return defaultRegistry.computed(fn, opts);
 }
 
+export function signalBox(initial, opts) {
+    return defaultRegistry.signalBox(initial, opts);
+}
+
+export function computedBox(fn, opts) {
+    return defaultRegistry.computedBox(fn, opts);
+}
+
 export function effect(fn, opts) {
     return defaultRegistry.effect(fn, opts);
 }
@@ -1740,6 +1931,32 @@ export function batch(fn) {
 
 export function untrack(fn) {
     return defaultRegistry.untrack(fn);
+}
+export function createRoot(fn) {
+    return defaultRegistry.createRoot(fn);
+}
+
+/**
+ * Return the currently-active owner as an opaque, gen-stamped handle
+ * (undefined if outside any effect/computed body). Pass to
+ * {@link runWithOwner} to re-enter the captured lifecycle scope. The handle
+ * is safe to hold across async boundaries: it goes STALE when the captured
+ * owner is disposed and the pool slot is recycled, and stale handles
+ * degrade to rooted execution rather than adopting into a stranger.
+ */
+export function getOwner() {
+    return defaultRegistry.getOwner();
+}
+
+/**
+ * Run `fn` with `ownerHandle` as the lifecycle owner: effects/computeds
+ * created directly in `fn` are adopted by that owner. A null/undefined/stale
+ * handle degrades to rooted execution (created children survive; the caller
+ * disposes them). Nulls the tracking observer for the duration of `fn`.
+ * See {@link Registry.runWithOwner}.
+ */
+export function runWithOwner(ownerHandle, fn) {
+    return defaultRegistry.runWithOwner(ownerHandle, fn);
 }
 
 /**

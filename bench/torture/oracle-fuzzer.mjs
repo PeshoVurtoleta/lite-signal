@@ -1,15 +1,15 @@
 /**
- * bench/torture/oracle-fuzzer.mjs -- differential CORRECTNESS fuzz.
+ * bench/torture/oracle-fuzzer.mjs — differential CORRECTNESS fuzz.
  *
  * The other soaks in this directory answer two questions: did anything throw,
  * and did the pool come back to baseline. Both are liveness questions. None of
- * them reads a single value and asks whether it is RIGHT -- so an engine that
+ * them reads a single value and asks whether it is RIGHT — so an engine that
  * returns stale values from every computed passes all three green. That is not
  * hypothetical: flipping the clean short-circuit in `pullComputed` from `<= 0`
  * to `<= 1` (a one-character off-by-one, exactly the kind of edit a perf tweak
  * makes) keeps the pool perfectly balanced, throws nothing, and is invisible to
  * graph-fuzzer, scheduler-bench and torture-soak alike. The unit suite catches
- * it -- but only on small hand-written graphs.
+ * it — but only on small hand-written graphs.
  *
  * This file closes that gap: it drives a random DAG and, after every operation,
  * compares EVERY computed against an independent reference model that recomputes
@@ -29,7 +29,7 @@
 
 import { performance } from "node:perf_hooks";
 import { createRegistry } from "../../Signal.js";
-import { mulberry32, pickValue, toNum } from "./helpers/index.mjs";
+import { mulberry32, VALUE_POOL, toNum } from "./helpers/index.mjs";
 
 const SEEDS = Number(process.env.ORACLE_SEEDS || 400);
 
@@ -49,19 +49,20 @@ const SEEDS = Number(process.env.ORACLE_SEEDS || 400);
  * node collapses -0 and 0 to the same total, so the mismatch is invisible
  * downstream. See the `identity` kind below.
  */
+const pickValue = (rnd) => VALUE_POOL[(rnd() * VALUE_POOL.length) | 0];
 const OPS_PER_SEED = Number(process.env.ORACLE_OPS || 120);
 
-/* -- deterministic RNG: a failure is replayable from its seed alone --------- */
+/* ── deterministic RNG: a failure is replayable from its seed alone ───────── */
 
-/* -- the model ----------------------------------------------------------------
+/* ── the model ────────────────────────────────────────────────────────────────
  *
  * A graph is described as plain data BEFORE anything reactive is built, so the
  * reference evaluator can walk the same description without touching the
  * engine. Two node shapes, both chosen because they stress different paths:
  *
- *   sum    -- reads every dependency, every time. Exercises the static fan-in
+ *   sum    — reads every dependency, every time. Exercises the static fan-in
  *            path and wide invalidation cones.
- *   select -- reads a selector, then reads exactly ONE dependency chosen by it.
+ *   select — reads a selector, then reads exactly ONE dependency chosen by it.
  *            This is the dynamic-dependency case: the set of sources changes
  *            between evaluations, so the engine must unsubscribe from the branch
  *            it no longer reads. A stale subscription here is invisible to a
@@ -102,7 +103,7 @@ function buildModel(rnd, { leaves, tiers, perTier }) {
 
 /**
  * Reference evaluator: naive, uncached, recursive. Recomputes the whole cone
- * every call. Slow on purpose -- it has no versioning to get wrong.
+ * every call. Slow on purpose — it has no versioning to get wrong.
  */
 function reference(model, ref) {
     if (ref.kind === "leaf") return model.leaves[ref.index].value;
@@ -121,7 +122,7 @@ function reference(model, ref) {
     return reference(model, chosen);
 }
 
-/* -- the engine build ------------------------------------------------------- */
+/* ── the engine build ─────────────────────────────────────────────────────── */
 
 function buildLive(r, model) {
     const sigs = model.leaves.map((l) => r.signal(l.value));
@@ -149,7 +150,7 @@ function buildLive(r, model) {
     return { sigs, comps };
 }
 
-/* -- one seed --------------------------------------------------------------- */
+/* ── one seed ─────────────────────────────────────────────────────────────── */
 
 function runSeed(seed) {
     const rnd = mulberry32(seed);
@@ -161,7 +162,7 @@ function runSeed(seed) {
     const mismatches = [];
 
     // Effects give the push side of the engine something to do while we pull.
-    // Their bodies are irrelevant; their presence is not -- a graph with live
+    // Their bodies are irrelevant; their presence is not — a graph with live
     // observers takes different invalidation paths than a pull-only one.
     const effectDisposers = [];
     for (let e = 0; e < 6; e++) {
@@ -245,7 +246,7 @@ function runSeed(seed) {
     return { seed, log, mismatches };
 }
 
-/* -- driver ----------------------------------------------------------------- */
+/* ── driver ───────────────────────────────────────────────────────────────── */
 
 const t0 = performance.now();
 let failures = 0;
@@ -269,7 +270,7 @@ for (let seed = 1; seed <= SEEDS; seed++) {
 }
 
 const dt = ((performance.now() - t0) / 1000).toFixed(2);
-console.log(`lite-signal oracle fuzzer -- ${SEEDS} seeds x ${OPS_PER_SEED} ops (${dt}s)`);
+console.log(`lite-signal oracle fuzzer — ${SEEDS} seeds x ${OPS_PER_SEED} ops (${dt}s)`);
 
 if (failures === 0) {
     console.log(`  PASS: every computed matched the reference on all ${SEEDS} seeds (${checks.toLocaleString()} ops)`);

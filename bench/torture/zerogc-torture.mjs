@@ -209,6 +209,11 @@ function gateChurn(name, build) {
     const { s0, s1 } = gateAllocAndGc(name, st);
     R.eq(name, s1.poolGrowths - s0.poolGrowths, 0, "the pool grew under create+dispose churn");
     R.eq(name, s1.activeNodes - s0.activeNodes, 0, "activeNodes did not return to baseline -- a churned node leaked");
+    // Visible positive verdict so a RUNNING churn gate is legible in the output --
+    // R.eq is silent on success, and on 1.5.0 churn-box ACTIVATES (signalBox is a
+    // function, buildChurnBox no longer returns null), so without this line its
+    // first-time activation would be invisible and indistinguishable from a SKIP.
+    R.note(`${name} -- ok: retained 0 B/call, poolGrowths delta 0, activeNodes returned to baseline`);
 }
 
 /* -- run -------------------------------------------------------------------- */

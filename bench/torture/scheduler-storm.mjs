@@ -1,5 +1,5 @@
 /**
- * bench/torture/scheduler-storm.mjs -- deferred-execution hazards under saturation.
+ * bench/torture/scheduler-storm.mjs — deferred-execution hazards under saturation.
  *
  * SCOPE NOTE, because the obvious wishlist for a file with this name is mostly
  * inapplicable here. `scheduler` is a user-supplied callback: the engine hands
@@ -41,10 +41,10 @@ import { createRegistry } from "../../Signal.js";
 import { soakRegistry, createReport, flushMicrotasks } from "./helpers/index.mjs";
 
 const SATURATION = Number(process.env.SCHED_EFFECTS || 10000);
-const R = createReport(`lite-signal scheduler storm -- deferred execution, ${SATURATION.toLocaleString()} effects`);
+const R = createReport(`lite-signal scheduler storm — deferred execution, ${SATURATION.toLocaleString()} effects`);
 const reg = () => soakRegistry(createRegistry, { maxNodes: SATURATION * 4, maxLinks: SATURATION * 8 });
 
-/* -- 1. The cached thunk is reused, not reallocated ------------------------- */
+/* ── 1. The cached thunk is reused, not reallocated ───────────────────────── */
 {
     // Documented as "reuse cached thunk". It is an allocation-avoidance
     // guarantee: a fresh closure per re-schedule would allocate once per effect
@@ -63,7 +63,7 @@ const reg = () => soakRegistry(createRegistry, { maxNodes: SATURATION * 4, maxLi
     stop();
 }
 
-/* -- 2. A thunk held past dispose is inert ---------------------------------- */
+/* ── 2. A thunk held past dispose is inert ────────────────────────────────── */
 {
     const r = reg();
     const s = r.signal(0);
@@ -78,7 +78,7 @@ const reg = () => soakRegistry(createRegistry, { maxNodes: SATURATION * 4, maxLi
     R.eq("stale-thunk", runs, before, "a disposed effect ran from a stale thunk");
 }
 
-/* -- 3. ABA: a stale thunk must not fire the slot's NEW resident ------------ */
+/* ── 3. ABA: a stale thunk must not fire the slot's NEW resident ──────────── */
 {
     // The sharp case the gen guard exists for. Dispose an effect, hold its run,
     // then allocate enough new effects that the pool hands the slot to someone
@@ -118,7 +118,7 @@ const reg = () => soakRegistry(createRegistry, { maxNodes: SATURATION * 4, maxLi
     for (const st of stops) st();
 }
 
-/* -- 4. Deferral coalesces a write storm into one run ----------------------- */
+/* ── 4. Deferral coalesces a write storm into one run ─────────────────────── */
 {
     // FLAG_QUEUED stays set until executeEffect clears it, so writes arriving
     // while the scheduler defers must not each schedule their own run. This is
@@ -155,7 +155,7 @@ const reg = () => soakRegistry(createRegistry, { maxNodes: SATURATION * 4, maxLi
     stop();
 }
 
-/* -- 5. A scheduler that never invokes run ---------------------------------- */
+/* ── 5. A scheduler that never invokes run ────────────────────────────────── */
 {
     // Contract-honouring, not a bug: the effect simply never runs. What matters
     // is that it does not wedge the flush or block unrelated effects.
@@ -175,7 +175,7 @@ const reg = () => soakRegistry(createRegistry, { maxNodes: SATURATION * 4, maxLi
     dormant(); neighbour();
 }
 
-/* -- 6. A synchronous scheduler behaves like no scheduler ------------------- */
+/* ── 6. A synchronous scheduler behaves like no scheduler ─────────────────── */
 {
     const r = reg();
     const s = r.signal(0);
@@ -191,7 +191,7 @@ const reg = () => soakRegistry(createRegistry, { maxNodes: SATURATION * 4, maxLi
     stopSync(); stopPlain();
 }
 
-/* -- 7. A scheduler invoking run twice -------------------------------------- */
+/* ── 7. A scheduler invoking run twice ────────────────────────────────────── */
 {
     // PIN, not a contract: nothing documents what a double invocation should
     // mean. The observed answer is better than I assumed when writing this --
@@ -213,7 +213,7 @@ const reg = () => soakRegistry(createRegistry, { maxNodes: SATURATION * 4, maxLi
     stop();
 }
 
-/* -- 8. A throwing scheduler must not take the pass down -------------------- */
+/* ── 8. A throwing scheduler must not take the pass down ──────────────────── */
 {
     const r = reg();
     const s = r.signal(0);
@@ -238,7 +238,7 @@ const reg = () => soakRegistry(createRegistry, { maxNodes: SATURATION * 4, maxLi
     bad(); good();
 }
 
-/* -- 9. Saturation: writes landing mid-drain must not be lost --------------- */
+/* ── 9. Saturation: writes landing mid-drain must not be lost ─────────────── */
 
 async function saturation() {
     const r = reg();
@@ -293,7 +293,7 @@ async function saturation() {
     for (let i = 0; i < SATURATION; i++) stops[i]();
 }
 
-/* -- 10. Dispose arriving mid-drain ----------------------------------------- */
+/* ── 10. Dispose arriving mid-drain ───────────────────────────────────────── */
 {
     // Half the pending thunks belong to effects disposed after scheduling but
     // before draining. They must no-op; the survivors must still run.
@@ -329,7 +329,7 @@ async function saturation() {
     for (let i = 1; i < N; i += 2) stops[i]();
 }
 
-/* -- driver ----------------------------------------------------------------- */
+/* ── driver ───────────────────────────────────────────────────────────────── */
 
 await saturation();
 process.exit(R.finish("every deferred-execution contract held under saturation"));
