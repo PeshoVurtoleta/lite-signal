@@ -4,6 +4,67 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.4.5] -- 2026-08-18
+
+The createRegistry validation patch. Until now `createRegistry(config)` read five
+options and validated none of them -- 20 of 25 malformed configs built without a
+word and the rest failed later, deep in the node allocator, naming an internal
+`nextFree` field rather than the option you got wrong. This closes the door. All
+of it is constructor-cold: **the engine's hot path is byte-for-byte unchanged and
+the zero-GC steady state does not move** (read/set/flush allocate 0 B/op as before).
+
+### Fixed
+
+- **`prealloc:"eager"` with an absurd capacity no longer kills the process.**
+  `{maxNodes: Infinity}` and `{maxNodes: 1e9}` (a plausible typo for `1e5`) used to
+  run an unbounded construction loop and SIGABRT the process with an uncatchable
+  "Ineffective mark-compacts near heap limit" -- not a throw, so `try/catch` could
+  not see it and a supervisor got a crashed worker instead of an error. Eager
+  construction now refuses by name above a `(maxNodes + maxLinks) > (1 << 24)`
+  ceiling, throwing a `TypeError` prefixed `createRegistry: "maxNodes"` (or
+  `"maxLinks"`) that suggests `prealloc:"lazy"` for an unbounded on-demand ledger.
+- **Fractional and non-positive capacities are rejected at construction.**
+  `{maxNodes: -1}`, `0`, `null`, `NaN` used to build a registry that died on first
+  use with `TypeError: Cannot read properties of undefined (reading 'nextFree')`;
+  `{maxNodes: 1.5}` was accepted and surfaced later as a `CapacityError`. All now
+  throw `createRegistry: "maxNodes"` (finite integer >= 1) at the call that made
+  the mistake.
+
+### Changed
+
+- **Every option is validated by name.** `maxNodes` / `maxLinks` / `maxFlushPasses`
+  must be finite integers >= 1; `prealloc` exactly `"eager"` or `"lazy"`;
+  `onCapacityExceeded` exactly `"throw"` or `"grow"`; `config` itself a plain object
+  or `undefined` (`null`, `42`, `"eager"` are rejected). A bad value throws a
+  `TypeError` prefixed `createRegistry: "<option>"`.
+- **Unknown keys throw with a did-you-mean hint.** `{maxNods: 32}` and
+  `{preAlloc: "lazy"}` used to build a default registry and run -- the misspelled
+  key silently ignored, so the capacity or the population strategy you asked for
+  never took effect. They now throw and suggest the intended key. If you had a typo,
+  you will now hear about it at construction instead of debugging it as production
+  jitter. A one-character `prealloc` typo in particular used to flip an eager pool
+  to lazy silently, selling back the zero-GC latency contract eager exists to buy.
+- **`stats()` returns 13 keys** (was 11): adds `nodePoolPopulation` and
+  `linkPoolPopulation`, the PHYSICAL count of constructed pool objects, distinct
+  from the `*Capacity` ledgers. Under `"eager"` population equals capacity; under
+  `"lazy"` it starts at 0 and grows on demand. This is the instrument that lets a
+  caller confirm an eager pool actually preallocated -- previously `stats()`
+  reported only the ledger and was blind to a `prealloc` typo. No existing key
+  removed or changed; two free array-length reads, no allocation.
+
+### Tests
+
+- `test/28-config-validation.test.mjs` -- the full 25-config matrix: every
+  malformed row throws a `TypeError` naming the option (never reaching the internal
+  `nextFree` path), every accepted row is explicitly listed, plus the retained
+  heap-delta / population check that `"eager"` at `maxNodes:200000` retains >20 MB
+  with `nodePoolPopulation === 200000` and `"lazy"` retains ~0 with
+  `nodePoolPopulation === 0`.
+- `test/28-config-oom.child.mjs` -- the three OOM rows (`maxNodes:Infinity`,
+  `maxNodes:1e9`, `maxLinks:Infinity`) run as isolated child processes under
+  `--max-old-space-size=256`, each asserting a caught named `TypeError` and a clean
+  exit (the fix must not SIGABRT).
+
 ## [1.4.4] -- 2026-08-03
 
 The verification-surface patch, round four. **The engine is unchanged**: as in

@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-signal v1.4.4
+ * @zakkster/lite-signal v1.4.5
  * --------------------
  * Hybrid Doubly-Linked-List Reactive Graph Engine -- decoupled (Signal1_3) base
  * with the two 1.1.3 performance fixes ported in:
@@ -173,6 +173,88 @@ export class CapacityError extends Error {
     }
 }
 
+/** The only config keys {@link createRegistry} recognizes. Anything else is
+ *  rejected at construction with a did-you-mean hint (fail closed on an
+ *  unverified state -- an unknown key is an error, never a silent ignore). */
+const ALLOWED_KEYS = ["maxNodes", "maxLinks", "prealloc", "onCapacityExceeded", "maxFlushPasses"];
+
+/** Ceiling on eager pool construction: `(maxNodes + maxLinks)` objects. A finite
+ *  but absurd `maxNodes` (e.g. `1e9`, a plausible typo for `1e5`) that would
+ *  otherwise OOM the process is refused BY NAME at construction rather than
+ *  allocating forever. Only the `"eager"` path is bounded; `"lazy"` keeps its
+ *  unbounded ledger. `1 << 24` == 16777216. */
+const EAGER_CONSTRUCT_CEILING = 1 << 24;
+
+/**
+ * Levenshtein edit distance between two short strings. Cold: called only on the
+ * constructor error path, over the five known option names, so its per-call
+ * array allocation never touches any hot path.
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function editDistance(a, b) {
+    const m = a.length;
+    const n = b.length;
+    const prev = new Array(n + 1);
+    const cur = new Array(n + 1);
+    for (let j = 0; j <= n; j++) prev[j] = j;
+    for (let i = 1; i <= m; i++) {
+        cur[0] = i;
+        for (let j = 1; j <= n; j++) {
+            const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+            let min = prev[j] + 1;
+            if (cur[j - 1] + 1 < min) min = cur[j - 1] + 1;
+            if (prev[j - 1] + cost < min) min = prev[j - 1] + cost;
+            cur[j] = min;
+        }
+        for (let j = 0; j <= n; j++) prev[j] = cur[j];
+    }
+    return prev[n];
+}
+
+/**
+ * The closest known config key to `key` within edit distance 2 (case-folded so
+ * `preAlloc`/`MAXNODES` resolve), or null when nothing is close. Cold path only.
+ * @param {string} key
+ * @returns {string|null}
+ */
+function suggestKey(key) {
+    const lk = key.toLowerCase();
+    let best = null;
+    let bestD = 3;
+    for (let i = 0; i < ALLOWED_KEYS.length; i++) {
+        const d = editDistance(lk, ALLOWED_KEYS[i].toLowerCase());
+        if (d < bestD) { bestD = d; best = ALLOWED_KEYS[i]; }
+    }
+    return bestD <= 2 ? best : null;
+}
+
+/**
+ * Render a rejected value for an error message, e.g. `42 (number)`.
+ * Cold: this runs only on a throw path, never on any hot path. `String(symbol)`
+ * throws, so symbols are stringified defensively.
+ * @param {*} v
+ * @returns {string}
+ */
+function received(v) {
+    return (typeof v === "symbol" ? v.toString() : String(v)) + " (" + typeof v + ")";
+}
+
+/**
+ * Validate that a numeric option is a finite integer >= 1. Cold: constructor
+ * error path only. Throws a {@link TypeError} prefixed `createRegistry: "<name>"`.
+ * @param {*} v
+ * @param {string} name
+ */
+function requirePositiveInt(v, name) {
+    if (!Number.isInteger(v) || v < 1) {
+        throw new TypeError(
+            'createRegistry: "' + name + '" must be a finite integer >= 1, received ' + received(v) + '.'
+        );
+    }
+}
+
 /**
  * Create an isolated reactive registry.
  *
@@ -211,18 +293,96 @@ export function createRegistry(config) {
     const NODE_PTR = Symbol("node_ptr");
     const NODE_GEN = Symbol("node_gen");
 
-    let currentNodesCapacity = (config !== undefined && config.maxNodes !== undefined) ? config.maxNodes : 1024;
-    let currentLinkCapacity = (config !== undefined && config.maxLinks !== undefined) ? config.maxLinks : currentNodesCapacity * 4;
-    const policy = (config !== undefined && config.onCapacityExceeded !== undefined) ? config.onCapacityExceeded : "throw";
-    const maxFlushPasses = (config !== undefined && config.maxFlushPasses !== undefined) ? config.maxFlushPasses : 100;
+    // Config-shape gate (cold). Accept `undefined` or a non-null, non-array
+    // object; reject `null`, `42`, `"eager"`, arrays and every other non-object
+    // BY NAME rather than dying later on `config.maxNodes` / an internal
+    // `nextFree` read.
+    if (config !== undefined && (config === null || typeof config !== "object" || Array.isArray(config))) {
+        throw new TypeError(
+            'createRegistry: "config" must be a plain object or undefined, received ' + received(config) + '.'
+        );
+    }
+
+    // Per-option validation (cold). Each option is validated BY NAME so a bad
+    // value throws `createRegistry: "<option>"` at construction, not a delayed
+    // internal TypeError on first use. All of this is constructor-cold: zero
+    // hot-path bytes.
+    let currentNodesCapacity = 1024;
+    let currentLinkCapacity;
+    let policy = "throw";
+    let maxFlushPasses = 100;
+    let prealloc = "eager";
+    if (config !== undefined) {
+        if (config.maxNodes !== undefined) {
+            requirePositiveInt(config.maxNodes, "maxNodes");
+            currentNodesCapacity = config.maxNodes;
+        }
+        currentLinkCapacity = currentNodesCapacity * 4;
+        if (config.maxLinks !== undefined) {
+            requirePositiveInt(config.maxLinks, "maxLinks");
+            currentLinkCapacity = config.maxLinks;
+        }
+        if (config.maxFlushPasses !== undefined) {
+            requirePositiveInt(config.maxFlushPasses, "maxFlushPasses");
+            maxFlushPasses = config.maxFlushPasses;
+        }
+        if (config.prealloc !== undefined) {
+            if (config.prealloc !== "eager" && config.prealloc !== "lazy") {
+                throw new TypeError(
+                    'createRegistry: "prealloc" must be "eager" or "lazy", received ' + received(config.prealloc) + '.'
+                );
+            }
+            prealloc = config.prealloc;
+        }
+        if (config.onCapacityExceeded !== undefined) {
+            if (config.onCapacityExceeded !== "throw" && config.onCapacityExceeded !== "grow") {
+                throw new TypeError(
+                    'createRegistry: "onCapacityExceeded" must be "throw" or "grow", received ' + received(config.onCapacityExceeded) + '.'
+                );
+            }
+            policy = config.onCapacityExceeded;
+        }
+        // Unknown-key rejection with a did-you-mean hint (`preAlloc` -> `prealloc`,
+        // `maxNods` -> `maxNodes`). Own enumerable keys only; cold path.
+        const keys = Object.keys(config);
+        for (let i = 0; i < keys.length; i++) {
+            const k = keys[i];
+            if (ALLOWED_KEYS.indexOf(k) === -1) {
+                const hint = suggestKey(k);
+                throw new TypeError(
+                    'createRegistry: "' + k + '" is not a recognized option' +
+                    (hint !== null ? ' (did you mean "' + hint + '"?)' : '') +
+                    '. Allowed: ' + ALLOWED_KEYS.join(", ") + '.'
+                );
+            }
+        }
+    } else {
+        currentLinkCapacity = currentNodesCapacity * 4;
+    }
     const maxLinkLimit = currentLinkCapacity * 16;
+
+    // Eager-construction ceiling (cold). `"eager"` builds `(maxNodes + maxLinks)`
+    // objects up front; a finite-but-absurd capacity (e.g. `1e9`) would OOM the
+    // process with an uncatchable SIGABRT, not a throw. Refuse BY NAME before
+    // allocating. Named for the larger driver so the message satisfies the
+    // per-option regex. `"lazy"` keeps its unbounded ledger (untouched).
+    if (prealloc === "eager" && (currentNodesCapacity + currentLinkCapacity) > EAGER_CONSTRUCT_CEILING) {
+        const driver = currentLinkCapacity > currentNodesCapacity ? "maxLinks" : "maxNodes";
+        throw new TypeError(
+            'createRegistry: "' + driver + '" eager construction of ' +
+            (currentNodesCapacity + currentLinkCapacity) + ' objects (maxNodes ' +
+            currentNodesCapacity + ' + maxLinks ' + currentLinkCapacity + ') exceeds the ceiling of ' +
+            EAGER_CONSTRUCT_CEILING + '. Use prealloc:"lazy" for an unbounded on-demand ledger, ' +
+            'or lower the capacity.'
+        );
+    }
 
     // Lazy pool population (P1): maxNodes / maxLinks are capacity ledgers,
     // not eager construction counts. Nodes/links are constructed on first
     // demand and recycled through the free lists thereafter -- the zero-GC
     // steady state is identical after warm-up, but the heap no longer carries
     // never-used live objects for every major GC to mark.
-    const prealloc = (config !== undefined && config.prealloc !== undefined) ? config.prealloc : "eager";
+    // `prealloc` was validated and resolved above (config-cold).
     const nodePool = [];
     let freeNodeHead = null;
     const linkPool = [];
@@ -1331,10 +1491,14 @@ export function createRegistry(config) {
      * Snapshot of registry counters. Useful for diagnostics and tests --
      * e.g. asserting that `activeNodes` returns to a baseline after teardown.
      *
-     * Returns 11 keys: eight live gauges (`signals`, `computeds`, `effects`,
+     * Returns 13 keys: ten live gauges (`signals`, `computeds`, `effects`,
      * `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`,
-     * `linkPoolCapacity`) plus three cumulative lifecycle counters added in 1.4.0
-     * (`totalAllocations`, `totalDisposals`, `poolGrowths`). The counters are
+     * `linkPoolCapacity`, plus `nodePoolPopulation` / `linkPoolPopulation` added
+     * in 1.4.5 -- the PHYSICAL count of constructed pool objects, which under
+     * `"eager"` equals capacity and under `"lazy"` starts at 0 and grows on
+     * demand, so a caller can tell a real eager pool from a `prealloc` typo that
+     * silently fell through to lazy) plus three cumulative lifecycle counters
+     * added in 1.4.0 (`totalAllocations`, `totalDisposals`, `poolGrowths`). The counters are
      * monotonic over the registry's life and reset only by {@link destroy}; sample
      * them over time to derive allocation rate, pool-reuse ratio, and graph churn
      * without the engine computing rates itself. In a quiescent registry
@@ -1350,6 +1514,15 @@ export function createRegistry(config) {
             pooledLinks: currentLinkCapacity - activeLinks,
             linkPoolCapacity: currentLinkCapacity,
             nodePoolCapacity: currentNodesCapacity,
+            // 1.4.5: PHYSICAL population (constructed objects), distinct from the
+            // capacity ledger above. `nodePool.length` / `linkPool.length` are the
+            // exact count ever constructed in this registry: eager fills the pool to
+            // capacity at construction (population === capacity), lazy starts at 0 and
+            // grows on demand. This is the instrument that distinguishes a real eager
+            // pool from a `prealloc` typo silently falling through to lazy. Two free
+            // array-length reads, no allocation.
+            nodePoolPopulation: nodePool.length,
+            linkPoolPopulation: linkPool.length,
             activeNodes,
             // 1.4: cumulative lifecycle counters (monotonic; reset by destroy()).
             // Derive: allocationRate = deltatotalAllocations/deltat; poolReuseRate =

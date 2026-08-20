@@ -236,17 +236,18 @@ describe("onCapacityExceeded: grow (1.3.0)", () => {
 
 // --- 1.4.0: cumulative lifecycle counters on stats() ------------------------
 describe("lifecycle counters (1.4.0)", () => {
-    it("stats() reports the 11-key 1.4.0 shape with all counters initially 0", () => {
+    it("stats() reports the 13-key 1.4.5 shape with all counters initially 0", () => {
         const r = createRegistry();
         const s = r.stats();
         const expected = [
             "signals", "computeds", "effects",
             "activeNodes", "activeLinks", "pooledLinks",
             "nodePoolCapacity", "linkPoolCapacity",
+            "nodePoolPopulation", "linkPoolPopulation",
             "totalAllocations", "totalDisposals", "poolGrowths"
         ];
         const keys = Object.keys(s);
-        assert.equal(keys.length, 11, "stats() exposes exactly 11 keys on 1.4.0");
+        assert.equal(keys.length, 13, "stats() exposes exactly 13 keys on 1.4.5");
         for (const k of expected) {
             assert.ok(k in s, `stats() must expose '${k}'`);
         }

@@ -22,7 +22,7 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
 - **isTracking**: `isTracking()` returns true iff a read right now would record a dependency on this registry (for wrappers that lazily allocate signals).
 - **onCleanup**: registers teardown for the current computation; fires before each re-run and once on dispose. Works in effects and computeds.
 - **Observer-lifecycle introspection** (1.1.4; top-level + per-registry): `hasObservers(handle)` returns true iff a signal/computed has >=1 live observer right now (O(1); a `peek` does not count). `observeObservers(handle, { onConnect?, onDisconnect? })` fires on the 0->1 and 1->0 observer transitions (after registration; transition-only) and returns an idempotent unobserve -- the auto-pause hook for tickers (lite-time/lite-raf start a source only while it's watched). `forEachObserver(handle, fn)` / `forEachSource(handle, fn)` walk the live graph in either direction, passing a `{ kind, value }` descriptor (`kind` is `"signal" | "computed" | "effect"`) -- for inspection (lite-devtools). The surface is gated by an internal counter: zero steady-state cost when nothing is observed. `hasObservers`/`forEach*` no-op on a non-handle; `observeObservers` throws `TypeError`. **Node identity (1.1.5):** `nodeId(handle)` returns the node's stable per-allocation id, `describe(handle)` returns the handle's own `{ id, kind, value }` descriptor, and `forEach*` descriptors now carry `id` too; a descriptor is **re-walkable** (pass it back into `forEachObserver`/`forEachSource`) -- the recursion primitive lite-devtools uses to walk the full DAG. **Owner-tree introspection (1.2.1):** `forEachOwned(handle, fn)` walks a node's owned children (lifetime-binding edges from the 1.2 owner tree -- invisible through dep/sub); `ownerOf(handle)` returns the owner's descriptor or `undefined` for top-level / stale handles. **Stale-handle guard (1.2.1):** the entire introspection surface plus `peek()`/`read()`/`set()` is now generation-checked. A handle held across the 1.2 owner-cascade auto-dispose used to resolve `NODE_PTR` ungated and silently report the recycled slot's NEW resident; 1.2.1 surfaces stale handles as `undefined` (or `TypeError`, for `observeObservers`) -- same ABA discipline `dispose()` always had. Descriptors are gen-stamped so the re-walkable contract survives the guard. **Push-based mutation hook (1.2.1):** `onGraphMutation(fn)` registers a single nullable listener invoked synchronously at every mutation point with three integers `(opcode, intA, intB)` -- opcodes `1` node-create / `2` node-dispose / `3` link-add / `4` link-remove / `5` recompute. Zero-cost gate when no listener is registered (one branch-predicted null check); allocation-free dispatch when registered. The connection point for push-based devtools/studio. Contract: observe only -- never throw, never mutate.
-- **Registry**: `createRegistry({ maxNodes, maxLinks, prealloc, onCapacityExceeded, maxFlushPasses })` creates an isolated reactive world with its own pools. Useful for tests, plugins, multi-tenant sandboxes. Top-level helpers use a default registry created at module load. `prealloc` (1.3.0; `"eager"` default | `"lazy"`) chooses up-front vs on-demand pool construction; `onCapacityExceeded` (`"throw"` default | `"grow"`) chooses fail-fast vs chunked-incremental growth bounded by the 16x link ceiling.
+- **Registry**: `createRegistry({ maxNodes, maxLinks, prealloc, onCapacityExceeded, maxFlushPasses })` creates an isolated reactive world with its own pools. Useful for tests, plugins, multi-tenant sandboxes. Top-level helpers use a default registry created at module load. `prealloc` (1.3.0; `"eager"` default | `"lazy"`) chooses up-front vs on-demand pool construction; `onCapacityExceeded` (`"throw"` default | `"grow"`) chooses fail-fast vs chunked-incremental growth bounded by the 16x link ceiling. **Config is validated (1.4.5):** `maxNodes`/`maxLinks`/`maxFlushPasses` must be finite integers >= 1, `prealloc` exactly `"eager"`/`"lazy"`, `onCapacityExceeded` exactly `"throw"`/`"grow"`, `config` itself an object or undefined; a bad value throws a `TypeError` prefixed `createRegistry: "<option>"`, an unknown key throws with a did-you-mean hint, and `prealloc:"eager"` above a `1<<24`-object ceiling throws by name rather than OOM-killing the process.
 - **CapacityError**: thrown when a fixed-size pool is exhausted under the `"throw"` policy, or when a `"grow"` policy hits the 16× starting-capacity ceiling on links.
 
 ## Architecture invariants
@@ -50,7 +50,30 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
 
 ## Version notes
 
-- **1.4.4** (current): the **verification-surface patch, round four**. No engine
+- **1.4.5** (current): the **createRegistry validation patch**. `createRegistry`
+  read five options and validated none of them: 20 of 25 malformed configs built
+  without complaint and the rest failed later, deep in the allocator. This closes
+  the door. `maxNodes`/`maxLinks`/`maxFlushPasses` must be finite integers >= 1;
+  `prealloc` exactly `"eager"`/`"lazy"`; `onCapacityExceeded` exactly
+  `"throw"`/`"grow"`; `config` itself an object or `undefined`. A bad value throws
+  a `TypeError` prefixed `createRegistry: "<option>"`, and an unknown key throws
+  with a did-you-mean hint (`preAlloc` -> `prealloc`, `maxNods` -> `maxNodes`)
+  instead of being silently ignored. Two severe fixes: `prealloc:"eager"` with a
+  finite-but-absurd capacity (`maxNodes:1e9`, `Infinity`) used to allocate forever
+  and SIGABRT the process uncatchably -- it now throws by name above a
+  `(maxNodes+maxLinks) > (1<<24)` ceiling before constructing anything (suggesting
+  `prealloc:"lazy"`); and a one-character `prealloc` typo used to silently flip an
+  eager pool to lazy, selling back the zero-GC real-time contract with `stats()`
+  blind to it. `stats()` now returns **13 keys** -- adds `nodePoolPopulation` /
+  `linkPoolPopulation` (physical constructed-object counts, eager == capacity,
+  lazy grows from 0), the instrument a caller reaches for to confirm the flip did
+  not happen. If you had a typo you will now hear about it at construction. **All
+  validation is constructor-cold: zero hot-path bytes, the zero-GC steady state is
+  byte-for-byte unchanged.** Tests: adds `test/28-config-validation.test.mjs` (the
+  full 25-config matrix) and `test/28-config-oom.child.mjs` (the OOM rows as
+  isolated child processes under `--max-old-space-size=256`, asserting a caught
+  named `TypeError` and a clean exit).
+- **1.4.4**: the **verification-surface patch, round four**. No engine
   change -- as in 1.4.1/1.4.2/1.4.3, the only edit to `Signal.js` is the banner
   version string, `Signal.d.ts` is untouched, and `bench/torture/` stays out of
   `files[]`; for consumers 1.4.4 is byte-for-byte 1.4.3 plus a version number. It
@@ -471,7 +494,7 @@ interface RegistryConfig {
   onCapacityExceeded?: "throw" | "grow";  // default "throw"; "grow" = chunked refill, ledger doubles, 16x link ceiling
 }
 
-interface RegistryStats {            // 11 keys as of 1.4.0
+interface RegistryStats {            // 13 keys as of 1.4.5
   signals: number;
   computeds: number;
   effects: number;
@@ -479,6 +502,8 @@ interface RegistryStats {            // 11 keys as of 1.4.0
   pooledLinks: number;
   linkPoolCapacity: number;          // ledger; doubles under "grow"
   nodePoolCapacity: number;          // ledger; doubles under "grow"
+  nodePoolPopulation: number;        // 1.4.5: physical node objects constructed; eager == capacity, lazy grows from 0
+  linkPoolPopulation: number;        // 1.4.5: physical link objects constructed; eager == capacity, lazy grows from 0
   activeNodes: number;               // live gauge
   totalAllocations: number;          // 1.4.0: cumulative node acquires; reset by destroy()
   totalDisposals: number;            // 1.4.0: cumulative node disposals; totalAllocations - totalDisposals === activeNodes

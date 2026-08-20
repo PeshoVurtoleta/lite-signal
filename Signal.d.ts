@@ -90,6 +90,15 @@ export interface RegistryStats {
     /** Node-pool capacity ledger. Doubles under the `"grow"` policy; under `"lazy"`
      *  prealloc it may exceed the count of physically constructed nodes. */
     nodePoolCapacity: number;
+    /** Physical count of node objects actually constructed in this registry (1.4.5).
+     *  Under `"eager"` this equals `nodePoolCapacity`; under `"lazy"` it starts at 0
+     *  and grows on demand. Distinguishes a real eager pool from a `prealloc` typo
+     *  that silently fell through to lazy. */
+    nodePoolPopulation: number;
+    /** Physical count of link objects actually constructed in this registry (1.4.5).
+     *  Under `"eager"` this equals `linkPoolCapacity`; under `"lazy"` it starts at 0
+     *  and grows on demand. */
+    linkPoolPopulation: number;
     /** Number of nodes currently allocated (signals + computeds + alive effects). */
     activeNodes: number;
     /**
