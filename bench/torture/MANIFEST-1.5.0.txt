@@ -2,29 +2,35 @@ lite-signal torture suite -- 1.5.0 engine behaviour
 ====================================================
 
 Target engine: 1.5.0 (verified on 1.5.0-rc.1; forward-compatible through 1.9).
-Shipped scenario count: 16 (13 semantic + 3 soak) -- the full superset.
+Shipped scenario count: 22 (19 semantic + 3 soak) -- the full superset.
 
 This file documents how the shipped superset behaves ON THE 1.5.0 ENGINE.
-For the version-agnostic catalogue of all 16 scenarios and their feature
-gates, see MANIFEST.txt. run.mjs carries the same 16 either way; the split
+For the version-agnostic catalogue of all 22 scenarios and their feature
+gates, see MANIFEST.txt. run.mjs carries the same 22 either way; the split
 below is purely which ones have a feature to exercise at 1.5.0.
 
 Run:
     npm run torture              # everything
-    npm run torture:semantic     # the 13 semantic scenarios (9 run, 4 skip here)
+    npm run torture:semantic     # the 19 semantic scenarios (15 run, 4 skip here)
     npm run torture:soak         # the 3 wall-clock soaks (nightly)
     node bench/torture/run.mjs --list
 
-Semantic -- EXECUTE on 1.5.0 (9)
+Semantic -- EXECUTE on 1.5.0 (15)
     oracle-fuzzer      values vs an independent reference evaluator
     glitch-hunter      glitch freedom + exact wakeup accounting
     work-accounting    minimum body-execution counts (wrapper-based)
     concurrent-storm   reentrancy, nesting, flush ordering
     scheduler-storm    deferred execution, ABA thunks, coalescing
     box-torture        signalBox / computedBox interop + surface   (1.5.0 feature)
+    owner-torture      getOwner/runWithOwner capture-restore + ABA degradation (1.5.0 feature)
     async-torture      watch / when / whenAsync contracts + fuzz
-    capacity-torture   the fail-closed pool boundary
+    capacity-torture   the fail-closed pool boundary + the 16x grow ceiling
+    error-torture      throwing effect bodies: per-effect buffering, AggregateError, buffer drain
+    deep-chain-torture pullComputed recursion fail-closed (RangeError) vs iterative push
+    zerogc-torture     zero-GC hot path via measureAllocs/measureOps + stats counters
     op-accounting      structural work via the onGraphMutation opcode lane
+    introspect-torture describe/forEach*/hasObservers/ownerOf + ABA gen-stamp guard
+    lifecycle-torture  createRoot detachment + destroy registry reset (1.5.0 feature)
 
 Semantic -- SKIP cleanly on 1.5.0 (4; each activates on its own engine version)
     scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0)
@@ -40,5 +46,5 @@ introduces its feature, so run.mjs stays green from 1.4.x forward and the 1.5.0
 RC ships the whole superset without referencing a feature the engine lacks.
 
 Verified green on 1.5.0-rc.1 (Node 22, --expose-gc):
-    torture:semantic  13/13 pass  (9 executed, 4 clean skips)
+    torture:semantic  19/19 pass  (15 executed, 4 clean skips)
     torture:soak       3/3 pass   (zero errors, pools back to leaf-only floor)

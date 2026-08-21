@@ -1,29 +1,41 @@
-lite-signal torture suite — complete set (16 scenarios)
+lite-signal torture suite — complete set (22 scenarios)
 ========================================================
 
-13 semantic (deterministic, fast, CI) + 3 soak. Full superset through 1.9.
+19 semantic (deterministic, fast, CI) + 3 soak. Full superset through 1.9.
 Every scenario feature-detects and skips cleanly below its feature; runs green
 from 1.4.x forward.
 
     npm run torture ; npm run torture:semantic ; npm run torture:soak
     node bench/torture/run.mjs --list
 
-SEMANTIC
+SEMANTIC (listed in run.mjs registration order)
   oracle-fuzzer            values vs an independent reference evaluator
   glitch-hunter            glitch freedom + exact wakeup accounting
   work-accounting          minimum body-execution counts (wrapper-based)
-  op-accounting            structural work via the engine's onGraphMutation
-                           opcode lane (op 1-5); op5 identity, equality cutoff,
-                           link/node balance, laziness, 400-seed op5 differential
   concurrent-storm         reentrancy, nesting, flush ordering
   scheduler-storm          deferred execution, ABA thunks, coalescing
   box-torture              signalBox / computedBox interop + surface   (1.5.0+)
   scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0+)
+  owner-torture            getOwner/runWithOwner capture-restore + ABA
+                           degradation                                 (1.5.0+)
   async-torture            watch / when / whenAsync contracts + fuzz
-  capacity-torture         the fail-closed pool boundary
+  capacity-torture         fail-closed pool boundary + CapacityError + the
+                           16x grow ceiling
+  error-torture            throwing effect bodies: per-effect buffering,
+                           AggregateError, buffer drain
+  deep-chain-torture       pullComputed recursion fail-closed (RangeError)
+                           vs iterative push path
   flush-torture            flushStrategy eager/sab/manual + subscribe  (1.7.0+)
   cleanup-return-torture   effect return cleanup + compose order       (1.8.0+)
   dispose-torture          Symbol.dispose / using on lifecycle objects (1.9.0+)
+  zerogc-torture           zero-GC hot path via measureAllocs/measureOps +
+                           stats counters; ZEROGC_BREAK self-test
+  op-accounting            structural work via the engine's onGraphMutation
+                           opcode lane (op 1-5); op5 identity, equality cutoff,
+                           link/node balance, laziness, 400-seed op5 differential
+  introspect-torture       describe/forEach*/hasObservers/ownerOf + ABA
+                           gen-stamp guard
+  lifecycle-torture        createRoot detachment + destroy registry reset (1.5.0+)
 
 SOAK (originals, unchanged): graph-fuzzer, scheduler-bench, torture-soak
 
@@ -36,5 +48,5 @@ missing mark lane. Recommendation there: add a "compare lane" (op 11/12) so the
 short-circuit's benefit becomes a counted fact and its regression becomes
 catchable.
 
-FEATURE GATES: box->1.5, scope->1.6, flush->1.7, cleanup-return->1.8,
-dispose->1.9. op-accounting and all others: 1.4.0+.
+FEATURE GATES: box/owner/lifecycle->1.5, scope->1.6, flush->1.7,
+cleanup-return->1.8, dispose->1.9. op-accounting and all others: 1.4.0+.
