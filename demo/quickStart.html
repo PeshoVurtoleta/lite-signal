@@ -424,6 +424,17 @@
             <button id="btn-destroy"  class="danger">destroy registry</button>
             <div class="note">dispose() returns a node to the pool · destroy() resets everything</div>
         </div>
+
+        <div class="control-row">
+            <div class="label">v1.5</div>
+            <button id="btn-box" class="batch">signalBox +5</button>
+            <div class="counter-display" id="box-readout" aria-live="polite">0</div>
+            <button id="btn-root"     class="owner">createRoot detach</button>
+            <button id="btn-capture"  class="owner">capture owner</button>
+            <button id="btn-reattach" class="owner">runWithOwner</button>
+            <button id="btn-stale"    class="revert">stale re-attach</button>
+            <div class="note">signalBox/computedBox: non-callable .get()/.set() sharing one graph · createRoot: detached, survives owner re-runs · runWithOwner: re-attach across a gap, a stale handle degrades to rooted (never corrupts)</div>
+        </div>
     </div>
 
     <!-- End-state overlay -->
@@ -435,7 +446,7 @@
     <!-- Grid -->
     <div class="grid" id="grid" aria-label="reactive output grid"></div>
 
-    <div class="footnote">v1.4.1 · zero-GC reactive graph · MIT</div>
+    <div class="footnote">v1.5.0 · zero-GC reactive graph · MIT</div>
 
 </div>
 
@@ -469,6 +480,7 @@
     const counterEl = $('main-counter');
     const destroyedMsg = $('destroyed-msg');
     const toastEl = $('toast');
+    const boxReadoutEl = $('box-readout');   // v1.5 computedBox live value
 
     /** @type {{el: HTMLElement, parent: HTMLElement}[]} */
     const boxes = [];
@@ -577,6 +589,12 @@
     let nestedParent = null;
     let nestedChildren = [];
 
+    // v1.5 surface: box variants live in the SAME graph as the callables.
+    let boxSignal, boxComputed, boxReadoutEff;
+    let capturedOwner = null;    // opaque gen-stamped handle from getOwner()
+    let ownerCaptureEff = null;  // the effect whose owner we captured
+    let detachedSurvivors = [];  // createRoot-spawned handles: caller-owned
+
     // The current "kind" of fire — set by the user action that triggered it,
     // then every pulse painted by signal subscribe / effect body picks it up.
     let fireMode = 'direct';
@@ -630,6 +648,9 @@
         r = createRegistry();
         nestedParent = null;
         nestedChildren = [];
+        capturedOwner = null;
+        ownerCaptureEff = null;
+        detachedSurvivors = [];
 
         nodesG.innerHTML = '';
         edgesG.innerHTML = '';
@@ -662,6 +683,18 @@
         counterReadoutEff = r.effect(() => {
             effectRuns++;
             counterEl.textContent = counter();
+        });
+
+        // ─── v1.5 box surface: non-callable variants, same graph, full interop ──
+        // signalBox -> { get, set, peek, update, subscribe }; computedBox reads a
+        // CALLABLE signal (counter) to prove the two forms share one graph. Same
+        // ReactiveNode + zero-GC read/write path; construction is ~1.7x cheaper
+        // (an Object.create(proto) handle, not a closure).
+        boxSignal   = r.signalBox(0);
+        boxComputed = r.computedBox(() => boxSignal.get() + counter());
+        boxReadoutEff = r.effect(() => {
+            effectRuns++;
+            boxReadoutEl.textContent = boxComputed.get();
         });
 
         // ─── SVG topology mirrors the reactive wiring 1:1 ─────────────────
@@ -930,6 +963,10 @@
         r = null;
         nestedParent = null;
         nestedChildren = [];
+        capturedOwner = null;
+        ownerCaptureEff = null;
+        detachedSurvivors = [];
+        boxReadoutEl.textContent = '0';
         grid.style.display = 'none';
         destroyedMsg.classList.add('active');
         setControlsEnabled(false);
@@ -938,8 +975,68 @@
         showToast('registry destroyed · every pool slot returned', 'warn', 2400);
     });
 
+    /* ── v1.5: signalBox / computedBox ─────────────────────────────── */
+    const addFive = (n) => n + 5;
+    $('btn-box').addEventListener('click', () => {
+        if (!r) return;
+        fireMode = 'batch';
+        boxSignal.update(addFive);   // non-callable .update(); same zero-GC path
+        showToast('signalBox.update(+5) -> computedBox recomputes -> its effect repaints. Non-callable .get()/.set(), sharing ONE graph with the callables above (computedBox reads counter()).', 'batch', 2800);
+    });
+
+    /* ── v1.5: createRoot — detached, survives owner re-runs ────────── */
+    $('btn-root').addEventListener('click', () => {
+        if (!r) return;
+        // Spawn a long-lived effect from a DETACHED scope. It is not adopted by
+        // any caller, so it survives owner re-runs/disposal; the caller (this
+        // array) owns its lifecycle. createRoot(fn) returns fn's value.
+        const h = r.createRoot(() => r.effect(() => { boxSignal.get(); }));
+        detachedSurvivors.push(h);
+        showToast(`createRoot: effect spawned in a detached scope -> NOT owned by the caller, survives owner re-runs. ${detachedSurvivors.length} detached alive (freed only by destroy()).`, 'owner', 2800);
+    });
+
+    /* ── v1.5: getOwner / runWithOwner — re-attach across a gap ─────── */
+    $('btn-capture').addEventListener('click', () => {
+        if (!r) return;
+        if (ownerCaptureEff) { r.dispose(ownerCaptureEff); ownerCaptureEff = null; }
+        // A live, re-running effect whose owner handle we grab from inside its body.
+        ownerCaptureEff = r.effect(() => {
+            counter();
+            capturedOwner = r.getOwner();
+        });
+        showToast('getOwner() captured the running effect as an opaque, generation-stamped handle -- safe to hold across an async boundary.', 'owner', 2600);
+    });
+
+    $('btn-reattach').addEventListener('click', () => {
+        if (!r) return;
+        if (!capturedOwner) { showToast('capture an owner first', 'warn'); return; }
+        const before = r.stats().effects;
+        // Cross a real async boundary, then re-attach the continuation.
+        setTimeout(() => {
+            if (!r || !capturedOwner) return;
+            r.runWithOwner(capturedOwner, () => {
+                r.effect(() => { boxSignal.get(); });   // adopted by the captured owner
+            });
+            const delta = r.stats().effects - before;
+            showToast(`runWithOwner across a setTimeout gap: continuation adopted by the captured owner (delta effects = ${delta}). It cascade-disposes when that owner re-runs.`, 'owner', 3000);
+        }, 0);
+    });
+
+    $('btn-stale').addEventListener('click', () => {
+        if (!r) return;
+        if (!capturedOwner) { showToast('capture an owner first', 'warn'); return; }
+        // Kill the owner so its pool slot is freed (and may be recycled by the
+        // LIFO free list). Replaying the now-stale handle must degrade, not corrupt.
+        if (ownerCaptureEff) { r.dispose(ownerCaptureEff); ownerCaptureEff = null; }
+        let ran = 0;
+        r.runWithOwner(capturedOwner, () => {
+            r.effect(() => { ran++; boxSignal.get(); });
+        });
+        showToast(`stale handle (owner disposed): runWithOwner degraded to ROOTED execution -- continuation ran (${ran}), graph intact. A raw pointer would adopt into a recycled stranger or crash the disposal walk.`, 'revert', 3400);
+    });
+
     function setControlsEnabled(on) {
-        const ids = ['btn-inc','btn-dec','btn-batch','btn-auto','btn-revert','btn-nest','btn-cascade','btn-dispose-first','btn-destroy'];
+        const ids = ['btn-inc','btn-dec','btn-batch','btn-auto','btn-revert','btn-nest','btn-cascade','btn-dispose-first','btn-destroy','btn-box','btn-root','btn-capture','btn-reattach','btn-stale'];
         for (const id of ids) $(id).disabled = !on;
         $('btn-recreate').disabled = false;
     }

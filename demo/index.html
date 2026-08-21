@@ -653,6 +653,12 @@
             background: var(--amber);
         }
 
+        /* v1.5 box variants: same pool slot as their node kind, hollowed to mark
+           the non-callable Object.create(proto) handle. */
+        .pool-strip .cell.box {
+            box-shadow: inset 0 0 0 1.5px rgba(9, 11, 16, 0.62);
+        }
+
         .pool-strip .cell.flash {
             animation: flash .4s;
         }
@@ -870,7 +876,7 @@
         <div class="brand">
             <span class="mark">◐</span>
             <span class="pkg">@zakkster/lite-signal</span>
-            <span class="ver">v1.4.1</span>
+            <span class="ver">v1.5.0</span>
         </div>
         <div class="tagline"><span class="dot"></span>oscilloscope · live reactive graph</div>
     </header>
@@ -1166,6 +1172,20 @@
                     </div>
                 </section>
                 <section>
+                    <h3>v1.5 · box + ownership</h3>
+                    <div class="btn-row">
+                        <button class="btn" data-spawn="signalBox">+ signalBox</button>
+                        <button class="btn" data-spawn="computedBox">+ computedBox</button>
+                    </div>
+                    <div class="btn-row">
+                        <button class="btn" id="pool-root">createRoot detach</button>
+                        <button class="btn" id="pool-capture">capture owner</button>
+                        <button class="btn" id="pool-reattach">runWithOwner</button>
+                        <button class="btn" id="pool-stale">stale re-attach</button>
+                    </div>
+                    <p class="help-line">boxes occupy the SAME node pool (hollow cells) at ~1.7x cheaper construction · createRoot spawns detached, survives dispose 50% · runWithOwner re-attaches across a gap, a stale handle degrades to rooted</p>
+                </section>
+                <section>
                     <h3>cleanup</h3>
                     <div class="btn-row">
                         <button class="btn" id="pool-dispose-half">dispose 50%</button>
@@ -1252,7 +1272,7 @@
 
     <!-- ───────── TELEMETRY STRIP ───────── -->
     <footer class="telemetry">
-        <div class="tele"><span class="k">version</span><span class="v">1.4.1</span></div>
+        <div class="tele"><span class="k">version</span><span class="v">1.5.0</span></div>
         <div class="tele"><span class="k">fps</span><span class="v accent" id="t-fps">—</span></div>
         <div class="tele"><span class="k">ops/sec</span><span class="v" id="t-ops">—</span></div>
         <div class="tele"><span class="k">active links</span><span class="v" id="t-links">0</span></div>
@@ -2030,6 +2050,9 @@
     // ──────────────────────────────────────────────────────────────────
     const pool = (() => {
         let registry = null, spawned = [], cells = [];
+        // v1.5 ownership fixtures (kept OUT of `spawned` so dispose-50% can't touch
+        // them -- that is the whole point of createRoot/detached lifecycles).
+        let capturedOwner = null, ownerEff = null, ownerTick = null, detached = [];
         const dom = {
             strip: $("pool-node-strip"), mn: $("pool-mn"), ml: $("pool-ml"), policy: $("pool-policy"),
             prealloc: $("pool-prealloc"),
@@ -2064,6 +2087,10 @@
                 prealloc: dom.prealloc.value
             });
             spawned = [];
+            capturedOwner = null;
+            ownerEff = null;
+            ownerTick = null;
+            detached = [];
             buildStrip();
             refresh();
             flash("registry built", "green");
@@ -2114,7 +2141,11 @@
             let idx = 0;
             for (const it of spawned) {
                 if (idx >= cells.length) break;
-                cells[idx].className = "cell " + it.kind;
+                // Box variants share the pool slot of their node kind; render them
+                // in that colour but hollowed (the .box marker) so they read apart.
+                if (it.kind === "signalBox")       cells[idx].className = "cell signal box";
+                else if (it.kind === "computedBox") cells[idx].className = "cell computed box";
+                else                                cells[idx].className = "cell " + it.kind;
                 idx++;
             }
         }
@@ -2140,6 +2171,21 @@
                         SINK[slot] = dep();
                     });
                     spawned.push({kind, ref: disposeHandle});
+                } else if (kind === "signalBox") {
+                    // v1.5: non-callable signal. Same ReactiveNode + pool slot as a
+                    // callable signal (stats counts it under `signals`), cheaper to
+                    // construct. { get, set, peek, update, subscribe }.
+                    const sb = registry.signalBox(0);
+                    spawned.push({kind, ref: sb});
+                } else if (kind === "computedBox") {
+                    // v1.5: non-callable computed reading a callable signal -> proves
+                    // box/callable interop inside one graph. { get, peek, subscribe }.
+                    const sigs = spawned.filter(x => x.kind === "signal" || x.kind === "signalBox");
+                    let dep = sigs.length ? sigs[(Math.random() * sigs.length) | 0].ref : registry.signal(0);
+                    if (!sigs.length) spawned.push({kind: "signal", ref: dep});
+                    const read = (dep && typeof dep.get === "function") ? () => dep.get() : () => dep();
+                    const cb = registry.computedBox(() => read() + 1);
+                    spawned.push({kind, ref: cb});
                 }
                 const idx = spawned.length - 1;
                 if (idx < cells.length) {
@@ -2227,7 +2273,62 @@
         $("pool-destroy").addEventListener("click", () => {
             if (registry) registry.destroy();
             spawned = [];
+            capturedOwner = null;
+            ownerEff = null;
+            ownerTick = null;
+            detached = [];
             flash("registry destroyed · pools reset", "green");
+            refresh();
+        });
+
+        // ── v1.5 ownership: createRoot / getOwner / runWithOwner ────────────
+        $("pool-root").addEventListener("click", () => {
+            if (!registry) rebuild();
+            // Spawn a long-lived effect in a DETACHED scope: not owned by the
+            // caller, so it survives dispose-50%. createRoot(fn) returns fn's value.
+            const slot = nextSinkSlot();
+            const h = registry.createRoot(() => registry.effect(() => { SINK[slot] = registry.stats().activeNodes; }));
+            detached.push(h);
+            flash(`createRoot: detached effect #${detached.length} -> survives dispose 50% (caller owns it)`, "green");
+            refresh();
+        });
+
+        $("pool-capture").addEventListener("click", () => {
+            if (!registry) rebuild();
+            if (ownerEff) { try { registry.dispose(ownerEff); } catch (e) {} ownerEff = null; }
+            ownerTick = registry.signal(0);
+            ownerEff = registry.effect(() => {
+                ownerTick();                       // track so the owner is a live scope
+                capturedOwner = registry.getOwner();
+            });
+            flash("getOwner() captured the running effect as a gen-stamped handle", "green");
+            refresh();
+        });
+
+        $("pool-reattach").addEventListener("click", () => {
+            if (!registry || !capturedOwner) { flash("capture an owner first", "red"); return; }
+            const before = registry.stats().effects;
+            setTimeout(() => {
+                if (!registry || !capturedOwner) return;
+                registry.runWithOwner(capturedOwner, () => {
+                    const slot = nextSinkSlot();
+                    registry.effect(() => { SINK[slot] = ownerTick(); });   // adopted by the owner
+                });
+                flash(`runWithOwner across a gap: continuation adopted (delta effects = ${registry.stats().effects - before})`, "green");
+                refresh();
+            }, 0);
+        });
+
+        $("pool-stale").addEventListener("click", () => {
+            if (!registry || !capturedOwner) { flash("capture an owner first", "red"); return; }
+            // Dispose the owner so its pool slot is freed; replay the stale handle.
+            if (ownerEff) { try { registry.dispose(ownerEff); } catch (e) {} ownerEff = null; }
+            let ran = 0;
+            registry.runWithOwner(capturedOwner, () => {
+                const slot = nextSinkSlot();
+                registry.effect(() => { ran++; SINK[slot] = 1; });
+            });
+            flash(`stale handle: runWithOwner degraded to ROOTED execution (ran ${ran}) -- graph intact, no corruption`, "green");
             refresh();
         });
 
