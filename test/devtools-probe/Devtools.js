@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-devtools -- reactive-graph inspection for @zakkster/lite-signal. v1.2.0
+ * @zakkster/lite-devtools -- reactive-graph inspection for @zakkster/lite-signal. v1.3.1
  * -----------------------------------------------------------------------------
  * Built entirely on lite-signal's public introspection surface (no private symbols,
  * no patched objects). Requires lite-signal >= 1.1.5: the source eagerly imports
@@ -26,6 +26,18 @@
  * 1.2.0: burstProfile() (flush/burst diagnostics; needs lite-signal >= 1.6 opcodes 6/7)
  *        and watchAllocations() (steady-state allocation-panel feed for lite-studio).
  *        Both are cold/debug paths, feature-detected via capabilities().burst.
+ * 1.3.0: capabilities() reports a full probe-derived capability vector (nine new
+ *        keys: boxes / roots / ownerCapture / scopes / flushControl / explicitDispose
+ *        / statsKeys / poolPopulation / cleanupReturn). Every key is a memoized
+ *        load-time feature probe (Law 4 -- never a version fingerprint) that fails
+ *        closed to `false` (Law 3). cleanupReturn is the one behaviour probe: it
+ *        runs ONCE at load inside a throwaway createRegistry(), never touching the
+ *        default registry, so the non-perturbing contract holds through detection.
+ * 1.3.1: no behaviour change -- test-hardening only. The "indistinguishable to
+ *        devtools" promise (Finding D) becomes a gate: box / createRoot-detached /
+ *        createScope-owner / getOwner-capture handles are driven through every read
+ *        op and the non-perturbing law (T0) is re-asserted shape-independently over
+ *        that expanded corpus.
  *
  * MIT (c) Zahary Shinikchiev
  */
@@ -33,6 +45,9 @@ import {
     stats, hasObservers, observeObservers, forEachObserver, forEachSource, nodeId, describe,
 } from "../../Signal.js";
 import * as SIG from "../../Signal.js";
+
+/** Package version. Three-place synced with package.json and llms.txt. */
+export const VERSION = "1.3.1";
 
 // Optional engine APIs, feature-detected so this module keeps loading on the
 // 1.1.5 floor. Named imports above are the hard floor (ESM link error below it);
@@ -50,10 +65,92 @@ const HAS_BURST = HAS_HOOK && (() => {
     }
 })();
 
-/** Engine capability snapshot -- lets a consumer (lite-studio) pick push vs poll
- *  and show/hide the ownership view without try/catch probing. */
+// --- S1 capability vector (1.3): memoized load-time feature probes -------------
+// Law 4: capability tiers are decided by `typeof` probes and a stats()-key band
+// at LOAD, memoized -- never by assuming a version. Law 3: every probe fails
+// closed to `false`. None runs per-call; capabilities() is an O(1) return built
+// from these consts. Each maps to one lite-signal surface:
+//   boxes           signalBox + computedBox   (lite-signal >= 1.5)
+//   roots           createRoot                (>= 1.5)
+//   ownerCapture    getOwner                   (owner-capture family; S2 consumes)
+//   scopes          createScope                (>= 1.6)
+//   flushControl    flush                      (>= 1.7)
+//   explicitDispose dispose and/or destroy     (>= 1.9)
+const probeFn = (fn) => {
+    try {
+        return fn() === true;
+    } catch (_) {
+        return false;
+    }
+};
+const HAS_BOXES = probeFn(() => typeof SIG.signalBox === "function" && typeof SIG.computedBox === "function");
+const HAS_ROOTS = probeFn(() => typeof SIG.createRoot === "function");
+const HAS_OWNER_CAPTURE = probeFn(() => typeof SIG.getOwner === "function");
+const HAS_SCOPES = probeFn(() => typeof SIG.createScope === "function");
+const HAS_FLUSH = probeFn(() => typeof SIG.flush === "function");
+const HAS_EXPLICIT_DISPOSE = probeFn(() => typeof SIG.dispose === "function" || typeof SIG.destroy === "function");
+
+// stats()-key band (Law 4: a coarse tier HINT only -- no helper branches on it).
+// 11 pre-1.6 / 12 (>=1.6 flushPasses) / 14 (>=1.9-preview.6 pool populations).
+const STATS_KEYS = (() => {
+    try {
+        return Object.keys(stats()).length;
+    } catch (_) {
+        return 0;
+    }
+})();
+// poolPopulation: stats() carries BOTH pool-population counters (>=1.9-preview.6).
+const HAS_POOL_POP = (() => {
+    try {
+        const k = Object.keys(stats());
+        return k.indexOf("nodePoolPopulation") !== -1 && k.indexOf("linkPoolPopulation") !== -1;
+    } catch (_) {
+        return false;
+    }
+})();
+
+// cleanupReturn (>=1.8): an effect body may `return` a cleanup. NOT typeof-probeable
+// -- it is a BEHAVIOUR. Probe it exactly once at load inside a THROWAWAY registry so
+// the default registry is never touched (T0/T6 would see any perturbation). Fails
+// closed to false if createRegistry is absent, the probe throws, or the cleanup did
+// not fire (pre-1.8 engines ignore a returned function). Engine-asks ledger #5: a
+// first-class capability flag would retire this scratch probe.
+const HAS_CLEANUP_RETURN = (() => {
+    try {
+        if (typeof SIG.createRegistry !== "function") return false;
+        const r = SIG.createRegistry();
+        let flipped = false;
+        const stop = r.effect(() => () => { flipped = true; });
+        if (typeof stop === "function") stop();
+        else if (typeof r.dispose === "function") r.dispose(stop);
+        if (typeof r.destroy === "function") r.destroy();
+        return flipped === true;
+    } catch (_) {
+        return false;
+    }
+})();
+
+/** Engine capability snapshot -- lets a consumer (lite-studio) pick push vs poll,
+ *  show/hide the ownership view, and gate box/scope/flush features without
+ *  try/catch probing. Four legacy keys (floor/owners/mutationHook/burst) keep
+ *  their exact 1.2.1 semantics; nine keys added in 1.3 report the probe-derived
+ *  capability vector. O(1) return built from the memoized load-time consts above. */
 export function capabilities() {
-    return {floor: "1.1.5", owners: HAS_OWNERS, mutationHook: HAS_HOOK, burst: HAS_BURST};
+    return {
+        floor: "1.1.5",
+        owners: HAS_OWNERS,
+        mutationHook: HAS_HOOK,
+        burst: HAS_BURST,
+        boxes: HAS_BOXES,
+        roots: HAS_ROOTS,
+        ownerCapture: HAS_OWNER_CAPTURE,
+        scopes: HAS_SCOPES,
+        flushControl: HAS_FLUSH,
+        explicitDispose: HAS_EXPLICIT_DISPOSE,
+        statsKeys: STATS_KEYS,
+        poolPopulation: HAS_POOL_POP,
+        cleanupReturn: HAS_CLEANUP_RETURN,
+    };
 }
 
 // One engine listener, many internal consumers (watchGraph / profile). The

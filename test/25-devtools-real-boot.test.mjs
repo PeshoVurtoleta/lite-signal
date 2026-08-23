@@ -1,4 +1,4 @@
-// Real lite-devtools 1.1.0 boot against the 1.3.0 engine.
+// Real lite-devtools 1.3.1 boot against the 1.5.0 engine.
 //
 // Setup note (test-rig quirk, NOT an engine bug). Because this repo's
 // package.json declares name="@zakkster/lite-signal", the resolver maps any
@@ -72,25 +72,48 @@ before(async () => {
     );
 });
 
-describe("lite-devtools 1.1.0 boots against the 1.3.0 engine", () => {
-    it("imports resolve and all 19 documented exports are functions", () => {
+describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
+    it("imports resolve and all 21 documented functions are exported", () => {
+        // 19 baseline + the two 1.3.x additions (burstProfile, watchAllocations).
         const expected = [
             "capabilities", "inspect", "subscribers", "dependencies", "track",
             "monitor", "leakWatch", "report", "graph", "toDot", "toTree", "diff",
             "trace", "ownerTree", "findPath", "watchGraph", "profile",
-            "serialize", "deserialize",
+            "serialize", "deserialize", "burstProfile", "watchAllocations",
         ];
         for (const name of expected) {
             assert.equal(typeof DT[name], "function", `devtools.${name} must be a function`);
         }
     });
 
-    it("capabilities() reports the 1.2.x feature surface (owner tree + mutation hook)", () => {
+    // capabilities() is devtools' runtime probe of the engine it is bound to.
+    // Asserting the FULL vector turns it into a precise fingerprint of the
+    // 1.5.0 surface: the 1.5 feature triad (boxes / roots / ownerCapture) must
+    // be present, and every 1.6+ feature (scopes / flushControl / cleanupReturn
+    // / the richer burst payload) must be absent. If a later engine feature is
+    // accidentally back-ported into canonical 1.5.0, one of these flags flips
+    // and this test catches it -- across the two-package boundary, not from the
+    // engine's own introspection.
+    it("capabilities() fingerprints EXACTLY the 1.5.0 surface (1.5 on, 1.6+ off)", () => {
         const caps = DT.capabilities();
         assert.equal(typeof caps, "object");
         assert.ok(caps !== null);
-        assert.equal(caps.owners, true, "1.2.x engine has owner tree");
-        assert.equal(caps.mutationHook, true, "1.2.1+ engine has onGraphMutation");
+
+        // Present in 1.5.0.
+        assert.equal(caps.owners, true, "1.5.0 has the owner tree");
+        assert.equal(caps.mutationHook, true, "1.5.0 has onGraphMutation");
+        assert.equal(caps.boxes, true, "1.5.0 has signalBox / computedBox");
+        assert.equal(caps.roots, true, "1.5.0 has createRoot");
+        assert.equal(caps.ownerCapture, true, "1.5.0 has getOwner / runWithOwner");
+        assert.equal(caps.explicitDispose, true, "1.5.0 has explicit dispose");
+        assert.equal(caps.poolPopulation, true, "1.5.0 stats expose pool population");
+        assert.equal(caps.statsKeys, 13, "1.5.0 stats() has exactly 13 keys");
+
+        // Absent until later engines -- graceful-degrade sentinels.
+        assert.equal(caps.scopes, false, "createScope is a 1.6 feature, must be absent in 1.5.0");
+        assert.equal(caps.flushControl, false, "flushStrategy is a 1.7 feature, must be absent in 1.5.0");
+        assert.equal(caps.cleanupReturn, false, "effect-return cleanup is a 1.8 feature, must be absent in 1.5.0");
+        assert.equal(caps.burst, false, "the richer op 5/6/7 burst payload is a 1.6+ feature, must be absent in 1.5.0");
     });
 
     it("inspect() reports a live handle as non-stale, with sensible neighbourhood counts", () => {
@@ -139,6 +162,42 @@ describe("lite-devtools 1.1.0 boots against the 1.3.0 engine", () => {
         SIG.dispose(c1); SIG.dispose(c2); SIG.dispose(a);
     });
 
+    it("ownerTree() returns a { id, kind, value, owned } descriptor for a rooted effect", () => {
+        // createRoot opens a detached ownership scope; an effect created inside
+        // it becomes an owned child of that root. ownerTree walks that tree.
+        let tree = null;
+        SIG.createRoot(() => {
+            const s = SIG.signal(5);
+            const e = SIG.effect(() => { s(); });
+            tree = DT.ownerTree(e);
+        });
+        assert.ok(tree !== null && typeof tree === "object", "ownerTree must return a descriptor");
+        assert.equal(typeof tree.id, "number", "descriptor carries a numeric node id");
+        assert.equal(tree.kind, "effect", "the walked node is the effect");
+        assert.ok(Array.isArray(tree.owned), "descriptor carries an owned[] child array");
+    });
+
+    it("burstProfile() degrades to null on 1.5.0 (needs the 1.6+ op 5/6/7 payload)", () => {
+        // capabilities().burst is false on 1.5.0, so burstProfile must return
+        // null rather than throw or hand back a half-wired profiler. This pins
+        // the documented graceful-degradation contract for the richer
+        // mutation-hook payload that only later engines emit.
+        assert.equal(DT.capabilities().burst, false, "precondition: 1.5.0 has no burst payload");
+        const bp = DT.burstProfile();
+        assert.equal(bp, null, "burstProfile must return null when capabilities().burst is false");
+    });
+
+    it("watchAllocations() returns an idempotent { stop } and leaks no timer", () => {
+        // Steady-state allocation feed. Like leakWatch it samples off lite-time's
+        // every() -- OUT of the reactive graph -- so it must hand back a stopper
+        // that clears the sampler. Double-stop must be a safe no-op.
+        const feed = DT.watchAllocations(() => {}, { sampleMs: 20, recomputes: true });
+        assert.equal(typeof feed, "object");
+        assert.equal(typeof feed.stop, "function");
+        feed.stop();
+        feed.stop();   // idempotent -- must not throw
+    });
+
     it("monitor() returns an object usable by devtools UIs", () => {
         const m = DT.monitor();
         assert.ok(m !== null && typeof m === "object");
@@ -148,10 +207,10 @@ describe("lite-devtools 1.1.0 boots against the 1.3.0 engine", () => {
         const watch = DT.leakWatch({ sampleMs: 50, growth: 1, onSample: () => {} });
         assert.equal(typeof watch, "object");
         assert.equal(typeof watch.stop, "function");
-        watch.stop();   // CRITICAL: clears the setInterval handle
+        watch.stop();   // CRITICAL: clears the sampler handle
     });
 
-    it("track() registers a lifecycle listener against a 1.3.0-built handle", () => {
+    it("track() registers a lifecycle listener against a 1.5.0-built handle", () => {
         const s = SIG.signal(0);
         const events = [];
         const untrack = DT.track(s, (e) => events.push(e));
@@ -162,30 +221,41 @@ describe("lite-devtools 1.1.0 boots against the 1.3.0 engine", () => {
         SIG.dispose(s);
     });
 
-    it("ghost contract: heavy devtools introspection adds ZERO nodes to the graph", () => {
+    it("ghost contract: the ENTIRE read-side surface adds ZERO nodes to the graph", () => {
         const a = SIG.signal(1);
         const b = SIG.signal(2);
         const c = SIG.computed(() => a() + b());
         c();
         const before = SIG.stats();
 
+        // Every non-perturbing helper, hammered. None may allocate a reactive
+        // link or add an observer. This is devtools' headline contract ("adds
+        // zero nodes and zero observers to the graph it inspects") pinned across
+        // the whole surface, not just the four helpers the old sweep covered.
+        const gBefore = DT.graph([c]);
         for (let i = 0; i < 25; i++) {
             DT.inspect(c);
             DT.subscribers(a);
             DT.dependencies(c);
-            DT.graph([c]);
+            DT.graph([a, b, c]);
             DT.report([a, b, c]);
             DT.toTree(c);
+            DT.toDot(gBefore);
             DT.ownerTree(c);
+            DT.findPath(a, c);
+            DT.serialize(gBefore);
+            DT.diff(gBefore, gBefore);
         }
         const after = SIG.stats();
 
         // Per Studio.js header: "[Studio] adds zero nodes and zero observers
         // to the graph it inspects" -- which is only true if devtools itself
-        // doesn't add any. This test pins that.
-        assert.equal(after.signals,   before.signals,   "ghost contract: signals delta must be 0");
-        assert.equal(after.computeds, before.computeds, "ghost contract: computeds delta must be 0");
-        assert.equal(after.effects,   before.effects,   "ghost contract: effects delta must be 0");
+        // doesn't add any. This test pins that across the full read surface.
+        assert.equal(after.signals,    before.signals,    "ghost contract: signals delta must be 0");
+        assert.equal(after.computeds,  before.computeds,  "ghost contract: computeds delta must be 0");
+        assert.equal(after.effects,    before.effects,    "ghost contract: effects delta must be 0");
+        assert.equal(after.activeNodes, before.activeNodes, "ghost contract: activeNodes delta must be 0");
+        assert.equal(after.activeLinks, before.activeLinks, "ghost contract: activeLinks delta must be 0");
 
         SIG.dispose(c); SIG.dispose(b); SIG.dispose(a);
     });
