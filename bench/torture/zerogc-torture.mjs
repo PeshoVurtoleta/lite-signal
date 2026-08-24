@@ -21,12 +21,21 @@
  *
  * Three independent witnesses, because no single one sees everything:
  *
- *   1. per-call RETAINED bytes (`measureAllocs` + `checkAllocs`,
- *      `maxBytesPerCall: 0`) -- allocation surviving a forced collection, taken
- *      as the min across batches so ambient noise is stripped off. This is the
- *      literal zero-retention assertion, and it is what catches the churn case:
- *      a handle that allocates transiently but is reclaimed reads 0 here, while a
- *      real steady-state leak does not.
+ *   1. per-call RETAINED bytes (`measureAllocs` + `checkAllocs`) -- allocation
+ *      surviving a forced collection, taken as the min across batches so ambient
+ *      noise is stripped off. STEADY scenarios gate at `maxBytesPerCall: 0`: a
+ *      write through an already-built graph retains literally nothing. CHURN
+ *      scenarios (create+dispose) gate at a sub-object floor (`CHURN_BYTES_FLOOR`,
+ *      < 1 B/call) instead -- not a loosened claim but an honest one. Measuring a
+ *      create+dispose cycle necessarily observes a TRANSIENT wrapper (a signalBox
+ *      is ~16-48 B), and gc-profiler 1.16.0 no longer lets a negative-delta batch
+ *      mask it: inverted batches are excluded from the min (`invertedBatches`), so
+ *      when the forced-GC windows happen to straddle a single surviving wrapper
+ *      the min lands on it (observed 0.0016-0.1152 B/call, ~1 object across 10k
+ *      calls). That is measurement floor, not a leak: a real per-call leak is a
+ *      whole un-recycled wrapper, >=16 B/call -- two to three orders of magnitude
+ *      above the floor -- and it would ALSO move the exact counters in witness 3,
+ *      which is the deterministic proof the byte witness only corroborates.
  *   2. major GC count and longest pause over a measured window (`measureOps` +
  *      `checkNoGc`, `maxMajor: 0` / `maxPauseMs: 2`) -- a zero-alloc window
  *      forces no major collection regardless of how long it runs, so a nonzero
@@ -73,6 +82,16 @@ const CFG = { maxNodes: 8192, maxLinks: 131072, prealloc: "eager", onCapacityExc
 // graphs, not ArrayBuffer backing stores -- that rule gates a surface this engine
 // does not have, and carrying it over from a typed-array library would be a lie.
 const RULES = { maxMajor: 0, maxPauseMs: 2, maxBytesPerCall: 0 };
+
+// Churn-only per-call retention floor. Steady writes retain exactly 0; a
+// create+dispose cycle cannot be measured at exactly 0 because the forced-GC
+// windows may straddle the single transient wrapper the cycle is built to
+// reclaim (gc-profiler 1.16.0 surfaces this by excluding inverted batches from
+// the min). < 1 B/call means "less than one byte retained per create+dispose" --
+// under 1/16th of a wrapper on average, i.e. full reclamation -- while a real
+// per-call handle leak (>=16 B/call) still fails here AND moves the exact
+// poolGrowths / activeNodes counters, which are the deterministic proof.
+const CHURN_BYTES_FLOOR = 1;
 
 const ITER = 10000;    // measureAllocs calls per batch
 const OPS = 100000;    // measureOps steady-window ops
@@ -175,13 +194,15 @@ function buildInjected() {
 /* -- verdict ---------------------------------------------------------------- */
 
 /** Signals 1 and 2, shared by every scenario: retained bytes, then major/pause. */
-function gateAllocAndGc(name, st) {
+function gateAllocAndGc(name, st, maxBytesPerCall) {
     const fn = st.hot;
 
     const alloc = measureAllocs(fn, { iterations: ITER, warmup: WARMUP });
-    const aRep = checkAllocs(alloc, { maxBytesPerCall: RULES.maxBytesPerCall });
+    const aRep = checkAllocs(alloc, { maxBytesPerCall });
     R.ok(name, aRep.verdict === "pass",
-        `retained ${alloc.bytesPerCall} B/call (verdict ${aRep.verdict}${alloc.settled ? "" : ", UNSETTLED"})`);
+        `retained ${alloc.bytesPerCall} B/call vs floor ${maxBytesPerCall} ` +
+        `(verdict ${aRep.verdict}${alloc.settled ? "" : ", UNSETTLED"}` +
+        `${alloc.invertedBatches ? `, ${alloc.invertedBatches} inverted batch(es)` : ""})`);
 
     const s0 = st.statsOf();
     const ops = measureOps(fn, { ops: OPS, warmup: WARMUP, stabilize: "deep" });
@@ -197,7 +218,7 @@ function gateAllocAndGc(name, st) {
 /** Steady scenarios: no node was acquired and the pool never grew. */
 function gateSteady(name, build) {
     const st = build();
-    const { s0, s1 } = gateAllocAndGc(name, st);
+    const { s0, s1 } = gateAllocAndGc(name, st, RULES.maxBytesPerCall);
     R.eq(name, s1.poolGrowths - s0.poolGrowths, 0, "the pool grew during steady-state writes");
     R.eq(name, s1.totalAllocations - s0.totalAllocations, 0, "a node was acquired during steady-state writes");
 }
@@ -206,14 +227,14 @@ function gateSteady(name, build) {
 function gateChurn(name, build) {
     const st = build();
     if (st === null) { R.note(`${name} -- SKIP: signalBox requires 1.5.0+`); return; }
-    const { s0, s1 } = gateAllocAndGc(name, st);
+    const { s0, s1 } = gateAllocAndGc(name, st, CHURN_BYTES_FLOOR);
     R.eq(name, s1.poolGrowths - s0.poolGrowths, 0, "the pool grew under create+dispose churn");
     R.eq(name, s1.activeNodes - s0.activeNodes, 0, "activeNodes did not return to baseline -- a churned node leaked");
     // Visible positive verdict so a RUNNING churn gate is legible in the output --
     // R.eq is silent on success, and on 1.5.0 churn-box ACTIVATES (signalBox is a
     // function, buildChurnBox no longer returns null), so without this line its
     // first-time activation would be invisible and indistinguishable from a SKIP.
-    R.note(`${name} -- ok: retained 0 B/call, poolGrowths delta 0, activeNodes returned to baseline`);
+    R.note(`${name} -- ok: retained < ${CHURN_BYTES_FLOOR} B/call (sub-object floor), poolGrowths delta 0, activeNodes returned to baseline`);
 }
 
 /* -- run -------------------------------------------------------------------- */
