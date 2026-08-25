@@ -43,7 +43,7 @@ const { createRegistry } = Signal;
 
 if (typeof Symbol.dispose !== "symbol") {
     console.log("lite-signal dispose torture — SKIP: Symbol.dispose unavailable (needs Node 20+)");
-    process.exit(0);
+    process.exit(78); // ENV_SKIP_EXIT — a RUNTIME prerequisite, never floor-escalated
 }
 
 // Feature-detect via the BOX prototype stamp, deliberately NOT the registry stamp:
@@ -61,7 +61,7 @@ if (typeof Symbol.dispose !== "symbol") {
     } catch { stamped = false; }
     if (!stamped) {
         console.log("lite-signal dispose torture — SKIP: Symbol.dispose stamping requires 1.9.0+");
-        process.exit(0);
+        process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
     }
 }
 

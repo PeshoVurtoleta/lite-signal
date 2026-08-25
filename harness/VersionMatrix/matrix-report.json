@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-07-01T05:21:50.590Z",
+  "generatedAt": "2026-08-24T20:29:24.069Z",
   "floor": "1.3.0",
-  "rolling": "1.5.0-alpha.1",
+  "rolling": "1.5.0",
   "note": "diagnostic over committed baselines; may be cross-host; not the gate",
   "workloads": {
     "reactive-graph-mix": {
@@ -9,22 +9,38 @@
         "vsFloor": {
           "frame.avg": 0,
           "frame.p99": 0,
-          "phase.write.p99": 0
+          "phase.write.p99": 0,
+          "phase.read.avg": 0,
+          "phase.read.p99": 0,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
-          "node": "v22.22.2",
-          "arch": "x64",
-          "platform": "linux 6.18.5",
-          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
-          "cores": 1,
-          "date": "2026-07-01T05:17:29.261Z"
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:27.522Z"
         }
       },
       "1.4.0-beta.1": {
         "vsFloor": {
-          "frame.avg": -0.03796990627187772,
-          "frame.p99": -0.09888787172735758,
-          "phase.write.p99": -0.04122132206315372
+          "frame.avg": 0.3480903337086144,
+          "frame.p99": 0.8369544816864578,
+          "phase.write.p99": 0.7109154999992897,
+          "phase.read.avg": 0.5527638266956069,
+          "phase.read.p99": 2.0482425096264887,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
           "node": "v22.22.2",
@@ -37,24 +53,63 @@
       },
       "1.5.0-alpha.1": {
         "vsFloor": {
-          "frame.avg": -0.013067397518751505,
-          "frame.p99": -0.10939427995187447,
-          "phase.write.p99": -0.01843843777272206
+          "frame.avg": 0.0019889160393490803,
+          "frame.p99": 0.008148005894807383,
+          "phase.write.p99": 0.007944007396849476,
+          "phase.read.avg": -0.03129230619403126,
+          "phase.read.p99": 0.030303091878076893,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
-          "node": "v22.22.2",
-          "arch": "x64",
-          "platform": "linux 6.18.5",
-          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
-          "cores": 1,
-          "date": "2026-07-01T05:17:54.499Z"
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:33.955Z"
+        }
+      },
+      "1.5.0": {
+        "vsFloor": {
+          "frame.avg": 0.0017242060775572248,
+          "frame.p99": 0.006433788587998867,
+          "phase.write.p99": 0.006225273669115126,
+          "phase.read.avg": -0.017722348187567485,
+          "phase.read.p99": -0.01018178287879147,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
+        },
+        "env": {
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:40.212Z"
         }
       },
       "1.6.0-preview.2": {
         "vsFloor": {
-          "frame.avg": -0.019747316586398986,
-          "frame.p99": -0.06407016889892418,
-          "phase.write.p99": -0.0192038584206345
+          "frame.avg": 0.3736256024806479,
+          "frame.p99": 0.9079318143024567,
+          "phase.write.p99": 0.7502050886014449,
+          "phase.read.avg": 0.5412402703577897,
+          "phase.read.p99": 1.6673938884919008,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
           "node": "v22.22.2",
@@ -71,22 +126,38 @@
         "vsFloor": {
           "frame.avg": 0,
           "frame.p99": 0,
-          "phase.write.p99": 0
+          "phase.write.p99": 0,
+          "phase.read.avg": 0,
+          "phase.read.p99": 0,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
-          "node": "v22.22.2",
-          "arch": "x64",
-          "platform": "linux 6.18.5",
-          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
-          "cores": 1,
-          "date": "2026-07-01T05:17:31.431Z"
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:28.985Z"
         }
       },
       "1.4.0-beta.1": {
         "vsFloor": {
-          "frame.avg": -0.002902439267602552,
-          "frame.p99": 0.01817385587098089,
-          "phase.write.p99": -0.026647120878747564
+          "frame.avg": 0.2550083950726945,
+          "frame.p99": 0.5363032514416081,
+          "phase.write.p99": 0.4366546168769463,
+          "phase.read.avg": 34.273298560731554,
+          "phase.read.p99": 3.7039997392296913,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
           "node": "v22.22.2",
@@ -99,24 +170,63 @@
       },
       "1.5.0-alpha.1": {
         "vsFloor": {
-          "frame.avg": -0.0060057088852084875,
-          "frame.p99": 0.1135943981390708,
-          "phase.write.p99": 0.020720112445910883
+          "frame.avg": -0.01617377907270515,
+          "frame.p99": -0.011635507219271006,
+          "phase.write.p99": -0.0112357357372146,
+          "phase.read.avg": -0.003820137848211715,
+          "phase.read.p99": 0,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
-          "node": "v22.22.2",
-          "arch": "x64",
-          "platform": "linux 6.18.5",
-          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
-          "cores": 1,
-          "date": "2026-07-01T05:17:56.650Z"
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:35.448Z"
+        }
+      },
+      "1.5.0": {
+        "vsFloor": {
+          "frame.avg": 0.006418390527618763,
+          "frame.p99": -0.004379456617705358,
+          "phase.write.p99": -0.003974075745790595,
+          "phase.read.avg": -0.012873345093811127,
+          "phase.read.p99": 0,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
+        },
+        "env": {
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:41.703Z"
         }
       },
       "1.6.0-preview.2": {
         "vsFloor": {
-          "frame.avg": -0.020467184082174288,
-          "frame.p99": -0.04143796185028705,
-          "phase.write.p99": -0.02785523498926559
+          "frame.avg": 0.2329003255439663,
+          "frame.p99": 0.4463561084645512,
+          "phase.write.p99": 0.4348714581152885,
+          "phase.read.avg": 36.63236390167442,
+          "phase.read.p99": 18.695998165294615,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
           "node": "v22.22.2",
@@ -133,22 +243,38 @@
         "vsFloor": {
           "frame.avg": 0,
           "frame.p99": 0,
-          "phase.write.p99": 0
+          "phase.write.p99": 0,
+          "phase.read.avg": 0,
+          "phase.read.p99": 0,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
-          "node": "v22.22.2",
-          "arch": "x64",
-          "platform": "linux 6.18.5",
-          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
-          "cores": 1,
-          "date": "2026-07-01T05:17:33.747Z"
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:30.748Z"
         }
       },
       "1.4.0-beta.1": {
         "vsFloor": {
-          "frame.avg": 0.020349384167722237,
-          "frame.p99": 0.04311665840181012,
-          "phase.write.p99": 0.021220128987611057
+          "frame.avg": 0.312777379111037,
+          "frame.p99": 0.5935558697953192,
+          "phase.write.p99": 0.5359565022586446,
+          "phase.read.avg": 0.7821258395035842,
+          "phase.read.p99": 3.212167582827847,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
           "node": "v22.22.2",
@@ -161,24 +287,63 @@
       },
       "1.5.0-alpha.1": {
         "vsFloor": {
-          "frame.avg": 0.010563979785414557,
-          "frame.p99": 0.13018524206862006,
-          "phase.write.p99": 0.12504459929782236
+          "frame.avg": -0.008790288796118388,
+          "frame.p99": -0.01454815745150524,
+          "phase.write.p99": -0.014686528291485564,
+          "phase.read.avg": -0.008795570917766107,
+          "phase.read.p99": -0.025527378136184643,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
-          "node": "v22.22.2",
-          "arch": "x64",
-          "platform": "linux 6.18.5",
-          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
-          "cores": 1,
-          "date": "2026-07-01T05:17:58.981Z"
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:37.171Z"
+        }
+      },
+      "1.5.0": {
+        "vsFloor": {
+          "frame.avg": -0.06944006877253524,
+          "frame.p99": -0.06455475504336945,
+          "phase.write.p99": -0.06455001702436283,
+          "phase.read.avg": -0.02751813235285535,
+          "phase.read.p99": 0.0062672087186143085,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
+        },
+        "env": {
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:38:50.650Z"
         }
       },
       "1.6.0-preview.2": {
         "vsFloor": {
-          "frame.avg": 0.019001362740213253,
-          "frame.p99": 0.031279546003346606,
-          "phase.write.p99": 0.0020197533149405875
+          "frame.avg": 0.31104302021000796,
+          "frame.p99": 0.5754724658039582,
+          "phase.write.p99": 0.5070783583373307,
+          "phase.read.avg": 0.8133462848276162,
+          "phase.read.p99": 3.4746254458909696,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
           "node": "v22.22.2",
@@ -195,22 +360,38 @@
         "vsFloor": {
           "frame.avg": 0,
           "frame.p99": 0,
-          "phase.write.p99": 0
+          "phase.write.p99": 0,
+          "phase.read.avg": 0,
+          "phase.read.p99": 0,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
-          "node": "v22.22.2",
-          "arch": "x64",
-          "platform": "linux 6.18.5",
-          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
-          "cores": 1,
-          "date": "2026-07-01T05:17:35.876Z"
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:32.475Z"
         }
       },
       "1.4.0-beta.1": {
         "vsFloor": {
-          "frame.avg": -0.0033246520357569113,
-          "frame.p99": -0.019919284952643234,
-          "phase.write.p99": -0.05279166658177562
+          "frame.avg": 0.379955923722544,
+          "frame.p99": 0.8659220762122247,
+          "phase.write.p99": 0.7890537342326867,
+          "phase.read.avg": 1.2579012398590508,
+          "phase.read.p99": 3.1159999509503447,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
           "node": "v22.22.2",
@@ -223,24 +404,63 @@
       },
       "1.5.0-alpha.1": {
         "vsFloor": {
-          "frame.avg": -0.010419611985785426,
-          "frame.p99": 0.03757123970708771,
-          "phase.write.p99": 0.03430254761425599
+          "frame.avg": -0.0001274911773087193,
+          "frame.p99": 0.001735184991816731,
+          "phase.write.p99": 0.003088133337238484,
+          "phase.read.avg": -0.014902296342183806,
+          "phase.read.p99": -0.014000028870999562,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
-          "node": "v22.22.2",
-          "arch": "x64",
-          "platform": "linux 6.18.5",
-          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
-          "cores": 1,
-          "date": "2026-07-01T05:18:01.168Z"
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:38.776Z"
+        }
+      },
+      "1.5.0": {
+        "vsFloor": {
+          "frame.avg": -0.01713531904846269,
+          "frame.p99": -0.015917933503278983,
+          "phase.write.p99": -0.014645811736531452,
+          "phase.read.avg": -0.010355147557738973,
+          "phase.read.p99": -0.013666693002399243,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
+        },
+        "env": {
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T17:35:45.160Z"
         }
       },
       "1.6.0-preview.2": {
         "vsFloor": {
-          "frame.avg": 0.00185480413814265,
-          "frame.p99": -0.05369241496598893,
-          "phase.write.p99": -0.08392102461455503
+          "frame.avg": 0.3871271869061202,
+          "frame.p99": 0.8016232609134843,
+          "phase.write.p99": 0.7302576993289055,
+          "phase.read.avg": 1.2820689130980694,
+          "phase.read.p99": 2.989666665683604,
+          "phase.create.avg": null,
+          "phase.create.p99": null,
+          "phase.dispose.avg": null,
+          "phase.dispose.p99": null,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
         },
         "env": {
           "node": "v22.22.2",
@@ -249,6 +469,54 @@
           "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
           "cores": 1,
           "date": "2026-07-01T05:18:26.695Z"
+        }
+      }
+    },
+    "creation-churn": {
+      "1.3.0": {
+        "vsFloor": {
+          "frame.avg": 0,
+          "frame.p99": 0,
+          "phase.write.p99": 0,
+          "phase.read.avg": null,
+          "phase.read.p99": null,
+          "phase.create.avg": 0,
+          "phase.create.p99": 0,
+          "phase.dispose.avg": 0,
+          "phase.dispose.p99": 0,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
+        },
+        "env": {
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T19:58:31.020Z"
+        }
+      },
+      "1.5.0": {
+        "vsFloor": {
+          "frame.avg": 0.0007328704876349085,
+          "frame.p99": 0.061010531921867915,
+          "phase.write.p99": -0.018691626529275175,
+          "phase.read.avg": null,
+          "phase.read.p99": null,
+          "phase.create.avg": 0.007880441248454446,
+          "phase.create.p99": 0.020161271424775754,
+          "phase.dispose.avg": -0.007839165475064448,
+          "phase.dispose.p99": -0.005142629659620796,
+          "counter.allocs.max": null,
+          "counter.poolGrowths.max": null
+        },
+        "env": {
+          "node": "v26.3.1",
+          "arch": "arm64",
+          "platform": "darwin 25.5.0",
+          "cpu": "Apple M4 Pro",
+          "cores": 12,
+          "date": "2026-08-24T19:58:31.451Z"
         }
       }
     }

@@ -9,6 +9,12 @@
  *   - zero thrown exceptions during the run
  *   - activeNodes / activeLinks return to (or below) the pre-fuzz baseline
  *     after a final settle pass — i.e. the dispose path is sound under churn
+ *   - (2026-08 audit, Phase 2) mid-run activeNodes/activeLinks high-water
+ *     stays under the topology's theoretical maxima -- the link-graveyard
+ *     witness a post-teardown check is structurally blind to; post-GC
+ *     heapUsed high-water stays within slack of the post-build baseline; and
+ *     eight sync SENTINEL effects prove delivery (observed values, not
+ *     peek() storage) with exact run counts
  *
  * Exit code: 0 on clean run, 1 on any error or stability assertion failure.
  *
@@ -117,6 +123,49 @@ for (let i = 0; i < N_INTERMEDIATE; i++) makeMid(i);
 for (let i = 0; i < N_TOP_COMPUTEDS; i++) makeTop(i);
 for (let i = 0; i < N_EFFECTS; i++) makeEffect(i);
 
+/* -- sentinel delivery oracle (observed values, not peek storage) ----------- */
+const N_SENTINELS = 8;
+const sentSigs = new Array(N_SENTINELS);
+const sentObserved = new Int32Array(N_SENTINELS);
+const sentRuns = new Int32Array(N_SENTINELS);
+const sentWrites = new Int32Array(N_SENTINELS);
+const sentDispose = new Array(N_SENTINELS);
+for (let i = 0; i < N_SENTINELS; i++) {
+    sentSigs[i] = r.signal(0);
+    const k = i;
+    sentDispose[i] = r.effect(() => { sentObserved[k] = sentSigs[k](); sentRuns[k]++; });
+}
+let sentinelFailTick = -1;
+let sentinelGot = 0, sentinelWant = 0;
+
+/* -- mid-run high-water + post-GC heap witnesses ---------------------------- */
+// Theoretical link maxima from the body shapes: mids read <= 6, tops <= 8,
+// effects <= 6 (duplicate reads collapse to one link), sentinels 1 each.
+// Rewires dispose before they create and sampling sits between ops, so nodes
+// can never legitimately exceed the built population either.
+const NODES_CEILING = TOTAL_NODES + N_SENTINELS * 2;
+const LINKS_CEILING = N_INTERMEDIATE * 6 + N_TOP_COMPUTEDS * 8 + N_EFFECTS * 6 + N_SENTINELS;
+let nodesHW = 0, linksHW = 0, hwBreachTick = -1;
+const HEAP_SLACK_MB = 16;
+const HEAP_SAMPLE_EVERY_MS = 1000;
+const HAVE_GC = typeof globalThis.gc === "function";
+let heapBase = -1, heapHW = -1, nextHeapSample = 0;
+let tickCount = 0;
+
+function sampleWitnesses(now) {
+    const st = r.stats();
+    if (st.activeNodes > nodesHW) nodesHW = st.activeNodes;
+    if (st.activeLinks > linksHW) linksHW = st.activeLinks;
+    if (hwBreachTick < 0 && (st.activeNodes > NODES_CEILING || st.activeLinks > LINKS_CEILING)) hwBreachTick = tickCount;
+    if (HAVE_GC && now >= nextHeapSample) {
+        globalThis.gc();
+        const used = process.memoryUsage().heapUsed;
+        if (used > heapHW) heapHW = used;
+        nextHeapSample = now + HEAP_SAMPLE_EVERY_MS;
+    }
+}
+if (HAVE_GC) { globalThis.gc(); heapBase = heapHW = process.memoryUsage().heapUsed; }
+
 const baseline = r.stats();
 let ops = 0;
 let errors = 0;
@@ -201,14 +250,25 @@ function fuzzOp() {
 
 const start = performance.now();
 const endAt = start + SECONDS * 1000;
+sampleWitnesses(start);   // seed the high-water with the post-build state
 
 function tick() {
-    if (performance.now() >= endAt) {
+    const now = performance.now();
+    if (now >= endAt) {
         finish();
         return;
     }
     for (let i = 0; i < OPS_PER_TICK; i++) fuzzOp();
     checkOracle();
+    // Sentinel: one sync write per tick, unique value, checked immediately.
+    tickCount++;
+    const k = tickCount % N_SENTINELS;
+    sentSigs[k].set(tickCount);
+    sentWrites[k]++;
+    if (sentObserved[k] !== tickCount && sentinelFailTick < 0) {
+        sentinelFailTick = tickCount; sentinelGot = sentObserved[k]; sentinelWant = tickCount;
+    }
+    sampleWitnesses(now);
     setImmediate(tick);
 }
 
@@ -220,6 +280,7 @@ function finish() {
     for (let i = 0; i < N_EFFECTS; i++) effectDis[i] && effectDis[i]();
     for (let i = 0; i < N_TOP_COMPUTEDS; i++) tops[i] && r.dispose(tops[i]);
     for (let i = 0; i < N_INTERMEDIATE; i++) mids[i] && r.dispose(mids[i]);
+    for (let i = 0; i < N_SENTINELS; i++) { sentDispose[i](); r.dispose(sentSigs[i]); }
 
     const after = r.stats();
     const initialEffects = baseline.effects;
@@ -231,6 +292,10 @@ function finish() {
     console.log("  errors:", errors);
     console.log("  baseline activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
     console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
+    console.log("  mid-run high-water nodes/links:", nodesHW, "/", linksHW,
+        "(ceilings", NODES_CEILING, "/", LINKS_CEILING + ")");
+    console.log("  post-GC heapUsed: base", (heapBase / 1048576).toFixed(1), "MB, high-water",
+        (heapHW / 1048576).toFixed(1), "MB", HAVE_GC ? "" : "(UNAVAILABLE)");
 
     // Final full oracle sweep -- every leaf, not just the sampled window.
     for (let i = 0; i < N_BASE_SIGNALS; i++) {
@@ -257,7 +322,7 @@ function finish() {
         console.error("  FAIL: activeNodes leak — expected ≤", expectedNodesFloor + 8, "got", after.activeNodes);
         exitCode = 1;
     }
-    if (after.effects !== initialEffects - N_EFFECTS) {
+    if (after.effects !== initialEffects - N_EFFECTS - N_SENTINELS) {
         console.error("  FAIL: effects didn't return to baseline (initial:", initialEffects, "after:", after.effects, ")");
         exitCode = 1;
     }
@@ -265,7 +330,34 @@ function finish() {
         console.error("  FAIL: JIT sink never advanced -- the work loops were optimised away");
         exitCode = 1;
     }
-    if (exitCode === 0) console.log("  PASS: zero errors, pool returned to baseline");
+    if (hwBreachTick >= 0 || nodesHW > NODES_CEILING || linksHW > LINKS_CEILING) {
+        console.error("  FAIL: mid-run high-water exceeded the topology ceiling (tick", hwBreachTick + ") --",
+            "nodes", nodesHW, ">", NODES_CEILING, "or links", linksHW, ">", LINKS_CEILING,
+            "-- retained graph garbage invisible to the post-teardown check");
+        exitCode = 1;
+    }
+    if (!HAVE_GC) {
+        console.error("  FAIL: heap witness unverifiable -- run with --expose-gc");
+        exitCode = 1;
+    } else if (heapHW - heapBase > HEAP_SLACK_MB * 1048576) {
+        console.error("  FAIL: post-GC heapUsed grew", ((heapHW - heapBase) / 1048576).toFixed(1),
+            "MB >", HEAP_SLACK_MB, "MB slack -- retention the pool counters cannot see");
+        exitCode = 1;
+    }
+    if (sentinelFailTick >= 0) {
+        console.error("  FAIL: sentinel delivery -- tick", sentinelFailTick, "wrote", sentinelWant,
+            "but the observing effect recorded", sentinelGot, "(sync flush did not deliver)");
+        exitCode = 1;
+    }
+    for (let i = 0; i < N_SENTINELS; i++) {
+        if (sentRuns[i] !== sentWrites[i] + 1) {
+            console.error("  FAIL: sentinel", i, "ran", sentRuns[i], "times for", sentWrites[i],
+                "writes (+1 creation) -- delivery count drifted");
+            exitCode = 1;
+            break;
+        }
+    }
+    if (exitCode === 0) console.log("  PASS: zero errors, pool returned to baseline, high-water + heap + delivery witnesses clean");
     process.exit(exitCode);
 }
 

@@ -11,11 +11,24 @@
  * graph-fuzzer, scheduler-bench and torture-soak alike. The unit suite catches
  * it — but only on small hand-written graphs.
  *
- * This file closes that gap: it drives a random DAG and, after every operation,
- * compares EVERY computed against an independent reference model that recomputes
- * from the leaves with no caching, no versioning and no short-circuit. Any
- * disagreement is a correctness bug, printed with the seed and a minimised
- * operation log so it can be replayed.
+ * This file closes that gap: it drives a random DAG and compares EVERY computed
+ * against an independent reference model that recomputes from the leaves with no
+ * caching, no versioning and no short-circuit. Any disagreement is a correctness
+ * bug, printed with the seed and the full operation log so it can be replayed.
+ *
+ * Checking is PROBABILISTIC (p = 0.4 per op, always once at seed end), not
+ * after-every-op: a full re-pull after every operation means no node is ever
+ * more than one write stale, which structurally masks the second-invalidation
+ * class — a version-marking bug where the SECOND write into an already-dirty,
+ * unpulled cone is dropped survives an always-check oracle because the cone is
+ * never dirty twice. Skipped checks let staleness accumulate across several
+ * writes before a check lands (the write-burst op drives 2-5 writes into one
+ * cone with no intermediate CHECK; sync effect flushes still re-pull observed
+ * cones between writes, so the unpulled-accumulation coverage lands on the
+ * unobserved portion — batched multi-writes cover the observed cones).
+ * checkAll also walks the nodes in a
+ * fresh seeded-shuffled order per call, so sink-first recursive pulls are
+ * exercised deterministically rather than only in creation order.
  *
  * The reference is deliberately dumb. It shares no code with the engine, so a
  * bug in the engine's invalidation cannot hide in the oracle too.
@@ -29,9 +42,15 @@
 
 import { performance } from "node:perf_hooks";
 import { createRegistry } from "../../Signal.js";
-import { mulberry32, VALUE_POOL, toNum } from "./helpers/index.mjs";
+import { mulberry32, shuffle, VALUE_POOL, toNum } from "./helpers/index.mjs";
 
 const SEEDS = Number(process.env.ORACLE_SEEDS || 400);
+
+/** Per-op probability that a full differential check runs. See the header:
+ *  always-checking masks staleness accumulation; never-checking finds bugs
+ *  late with unusable logs. 0.4 keeps the expected gap between checks at
+ *  ~2.5 ops while still checking ~48 times per seed. */
+const CHECK_P = 0.4;
 
 /**
  * Adversarial leaf values.
@@ -170,8 +189,14 @@ function runSeed(seed) {
         effectDisposers.push(r.effect(function () { comps[target](); }));
     }
 
+    // Walk order is re-shuffled per call: pulling a deep sink FIRST forces the
+    // recursive clean-check down the whole cone, where creation (topological)
+    // order would have validated every dependency before reaching it.
+    const order = model.nodes.map((_, i) => i);
     const checkAll = (label) => {
-        for (let i = 0; i < model.nodes.length; i++) {
+        shuffle(rnd, order);
+        for (let k = 0; k < order.length; k++) {
+            const i = order[k];
             const got = comps[i]();
             const want = reference(model, { kind: "node", index: i });
             if (!Object.is(got, want)) {
@@ -187,12 +212,32 @@ function runSeed(seed) {
     for (let op = 0; op < OPS_PER_SEED; op++) {
         const roll = rnd();
 
-        if (roll < 0.45) {
+        if (roll < 0.40) {
             const li = (rnd() * model.leaves.length) | 0;
             const v = rnd() < 0.55 ? (rnd() * 100) | 0 : pickValue(rnd);
             model.leaves[li].value = v;
             sigs[li].set(v);
             log.push(`set L${li}=${String(v)}${Object.is(v, -0) ? "(-0)" : ""}`);
+        } else if (roll < 0.50) {
+            // Write-burst: 2-5 consecutive writes into the SAME leaf with no
+            // intermediate CHECK. Precision note: outside batch each set()
+            // synchronously flushes the 6 installed effects, so cones those
+            // effects observe ARE re-pulled between burst writes — the
+            // "already-dirty, unpulled cone" condition holds for the
+            // UNOBSERVED portion of the graph here, while observed cones get
+            // their multi-write-without-pull coverage from the batch op
+            // above. Only the LAST value must survive; a marker that
+            // early-exits on "already dirty" without re-stamping serves the
+            // first write's value on the unobserved cones.
+            const li = (rnd() * model.leaves.length) | 0;
+            const n = 2 + ((rnd() * 4) | 0);
+            let v;
+            for (let w = 0; w < n; w++) {
+                v = rnd() < 0.55 ? (rnd() * 100) | 0 : pickValue(rnd);
+                sigs[li].set(v);
+            }
+            model.leaves[li].value = v;
+            log.push(`burst L${li} x${n} ->${String(v)}${Object.is(v, -0) ? "(-0)" : ""}`);
         } else if (roll < 0.65) {
             // Batched multi-write: the engine may coalesce, but the settled
             // values must match a reference that knows nothing about batching.
@@ -204,7 +249,7 @@ function runSeed(seed) {
                     const v = rnd() < 0.55 ? (rnd() * 100) | 0 : pickValue(rnd);
                     model.leaves[li].value = v;
                     sigs[li].set(v);
-                    writes.push(`L${li}=${String(v)}`);
+                    writes.push(`L${li}=${String(v)}${Object.is(v, -0) ? "(-0)" : ""}`);
                 }
             });
             log.push(`batch{${writes.join(",")}}`);
@@ -239,8 +284,14 @@ function runSeed(seed) {
             log.push(`untrack read ${target}`);
         }
 
-        if (!checkAll("after op " + op)) break;
+        // Probabilistic: most ops leave the graph unchecked so staleness can
+        // accumulate across several writes before a check lands (see header).
+        if (rnd() < CHECK_P && !checkAll("after op " + op)) break;
     }
+
+    // Always settle the seed with a full check — the tail of the op sequence
+    // must not escape validation just because the last few rolls skipped it.
+    if (mismatches.length === 0) checkAll("final");
 
     for (const d of effectDisposers) d();
     return { seed, log, mismatches };
@@ -284,7 +335,8 @@ if (firstFailure.threw) {
     const m = firstFailure.mismatches[0];
     console.error(`  seed ${firstFailure.seed}: ${m.node} (${m.kind}) ${m.label}`);
     console.error(`    engine=${m.got}  reference=${m.want}`);
-    console.error(`  replay log (last 12 ops):`);
-    for (const line of firstFailure.log.slice(-12)) console.error(`    ${line}`);
+    console.error(`  replay log (all ${firstFailure.log.length} ops — checks are probabilistic, so the`);
+    console.error(`  responsible op may be well before the failing check):`);
+    for (const line of firstFailure.log) console.error(`    ${line}`);
 }
 process.exit(1);

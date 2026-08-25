@@ -6,6 +6,26 @@
  * ops/sec is contextual; the assertion is that nothing crashes and that
  * after teardown the pool returns to its leaf-only baseline.
  *
+ * 2026-08 audit, Phase 2 -- three witnesses that post-teardown checks are
+ * structurally blind to:
+ *
+ *   MID-RUN HIGH-WATER: activeNodes/activeLinks are sampled every tick and
+ *   gated against the topology's theoretical maxima. A link graveyard (links
+ *   recycled only at node-dispose) keeps the POST-teardown counts clean while
+ *   the mid-run link count climbs without bound -- only a mid-run ceiling can
+ *   see it.
+ *
+ *   POST-GC heapUsed: an independent witness for retention the pool counters
+ *   cannot see (closures, arrays, scheduler caches). Forced-GC heapUsed is
+ *   sampled ~1/s; its high-water must stay within a fixed slack of the
+ *   post-build baseline.
+ *
+ *   SENTINEL DELIVERY: the shadow oracle checks STORAGE via peek(); a flush
+ *   path that stopped delivering would pass it forever. Eight dedicated
+ *   sentinel effects record the values they OBSERVE; each tick writes one
+ *   sentinel synchronously and the observed value must match immediately,
+ *   with exact run counts at teardown (sync flush = one run per write).
+ *
  * Exit code: 0 on clean run, 1 on any error or stability assertion failure.
  *
  * Usage: node --expose-gc bench/torture/torture-soak.mjs
@@ -83,6 +103,62 @@ function makeComputed(i) {
 for (let i = 0; i < N_COMPUTEDS; i++) makeComputed(i);
 for (let i = 0; i < N_EFFECTS; i++) makeEffect(i);
 
+/* -- sentinel delivery oracle ----------------------------------------------- */
+// The shadow oracle below proves STORAGE (peek). These prove DELIVERY: each
+// sentinel effect records what it OBSERVED; a sync write outside batch must
+// reach it before set() returns. Values are unique per write (monotonic), so
+// runs are never coalesced and the count at teardown is exact.
+const N_SENTINELS = 8;
+const sentSigs = new Array(N_SENTINELS);
+const sentObserved = new Int32Array(N_SENTINELS);
+const sentRuns = new Int32Array(N_SENTINELS);
+const sentWrites = new Int32Array(N_SENTINELS);
+const sentDispose = new Array(N_SENTINELS);
+for (let i = 0; i < N_SENTINELS; i++) {
+    sentSigs[i] = r.signal(0);
+    const k = i;
+    sentDispose[i] = r.effect(() => { sentObserved[k] = sentSigs[k](); sentRuns[k]++; });
+}
+let sentinelFailTick = -1;
+let sentinelGot = 0, sentinelWant = 0;
+
+/* -- mid-run high-water witness --------------------------------------------- */
+// Theoretical maxima from the topology: every effect body performs at most 8
+// reads (1 + randInt(8)) and every computed at most 6, duplicates collapse to
+// one link -- so links can NEVER legitimately exceed E*8 + C*6 (+1 per
+// sentinel), and nodes can never exceed the built population (rewires dispose
+// before they create; sampling sits between ops, never mid-rewire). Exceeding
+// either mid-run proves retained garbage even when teardown comes back clean.
+const NODES_CEILING = TOTAL + N_SENTINELS * 2;
+const LINKS_CEILING = N_EFFECTS * 8 + N_COMPUTEDS * 6 + N_SENTINELS;
+let nodesHW = 0, linksHW = 0, hwBreachTick = -1;
+
+/* -- post-GC heapUsed witness ----------------------------------------------- */
+// Independent of the pool counters: forced-GC heapUsed high-water vs the
+// post-build baseline. HEAP_SLACK_MB calibrated 2026-08 (post-GC drift on a
+// healthy run is JIT/feedback-vector noise, single-digit MB); a real per-op
+// retention leak compounds far past it within seconds.
+const HEAP_SLACK_MB = 16;
+const HEAP_SAMPLE_EVERY_MS = 1000;
+const HAVE_GC = typeof globalThis.gc === "function";
+let heapBase = -1, heapHW = -1, nextHeapSample = 0;
+let tickCount = 0;
+
+function sampleWitnesses(now) {
+    const st = r.stats();
+    if (st.activeNodes > nodesHW) nodesHW = st.activeNodes;
+    if (st.activeLinks > linksHW) linksHW = st.activeLinks;
+    if (hwBreachTick < 0 && (st.activeNodes > NODES_CEILING || st.activeLinks > LINKS_CEILING)) hwBreachTick = tickCount;
+    if (HAVE_GC && now >= nextHeapSample) {
+        globalThis.gc();
+        const used = process.memoryUsage().heapUsed;
+        if (heapBase < 0) heapBase = used;
+        if (used > heapHW) heapHW = used;
+        nextHeapSample = now + HEAP_SAMPLE_EVERY_MS;
+    }
+}
+if (HAVE_GC) { globalThis.gc(); heapBase = heapHW = process.memoryUsage().heapUsed; }
+
 const baseline = r.stats();
 let ops = 0;
 let errors = 0;
@@ -114,6 +190,7 @@ function checkOracle() {
 
 const start = performance.now();
 const endAt = start + SECONDS * 1000;
+sampleWitnesses(start);   // seed the high-water with the post-build state
 
 function stepChunk() {
     for (let k = 0; k < 2000; k++) {
@@ -158,12 +235,23 @@ function stepChunk() {
 }
 
 function tick() {
-    if (performance.now() >= endAt) {
+    const now = performance.now();
+    if (now >= endAt) {
         finish();
         return;
     }
     stepChunk();
     checkOracle();
+    // Sentinel: one sync write per tick, unique value; delivery must complete
+    // before set() returns (no batch, no scheduler). Checked IMMEDIATELY.
+    tickCount++;
+    const k = tickCount % N_SENTINELS;
+    sentSigs[k].set(tickCount);
+    sentWrites[k]++;
+    if (sentObserved[k] !== tickCount && sentinelFailTick < 0) {
+        sentinelFailTick = tickCount; sentinelGot = sentObserved[k]; sentinelWant = tickCount;
+    }
+    sampleWitnesses(now);
     setImmediate(tick);
 }
 
@@ -173,6 +261,7 @@ function finish() {
 
     for (let i = 0; i < N_EFFECTS; i++) effectDis[i] && effectDis[i]();
     for (let i = 0; i < N_COMPUTEDS; i++) computeds[i] && r.dispose(computeds[i]);
+    for (let i = 0; i < N_SENTINELS; i++) { sentDispose[i](); r.dispose(sentSigs[i]); }
 
     const after = r.stats();
 
@@ -183,6 +272,10 @@ function finish() {
     console.log("  errors:", errors);
     console.log("  baseline activeNodes/activeLinks:", baseline.activeNodes, "/", baseline.activeLinks);
     console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
+    console.log("  mid-run high-water nodes/links:", nodesHW, "/", linksHW,
+        "(ceilings", NODES_CEILING, "/", LINKS_CEILING + ")");
+    console.log("  post-GC heapUsed: base", (heapBase / 1048576).toFixed(1), "MB, high-water",
+        (heapHW / 1048576).toFixed(1), "MB", HAVE_GC ? "" : "(UNAVAILABLE)");
 
     // Final full oracle sweep -- every signal, not just the sampled window.
     for (let i = 0; i < N_SIGNALS; i++) {
@@ -213,7 +306,36 @@ function finish() {
         console.error("  FAIL: JIT sink never advanced -- the work loops were optimised away");
         exitCode = 1;
     }
-    if (exitCode === 0) console.log("  PASS: zero errors, pool returned to baseline");
+    if (hwBreachTick >= 0 || nodesHW > NODES_CEILING || linksHW > LINKS_CEILING) {
+        console.error("  FAIL: mid-run high-water exceeded the topology ceiling (tick", hwBreachTick + ") --",
+            "nodes", nodesHW, ">", NODES_CEILING, "or links", linksHW, ">", LINKS_CEILING,
+            "-- retained graph garbage invisible to the post-teardown check");
+        exitCode = 1;
+    }
+    if (!HAVE_GC) {
+        console.error("  FAIL: heap witness unverifiable -- run with --expose-gc");
+        exitCode = 1;
+    } else if (heapHW - heapBase > HEAP_SLACK_MB * 1048576) {
+        console.error("  FAIL: post-GC heapUsed grew", ((heapHW - heapBase) / 1048576).toFixed(1),
+            "MB >", HEAP_SLACK_MB, "MB slack -- retention the pool counters cannot see");
+        exitCode = 1;
+    }
+    if (sentinelFailTick >= 0) {
+        console.error("  FAIL: sentinel delivery -- tick", sentinelFailTick, "wrote", sentinelWant,
+            "but the observing effect recorded", sentinelGot, "(sync flush did not deliver)");
+        exitCode = 1;
+    }
+    // Exact delivery accounting: sync flush outside batch = one observed run
+    // per write, plus the creation run. Any drift is a dropped or doubled fire.
+    for (let i = 0; i < N_SENTINELS; i++) {
+        if (sentRuns[i] !== sentWrites[i] + 1) {
+            console.error("  FAIL: sentinel", i, "ran", sentRuns[i], "times for", sentWrites[i],
+                "writes (+1 creation) -- delivery count drifted");
+            exitCode = 1;
+            break;
+        }
+    }
+    if (exitCode === 0) console.log("  PASS: zero errors, pool returned to baseline, high-water + heap + delivery witnesses clean");
     process.exit(exitCode);
 }
 

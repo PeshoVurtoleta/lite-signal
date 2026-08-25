@@ -48,7 +48,7 @@ const HAS_DESTROY = typeof reg().destroy === "function";
 
 if (!HAS_ROOT && !HAS_DESTROY) {
     console.log("lite-signal lifecycle torture -- SKIP: neither createRoot nor destroy available");
-    process.exit(0);
+    process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
 }
 
 const R = createReport("lite-signal lifecycle torture -- createRoot detachment + destroy reset");

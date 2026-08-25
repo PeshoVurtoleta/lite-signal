@@ -59,7 +59,7 @@ const { createRegistry } = Signal;
     } catch { ok = false; }
     if (!ok) {
         console.log("lite-signal introspect torture -- SKIP: introspection surface not available");
-        process.exit(0);
+        process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
     }
 }
 

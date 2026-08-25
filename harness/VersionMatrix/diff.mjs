@@ -13,8 +13,8 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 const manifest = JSON.parse(readFileSync('./manifest.json', 'utf8'));
 const { floor, rolling, history, workloads } = manifest;
 const load = (v, w) => { const p = `./baselines/${v}/${w}.json`; return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null; };
-const metrics = ['frame.avg', 'frame.p99', 'phase.write.p99'];
-const read = (d, m) => { const p = m.split('.'); return p[0] === 'frame' ? d.frame[p[1]] : (d.phases[p[1]] && d.phases[p[1]][p[2]]); };
+const metrics = ['frame.avg', 'frame.p99', 'phase.write.p99', 'phase.read.avg', 'phase.read.p99', 'phase.create.avg', 'phase.create.p99', 'phase.dispose.avg', 'phase.dispose.p99', 'counter.allocs.max', 'counter.poolGrowths.max'];
+const read = (d, m) => { const p = m.split('.'); if (p[0] === 'frame') return d.frame[p[1]]; if (p[0] === 'counter') return d.counters && d.counters[p[1]] && d.counters[p[1]][p[2]]; return d.phases[p[1]] && d.phases[p[1]][p[2]]; };
 const pct = (x) => (x && x.pct != null) ? ((x.pct >= 0 ? '+' : '') + (x.pct * 100).toFixed(1) + '%') : 'n/a';
 
 const report = { generatedAt: new Date().toISOString(), floor, rolling, note: 'diagnostic over committed baselines; may be cross-host; not the gate', workloads: {} };

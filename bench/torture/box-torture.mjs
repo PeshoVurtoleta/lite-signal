@@ -42,7 +42,7 @@ const computedBox = Signal.computedBox;
 
 if (typeof signalBox !== "function" || typeof computedBox !== "function") {
     console.log("lite-signal box torture — SKIP: signalBox/computedBox require 1.5.0+");
-    process.exit(0);
+    process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
 }
 import { mulberry32, randInt, pickValue, toNum, soakRegistry, createReport } from "./helpers/index.mjs";
 

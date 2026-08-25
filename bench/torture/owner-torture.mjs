@@ -65,7 +65,7 @@ const { createRegistry } = Signal;
     } catch { ok = false; }
     if (!ok) {
         console.log("lite-signal owner torture -- SKIP: getOwner/runWithOwner require 1.5.0+");
-        process.exit(0);
+        process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
     }
 }
 
@@ -261,4 +261,35 @@ if (fuzzFail > 0) {
 }
 
 R.note(`${SEEDS} seeds: capture/dispose/recycle/restore of owner handles never crashed`);
+
+/* -- 8. Owner handle across destroy(): degrade to ROOTED, never crash ------- */
+{
+    // destroy() bumps every node's gen, so a handle captured BEFORE it is the
+    // deepest staleness the ABA guard faces: not one recycled slot but a whole
+    // reset world. Contract (2026-08 audit, Phase 2; verified live on 1.5.0):
+    // runWithOwner on the pre-destroy handle degrades to ROOTED execution --
+    // the continuation effect is alive, runs on writes, and ownerOf() reports
+    // it unowned -- exactly the corpse/recycled degradation the fuzz above
+    // pins, extended across the registry reset.
+    const r = reg();
+    let cap = null;
+    r.effect(() => { cap = r.getOwner(); });
+    R.ok("owner-destroy", cap !== undefined && cap !== null, "getOwner returned nothing inside an effect");
+    r.destroy();
+
+    const s = r.signal(0);
+    let runs = 0, inner = null, threw = null;
+    try {
+        r.runWithOwner(cap, () => { inner = r.effect(() => { s(); runs++; }); });
+        s.set(1);
+    } catch (e) { threw = e; }
+    R.ok("owner-destroy", threw === null, `runWithOwner on a pre-destroy handle threw: ${threw && threw.message}`);
+    R.eq("owner-destroy", runs, 2, "the continuation effect under a pre-destroy owner is not alive (want creation run + 1 write)");
+    // Fail CLOSED on a missing ownerOf: "unverifiable" must not alias the pass
+    // value (undefined) -- same sentinel discipline as harness/owner-hazard-repro.
+    const owner = typeof r.ownerOf === "function" ? r.ownerOf(inner) : "<engine lacks ownerOf -- unverifiable>";
+    R.ok("owner-destroy", owner === undefined,
+        `continuation is owned by ${JSON.stringify(owner)} -- a pre-destroy handle must degrade to rooted, not adopt`);
+}
+
 process.exit(R.finish("owner handles adopt live owners, degrade stale handles to rooted, and isolate deps"));

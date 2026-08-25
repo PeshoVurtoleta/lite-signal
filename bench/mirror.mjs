@@ -54,7 +54,15 @@ function liteAdapter() {
         // his resetBenchmark(): destroy AND rebuild a fresh registry between benches
         reset() { reg.destroy(); reg = createRegistry(LITE_CONFIG); },
         // lite-only pool fingerprint for the metrics column (free; absent on ref engines)
-        poolMetrics() { const s = reg.stats(); return { flushPasses: s.flushPasses, poolGrowths: s.poolGrowths }; },
+        // Emit only counters this stats() shape actually carries: 1.5.0 has no
+        // flushPasses key, and "flushPasses=undefined" in the metrics column
+        // broke the pool fingerprint the header promises (2026-08 review).
+        poolMetrics() {
+            const s = reg.stats();
+            const out = { poolGrowths: s.poolGrowths };
+            if (typeof s.flushPasses === "number") out.flushPasses = s.flushPasses;
+            return out;
+        },
     };
 }
 

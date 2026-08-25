@@ -475,7 +475,7 @@ allocation against the JS heap?"
 
 ## Torture soaks (`bench/torture/`)
 
-`torture/` holds sixteen scenarios in two groups, a shared `helpers/` module and a
+`torture/` holds twenty-five scenarios in two groups, a shared `helpers/` module and a
 runner. **None are benchmarks.**
 
 ```bash

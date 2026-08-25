@@ -39,8 +39,11 @@ const env = envMeta();
     const outPath = rep ? `./baselines/${label}/${wname}.rep${rep}.json` : `./baselines/${label}/${wname}.json`;
     writeFileSync(outPath, JSON.stringify(summary, null, 2));
     const f = summary.frame;
+    const phaseCells = Object.keys(summary.phases).map((t) => `${t}.p99=${summary.phases[t].p99.toFixed(4)}`).join('  ');
+    const counterCells = summary.counters && Object.keys(summary.counters).length
+        ? '  ' + Object.keys(summary.counters).map((t) => `${t}=${summary.counters[t].max}`).join('  ') : '';
     console.error(
         `  [${label} / ${wname.padEnd(20)}] frame.avg=${f.avg.toFixed(4)}ms  p99=${f.p99.toFixed(4)}ms  ` +
-        `write.p99=${summary.phases.write.p99.toFixed(4)}  read.p99=${summary.phases.read.p99.toFixed(4)}  sink=${sink.toFixed(0)}`
+        `${phaseCells}${counterCells}  sink=${sink.toFixed(0)}`
     );
 }

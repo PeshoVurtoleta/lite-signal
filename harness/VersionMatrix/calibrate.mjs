@@ -10,8 +10,8 @@ import { readFileSync, existsSync } from 'node:fs';
 const [A, B] = process.argv.slice(2);
 const manifest = JSON.parse(readFileSync('./manifest.json', 'utf8'));
 const load = (v, w) => { const p = `./baselines/${v}/${w}.json`; return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null; };
-const metrics = ['frame.avg', 'frame.p99', 'phase.write.p99'];
-const read = (d, m) => { const p = m.split('.'); return p[0] === 'frame' ? d.frame[p[1]] : (d.phases[p[1]] && d.phases[p[1]][p[2]]); };
+const metrics = ['frame.avg', 'frame.p99', 'phase.write.p99', 'phase.read.avg', 'phase.read.p99', 'phase.create.avg', 'phase.create.p99', 'phase.dispose.avg', 'phase.dispose.p99', 'counter.allocs.max', 'counter.poolGrowths.max'];
+const read = (d, m) => { const p = m.split('.'); if (p[0] === 'frame') return d.frame[p[1]]; if (p[0] === 'counter') return d.counters && d.counters[p[1]] && d.counters[p[1]][p[2]]; return d.phases[p[1]] && d.phases[p[1]][p[2]]; };
 
 console.error(`\nself-noise: ${A} vs ${B} (two cold captures of the same version)`);
 console.error('gate tolerances must sit ABOVE these numbers.\n');
