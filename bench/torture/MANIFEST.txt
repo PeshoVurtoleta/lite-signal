@@ -1,0 +1,108 @@
+lite-signal torture suite -- complete set (22 scenarios)
+========================================================
+
+19 semantic (deterministic, fast, CI) + 3 soak. Full superset through 1.9.
+Every scenario feature-detects and skips cleanly below its feature; runs green
+from 1.4.x forward.
+
+    npm run torture ; npm run torture:semantic ; npm run torture:soak
+    node bench/torture/run.mjs --list
+
+SEMANTIC (listed in run.mjs registration order)
+  oracle-fuzzer            values vs an independent reference evaluator
+  glitch-hunter            glitch freedom + exact wakeup accounting
+  work-accounting          minimum body-execution counts (wrapper-based)
+  concurrent-storm         reentrancy, nesting, flush ordering
+  scheduler-storm          deferred execution, ABA thunks, coalescing
+  box-torture              signalBox / computedBox interop + surface   (1.5.0+)
+  scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0+)
+  owner-torture            getOwner/runWithOwner capture-restore + ABA
+                           degradation                                 (1.5.0+)
+  async-torture            watch / when / whenAsync contracts + fuzz
+  capacity-torture         fail-closed pool boundary + CapacityError + the
+                           16x grow ceiling
+  error-torture            throwing effect bodies: per-effect buffering,
+                           AggregateError, buffer drain
+  deep-chain-torture       pullComputed recursion fail-closed (RangeError)
+                           vs iterative push path
+  flush-torture            flushStrategy eager/sab/manual + subscribe  (1.7.0+)
+  cleanup-return-torture   effect return cleanup + compose order       (1.8.0+)
+  dispose-torture          Symbol.dispose / using on lifecycle objects (1.9.0+)
+  zerogc-torture           zero-GC hot path via measureAllocs/measureOps +
+                           stats counters; ZEROGC_BREAK self-test
+  op-accounting            structural work via onGraphMutation opcodes 1-5
+  introspect-torture       describe/forEach*/hasObservers/ownerOf/observeObservers
+                           + the ABA gen-stamp guard (devtools substrate)
+  lifecycle-torture        createRoot detachment + destroy registry reset (1.5.0+)
+
+SOAK (originals, unchanged): graph-fuzzer, scheduler-bench, torture-soak
+
+--- 1.6.0 GAP REVIEW ---
+1.6.0 adds createScope + describe and fixes the disposal crash. scope-torture
+already covered createScope adoption + the crash fuzz. The UNCHECKED surface was
+the read-only INTROSPECTION API (describe, nodeId, hasObservers, isTracking,
+forEachObserver/Source/Owned, ownerOf, observeObservers) -- the substrate
+lite-devtools / lite-studio build on. The whole suite exercised none of it.
+
+introspect-torture closes that. Two load-bearing properties:
+  1. WALK AGREEMENT -- forEachSource/Observer must match the real edge set and
+     track dynamic rewiring (cross-checked vs the reference dep set + op-3/4 lane).
+  2. THE ABA GEN-STAMP GUARD -- a descriptor captured before dispose+recycle must
+     resolve to nothing, never the new resident. Broken, devtools would read a
+     recycled node's edges as the old node's: silent data corruption. This guard
+     is invisible to every value/wakeup/work oracle; introspect-torture is the
+     ONLY scenario that catches its removal.
+
+Note (self-correction recorded): observeObservers hooks are onConnect (0->1) and
+onDisconnect (1->0) transitions, NOT per-add/remove. An early draft guessed
+onObserverAdded/onObserverRemoved and failed; the engine was right, the test was
+wrong. The scenario now pins the transition-only semantics explicitly.
+
+
+--- 1.7.0 GAP REVIEW (flush-torture extended) ---
+flush-torture already covered cross-strategy value convergence and .subscribe().
+The UNCHECKED contracts found and added:
+  1. VALUE-NEVER-DEFERS invariant: a computed pull is fresh WHILE effects are
+     still deferred (the .d.ts's emphatic guarantee: only delivery defers). The
+     suite previously checked effect convergence, never the synchronous pull a
+     manual-mode consumer relies on.
+  2. FLAG_QUEUED enqueue-dedup, counted via op-7. Run-count alone is MASKED by a
+     second, execute-time dedup layer: a broken enqueue-dedup still yields 1 run
+     while bloating the queue with 50 duplicate slots. Only op-7 (effect-enqueued)
+     sees it. Deterministic-work lesson again.
+  3. Invalid flushStrategy token throws (documented @throws; a silent fall-through
+     to eager would hide a config typo in a real-time loop).
+  4. Re-entrant flush (isFlushing guard), explicit flush INSIDE a batch draining
+     mid-batch (pinned), and sab nested-batch flushing only at the outermost exit.
+
+Mutation evidence: invalid-token and enqueue-dedup(op-7) are caught by
+flush-torture uniquely. The isFlushing guard removal is caught by concurrent-storm
+(reachable there via nested-flush/dispose-mid-flush), so flush-torture's
+re-entrancy block is a focused pin rather than the sole catcher. The
+value-never-defers invariant is a robust positive pin: the engine's pull path
+compares dep VERSION independently of marking, so the value is correct even if
+marking is skipped -- redundant correctness worth pinning.
+
+--- 1.8.0 GAP REVIEW (cleanup-return-torture extended) ---
+1.8.0 has TWO engine changes, not one: (1) effect cleanup-return (already
+covered), and (2) a disposal-crash fix -- the "dangling re-tracking cursor on
+source disposal" (severTail walking from a link the observer's re-tracking cursor
+was parked on, wiping headDep + double-freeing, `Cannot set properties of null
+(setting 'headSub')`). scope-torture's fuzz and cleanup-return scenario 6 caught
+the CLASS; the sharp documented MECHANISMS were only probabilistically covered.
+
+Added scenario 6b: five NAMED deterministic cursor-geometry pins --
+  (a) dispose a linked-unread COMPUTED mid-retrack;
+  (b) dispose MULTIPLE linked-unread sources in one re-run;
+  (c) SHARPEST: read s1 then dispose s2 with the cursor parked EXACTLY on the
+      freed link (the precise severTail geometry);
+  (d) variant (c) + a returned cleanup (the "composes with cleanup-return" claim);
+  (e) survivors-intact: the observer still reacts to a SURVIVING dep after the
+      cursor-parked dispose (the crash's worst silent form wiped headDep).
+
+Reverting the one-line 1.8 cursor repair fires all five with the exact headSub
+null-deref, and now names WHICH cursor position broke instead of a fuzz seed.
+
+FEATURE GATES: box/owner/lifecycle->1.5, scope->1.6, flush->1.7,
+cleanup-return->1.8, dispose->1.9. op-accounting, introspect-torture, and all
+others: 1.4.0+.

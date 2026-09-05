@@ -1,0 +1,50 @@
+# ==== BENCH STAMP v1 (machine-generated -- do not hand-edit) ====
+# date        : 2026-07-18T20:45:31.735Z
+# protocol    : isolated-per-engine  reps=5
+# host        : Apple M4 Pro  darwin/arm64  node v26.3.1  gc=on
+# engine      : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.8.0/Signal.js
+# engine.sha  : ae4491a3249798d1839c9e10e41944e84ad6edf64bcf750122a214c03ce1a64c
+# harness     : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.8.0/bench/benchmark.mjs
+# harness.sha : 6cbcceb7390878cd22c9a7f8313eac49ec70d993fe85270cc0acf9e4c4580a0b
+# config      : {"mode":"microscope: eager, per-scenario right-sized pools, default flush"}
+# extra       : {"warmup":2,"iterations":20000}
+# ================================================================
+#STAMP {"kind":"bench-stamp/v1","date":"2026-07-18T20:45:31.735Z","protocol":"isolated-per-engine","reps":5,"node":"v26.3.1","arch":"arm64","platform":"darwin","cpu":"Apple M4 Pro","gcExposed":true,"enginePath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.8.0/Signal.js","engineSha256":"ae4491a3249798d1839c9e10e41944e84ad6edf64bcf750122a214c03ce1a64c","harnessPath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.8.0/bench/benchmark.mjs","harnessSha256":"6cbcceb7390878cd22c9a7f8313eac49ec70d993fe85270cc0acf9e4c4580a0b","config":{"mode":"microscope: eager, per-scenario right-sized pools, default flush"},"extra":{"warmup":2,"iterations":20000}}
+Config: WARMUP=2  RUNS=5  ITERATIONS=20,000
+
+--------------------------------------------------------------------------------------------------
+KAIROS -- 1 source -> 1000 computeds -> 1 aggregating effect
+--------------------------------------------------------------------------------------------------
+alien-signals       median=  428.30ms min=  422.07ms ops/s=46K    heapMed= 801.8KB  heapP95= 916.0KB  retained= 0.0KB    sink=[x]
+
+--------------------------------------------------------------------------------------------------
+BROADCAST -- 1 source -> 1000 effects
+--------------------------------------------------------------------------------------------------
+alien-signals       median=  458.15ms min=  453.32ms ops/s=43K    heapMed= 0.0KB    heapP95= 22.6KB   retained= 0.0KB    sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DEEP CHAIN -- 256-deep computed chain -> 1 effect
+--------------------------------------------------------------------------------------------------
+alien-signals       median=   96.91ms min=   94.71ms ops/s=206K   heapMed= 1062.1KB heapP95= 3374.2KB retained= 0.0KB    sink=[x]
+
+--------------------------------------------------------------------------------------------------
+MUX -- 256 inputs -> 1 sum computed -> 1 effect
+--------------------------------------------------------------------------------------------------
+alien-signals       median=   35.27ms min=   35.10ms ops/s=567K   heapMed= 781.3KB  heapP95= 807.6KB  retained= 0.0KB    sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DYNAMIC DAG -- sqrt-layered, FAN=6 deps, read order flips each iter
+--------------------------------------------------------------------------------------------------
+alien-signals       median= 4470.02ms min= 4460.75ms ops/s=4K     heapMed= 57161.4KB heapP95= 65809.4KB retained= 0.0KB    sink=[x]
+
+--------------------------------------------------------------------------------------------------
+SELECTIVE DAG -- sqrt-layered, 4 candidates, 2 read per iter (set churn)
+--------------------------------------------------------------------------------------------------
+alien-signals       median= 2510.83ms min= 2493.30ms ops/s=7K     heapMed= 78026.4KB heapP95= 79042.3KB retained= 0.0KB    sink=[x]
+
+Notes:
+  heapMed = MEDIAN transient heap per timed run, GC-fenced each run (raw alloc pressure)
+  heapP95 = 95th-pctile of the same per-run deltas (tail alloc); no more single-smear average (F9)
+  retained = heap surviving a forced GC (true leaks / steady-state live graph)
+  Zero-GC libs should show retained ~ 0KB; heap close to 0KB.
+  BENCH_SINK_SUM (anti-DCE): 1331373289766912.00

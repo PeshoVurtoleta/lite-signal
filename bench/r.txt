@@ -1,0 +1,36 @@
+zakkster@MacBook-Pro bench % node aggregate.mjs
+microscope aggregate  (reps on disk; 4 engine(s))
+
+scenario        @zakkster/lite-signalalien-signals preact-signalssolid-signals
+KAIROS          502.01ms      433.19ms      538.47ms      1997.30ms
+BROADCAST       433.51ms      478.35ms      498.87ms      1069.52ms
+DEEP CHAIN      170.10ms      98.57ms       153.00ms      542.98ms
+MUX             23.00ms       35.00ms       38.19ms       199.63ms
+DYNAMIC DAG     3699.65ms     4448.40ms     2792.55ms     5126.11ms
+SELECTIVE DAG   2011.66ms     2493.37ms     2596.97ms     3614.18ms
+
+vs alien-signals (time / heap; + = lite better):
+
+  @zakkster/lite-signal:
+    KAIROS           time -15.9%   heap +97.1% (23.4KB vs 801.8KB)
+    BROADCAST        time +9.4%   heap n/a (0.0KB vs 0.0KB)
+    DEEP CHAIN       time -72.6%   heap +100.0% (0.5KB vs 1062.1KB)
+    MUX              time +34.3%   heap +100.0% (0.0KB vs 781.3KB)
+    DYNAMIC DAG      time +16.8%   heap +94.5% (3259.1KB vs 59795.3KB)
+    SELECTIVE DAG    time +19.3%   heap +90.0% (7745.3KB vs 77840.9KB)
+
+  preact-signals:
+    KAIROS           time -24.3%   heap -214.2% (2519.3KB vs 801.8KB)
+    BROADCAST        time -4.3%   heap n/a (2501.4KB vs 0.0KB)
+    DEEP CHAIN       time -55.2%   heap -135.5% (2501.7KB vs 1062.1KB)
+    MUX              time -9.1%   heap -220.1% (2501.3KB vs 781.3KB)
+    DYNAMIC DAG      time +37.2%   heap +92.3% (4610.3KB vs 59795.3KB)
+    SELECTIVE DAG    time -4.2%   heap +98.3% (1331.3KB vs 77840.9KB)
+
+  solid-signals:
+    KAIROS           time -361.1%   heap -1133.6% (9891.4KB vs 801.8KB)
+    BROADCAST        time -123.6%   heap n/a (5465.4KB vs 0.0KB)
+    DEEP CHAIN       time -450.8%   heap -182.8% (3003.4KB vs 1062.1KB)
+    MUX              time -470.4%   heap -2103.3% (17214.4KB vs 781.3KB)
+    DYNAMIC DAG      time -15.2%   heap +69.4% (18313.2KB vs 59795.3KB)
+    SELECTIVE DAG    time -45.0%   heap +78.9% (16440.4KB vs 77840.9KB)

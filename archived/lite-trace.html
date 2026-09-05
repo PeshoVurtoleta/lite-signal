@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lite-signal :: lite-trace</title>
+<style>
+  :root {
+    --bg:          #050d07;
+    --bg:          oklch(0.16 0.03 155);
+    --panel:       #0a1a0e;
+    --panel:       oklch(0.21 0.04 155);
+    --grid:        #123018;
+    --grid:        oklch(0.28 0.05 155);
+    --phos:        #35ff8b;
+    --phos:        oklch(0.87 0.24 152);
+    --phos-dim:    #1c8a4d;
+    --phos-dim:    oklch(0.6 0.16 152);
+    --amber:       #ffb638;
+    --amber:       oklch(0.82 0.17 75);
+    --cyan:        #38d9ff;
+    --cyan:        oklch(0.82 0.13 220);
+    --violet:      #b98cff;
+    --violet:      oklch(0.78 0.14 300);
+    --alarm:       #ff5470;
+    --alarm:       oklch(0.72 0.2 15);
+    --text:        #bdf5d2;
+    --text:        oklch(0.9 0.08 155);
+    --text-dim:    #6fae86;
+    --text-dim:    oklch(0.7 0.06 155);
+    --r:           0.5rem;
+    --mono:        "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background:
+      repeating-linear-gradient(0deg, transparent 0, transparent 2px, #0000000d 2px, #0000000d 3px),
+      radial-gradient(ellipse 120% 80% at 50% 0%, #0c1f12 0%, var(--bg) 70%);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    padding: 1.25rem;
+    min-height: 100vh;
+  }
+  .crt { max-width: 68rem; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+
+  header { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; border-bottom: 1px solid var(--grid); padding-bottom: 0.75rem; }
+  header h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: 0.06em; color: var(--phos); text-shadow: 0 0 8px #35ff8b55; }
+  header .sub { color: var(--text-dim); font-size: 0.75rem; }
+  header .spacer { flex: 1; }
+  header .stat { font-size: 0.72rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  header .stat b { color: var(--phos); font-weight: 600; }
+
+  .tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .tab {
+    font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.04em;
+    color: var(--text-dim); background: var(--panel); border: 1px solid var(--grid);
+    border-radius: var(--r); padding: 0.35rem 0.8rem; cursor: pointer;
+    transition: color 0.12s, border-color 0.12s;
+  }
+  @media (hover: hover) { .tab:hover { color: var(--phos); border-color: var(--phos-dim); } }
+  .tab[aria-selected="true"] { color: var(--bg); background: var(--phos); border-color: var(--phos); }
+  .tab:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  .panel { background: var(--panel); border: 1px solid var(--grid); border-radius: var(--r); padding: 0.9rem 1rem; }
+  .panel h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--phos-dim); margin-bottom: 0.75rem; }
+  .panel h2 .note { color: var(--text-dim); text-transform: none; letter-spacing: 0; }
+
+  .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  button.act {
+    font-family: var(--mono); font-size: 0.75rem; color: var(--phos); background: transparent;
+    border: 1px solid var(--phos-dim); border-radius: var(--r); padding: 0.4rem 0.9rem;
+    cursor: pointer; letter-spacing: 0.04em; transition: background 0.12s, color 0.12s;
+  }
+  @media (hover: hover) { button.act:hover { background: var(--phos); color: var(--bg); } }
+  button.act:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  button.act.live { background: var(--phos); color: var(--bg); }
+  .controls .hint { color: var(--text-dim); font-size: 0.72rem; }
+  select {
+    font-family: var(--mono); font-size: 0.72rem; color: var(--text); background: var(--panel);
+    border: 1px solid var(--grid); border-radius: var(--r); padding: 0.35rem 0.5rem;
+  }
+
+  .scene { display: none; flex-direction: column; gap: 1rem; }
+  .scene.active { display: flex; }
+
+  /* ---- flat log ---- */
+  .log-wrap { max-height: 26rem; overflow-y: auto; border: 1px solid var(--grid); border-radius: calc(var(--r) - 2px); background: #04180c; background: oklch(0.19 0.04 155); }
+  table.log { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+  table.log th { position: sticky; top: 0; background: var(--panel); color: var(--phos-dim); text-align: left; padding: 0.4rem 0.7rem; font-weight: 500; letter-spacing: 0.06em; border-bottom: 1px solid var(--grid); text-transform: uppercase; font-size: 0.68rem; }
+  table.log td { padding: 0.25rem 0.7rem; border-bottom: 1px solid #0e2414; border-bottom: 1px solid oklch(0.24 0.04 155); font-variant-numeric: tabular-nums; }
+  table.log tr:last-child td { border-bottom: none; }
+  .op-badge { display: inline-block; min-width: 5.5rem; padding: 0.05rem 0.45rem; border-radius: 3px; font-size: 0.68rem; letter-spacing: 0.03em; }
+  .op-create { color: var(--phos);   background: #0f3d22; background: oklch(0.32 0.09 152); }
+  .op-dispose{ color: var(--alarm);  background: #2a0a12; background: oklch(0.26 0.08 15); }
+  .op-linkadd{ color: var(--cyan);   background: #0a2530; background: oklch(0.28 0.06 220); }
+  .op-linkrm { color: var(--violet); background: #1e1430; background: oklch(0.26 0.06 300); }
+  .op-recomp { color: var(--amber);  background: #2e2208; background: oklch(0.3 0.07 75); }
+  .op-flush  { color: var(--bg);     background: var(--phos); }
+  .op-enq    { color: var(--text-dim); background: #0e2414; background: oklch(0.24 0.04 155); }
+  td .arg { color: var(--text-dim); }
+
+  /* ---- burst timeline ---- */
+  .timeline { display: flex; flex-direction: column; gap: 0.9rem; }
+  .burst {
+    border: 1px solid var(--grid); border-radius: var(--r); padding: 0.7rem 0.85rem;
+    background: #04180c; background: oklch(0.19 0.03 155);
+  }
+  .burst-head { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+  .burst-head .id { color: var(--phos); font-weight: 600; }
+  .burst-head .meta { color: var(--text-dim); font-size: 0.72rem; }
+  .burst-head .meta b { color: var(--text); font-weight: 600; }
+  .pass-track { display: flex; flex-direction: column; gap: 0.35rem; }
+  .pass-row { display: grid; grid-template-columns: 3.5rem 1fr; gap: 0.6rem; align-items: center; }
+  .pass-row .plabel { color: var(--text-dim); font-size: 0.72rem; }
+  .waterfall { display: flex; gap: 2px; align-items: flex-end; height: 1.6rem; }
+  .wf-cell { flex: 1 1 auto; min-width: 2px; background: var(--phos-dim); border-radius: 1px; }
+  .wf-cell.recomp { background: var(--amber); }
+  .wf-cell.skip { background: #0f3d22; background: oklch(0.32 0.06 152); }
+  .burst-legend { display: flex; gap: 1.2rem; margin-top: 0.6rem; font-size: 0.7rem; color: var(--text-dim); flex-wrap: wrap; }
+  .burst-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .swatch { width: 0.7rem; height: 0.7rem; border-radius: 2px; display: inline-block; }
+
+  .empty { color: var(--text-dim); text-align: center; padding: 2rem 1rem; font-size: 0.8rem; }
+
+  footer { color: var(--text-dim); font-size: 0.7rem; text-align: center; padding-top: 0.5rem; border-top: 1px solid var(--grid); }
+  code { color: var(--phos-dim); }
+  .err-banner { display: none; background: #2a0a12; background: oklch(0.25 0.09 15); border: 1px solid var(--alarm); color: var(--text); padding: 0.75rem 1rem; border-radius: var(--r); font-size: 0.78rem; }
+  .err-banner.show { display: block; }
+</style>
+</head>
+<body>
+<div class="crt">
+  <header>
+    <h1>LITE-TRACE</h1>
+    <span class="sub">@zakkster/lite-signal &mdash; onGraphMutation op-stream</span>
+    <span class="spacer"></span>
+    <span class="stat">events <b id="$evtCount">0</b></span>
+    <span class="stat">bursts <b id="$burstCount">0</b></span>
+  </header>
+
+  <div class="err-banner" id="$err"></div>
+
+  <div class="panel">
+    <h2>trace driver <span class="note">&mdash; every op is captured live from the running graph</span></h2>
+    <div class="controls">
+      <button class="act" id="$stepBtn">single write</button>
+      <button class="act" id="$batchBtn">batched burst</button>
+      <button class="act" id="$chainBtn">rewire graph</button>
+      <button class="act" id="$clearBtn">clear</button>
+      <span class="hint" id="$hint">a 3-layer diamond graph is wired and ready</span>
+    </div>
+  </div>
+
+  <div class="tabs" role="tablist" aria-label="trace views">
+    <button class="tab" role="tab" data-scene="flat" aria-selected="true">flat log</button>
+    <button class="tab" role="tab" data-scene="burst" aria-selected="false">burst timeline</button>
+  </div>
+
+  <!-- ============ FLAT LOG ============ -->
+  <section class="scene active" data-scene="flat">
+    <div class="panel">
+      <h2>chronological op-stream
+        <span class="note">&mdash;
+          <select id="$filter">
+            <option value="all">all opcodes</option>
+            <option value="lifecycle">lifecycle (create/dispose)</option>
+            <option value="links">links (add/remove)</option>
+            <option value="flush">flush + recompute</option>
+          </select>
+        </span>
+      </h2>
+      <div class="log-wrap">
+        <table class="log">
+          <thead><tr><th>#</th><th>op</th><th>arg a</th><th>arg b</th><th>meaning</th></tr></thead>
+          <tbody id="$logBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ BURST TIMELINE ============ -->
+  <section class="scene" data-scene="burst">
+    <div class="panel">
+      <h2>per-flush burst timeline <span class="note">&mdash; passes, effects/pass, recompute waterfall</span></h2>
+      <div class="timeline" id="$timeline">
+        <div class="empty">Drive a write or a batched burst to capture a flush. Each flush shows its passes, the effects delivered per pass, and which computeds recomputed vs short-circuited.</div>
+      </div>
+      <div class="burst-legend">
+        <span><i class="swatch" style="background: var(--amber)"></i> computed recomputed (op 5)</span>
+        <span><i class="swatch" style="background: var(--phos-dim)"></i> effect enqueued (op 7)</span>
+        <span><i class="swatch" style="background: oklch(0.32 0.06 152)"></i> pass boundary (op 6)</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    opcodes: <code>1</code> node-create &middot; <code>2</code> node-dispose &middot; <code>3</code> link-add &middot;
+    <code>4</code> link-remove &middot; <code>5</code> recompute &middot; <code>6</code> flush-pass-start &middot; <code>7</code> effect-enqueue.
+    the trace hook is gated &mdash; zero cost when detached.
+  </footer>
+</div>
+
+<script type="module">
+let createRegistry;
+try {
+  ({ createRegistry } = await import("@zakkster/lite-signal"));
+} catch (e) {
+  const b = document.getElementById("$err");
+  b.className = "err-banner show";
+  b.textContent = "Engine not found. Place Signal.js and Watch.js next to this file, then serve with `npx serve .`. Details: " + e.message;
+  throw e;
+}
+
+// ---------- cached refs ----------
+const $evtCount   = document.getElementById("$evtCount");
+const $burstCount = document.getElementById("$burstCount");
+const $stepBtn    = document.getElementById("$stepBtn");
+const $batchBtn   = document.getElementById("$batchBtn");
+const $chainBtn   = document.getElementById("$chainBtn");
+const $clearBtn   = document.getElementById("$clearBtn");
+const $hint       = document.getElementById("$hint");
+const $filter     = document.getElementById("$filter");
+const $logBody    = document.getElementById("$logBody");
+const $timeline   = document.getElementById("$timeline");
+
+// ---------- opcode metadata ----------
+const OP = {
+  1: { cls: "op-create",  name: "node-create",  meaning: (a,b) => `node #${a} (kind ${b})` },
+  2: { cls: "op-dispose", name: "node-dispose", meaning: (a)   => `node #${a}` },
+  3: { cls: "op-linkadd", name: "link-add",     meaning: (a,b) => `#${a} <- #${b}` },
+  4: { cls: "op-linkrm",  name: "link-remove",  meaning: (a,b) => `#${a} -x- #${b}` },
+  5: { cls: "op-recomp",  name: "recompute",    meaning: (a)   => `computed #${a}` },
+  6: { cls: "op-flush",   name: "flush-pass",   meaning: (a,b) => `pass ${a}, ${b} effect(s)` },
+  7: { cls: "op-enq",     name: "effect-enq",   meaning: (a)   => `effect #${a}` },
+};
+const FILTERS = {
+  all: null,
+  lifecycle: new Set([1, 2]),
+  links: new Set([3, 4]),
+  flush: new Set([5, 6, 7]),
+};
+
+// ---------- scene routing ----------
+const tabs = document.querySelectorAll(".tab");
+const scenes = document.querySelectorAll(".scene");
+for (const t of tabs) {
+  t.addEventListener("click", () => {
+    const name = t.dataset.scene;
+    for (const tt of tabs) tt.setAttribute("aria-selected", String(tt === t));
+    for (const s of scenes) s.classList.toggle("active", s.dataset.scene === name);
+  });
+}
+
+// ---------- trace state ----------
+const T = {
+  r: null, evts: [], seq: 0, bursts: [],
+  // per-flush accumulation
+  inFlush: false, curBurst: null,
+  recompThisPass: 0, enqThisBurst: 0, recompThisBurst: 0,
+};
+
+function buildGraph() {
+  const r = createRegistry();
+  // diamond: src -> {l, rr} -> bottom, plus a couple sinks
+  const src = r.signal(1);
+  const l  = r.computed(() => src() + 1);
+  const rr = r.computed(() => src() * 2);
+  const bottom = r.computed(() => l() + rr());
+  r.effect(() => { if (bottom() < 0) console.log("x"); });
+  r.effect(() => { if (l() < 0) console.log("x"); });
+  T.r = r; T.src = src; T.nodes = { l, rr, bottom };
+  T.dynSigs = [];
+  attachHook();
+}
+
+function attachHook() {
+  // The trace hook: capture every op. IMPORTANT ordering: op 7 (effect-enqueue)
+  // fires during markDownstream, BEFORE op 6 (flush-pass-start) opens the flush
+  // loop. So a burst is opened by the FIRST op 7 OR op 6 of a settle, and closed
+  // when the driver returns after the synchronous flush.
+  T.r.onGraphMutation((op, a, b) => {
+    T.evts.push({ n: ++T.seq, op, a, b });
+    if (T.evts.length > 2000) T.evts.shift();
+
+    // open a burst on the first enqueue/flush/recompute of a settle
+    if ((op === 7 || op === 6 || op === 5) && !T.inFlush) {
+      T.inFlush = true;
+      T.curBurst = { id: T.bursts.length + 1, passes: [], recomputes: 0, enqueues: 0 };
+      T.recompThisBurst = 0; T.enqThisBurst = 0;
+    }
+
+    if (op === 6) {
+      T.curBurst.passes.push({ pass: a, effects: b, recomputes: 0 });
+    } else if (op === 5 && T.inFlush) {
+      T.recompThisBurst++;
+      const p = T.curBurst.passes[T.curBurst.passes.length - 1];
+      if (p) p.recomputes++;
+    } else if (op === 7 && T.inFlush) {
+      T.enqThisBurst++;
+    }
+  });
+}
+
+// A burst "closes" when we return to the driver after a synchronous flush.
+// Since flushes are synchronous, we finalize right after the triggering call.
+function finalizeBurst(label) {
+  if (T.inFlush && T.curBurst) {
+    T.curBurst.recomputes = T.recompThisBurst;
+    T.curBurst.enqueues = T.enqThisBurst;
+    T.curBurst.label = label;
+    T.bursts.push(T.curBurst);
+    if (T.bursts.length > 40) T.bursts.shift();
+  }
+  T.inFlush = false; T.curBurst = null;
+  renderAll();
+}
+
+// ---------- renderers ----------
+function renderAll() {
+  $evtCount.textContent = T.seq.toLocaleString("en-US");
+  $burstCount.textContent = T.bursts.length.toString();
+  renderFlat();
+  renderBursts();
+}
+
+function renderFlat() {
+  const set = FILTERS[$filter.value];
+  const frag = document.createDocumentFragment();
+  // show most recent ~250, newest at bottom (chronological)
+  const start = Math.max(0, T.evts.length - 250);
+  for (let i = start; i < T.evts.length; i++) {
+    const e = T.evts[i];
+    if (set && !set.has(e.op)) continue;
+    const meta = OP[e.op];
+    const tr = document.createElement("tr");
+    const cSeq = document.createElement("td"); cSeq.textContent = e.n;
+    const cOp = document.createElement("td");
+    const badge = document.createElement("span");
+    badge.className = "op-badge " + meta.cls; badge.textContent = meta.name;
+    cOp.append(badge);
+    const cA = document.createElement("td"); cA.className = "arg"; cA.textContent = e.a;
+    const cB = document.createElement("td"); cB.className = "arg"; cB.textContent = e.b;
+    const cM = document.createElement("td"); cM.textContent = meta.meaning(e.a, e.b);
+    tr.append(cSeq, cOp, cA, cB, cM);
+    frag.append(tr);
+  }
+  $logBody.innerHTML = "";
+  $logBody.append(frag);
+  // autoscroll to newest
+  const wrap = $logBody.closest(".log-wrap");
+  if (wrap) wrap.scrollTop = wrap.scrollHeight;
+}
+
+function renderBursts() {
+  if (T.bursts.length === 0) return;
+  const frag = document.createDocumentFragment();
+  // newest first
+  for (let i = T.bursts.length - 1; i >= 0; i--) {
+    const bd = T.bursts[i];
+    const el = document.createElement("div"); el.className = "burst";
+    const head = document.createElement("div"); head.className = "burst-head";
+    const id = document.createElement("span"); id.className = "id"; id.textContent = "burst #" + bd.id;
+    const meta = document.createElement("span"); meta.className = "meta";
+    const skips = bd.enqueues - bd.recomputes;
+    meta.innerHTML = `<b>${bd.passes.length}</b> pass(es) &middot; <b>${bd.recomputes}</b> recompute(s) &middot; <b>${bd.enqueues}</b> enqueue(s)`
+      + (bd.label ? ` &middot; ${bd.label}` : "");
+    head.append(id, meta);
+    el.append(head);
+
+    const track = document.createElement("div"); track.className = "pass-track";
+    for (const p of bd.passes) {
+      const prow = document.createElement("div"); prow.className = "pass-row";
+      const pl = document.createElement("span"); pl.className = "plabel"; pl.textContent = "pass " + p.pass;
+      const wf = document.createElement("div"); wf.className = "waterfall";
+      // waterfall cells: one amber cell per recompute, phos cells for effects delivered
+      const rc = Math.max(0, p.recomputes);
+      const ef = Math.max(0, p.effects);
+      const total = Math.max(1, rc + ef);
+      for (let k = 0; k < rc; k++) { const c = document.createElement("div"); c.className = "wf-cell recomp"; wf.append(c); }
+      for (let k = 0; k < ef; k++) { const c = document.createElement("div"); c.className = "wf-cell"; wf.append(c); }
+      if (rc + ef === 0) { const c = document.createElement("div"); c.className = "wf-cell skip"; wf.append(c); }
+      prow.append(pl, wf);
+      track.append(prow);
+    }
+    el.append(track);
+    frag.append(el);
+  }
+  $timeline.innerHTML = "";
+  $timeline.append(frag);
+}
+
+// ---------- driver actions ----------
+$stepBtn.addEventListener("click", () => {
+  T.src.set((Math.random() * 1000) | 0);
+  finalizeBurst("single write");
+  $hint.textContent = "drove one write through the diamond";
+});
+
+$batchBtn.addEventListener("click", () => {
+  // batch several writes -> one flush -> one burst with more enqueues
+  T.r.batch(() => {
+    T.src.set((Math.random() * 1000) | 0);
+    for (const s of T.dynSigs) s.set((Math.random() * 1000) | 0);
+  });
+  finalizeBurst("batched burst");
+  $hint.textContent = "batched writes collapsed into a single flush";
+});
+
+$chainBtn.addEventListener("click", () => {
+  // rewire: add a new signal + computed + effect -> emits create/link ops
+  const s = T.r.signal((Math.random() * 100) | 0);
+  const c = T.r.computed(() => s() + T.src());
+  T.r.effect(() => { if (c() < 0) console.log("x"); });
+  T.dynSigs.push(s);
+  finalizeBurst("rewire");
+  $hint.textContent = "added a signal + computed + effect (watch create/link ops in the flat log)";
+});
+
+$clearBtn.addEventListener("click", () => {
+  T.evts.length = 0; T.bursts.length = 0; T.seq = 0;
+  T.inFlush = false; T.curBurst = null;
+  $logBody.innerHTML = "";
+  $timeline.innerHTML = '<div class="empty">Cleared. Drive a write or a batched burst to capture a flush.</div>';
+  renderAll();
+  $hint.textContent = "trace cleared";
+});
+
+$filter.addEventListener("change", renderFlat);
+
+// ---------- boot ----------
+buildGraph();
+renderAll();
+$hint.textContent = "a 3-layer diamond graph is wired and ready";
+</script>
+</body>
+</html>

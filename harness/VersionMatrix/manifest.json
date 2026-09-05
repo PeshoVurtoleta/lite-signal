@@ -1,0 +1,18 @@
+{
+  "floor": "1.3.0",
+  "rolling": "1.7.0-preview.2",
+  "history": [
+    "1.3.0",
+    "1.4.0-beta.1",
+    "1.5.0-alpha.1",
+    "1.5.0-beta.4",
+    "1.6.0-preview.2",
+    "1.7.0-preview.2"
+  ],
+  "workloads": ["reactive-graph-mix", "deep-chain", "broadcast-fanout", "dynamic-dep-churn"],
+  "tolerances": {
+    "floor":   { "frame.avg": 0.10, "frame.p99": 0.30, "phase.write.p99": 0.30 },
+    "rolling": { "frame.avg": 0.05, "frame.p99": 0.18, "phase.write.p99": 0.18 }
+  },
+  "_notes": "floor/rolling MUST be npm-installable versions: matrix.sh `swap`s them into node_modules from the registry. Labels like '1.7.0-eager' or an unpublished '1.5.0' will break the gate before it measures anything. floor=1.3.0 is the current `latest` stable anchor; rolling=1.7.0-preview.2 is the immediate predecessor of this candidate (the `preview` dist-tag). Tolerances calibrated against measured self-noise (npm run calibrate: frame.avg <=3.4%, frame.p99 up to 14%). frame.avg is the tight stable anchor (5% rolling, safely above its ~3% noise). p99 gates sit above the 14% p99 self-noise so they only fire on gross tail regressions. If the gate reports NO EVIDENCE (spread > maxSpreadPct), the host was noisy -- quiesce and recapture; do NOT raise tolerances to force a pass."
+}

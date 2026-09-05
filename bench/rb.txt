@@ -1,0 +1,74 @@
+----------------------------------------------------------------------------------------------
+EXECUTION TIME (median across reps, ms; lower is better)
+----------------------------------------------------------------------------------------------
+test                                                            lite     alien   lite vs alien
+64x6 - 4 sources - dynamic - read 12% (dashboard selecti      195.97    174.55   -12.3%  alien
+24x8 - 3 sources - dynamic - read 40% (editor derived st      276.42    248.13   -11.4%  alien
+120x7 - 5 sources - dynamic - read 18% (kanban board)         166.22    148.92   -11.6%  alien
+40x10 - 4 sources - dynamic - read 60% (entity detail pa      368.94    329.20   -12.1%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources (layered       48.95     34.84   -40.5%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 3       44.39     33.13   -34.0%  alien
+256->512x32 - fanIn 8 - layered-dag - 8 sources - burst       599.92    354.95   -69.0%  alien
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm         4.70      3.90   -20.7%  alien
+32x8 - 4 sources - pull (pure pull)                             0.74      0.47   -58.5%  alien
+8x64 - 1 sources - pull (linear chain - 1 source - pull         0.84      0.70   -19.1%  alien
+64x4 - 8 sources - pull (wide tree - 8 sources - pull (b        0.77      0.40   -91.3%  alien
+32x8 - 4 sources - push (pure push)                            86.92     74.42   -16.8%  alien
+10x5 - 2 sources - read 20% (simple component)                132.74    114.88   -15.5%  alien
+10x10 - 6 sources - dynamic - read 20% (dynamic componen      113.57    109.84   -3.4%  alien
+1000x12 - 4 sources - dynamic (large web app)                 261.73    254.33   -2.9%  alien
+1000x5 - 25 sources (wide dense)                              316.34    359.67   +12.0%  lite
+5x500 - 3 sources (deep)                                       99.39     92.44   -7.5%  alien
+avoidablePropagation                                           94.48     65.11   -45.1%  alien
+broadPropagation                                              195.75    135.69   -44.3%  alien
+deepPropagation                                                72.54     44.05   -64.7%  alien
+diamond                                                       105.23     85.15   -23.6%  alien
+mux                                                           193.78    160.12   -21.0%  alien
+repeatedObservers                                              28.34     26.27   -7.9%  alien
+triangle                                                       44.19     32.82   -34.6%  alien
+unstable                                                       41.19     38.00   -8.4%  alien
+manyEffectsFromOneSource                                      118.83    106.45   -11.6%  alien
+manySourcesIntoOneComputedEffectWithDirect                     64.63     93.84   +31.1%  lite
+manySourcesIntoOneComputedEffect                               63.71     90.42   +29.5%  lite
+manySourcesIntoOneDirectEffect                                 32.36     29.61   -9.3%  alien
+molBench                                                      163.19    163.74   +0.3%  lite
+createDataSignals                                               8.80      2.45   -259.9%  alien
+createComputations0to1                                         10.63      2.07   -413.8%  alien
+createComputations1to1                                         14.63      6.13   -138.8%  alien
+createComputations2to1                                          5.10      2.57   -98.4%  alien
+createComputations4to1                                          2.96      2.05   -44.0%  alien
+createComputations1000to1                                       0.02      0.02   +0.0%  alien
+createComputations1to2                                         13.70      4.71   -191.1%  alien
+createComputations1to4                                         14.06      2.95   -376.6%  alien
+createComputations1to8                                         13.96      3.48   -301.6%  alien
+createComputations1to1000                                       9.31      2.06   -350.8%  alien
+updateComputations1to1                                          3.00      1.84   -62.8%  alien
+updateComputations2to1                                          1.49      0.91   -63.7%  alien
+updateComputations4to1                                          1.74      0.45   -286.7%  alien
+updateComputations1000to1                                       0.04      0.01   -300.0%  alien
+updateComputations1to2                                          2.23      0.91   -144.5%  alien
+updateComputations1to4                                          1.54      0.45   -242.2%  alien
+updateComputations1to1000                                       0.11      0.02   -450.0%  alien
+----------------------------------------------------------------------------------------------
+lite faster than alien on 4/47 shapes.
+
+HONEST FRAMING (the claim that reproduces):
+  lite-signal's differentiated position is ALLOCATION, not raw propagation speed.
+  On these shapes lite runs at parity-to-behind alien on throughput (weak on deep/
+  layered propagation -- the DEEP CHAIN / burst family), while allocating one to four
+  orders of magnitude less transient heap (see bench/benchmark.mjs heap columns, the
+  zero-GC microscope). The headline is 'competitive throughput with dramatically lower
+  GC pressure', not 'fastest dynamic-graph engine'.
+
+STANDING RULES (enforced by the harness, not by prose):
+  1. No number is published unless its file carries a machine stamp and the sweep
+     exited 0 (dead-sink / counter / checksum / expected / sentinel / stamp guards).
+  2. The mirror tracks Andrii verbatim; divergence for identical engine bytes is a
+     harness bug (run mirror.mjs --self-verify). Shape edits only by re-porting.
+  3. One shape name = one definition, repo-wide. Approximations deleted, not renamed.
+  4. lite's config is fixed per file and echoed by the stamp. sab is a production
+     feature, not a benchmark knob.
+  5. Cross-protocol / cross-host comparisons cite (stamp, protocol) or are not made.
+
+Raw per-rep files (checked in for audit): bench/mirror-runs/<engine>-rep<N>.txt
+Re-derive this file (no re-benching): node bench/report.mjs

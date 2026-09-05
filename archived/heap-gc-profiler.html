@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>lite-signal :: heap / GC profiler</title>
+    <style>
+        /* ---- oscilloscope tokens: hex first, oklch second ---- */
+        :root {
+            --bg: #050d07;
+            --bg: oklch(0.16 0.03 155);
+            --panel: #0a1a0e;
+            --panel: oklch(0.21 0.04 155);
+            --grid: #123018;
+            --grid: oklch(0.28 0.05 155);
+            --phos: #35ff8b;
+            --phos: oklch(0.87 0.24 152);
+            --phos-dim: #1c8a4d;
+            --phos-dim: oklch(0.6 0.16 152);
+            --phos-faint: #0f3d22;
+            --phos-faint: oklch(0.36 0.09 152);
+            --amber: #ffb638;
+            --amber: oklch(0.82 0.17 75);
+            --alarm: #ff5470;
+            --alarm: oklch(0.72 0.2 15);
+            --text: #bdf5d2;
+            --text: oklch(0.9 0.08 155);
+            --text-dim: #6fae86;
+            --text-dim: oklch(0.7 0.06 155);
+            --r: 0.5rem;
+            --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100%;
+        }
+
+        body {
+            background: repeating-linear-gradient(0deg, transparent 0, transparent 2px, #0000000d 2px, #0000000d 3px),
+            radial-gradient(ellipse 120% 80% at 50% 0%, #0c1f12 0%, var(--bg) 70%);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 0.8125rem;
+            line-height: 1.5;
+            padding: 1.25rem;
+            min-height: 100vh;
+        }
+
+        .crt {
+            max-width: 68rem;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            border-bottom: 1px solid var(--grid);
+            padding-bottom: 0.75rem;
+        }
+
+        header h1 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            color: var(--phos);
+            text-shadow: 0 0 8px #35ff8b55;
+        }
+
+        header .sub {
+            color: var(--text-dim);
+            font-size: 0.75rem;
+        }
+
+        header .spacer {
+            flex: 1;
+        }
+
+        header .verdict {
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            padding: 0.15rem 0.55rem;
+            border: 1px solid var(--phos-dim);
+            border-radius: 999px;
+            color: var(--phos);
+        }
+
+        header .verdict.warn {
+            color: var(--amber);
+            border-color: var(--amber);
+        }
+
+        header .verdict.alarm {
+            color: var(--alarm);
+            border-color: var(--alarm);
+        }
+
+        /* ---- scene tabs ---- */
+        .tabs {
+            display: flex;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+
+        .tab {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            letter-spacing: 0.04em;
+            color: var(--text-dim);
+            background: var(--panel);
+            border: 1px solid var(--grid);
+            border-radius: var(--r);
+            padding: 0.35rem 0.8rem;
+            cursor: pointer;
+            transition: color 0.12s, border-color 0.12s;
+        }
+
+        @media (hover: hover) {
+            .tab:hover {
+                color: var(--phos);
+                border-color: var(--phos-dim);
+            }
+        }
+
+        .tab[aria-selected="true"] {
+            color: var(--bg);
+            background: var(--phos);
+            border-color: var(--phos);
+            text-shadow: none;
+        }
+
+        .tab:focus-visible {
+            outline: 2px solid var(--amber);
+            outline-offset: 2px;
+        }
+
+        .grid2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        @media (max-width: 52rem) {
+            .grid2 {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--grid);
+            border-radius: var(--r);
+            padding: 0.9rem 1rem;
+        }
+
+        .panel h2 {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--phos-dim);
+            margin-bottom: 0.75rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+        }
+
+        .panel h2 .note {
+            color: var(--text-dim);
+            text-transform: none;
+            letter-spacing: 0;
+            font-size: 0.7rem;
+        }
+
+        /* ---- readout rows ---- */
+        .readout {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 0.3rem 1rem;
+        }
+
+        .readout dt {
+            color: var(--text-dim);
+        }
+
+        .readout dd {
+            color: var(--text);
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .readout dd.hot {
+            color: var(--amber);
+        }
+
+        .readout dd.zero {
+            color: var(--phos);
+        }
+
+        .readout dd.alarm {
+            color: var(--alarm);
+        }
+
+        /* ---- big verify stamp ---- */
+        .stamp {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.35rem;
+            padding: 1.5rem 1rem;
+            text-align: center;
+        }
+
+        .stamp .big {
+            font-size: 1.6rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            color: var(--phos);
+            text-shadow: 0 0 14px #35ff8b66;
+        }
+
+        .stamp .big.fail {
+            color: var(--alarm);
+            text-shadow: 0 0 14px #ff547066;
+        }
+
+        .stamp .detail {
+            color: var(--text-dim);
+            font-size: 0.75rem;
+            max-width: 26rem;
+        }
+
+        /* ---- scope canvas ---- */
+        .scope-wrap {
+            position: relative;
+        }
+
+        canvas {
+            width: 100%;
+            display: block;
+            border-radius: calc(var(--r) - 2px);
+            background: #04180c;
+            background: oklch(0.19 0.04 155);
+        }
+
+        .scope-legend {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.5rem;
+            flex-wrap: wrap;
+            font-size: 0.72rem;
+            color: var(--text-dim);
+        }
+
+        .scope-legend span {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .swatch {
+            width: 0.7rem;
+            height: 0.7rem;
+            border-radius: 2px;
+            display: inline-block;
+        }
+
+        /* ---- pool bars ---- */
+        .bars {
+            display: flex;
+            flex-direction: column;
+            gap: 0.7rem;
+        }
+
+        .bar-row {
+            display: grid;
+            grid-template-columns: 6.5rem 1fr 5rem;
+            gap: 0.6rem;
+            align-items: center;
+        }
+
+        .bar-row .lbl {
+            color: var(--text-dim);
+            font-size: 0.72rem;
+        }
+
+        .bar-track {
+            height: 0.85rem;
+            background: #04180c;
+            background: oklch(0.19 0.03 155);
+            border: 1px solid var(--grid);
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .bar-fill {
+            height: 100%;
+            background: var(--phos-dim);
+            transition: width 0.15s linear;
+        }
+
+        .bar-fill.warn {
+            background: var(--amber);
+        }
+
+        .bar-fill.alarm {
+            background: var(--alarm);
+        }
+
+        .bar-row .val {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+            font-size: 0.72rem;
+        }
+
+        /* ---- controls ---- */
+        .controls {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        button.act {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            color: var(--phos);
+            background: transparent;
+            border: 1px solid var(--phos-dim);
+            border-radius: var(--r);
+            padding: 0.4rem 0.9rem;
+            cursor: pointer;
+            letter-spacing: 0.04em;
+            transition: background 0.12s, color 0.12s;
+        }
+
+        @media (hover: hover) {
+            button.act:hover {
+                background: var(--phos);
+                color: var(--bg);
+            }
+        }
+
+        button.act:focus-visible {
+            outline: 2px solid var(--amber);
+            outline-offset: 2px;
+        }
+
+        button.act:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        button.act.live {
+            background: var(--phos);
+            color: var(--bg);
+        }
+
+        .controls .hint {
+            color: var(--text-dim);
+            font-size: 0.72rem;
+        }
+
+        .scene {
+            display: none;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .scene.active {
+            display: flex;
+        }
+
+        footer {
+            color: var(--text-dim);
+            font-size: 0.7rem;
+            text-align: center;
+            padding-top: 0.5rem;
+            border-top: 1px solid var(--grid);
+        }
+
+        code {
+            color: var(--phos-dim);
+        }
+
+        .err-banner {
+            display: none;
+            background: #2a0a12;
+            background: oklch(0.25 0.09 15);
+            border: 1px solid var(--alarm);
+            color: var(--text);
+            padding: 0.75rem 1rem;
+            border-radius: var(--r);
+            font-size: 0.78rem;
+        }
+
+        .err-banner.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+<div class="crt">
+    <header>
+        <h1>HEAP / GC PROFILER</h1>
+        <span class="sub">@zakkster/lite-signal &mdash; pool telemetry via stats()</span>
+        <span class="spacer"></span>
+        <span class="verdict" id="$verdict">standby</span>
+    </header>
+
+    <div class="err-banner" id="$err"></div>
+
+    <div class="tabs" role="tablist" aria-label="profiler scenes">
+        <button class="tab" role="tab" data-scene="verify" aria-selected="true">verify mode</button>
+        <button class="tab" role="tab" data-scene="dash" aria-selected="false">live dashboard</button>
+    </div>
+
+    <!-- ============ VERIFY SCENE ============ -->
+    <section class="scene active" data-scene="verify">
+        <div class="panel">
+            <h2>steady-state allocation assertion <span class="note">writes only &mdash; no node creation on the hot path</span>
+            </h2>
+            <div class="controls">
+                <button class="act" id="$runVerify">run assertion</button>
+                <span class="hint" id="$verifyHint">drives 200k writes through a warmed graph, then checks pool growth + alloc delta</span>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="stamp">
+                <div class="big" id="$stampBig">&mdash;</div>
+                <div class="detail" id="$stampDetail">The zero-GC claim: after warm-up, hot-path writes must allocate no
+                    new nodes and grow no pool. Run the assertion to measure it against the live engine.
+                </div>
+            </div>
+        </div>
+
+        <div class="grid2">
+            <div class="panel">
+                <h2>before window</h2>
+                <dl class="readout" id="$before"></dl>
+            </div>
+            <div class="panel">
+                <h2>after window <span class="note">delta vs before</span></h2>
+                <dl class="readout" id="$after"></dl>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ DASHBOARD SCENE ============ -->
+    <section class="scene" data-scene="dash">
+        <div class="panel">
+            <h2>workload driver</h2>
+            <div class="controls">
+                <button class="act" id="$toggleLive">start live</button>
+                <button class="act" id="$burstBtn">inject burst</button>
+                <button class="act" id="$growBtn">force pool growth</button>
+                <span class="hint" id="$dashHint">idle</span>
+            </div>
+        </div>
+
+        <div class="panel scope-wrap">
+            <h2>allocation scope <span class="note">activeNodes / activeLinks over time</span></h2>
+            <canvas id="$scope" width="1000" height="220"></canvas>
+            <div class="scope-legend">
+                <span><i class="swatch" style="background: var(--phos)"></i> active nodes</span>
+                <span><i class="swatch" style="background: var(--amber)"></i> active links</span>
+                <span><i class="swatch" style="background: var(--alarm)"></i> pool growth event</span>
+            </div>
+        </div>
+
+        <div class="grid2">
+            <div class="panel">
+                <h2>pool utilization</h2>
+                <div class="bars" id="$bars"></div>
+            </div>
+            <div class="panel">
+                <h2>lifecycle counters <span class="note">cumulative</span></h2>
+                <dl class="readout" id="$counters"></dl>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        reads only <code>stats()</code> &mdash; the profiler never touches the hot path.
+        growth-pressure = activeLinks / linkPoolCapacity. zero pool growth in steady state is the contract.
+    </footer>
+</div>
+
+<script type="module">
+    // ---- load the real engine (local siblings; unpublished 1.9 ships next to the demo) ----
+    // When published, swap to the importmap route: import { createRegistry } from "@zakkster/lite-signal";
+    let createRegistry;
+    try {
+        ({createRegistry} = await import("@zakkster/lite-signal"));
+    } catch (e) {
+        const b = document.getElementById("$err");
+        b.className = "err-banner show";
+        b.textContent = "Engine not found. Place Signal.js and Watch.js next to this file, then serve with `npx serve .` (module imports need http, not file://). Details: " + e.message;
+        throw e;
+    }
+
+    // ---------- cached DOM refs ($-prefixed) ----------
+    const $verdict = document.getElementById("$verdict");
+    const $runVerify = document.getElementById("$runVerify");
+    const $verifyHint = document.getElementById("$verifyHint");
+    const $stampBig = document.getElementById("$stampBig");
+    const $stampDetail = document.getElementById("$stampDetail");
+    const $before = document.getElementById("$before");
+    const $after = document.getElementById("$after");
+    const $toggleLive = document.getElementById("$toggleLive");
+    const $burstBtn = document.getElementById("$burstBtn");
+    const $growBtn = document.getElementById("$growBtn");
+    const $dashHint = document.getElementById("$dashHint");
+    const $scope = document.getElementById("$scope");
+    const $bars = document.getElementById("$bars");
+    const $counters = document.getElementById("$counters");
+
+    // ---------- scene routing ----------
+    const tabs = document.querySelectorAll(".tab");
+    const scenes = document.querySelectorAll(".scene");
+    for (const t of tabs) {
+        t.addEventListener("click", () => {
+            const name = t.dataset.scene;
+            for (const tt of tabs) tt.setAttribute("aria-selected", String(tt === t));
+            for (const s of scenes) s.classList.toggle("active", s.dataset.scene === name);
+        });
+    }
+
+    // ---------- helpers ----------
+    function row(dl, label, value, cls) {
+        const dt = document.createElement("dt");
+        dt.textContent = label;
+        const dd = document.createElement("dd");
+        dd.textContent = value;
+        if (cls) dd.className = cls;
+        dl.append(dt, dd);
+    }
+
+    function fmt(n) {
+        return (n | 0).toLocaleString("en-US");
+    }
+
+    // ============================================================
+    // VERIFY MODE  --  the zero-GC assertion
+    // ============================================================
+    $runVerify.addEventListener("click", () => {
+        $runVerify.disabled = true;
+        $verifyHint.textContent = "building + warming graph...";
+        $verdict.textContent = "measuring";
+        $verdict.className = "verdict warn";
+
+        // let the label paint before the synchronous work
+        requestAnimationFrame(() => requestAnimationFrame(runAssertion));
+    });
+
+    function runAssertion() {
+        // A 256-wide fan-in graph, sized so the build is fully pooled.
+        const N = 256;
+        const r = createRegistry({maxNodes: N + 64, maxLinks: N * 3, prealloc: "eager", onCapacityExceeded: "grow"});
+        const sigs = new Array(N);
+        for (let i = 0; i < N; i++) sigs[i] = r.signal(i);
+        const sum = r.computed(() => {
+            let s = 0;
+            for (let i = 0; i < N; i++) s += sigs[i]();
+            return s;
+        });
+        let sink = 0;
+        r.effect(() => {
+            sink = sum();
+        });
+
+        // warm: settle JIT + evaluate the cone
+        for (let w = 0; w < 5000; w++) sigs[w & (N - 1)].set(w);
+
+        const before = r.stats();
+        const heapBefore = performance.now(); // placeholder ordering; heap read below if available
+        const memBefore = (performance).memory ? performance.memory.usedJSHeapSize : null;
+
+        // HOT WINDOW: 200k writes, no node creation
+        const ITER = 200000;
+        for (let i = 0; i < ITER; i++) sigs[i & (N - 1)].set(i);
+        if (sink < 0) console.log(sink); // anti-DCE
+
+        const after = r.stats();
+        const memAfter = (performance).memory ? performance.memory.usedJSHeapSize : null;
+
+        const dAlloc = after.totalAllocations - before.totalAllocations;
+        const dLinkAlloc = after.totalLinkAllocations - before.totalLinkAllocations;
+        const dGrowth = after.poolGrowths - before.poolGrowths;
+        const dFlush = after.flushPasses - before.flushPasses;
+
+        // render before/after
+        $before.innerHTML = "";
+        $after.innerHTML = "";
+        row($before, "totalAllocations", fmt(before.totalAllocations));
+        row($before, "totalLinkAllocations", fmt(before.totalLinkAllocations));
+        row($before, "poolGrowths", fmt(before.poolGrowths));
+        row($before, "activeNodes", fmt(before.activeNodes));
+        row($before, "activeLinks", fmt(before.activeLinks));
+
+        row($after, "node alloc delta", fmt(dAlloc), dAlloc === 0 ? "zero" : "alarm");
+        row($after, "link alloc delta", fmt(dLinkAlloc), dLinkAlloc === 0 ? "zero" : "alarm");
+        row($after, "pool growths", fmt(dGrowth), dGrowth === 0 ? "zero" : "alarm");
+        row($after, "flush passes", fmt(dFlush), "");
+        row($after, "writes driven", fmt(ITER), "");
+        if (memBefore !== null) {
+            const dHeapKB = (memAfter - memBefore) / 1024;
+            row($after, "JS heap delta", dHeapKB.toFixed(1) + " KB", dHeapKB < 256 ? "zero" : "hot");
+        } else {
+            row($after, "JS heap delta", "n/a (need --enable-precise-memory-info)", "");
+        }
+
+        const pass = dAlloc === 0 && dLinkAlloc === 0 && dGrowth === 0;
+        if (pass) {
+            $stampBig.textContent = "ZERO-GC HELD";
+            $stampBig.className = "big";
+            $stampDetail.textContent = `${fmt(ITER)} hot-path writes through a ${N}-wide graph allocated no nodes, no links, and grew no pool. Steady-state reactive updates run entirely on pooled memory.`;
+            $verdict.textContent = "zero-GC verified";
+            $verdict.className = "verdict";
+        } else {
+            $stampBig.textContent = "ALLOCATION DETECTED";
+            $stampBig.className = "big fail";
+            $stampDetail.textContent = `Hot path allocated: ${fmt(dAlloc)} nodes, ${fmt(dLinkAlloc)} links, ${fmt(dGrowth)} pool growths. Steady-state writes should touch none of these.`;
+            $verdict.textContent = "alloc on hot path";
+            $verdict.className = "verdict alarm";
+        }
+
+        r.destroy();
+        $runVerify.disabled = false;
+        $verifyHint.textContent = "re-run to measure again";
+    }
+
+    // ============================================================
+    // LIVE DASHBOARD  --  pool utilization + growth pressure
+    // ============================================================
+    const DASH = {
+        r: null, sigs: null, sum: null, sink: 0, N: 128,
+        running: false, raf: 0, driveI: 0,
+        growthEvents: [],       // x positions where poolGrowths incremented
+        lastGrowths: 0,
+        // ring buffers for the scope, power-of-2
+        CAP: 512, mask: 511, head: 0,
+        nodesBuf: new Float32Array(512),
+        linksBuf: new Float32Array(512),
+        growBuf: new Uint8Array(512),
+        lastSample: 0,
+    };
+
+    function dashBuild() {
+        const N = DASH.N;
+        const r = createRegistry({maxNodes: 200, maxLinks: 400, prealloc: "eager", onCapacityExceeded: "grow"});
+        const sigs = new Array(N);
+        for (let i = 0; i < N; i++) sigs[i] = r.signal(i);
+        const sum = r.computed(() => {
+            let s = 0;
+            for (let i = 0; i < N; i++) s += sigs[i]();
+            return s;
+        });
+        r.effect(() => {
+            DASH.sink = sum();
+        });
+        DASH.r = r;
+        DASH.sigs = sigs;
+        DASH.sum = sum;
+        DASH.lastGrowths = r.stats().poolGrowths;
+    }
+
+    function dashLoop(ts) {
+        if (!DASH.running) return;
+        const r = DASH.r, sigs = DASH.sigs, N = DASH.N;
+        // drive a chunk of writes per frame (steady load)
+        for (let k = 0; k < 400; k++) {
+            sigs[DASH.driveI & (N - 1)].set(DASH.driveI);
+            DASH.driveI++;
+        }
+        if (DASH.sink < 0) console.log(DASH.sink);
+
+        // sample telemetry ~10 Hz
+        if (ts - DASH.lastSample >= 100) {
+            DASH.lastSample = ts;
+            sampleDash();
+        }
+        DASH.raf = requestAnimationFrame(dashLoop);
+    }
+
+    function sampleDash() {
+        const s = DASH.r.stats();
+        const h = DASH.head;
+        DASH.nodesBuf[h] = s.activeNodes;
+        DASH.linksBuf[h] = s.activeLinks;
+        const grew = s.poolGrowths > DASH.lastGrowths;
+        DASH.growBuf[h] = grew ? 1 : 0;
+        if (grew) DASH.lastGrowths = s.poolGrowths;
+        DASH.head = (h + 1) & DASH.mask;
+        drawScope();
+        drawBars(s);
+        drawCounters(s);
+        updateVerdict(s);
+    }
+
+    function updateVerdict(s) {
+        const pressure = s.linkPoolCapacity > 0 ? s.activeLinks / s.linkPoolCapacity : 0;
+        if (s.poolGrowths > 0 && DASH.growthEvents.length === 0) DASH.growthEvents.push(1);
+        if (pressure > 0.9) {
+            $verdict.textContent = "growth pressure high";
+            $verdict.className = "verdict warn";
+        } else {
+            $verdict.textContent = "pooled / stable";
+            $verdict.className = "verdict";
+        }
+    }
+
+    // ---- scope rendering (contiguous ring drawn oldest->newest) ----
+    const ctx = $scope.getContext("2d");
+
+    function drawScope() {
+        const W = $scope.width, H = $scope.height;
+        ctx.clearRect(0, 0, W, H);
+        // grid
+        ctx.strokeStyle = "#123018";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let x = 0; x <= W; x += W / 10) {
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, H);
+        }
+        for (let y = 0; y <= H; y += H / 4) {
+            ctx.moveTo(0, y);
+            ctx.lineTo(W, y);
+        }
+        ctx.stroke();
+
+        // find max for scaling
+        let maxN = 1, maxL = 1;
+        for (let i = 0; i < DASH.CAP; i++) {
+            if (DASH.nodesBuf[i] > maxN) maxN = DASH.nodesBuf[i];
+            if (DASH.linksBuf[i] > maxL) maxL = DASH.linksBuf[i];
+        }
+        const scaleMax = Math.max(maxN, maxL) * 1.15 + 1;
+
+        const n = DASH.CAP;
+        const plot = (buf, color) => {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            for (let i = 0; i < n; i++) {
+                const idx = (DASH.head + i) & DASH.mask;
+                const x = (i / (n - 1)) * W;
+                const y = H - (buf[idx] / scaleMax) * (H - 8) - 4;
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        };
+        plot(DASH.linksBuf, "#ffb638");
+        plot(DASH.nodesBuf, "#35ff8b");
+
+        // growth markers
+        ctx.fillStyle = "#ff5470";
+        for (let i = 0; i < n; i++) {
+            const idx = (DASH.head + i) & DASH.mask;
+            if (DASH.growBuf[idx]) {
+                const x = (i / (n - 1)) * W;
+                ctx.fillRect(x - 1, 0, 2, H);
+            }
+        }
+    }
+
+    function drawBars(s) {
+        const rows = [
+            ["nodes", s.activeNodes, s.nodePoolCapacity],
+            ["links", s.activeLinks, s.linkPoolCapacity],
+            ["pooled links", s.pooledLinks, s.linkPoolCapacity],
+        ];
+        $bars.innerHTML = "";
+        for (const [lbl, used, cap] of rows) {
+            const pct = cap > 0 ? Math.min(100, (used / cap) * 100) : 0;
+            const wrap = document.createElement("div");
+            wrap.className = "bar-row";
+            const l = document.createElement("span");
+            l.className = "lbl";
+            l.textContent = lbl;
+            const track = document.createElement("div");
+            track.className = "bar-track";
+            const fill = document.createElement("div");
+            fill.className = "bar-fill" + (pct > 90 ? " alarm" : pct > 70 ? " warn" : "");
+            fill.style.width = pct.toFixed(1) + "%";
+            track.append(fill);
+            const v = document.createElement("span");
+            v.className = "val";
+            v.textContent = fmt(used) + " / " + fmt(cap);
+            wrap.append(l, track, v);
+            $bars.append(wrap);
+        }
+    }
+
+    function drawCounters(s) {
+        $counters.innerHTML = "";
+        row($counters, "totalAllocations", fmt(s.totalAllocations));
+        row($counters, "totalDisposals", fmt(s.totalDisposals));
+        row($counters, "poolGrowths", fmt(s.poolGrowths), s.poolGrowths > 0 ? "hot" : "zero");
+        row($counters, "totalLinkAllocations", fmt(s.totalLinkAllocations));
+        row($counters, "totalLinkDisposals", fmt(s.totalLinkDisposals));
+        row($counters, "flushPasses", fmt(s.flushPasses));
+    }
+
+    $toggleLive.addEventListener("click", () => {
+        if (!DASH.r) dashBuild();
+        DASH.running = !DASH.running;
+        $toggleLive.textContent = DASH.running ? "stop live" : "start live";
+        $toggleLive.classList.toggle("live", DASH.running);
+        $dashHint.textContent = DASH.running ? "driving ~24k writes/sec, sampling stats() at 10 Hz" : "paused";
+        if (DASH.running) {
+            DASH.lastSample = 0;
+            DASH.raf = requestAnimationFrame(dashLoop);
+        } else cancelAnimationFrame(DASH.raf);
+    });
+
+    $burstBtn.addEventListener("click", () => {
+        if (!DASH.r) dashBuild();
+        const r = DASH.r, sigs = DASH.sigs, N = DASH.N;
+        r.batch(() => {
+            for (let i = 0; i < N; i++) sigs[i].set(Math.random() * 1e6 | 0);
+        });
+        sampleDash();
+        $dashHint.textContent = "injected a batched " + N + "-signal burst";
+    });
+
+    $growBtn.addEventListener("click", () => {
+        if (!DASH.r) dashBuild();
+        // Create enough new computeds to push the link pool past capacity -> a real poolGrowth.
+        const r = DASH.r, sigs = DASH.sigs, N = DASH.N;
+        for (let g = 0; g < 40; g++) {
+            const a = sigs[g & (N - 1)], b = sigs[(g + 7) & (N - 1)], c = sigs[(g + 19) & (N - 1)];
+            const cc = r.computed(() => a() + b() + c());
+            r.effect(() => {
+                if (cc() < 0) console.log("x");
+            });
+        }
+        sampleDash();
+        $dashHint.textContent = "added 40 computeds+effects -> watch for a red pool-growth marker";
+    });
+
+    // initial idle render
+    dashBuild();
+    sampleDash();
+    DASH.running = false;
+</script>
+</body>
+</html>
