@@ -1,0 +1,41 @@
+{
+  "bands": {
+    "createDataSignals": {
+      "within": 6,
+      "outside": 10
+    },
+    "createComputations1to1": {
+      "within": 7,
+      "outside": 12
+    },
+    "createComputations2to1": {
+      "within": 5,
+      "outside": 9
+    },
+    "createComputations1to8": {
+      "within": 4.5,
+      "outside": 8
+    },
+    "createComputations1to1000": {
+      "within": 6,
+      "outside": 10
+    }
+  },
+  "entries": [
+    {
+      "date": "2026-08-24T22:38:31.201Z",
+      "tree": "1.5.0 (tree)",
+      "alien": "3.2.1",
+      "node": "v26.3.1",
+      "cpu": "Apple M4 Pro",
+      "geomean": 3.865,
+      "ratios": {
+        "createDataSignals": 4.273,
+        "createComputations1to1": 5.795,
+        "createComputations2to1": 3.572,
+        "createComputations1to8": 2.787,
+        "createComputations1to1000": 3.498
+      }
+    }
+  ]
+}
