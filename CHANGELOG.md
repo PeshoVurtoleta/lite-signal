@@ -4,6 +4,58 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added -- mint-cycle allocation anatomy probe (harness, no engine change)
+
+A dedicated probe (`harness/mint-anatomy.mjs`, dispatched as `mint`) pins the
+per-op heap cost of every creation primitive's mint+dispose cycle on a pre-grown
+fixed-ceiling registry (`createRegistry({maxNodes:1<<16, maxLinks:1<<18,
+onCapacityExceeded:"throw"})`). Fresh child process per (variant, warmup) cell --
+JIT tier state poisons same-process comparisons. `Signal.js` / `Signal.d.ts`
+untouched; this is verification + attribution only.
+
+**Corrected numbers** (all-space B/op, node v26.3.1 darwin/arm64, pre-grown
+throw-policy registry, slope over ops windows {1000,4000,16000} so the sampler
+constant cancels):
+
+| cycle (mint + dispose) | all-space B/op | note                                    |
+| ---------------------- | -------------: | --------------------------------------- |
+| `signal(1)` + dispose  |            264 | tier-invariant                          |
+| `computed(fn)` + dispose |          208 | 4 own props, no `set`/`update`          |
+| `effect(fn)` + disposeFn() |        160 | 2-prop disposer + 3-slot context        |
+| `signalBox(1)` + dispose |           56 | `Object.create(proto)` handle, 0 closures |
+| `computedBox(fn)` + dispose |        56 | same                                    |
+| dispose side (all forms) |            0 | mint-and-hold equals the cycle to +-0.3 B |
+
+LiteStore LS-06's ~209 B for the signal cycle was a **new-space-only reading at a
+pre-TurboFan tier**: below ~15-25k lifetime mints, ~56 B/op of closure-feedback
+plumbing lands in OLD space, invisible to a `new_space` delta. The total was
+always 264. `--no-turbofan` freezes the new-space witness at 208 forever;
+`--no-maglev` shows 264 immediately; all-space totals never move (264.3 at every
+tier). Hence the methodology rule this probe enforces (P3, and the sampling-profiler
+cross-check in the findings): **allocation accounting must sum `space_used_size`
+over ALL heap spaces** -- a new-space-only delta is valid only for scavenge-churn
+characterization, never for per-op cost.
+
+**Pooling accessor closures with their nodes -- evaluated and REJECTED (fail-open).**
+Reusing one accessor-closure identity across dispose/reuse makes a retained stale
+handle and a fresh handle *the same object* (`a === b`), so both holders share one
+captured `birthGen` and the ABA gen-guard -- checked at the only place it runs and
+pinned by `probe-c1-stale-set` / `probe-c1-stale-read` -- becomes undecidable: a
+stale `a()` reads the recycled slot's new resident, a stale `a.set()` overwrites
+it. That fails open; suite law is fail closed. **Fresh accessor identity per mint
+is load-bearing** for the stale-handle contract and cannot be repaired by any stamp
+placement. The callable path's ~264 B is therefore the documented, irreducible
+price of `count()` / `count.set(x)` ergonomics; **`signalBox` (56 B/op, same graph,
+same but DECIDABLE guard -- each box carries its own `NODE_GEN`) is the sanctioned
+cheap path** (-79%). FinalizationRegistry-gated recycling is semantically sound but
+allocates per mint, makes reuse GC-scheduled, and retains every accessor until
+finalization -- rejected too.
+
+Run it: `node harness/run.mjs mint [--verify]` (`--verify` applies relative pins
+P1..P5; exit 0 iff every cell succeeded and every pin passed).
+
 ## [1.5.0] -- 2026-08-21
 
 **Stable 1.5.0.** Graduates `1.5.0-rc.3` to the release line with **no further engine
