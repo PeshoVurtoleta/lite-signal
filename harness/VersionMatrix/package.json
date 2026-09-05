@@ -1,0 +1,17 @@
+{
+  "name": "@zakkster/lite-signal-version-matrix",
+  "private": true,
+  "type": "module",
+  "description": "Cross-version performance gate for @zakkster/lite-signal (one-engine-per-cold-process).",
+  "scripts": {
+    "matrix": "bash matrix.sh",
+    "gate": "node gate.mjs",
+    "diff": "node diff.mjs",
+    "calibrate": "node gate.mjs --calibrate"
+  },
+  "devDependencies": {
+    "@zakkster/lite-profiler": "^1.2.0"
+  },
+  "license": "MIT",
+  "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>"
+}

@@ -1,0 +1,71 @@
+----------------------------------------------------------------------------------------------
+EXECUTION TIME (median across reps, ms; lower is better)
+----------------------------------------------------------------------------------------------
+test                                                            lite     alien   lite vs alien
+64x6 - 4 sources - dynamic - read 12% (dashboard selecti      197.44    175.48   -12.5%  alien
+24x8 - 3 sources - dynamic - read 40% (editor derived st      281.38    250.34   -12.4%  alien
+120x7 - 5 sources - dynamic - read 18% (kanban board)         166.72    149.07   -11.8%  alien
+40x10 - 4 sources - dynamic - read 60% (entity detail pa      368.01    331.96   -10.9%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources (layered       53.24     36.19   -47.1%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 3       49.15     34.82   -41.2%  alien
+256->512x32 - fanIn 8 - layered-dag - 8 sources - burst       668.22    361.79   -84.7%  alien
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm         4.78      3.96   -20.4%  alien
+32x8 - 4 sources - pull (pure pull)                             0.77      0.45   -71.9%  alien
+8x64 - 1 sources - pull (linear chain - 1 source - pull         0.85      0.72   -18.8%  alien
+64x4 - 8 sources - pull (wide tree - 8 sources - pull (b        0.79      0.40   -96.3%  alien
+32x8 - 4 sources - push (pure push)                            88.77     75.34   -17.8%  alien
+10x5 - 2 sources - read 20% (simple component)                134.06    114.40   -17.2%  alien
+10x10 - 6 sources - dynamic - read 20% (dynamic componen      114.71    111.88   -2.5%  alien
+1000x12 - 4 sources - dynamic (large web app)                 263.64    255.59   -3.2%  alien
+1000x5 - 25 sources (wide dense)                              320.74    359.17   +10.7%  lite
+5x500 - 3 sources (deep)                                      101.08     93.11   -8.6%  alien
+avoidablePropagation                                           95.56     65.81   -45.2%  alien
+broadPropagation                                              196.04    138.91   -41.1%  alien
+deepPropagation                                                74.17     44.58   -66.4%  alien
+diamond                                                       106.08     85.91   -23.5%  alien
+mux                                                           189.76    161.07   -17.8%  alien
+repeatedObservers                                              28.48     26.31   -8.2%  alien
+triangle                                                       44.46     33.34   -33.4%  alien
+unstable                                                       41.49     38.20   -8.6%  alien
+manyEffectsFromOneSource                                      119.41    107.36   -11.2%  alien
+manySourcesIntoOneComputedEffectWithDirect                     65.15     95.04   +31.5%  lite
+manySourcesIntoOneComputedEffect                               63.70     91.20   +30.2%  lite
+manySourcesIntoOneDirectEffect                                 32.67     29.75   -9.8%  alien
+molBench                                                      166.53    165.85   -0.4%  alien
+createDataSignals                                               9.01      2.50   -259.7%  alien
+createComputations0to1                                         12.85      2.21   -481.4%  alien
+createComputations1to1                                         14.54      6.21   -134.1%  alien
+createComputations2to1                                          6.01      2.71   -121.8%  alien
+createComputations4to1                                          3.95      2.08   -89.9%  alien
+createComputations1000to1                                       0.02      0.02   +0.0%  alien
+createComputations1to2                                         13.47      5.14   -161.9%  alien
+createComputations1to4                                         13.27      3.08   -331.5%  alien
+createComputations1to8                                         14.51      3.92   -270.6%  alien
+createComputations1to1000                                      11.02      2.15   -412.3%  alien
+updateComputations1to1                                          2.96      1.89   -56.6%  alien
+updateComputations2to1                                          1.85      0.95   -94.2%  alien
+updateComputations4to1                                          1.71      0.46   -276.9%  alien
+updateComputations1000to1                                       0.04      0.02   -100.0%  alien
+updateComputations1to2                                          2.34      0.92   -154.3%  alien
+updateComputations1to4                                          1.52      0.46   -231.5%  alien
+updateComputations1to1000                                       0.11      0.04   -214.3%  alien
+----------------------------------------------------------------------------------------------
+lite faster than alien on 3/47 shapes.
+
+HONEST FRAMING (the claim that reproduces):
+  lite-signal's differentiated position is ALLOCATION, not raw propagation speed.
+  On these shapes lite runs at parity-to-behind alien on throughput (weak on deep/
+  layered propagation -- the DEEP CHAIN / burst family), while allocating one to four
+  orders of magnitude less transient heap (see bench/benchmark.mjs heap columns, the
+  zero-GC microscope). The headline is 'competitive throughput with dramatically lower
+  GC pressure', not 'fastest dynamic-graph engine'.
+
+STANDING RULES (enforced by the harness, not by prose):
+  1. No number is published unless its file carries a machine stamp and the sweep
+     exited 0 (dead-sink / counter / checksum / expected / sentinel / stamp guards).
+  2. The mirror tracks Andrii verbatim; divergence for identical engine bytes is a
+     harness bug (run mirror.mjs --self-verify). Shape edits only by re-porting.
+  3. One shape name = one definition, repo-wide. Approximations deleted, not renamed.
+  4. lite's config is fixed per file and echoed by the stamp. sab is a production
+     feature, not a benchmark knob.
+  5. Cross-protocol / cross-host comparisons cite (stamp, protocol) or are not made.
