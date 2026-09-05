@@ -1,4 +1,4 @@
-// Real lite-devtools 1.3.1 boot against the 1.5.0 engine.
+// Real lite-devtools 1.6.2 boot against the 1.6.0 engine.
 //
 // Setup note (test-rig quirk, NOT an engine bug). Because this repo's
 // package.json declares name="@zakkster/lite-signal", the resolver maps any
@@ -17,6 +17,15 @@
 // engine (../Signal.js), so Devtools and this test share ONE engine instance.
 // If anything regresses to two instances, the precondition guard below fails
 // fast with an actionable message instead of three cryptic handle errors.
+//
+// GROUND TRUTH (probed live, devtools 1.6.2 x engine 1.6.0-rc, 2026-09-05):
+// 22 function exports + VERSION const "1.6.2"; capabilities() = exactly 13 keys
+// { floor:"1.1.5", owners:T, mutationHook:T, burst:T, boxes:T, roots:T,
+//   ownerCapture:T, scopes:T, flushControl:F, explicitDispose:T, statsKeys:14,
+//   poolPopulation:T, cleanupReturn:F }; burstProfile() returns a LIVE handle
+// { stop, passes, perPass, queued, ran, redundant, shortCircuited }; the 1.6.x
+// devtools Symbol.dispose stamps hold (off[Symbol.dispose] === off for track,
+// h[Symbol.dispose] === h.stop for the object handles).
 
 import {describe, it, before} from "node:test";
 import assert from "node:assert/strict";
@@ -72,48 +81,65 @@ before(async () => {
     );
 });
 
-describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
-    it("imports resolve and all 21 documented functions are exported", () => {
-        // 19 baseline + the two 1.3.x additions (burstProfile, watchAllocations).
+describe("lite-devtools 1.6.2 boots against the 1.6.0 engine", () => {
+    it("imports resolve: all 22 documented functions + the VERSION const", () => {
+        // 19 baseline + burstProfile/watchAllocations (1.3.x) + pendingEffects.
         const expected = [
             "capabilities", "inspect", "subscribers", "dependencies", "track",
             "monitor", "leakWatch", "report", "graph", "toDot", "toTree", "diff",
             "trace", "ownerTree", "findPath", "watchGraph", "profile",
             "serialize", "deserialize", "burstProfile", "watchAllocations",
+            "pendingEffects",
         ];
         for (const name of expected) {
             assert.equal(typeof DT[name], "function", `devtools.${name} must be a function`);
         }
+        const fns = Object.keys(DT).filter((k) => typeof DT[k] === "function");
+        assert.equal(fns.length, expected.length,
+            `devtools exports exactly ${expected.length} functions (got ${fns.length}: a new/removed ` +
+            "export means this pairing pin is stale -- update the expected list deliberately)");
+        // Three-place version sync: the devDep bump must travel with this test.
+        assert.equal(DT.VERSION, "1.6.2", "devtools VERSION const pins the tested pairing");
     });
 
     // capabilities() is devtools' runtime probe of the engine it is bound to.
-    // Asserting the FULL vector turns it into a precise fingerprint of the
-    // 1.5.0 surface: the 1.5 feature triad (boxes / roots / ownerCapture) must
-    // be present, and every 1.6+ feature (scopes / flushControl / cleanupReturn
-    // / the richer burst payload) must be absent. If a later engine feature is
-    // accidentally back-ported into canonical 1.5.0, one of these flags flips
-    // and this test catches it -- across the two-package boundary, not from the
-    // engine's own introspection.
-    it("capabilities() fingerprints EXACTLY the 1.5.0 surface (1.5 on, 1.6+ off)", () => {
+    // Asserting the FULL vector (values AND key set) turns it into a precise
+    // fingerprint of the 1.6.0 surface: the 1.5 triad (boxes / roots /
+    // ownerCapture) AND the 1.6 pair (scopes / burst) must be present, and every
+    // 1.7+ feature (flushControl / cleanupReturn) must be absent. If a later
+    // engine feature is accidentally back-ported into this line, one of these
+    // flags flips and this test catches it -- across the two-package boundary,
+    // not from the engine's own introspection.
+    it("capabilities() fingerprints EXACTLY the 1.6.0 surface (1.5+1.6 on, 1.7+ off)", () => {
         const caps = DT.capabilities();
         assert.equal(typeof caps, "object");
         assert.ok(caps !== null);
 
-        // Present in 1.5.0.
-        assert.equal(caps.owners, true, "1.5.0 has the owner tree");
-        assert.equal(caps.mutationHook, true, "1.5.0 has onGraphMutation");
-        assert.equal(caps.boxes, true, "1.5.0 has signalBox / computedBox");
-        assert.equal(caps.roots, true, "1.5.0 has createRoot");
-        assert.equal(caps.ownerCapture, true, "1.5.0 has getOwner / runWithOwner");
-        assert.equal(caps.explicitDispose, true, "1.5.0 has explicit dispose");
-        assert.equal(caps.poolPopulation, true, "1.5.0 stats expose pool population");
-        assert.equal(caps.statsKeys, 13, "1.5.0 stats() has exactly 13 keys");
+        // Exact key set -- a new capability key appearing (or one vanishing)
+        // must be a deliberate re-pin, not a silent drift.
+        assert.deepEqual(Object.keys(caps).sort(), [
+            "boxes", "burst", "cleanupReturn", "explicitDispose", "floor",
+            "flushControl", "mutationHook", "ownerCapture", "owners",
+            "poolPopulation", "roots", "scopes", "statsKeys",
+        ], "capabilities() key set drifted -- re-pin deliberately");
+
+        assert.equal(caps.floor, "1.1.5", "devtools baseline floor");
+
+        // Present in 1.6.0.
+        assert.equal(caps.owners, true, "1.6.0 has the owner tree");
+        assert.equal(caps.mutationHook, true, "1.6.0 has onGraphMutation");
+        assert.equal(caps.boxes, true, "1.6.0 has signalBox / computedBox");
+        assert.equal(caps.roots, true, "1.6.0 has createRoot");
+        assert.equal(caps.ownerCapture, true, "1.6.0 has getOwner / runWithOwner");
+        assert.equal(caps.explicitDispose, true, "1.6.0 has explicit dispose");
+        assert.equal(caps.poolPopulation, true, "1.6.0 stats expose pool population");
+        assert.equal(caps.scopes, true, "createScope ships in 1.6.0 -- scopes must read true");
+        assert.equal(caps.burst, true, "the op 5/6/7 burst payload ships in 1.6.0 -- burst must read true");
+        assert.equal(caps.statsKeys, 14, "1.6.0 stats() has exactly 14 keys (13 + flushPasses)");
 
         // Absent until later engines -- graceful-degrade sentinels.
-        assert.equal(caps.scopes, false, "createScope is a 1.6 feature, must be absent in 1.5.0");
-        assert.equal(caps.flushControl, false, "flushStrategy is a 1.7 feature, must be absent in 1.5.0");
-        assert.equal(caps.cleanupReturn, false, "effect-return cleanup is a 1.8 feature, must be absent in 1.5.0");
-        assert.equal(caps.burst, false, "the richer op 5/6/7 burst payload is a 1.6+ feature, must be absent in 1.5.0");
+        assert.equal(caps.flushControl, false, "flushStrategy is a 1.7 feature, must be absent in 1.6.0");
+        assert.equal(caps.cleanupReturn, false, "effect-return cleanup is a 1.8 feature, must be absent in 1.6.0");
     });
 
     it("inspect() reports a live handle as non-stale, with sensible neighbourhood counts", () => {
@@ -177,14 +203,56 @@ describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
         assert.ok(Array.isArray(tree.owned), "descriptor carries an owned[] child array");
     });
 
-    it("burstProfile() degrades to null on 1.5.0 (needs the 1.6+ op 5/6/7 payload)", () => {
-        // capabilities().burst is false on 1.5.0, so burstProfile must return
-        // null rather than throw or hand back a half-wired profiler. This pins
-        // the documented graceful-degradation contract for the richer
-        // mutation-hook payload that only later engines emit.
-        assert.equal(DT.capabilities().burst, false, "precondition: 1.5.0 has no burst payload");
+    it("burstProfile() is LIVE on 1.6.0: stop() summarizes a batched burst exactly", () => {
+        // On 1.5.0 this degraded to null. 1.6.0 emits the op 6/7 flush payload,
+        // so capabilities().burst is true and burstProfile() must hand back the
+        // real handle. PROBED CONTRACT (1.6.2 x 1.6.0-rc): the counters
+        // materialize in stop()'s returned summary { passes, perPass[], queued,
+        // ran } -- they are NOT live reads on the handle -- and the accounting
+        // is deterministic: effect creation contributes no flush pass, and a
+        // 3-write batch coalesces to exactly one pass running exactly one
+        // effect. Deeper coalescing torture is gated in
+        // bench/torture/burst-profile-torture.mjs; this pins the boot contract.
+        assert.equal(DT.capabilities().burst, true, "precondition: 1.6.0 carries the burst payload");
         const bp = DT.burstProfile();
-        assert.equal(bp, null, "burstProfile must return null when capabilities().burst is false");
+        assert.ok(bp !== null && typeof bp === "object", "burstProfile() must return a live handle on 1.6.0");
+        assert.equal(typeof bp.stop, "function");
+        for (const k of ["passes", "perPass", "queued", "ran", "redundant", "shortCircuited"]) {
+            assert.ok(k in bp, `burst handle carries documented field '${k}'`);
+        }
+
+        const s = SIG.signal(0);
+        const e = SIG.effect(() => { s(); });                 // creation run: DIRECT, no flush pass
+        SIG.batch(() => { s.set(1); s.set(2); s.set(3); });   // coalesces to ONE pass, ONE run
+        const summary = bp.stop();
+        assert.ok(summary !== null && typeof summary === "object",
+            "stop() returns the burst summary (documented contract)");
+        assert.equal(summary.passes, 1,
+            "three batched writes must coalesce to exactly ONE observed flush pass");
+        assert.deepEqual(summary.perPass, [1],
+            "that pass must run exactly one effect (no redundant re-runs)");
+        bp.stop();   // idempotent -- must not throw
+        SIG.dispose(e); SIG.dispose(s);
+    });
+
+    it("Symbol.dispose (using) stamps: track's off is self-stamped, handles mirror stop",
+       {skip: typeof Symbol.dispose !== "symbol" ? "Symbol.dispose absent on this Node" : false},
+       () => {
+        // devtools 1.6.x stamps Symbol.dispose across its stopper handles:
+        // track() returns a bare function self-stamped (off[Symbol.dispose] ===
+        // off); object handles mirror their idempotent stop. Dispose-then-stop
+        // and stop-then-dispose are both no-ops.
+        const s = SIG.signal(0);
+        const off = DT.track(s, () => {});
+        assert.equal(off[Symbol.dispose], off, "track off must be self-stamped, never a new closure");
+        off[Symbol.dispose]();
+        off();   // idempotent after dispose
+
+        const feed = DT.watchAllocations(() => {}, {sampleMs: 50});
+        assert.equal(feed[Symbol.dispose], feed.stop, "handle mirrors its stop onto Symbol.dispose");
+        feed[Symbol.dispose]();
+        feed.stop();   // idempotent after dispose
+        SIG.dispose(s);
     });
 
     it("watchAllocations() returns an idempotent { stop } and leaks no timer", () => {
@@ -210,7 +278,7 @@ describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
         watch.stop();   // CRITICAL: clears the sampler handle
     });
 
-    it("track() registers a lifecycle listener against a 1.5.0-built handle", () => {
+    it("track() registers a lifecycle listener against a 1.6.0-built handle", () => {
         const s = SIG.signal(0);
         const events = [];
         const untrack = DT.track(s, (e) => events.push(e));
@@ -232,6 +300,7 @@ describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
         // link or add an observer. This is devtools' headline contract ("adds
         // zero nodes and zero observers to the graph it inspects") pinned across
         // the whole surface, not just the four helpers the old sweep covered.
+        // pendingEffects joins the sweep at 1.6.2 (queue read-out is read-only).
         const gBefore = DT.graph([c]);
         for (let i = 0; i < 25; i++) {
             DT.inspect(c);
@@ -245,6 +314,7 @@ describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
             DT.findPath(a, c);
             DT.serialize(gBefore);
             DT.diff(gBefore, gBefore);
+            DT.pendingEffects();
         }
         const after = SIG.stats();
 

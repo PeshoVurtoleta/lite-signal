@@ -207,6 +207,49 @@ if (typeof reg().forEachOwned === "function" && typeof reg().ownerOf === "functi
     ownerStop();   // cascade-dispose the adopted children
 }
 
+/* -- 7b. ownerOf / forEachOwned on a NATIVE createScope owner (1.6.0+) ------- */
+// Restores the 1.6.0-native lane the 1.5.0 re-target dropped: the scope owner
+// is backed by a never-re-running effect node, and the disposer createScope
+// hands back is the same gen-guarded handle effect() returns -- so ownerOf on
+// an adopted child must resolve the scope owner, and forEachOwned must work on
+// BOTH the resolved descriptor and the disposer handle itself (the documented
+// first-class-handle contract). Skips cleanly below 1.6.0.
+if (typeof reg().createScope === "function" && typeof reg().forEachOwned === "function") {
+    const r = reg();
+    const nodesBefore = r.stats().activeNodes;
+    let innerC = null, innerE = null;
+    const dispose = r.createScope((d) => {
+        innerC = r.computed(() => 1);
+        innerE = r.effect(() => { innerC(); });
+        return d;
+    });
+
+    const ownerDesc = r.ownerOf(innerC);
+    R.ok("scope-ownerOf", ownerDesc !== undefined,
+        "ownerOf(adopted computed) did not resolve the createScope owner");
+
+    if (ownerDesc !== undefined) {
+        let owned = 0;
+        r.forEachOwned(ownerDesc, () => owned++);
+        R.eq("scope-forEachOwned", owned, 2,
+            `forEachOwned enumerated ${owned} children, expected exactly 2 (adopted computed + effect)`);
+    }
+
+    // The disposer is a first-class handle: forEachOwned resolves it directly.
+    let ownedViaDisposer = 0;
+    r.forEachOwned(dispose, () => ownedViaDisposer++);
+    R.eq("scope-disposer-handle", ownedViaDisposer, 2,
+        `forEachOwned(disposer) enumerated ${ownedViaDisposer} children, expected exactly 2`);
+
+    dispose();
+    // Cascade teardown: children's handles go stale (ABA guard), the owner node
+    // itself is freed, and the pool gauge returns exactly to its pre-scope value.
+    R.eq("scope-child-stale", r.describe(innerC), undefined,
+        "describe(cascade-disposed child) must resolve to nothing (gen guard)");
+    R.eq("scope-pool-restored", r.stats().activeNodes, nodesBefore,
+        "activeNodes must return exactly to the pre-scope baseline after dispose()");
+}
+
 /* -- 8. observeObservers fires on observer add/remove ----------------------- */
 if (typeof reg().observeObservers === "function") {
     const r = reg();

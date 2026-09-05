@@ -1,4 +1,4 @@
-// Zero-GC probe on the Andrii-Volynets weak-group shapes, via lite-devtools 1.3.1.
+// Zero-GC probe on the Andrii-Volynets weak-group shapes, via lite-devtools 1.6.2.
 //
 // WHY THIS EXISTS. The reactive benchmark (bench/AndriiVolynetsReactiveBench.log)
 // ranks lite-signal #4 overall but weak on the CREATION and UPDATE groups. The
@@ -37,7 +37,7 @@ function buildLocalDevtools() {
     const SPEC = /(["'])@zakkster\/lite-signal\1/g;
     if (!SPEC.test(src)) {
         throw new Error(
-            "test 31: could not find the '@zakkster/lite-signal' import in Devtools.js to " +
+            "test 32: could not find the '@zakkster/lite-signal' import in Devtools.js to " +
             "rewrite -- update the SPEC so the probe shares this test's engine instance."
         );
     }
@@ -57,7 +57,7 @@ before(async () => {
     const ViaDevtools = await import("../Signal.js");
     assert.strictEqual(
         SIG.createRegistry, ViaDevtools.createRegistry,
-        "test 31 requires a single engine instance (see test 25 header)."
+        "test 32 requires a single engine instance (see test 25 header)."
     );
 });
 
