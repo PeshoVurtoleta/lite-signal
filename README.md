@@ -928,16 +928,19 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds the complete **22-scenario superset (19 semantic + 3
-soak)** -- at full parity with the shipped 1.4.4 canonical suite -- behind one
-runner (`run.mjs`), the forward-compatible set through 1.9.
+`bench/torture/` holds the complete **27-scenario superset (23 semantic + 4
+soak)** -- the shipped canonical suite plus the 2026-08 audit-phase hardening --
+behind one runner (`run.mjs`), the forward-compatible set through 1.9.
 They are not perf benchmarks: the ops/sec figures reflect random workload
 composition, not engine throughput -- `bench/benchmark.mjs` remains the canonical
 perf harness. Every scenario feature-detects and **skips cleanly** below the
-engine version that introduces its feature, so on the 1.7.0 engine the runner
-executes **20 of the 22** (17 semantic + 3 soak, including `flush-torture` and the
-four lifecycle scenarios that run natively) and reports a clean SKIP for the two
-later-version ones (`cleanup-return-torture` 1.8.0, `dispose-torture` 1.9.0).
+engine version that introduces its feature (exit 77, which the runner escalates
+to FAIL if the engine is at or above the scenario's floor), so on the 1.7.0
+engine the runner executes **24 of the 27** (21 semantic + 3 soak, including
+`flush-torture` and the lifecycle scenarios that run natively), reports a clean
+SKIP for the two later-version ones (`cleanup-return-torture` 1.8.0,
+`dispose-torture` 1.9.0), and leaves the full-distance `wraparound-torture`
+soak opt-in (`TORTURE_WRAPAROUND=1`).
 
 ```bash
 npm run torture              # everything
@@ -965,13 +968,17 @@ engine.
 | `scheduler-storm` | deferred execution under 10,000 effects: gen-bound thunk ABA guard, `FLAG_QUEUED` coalescing, a throwing scheduler contained |
 | `box-torture` (1.5.0) | `signalBox`/`computedBox` interop: the oracle differential fuzz with every node realised as **either** a callable or a box |
 | `scope-torture` (1.6.0) | `createScope` adoption contract, the disposal-crash repro + a 300-seed fuzz, `runWithOwner` re-attachment into a scope, pool balance over 200 rounds |
+| `retrack-dispose-torture` | the dispose-during-retracking cursor hazard: mid-retrack disposals under a survivor-value + pool oracle, plus a seeded disposal fuzz |
 | `owner-torture` (1.6.0) | `getOwner`/`runWithOwner` capture-restore: live-owner adoption cascade-disposes, a STALE handle degrades to ROOTED, dep-isolation holds, + a 300-seed capture/dispose/recycle/restore fuzz |
 | `async-torture` | `watch`/`when`/`whenAsync` contracts + a 300-seed projection-guard storm |
 | `capacity-torture` | the fail-closed pool boundary: exact ceilings, re-throw-on-read, `grow` crossing the same boundary, and the `maxLinks * 16` grow ceiling terminating AT the wall |
 | `error-torture` | throwing effect bodies under flush: a single throw re-thrown UNWRAPPED, 2+ into an `AggregateError` carrying EXACTLY those errors, a survivor still runs, buffer drains flat over 4096 throw/clean cycles |
+| `contract-torture` | throw-inside-batch commit+flush semantics (incl the pending scheduler thunk), write-inside-computed in-pass delivery, the equals contract under churn, and the 1.6.0+ `flushPasses` pins on the abnormal paths |
+| `interop-torture` | multi-registry isolation + `destroy()` staleness degradation: cross-registry handles stay inert, post-destroy handles read as stale |
 | `deep-chain-torture` | `pullComputed` recursion fails CLOSED with a `RangeError` beyond the stack budget while the iterative push path stays open; the registry stays usable, the re-throw is deterministic |
 | `flush-torture` (1.7.0) | the three `flushStrategy` modes by cross-strategy differential (same graph + op sequence under eager/sab/manual settling to identical values), per-strategy scheduling, re-entrant/empty `flush()`, and the `.subscribe()` contract under each |
 | `zerogc-torture` | the zero-GC claim made falsifiable via `@zakkster/lite-gc-profiler`: `measureAllocs`/`checkAllocs` at `maxBytesPerCall: 0` + `measureOps`/`checkNoGc` at `maxMajor: 0`/`maxPauseMs: 2` + engine `stats()` deltas across steady + churn, `churn-box` active, `ZEROGC_BREAK=1` self-test |
+| `burst-profile-torture` (1.6.0) | the op-6/7 flush lane engine-raw: burst coalescing == 1.0x EXACTLY, pass accounting, `stats().flushPasses` agreement; `BURST_BREAK=drop7|ghost6` self-tests must fail the gate |
 | `lifecycle-torture` (1.5.0) | `createRoot` detachment (children survive, deps isolated) + `destroy` registry reset (stales every handle, returns `stats().activeNodes` to 0) |
 | `cleanup-return-torture` (1.8.0+) | an effect's returned cleanup: timing, compose order, self-dispose guard -- SKIP on 1.7.0 |
 | `dispose-torture` (1.9.0+) | `Symbol.dispose` / `using` on lifecycle objects -- SKIP on 1.7.0 |
@@ -993,6 +1000,7 @@ failure:
 node --expose-gc bench/torture/graph-fuzzer.mjs     # 10s random-DAG fuzz, 1500 nodes
 node --expose-gc bench/torture/torture-soak.mjs     #  5s high-volume churn, 7500 nodes
 node --expose-gc bench/torture/scheduler-bench.mjs  # 10s microtask-scheduled, 3300 nodes
+TORTURE_WRAPAROUND=1 node bench/torture/wraparound-torture.mjs  # opt-in: the 2^31 dormancy band at FULL distance (~40s)
 ```
 
 Run any of them with `TORTURE_SECONDS=N` for a longer soak. Indicative numbers from a development host (post-teardown pool returns to baseline in all three):

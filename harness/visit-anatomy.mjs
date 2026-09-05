@@ -43,7 +43,7 @@ const NAMES = [
     "pullTotal",      // 6  pullComputed entries
     "pullCacheHit",   // 7  pullComputed same-globalVersion cache hit
     "recompute",      // 8  pullComputed actually re-ran the body
-    "eqDispatch",     // 9  `const eq = node.equals` dispatch sites (x3)
+    "eqDispatch",     // 9  `const eq = node.equals` dispatch sites (x5 on 1.7.0)
     "effectExec",     // 10 executeEffect entries
     "depWalk",        // 11 dep-validation edges walked (pullComputed + executeEffect needsRun loops)
 ];
@@ -94,8 +94,14 @@ const EDITS = [
         `        if (node.evalVersion === globalVersion) { ${bump(I.pullCacheHit)}`, 1],
     [`runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute`,
         `${bump(I.recompute)}runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute`, 1],
+    // 1.7.0 RE-ANCHOR (2026-09-06): the flushStrategy build-time closure split
+    // duplicates the .set body (eager/deferred variants) and boxSet likewise,
+    // so the 3 logical eq sites (set, boxSet, computed re-eval) now appear as
+    // 5 source sites. Only ONE set/boxSet variant is instantiated per registry
+    // (the ternary picks a closure at creation), so runtime counts -- and every
+    // pin below -- are unchanged under the default eager strategy the shapes use.
     [`const eq = node.equals;`,
-        `${bump(I.eqDispatch)}const eq = node.equals;`, 3],
+        `${bump(I.eqDispatch)}const eq = node.equals;`, 5],
     [`function executeEffect(node) {`,
         `function executeEffect(node) { ${bump(I.effectExec)}`, 1],
 ];

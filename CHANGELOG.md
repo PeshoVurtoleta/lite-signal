@@ -4,6 +4,99 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.7.0-beta] -- 2026-09-06
+
+Verification + infra increment; promotes the line to the `beta` dist-tag. **No
+engine change past the version banner comment** (`Signal.js` shasum-identical to
+1.7.0-alpha.6 below the banner; `Signal.d.ts` / `Watch.js` untouched). Migration
+2 of the torture-parity campaign: the canonical 1.5.x audit instrument set, as
+merged into 1.6.0-rc.1, carried onto this folder -- with every version-sensitive
+pin re-probed on THIS engine before being written, and this folder's own richer
+tooling kept where it was ahead.
+
+### Added -- torture suite 22 -> 27 scenarios (audit-phase hardening)
+
+- `contract-torture` (throw-inside-batch commit+flush semantics incl the pending
+  scheduler thunk, write-inside-computed in-pass delivery, equals contract under
+  churn, and the 1.6.0+ `flushPasses` pins on the abnormal paths),
+  `interop-torture` (multi-registry isolation + `destroy()` staleness
+  degradation), `retrack-dispose-torture` (dispose-during-retracking cursor
+  hazard under survivor-value + pool oracles), `burst-profile-torture` (the
+  op-6/7 flush lane engine-raw: coalescing == 1.0x exactly, pass accounting,
+  `stats().flushPasses` agreement; `BURST_BREAK=drop7|ghost6` self-tests both
+  verified to exit 1), and the opt-in `wraparound-torture` (the 2^31 dormancy
+  band re-pinned at FULL distance on this engine, 12/12 asserts).
+- The hardened runner: 3-state skip protocol (exit 77 floor-skip -- escalated to
+  FAIL at/above the engine's floor -- and exit 78 environment-skip), per-scenario
+  wall-clock caps, and an asserted-nothing guard. This folder's NATIVE
+  `flush-torture` (the cross-strategy eager/sab/manual differential plus its
+  sections 7-10: value-never-defers, op-7 enqueue dedup, the invalid-token throw
+  matrix, re-entrant flush) is KEPT over the canonical floor-skip copy -- its
+  self-skip patched from exit 0 to the suite's exit 77 -- and now executes
+  natively. Suite on this engine: **24 pass / 3 skip (cleanup-return 1.8,
+  dispose 1.9, wraparound opt-in) / 0 fail**.
+
+### Added -- test + gate lanes
+
+- `test/zgc/` zero-GC gate lane (`npm run test:zgc` + `test:zgc:report`):
+  scavenge-witness scenarios under a 4 MB semi-space with the Node-26
+  nursery-proofed ctrlPositive; 7/7 + 3/3 report on this engine; both
+  `ZEROGC_BREAK` modes exit 1.
+- `test/ProfilerTests/` hardening sub-package (`npm run test:hardening`):
+  28 tests, 22 execute + 6 version-gated skips here.
+- `test/25-devtools-real-boot.test.mjs` REWRITTEN against **lite-devtools
+  1.6.2** via the single-instance import-rewrite rig; the exact 13-key
+  `capabilities()` fingerprint was probed live on this engine first:
+  `flushControl:T` (the 1.7.0 flip), `cleanupReturn:F`, `statsKeys:14`,
+  22 exports + `VERSION "1.6.2"`, live `burstProfile()` stop-summary,
+  the 1.6.x `Symbol.dispose` stamps.
+- `test/32-devtools-zerogc-probe.test.mjs`: devtools attach/detach allocation
+  probes against the 14-key `stats()` surface.
+- Harness instruments from the 2026-08 audit phases: `mint-anatomy` (wired as
+  `node harness/run.mjs mint [--verify]`), `visit-anatomy --verify`,
+  `jit-health --strict` (+ a freshly recorded Node-26 deopt baseline),
+  `costmodel`, `floors`, `trend`, `creation-anatomy`, `burst-real`, and the
+  phase-3 rewrites of `andrii-isolated-child` / `creation-isolated` /
+  `owner-hazard-repro`. VersionMatrix gains the read + creation + exact-counter
+  lanes and the `creation-churn` workload.
+
+### Measured on this engine (node v26.3.1, darwin/arm64)
+
+- Creation anatomy IDENTICAL to the 1.5.x/1.6.x line: `signal(1)`+dispose
+  **264 B/op** all-space (tier-invariant), `computed` 208, `effect` 160,
+  `signalBox`/`computedBox` **56**, dispose side 0 -- all mint pins PASS. The
+  1.7.0 flushStrategy closure split selects ONE closure per registry at init,
+  so the creation path allocates exactly what 1.6.0 did.
+- `visit-anatomy --verify`: all 21 exact structural pins hold after a
+  DELIBERATE re-anchor (the closure split duplicates the eq-dispatch source
+  sites 3 -> 5; runtime counts unchanged). Both failure paths re-proven on this
+  engine: the anchor-drift refusal fired on the real drift, and a gutted
+  short-circuit mutant fires the `depWalk` pin (640,000 vs pinned 0, exit 1).
+- `jit-health --strict`: signal / computed / signalBox / computedBox handle
+  families all MONOMORPHIC; 5 engine-attributed deopts baselined for Node 26.
+- **VersionMatrix `npm run gate` PASSED 5/5** (interleaved floor-1.3.0 +
+  rolling-1.5.0 tarballs + tree candidate, REPS=5): all five workloads PASS
+  both gates; creation counters exact (288 allocs/frame, 0 poolGrowths).
+
+### Changed
+
+- devDependencies: `@zakkster/lite-devtools` ^1.2.0 -> **^1.6.2**,
+  `@zakkster/lite-gc-profiler` ^1.15.0 -> **^1.16.0**.
+- package.json scripts aligned with the campaign set: added `test:report`,
+  `test:hardening(:gc)`, `test:zgc(:report)`, `test:all`; `test:harness` now
+  runs the ProfilerTools sub-package via `npm --prefix`; `verify` gains
+  `test:zgc` + `harness:smoke`; `exports` puts `types` first. Native
+  `harness:smoke/perf/toe` and `profile:*` scripts kept.
+
+### Removed
+
+- `test/28-scope.test.mjs` -- byte-identical duplicate of `29-scope.test.mjs`
+  (the alpha.3 notes already claimed this removal, but the file had survived on
+  disk and the scope suite ran twice). Unit count 537 -> **533** (532 pass /
+  0 fail / 1 skip).
+- Stale `bench-reactive` script (its target `bench/benchmarkReactive.mjs` does
+  not exist in this folder; the legacy reactive bench was deliberately retired).
+
 ## [1.7.0-alpha.6] -- 2026-08-20
 
 Backports the **1.4.5 `createRegistry` input validation** (all four findings) onto

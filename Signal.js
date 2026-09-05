@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-signal v1.7.0-alpha.6
+ * @zakkster/lite-signal v1.7.0-beta
  * --------------------
  * 1.7.0 -- flushStrategy: registry-level effect-delivery policy.
  *

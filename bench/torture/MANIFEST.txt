@@ -9,9 +9,12 @@ a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
 wall clock (TORTURE_TIMEOUT_MS, default 300s -> FAIL, not a hang) and finish()
 fails any scenario that reaches PASS having asserted nothing.
 
-On THIS engine (1.6.0): 20 semantic execute and 3 skip at their floors (flush
-1.7, cleanup-return 1.8, dispose 1.9); the soaks run 3 + the opt-in wraparound.
-scope-torture, burst-profile-torture, and the zerogc scope lanes ACTIVATE here.
+On THIS engine (1.7.0): 21 semantic execute and 2 skip at their floors
+(cleanup-return 1.8, dispose 1.9); the soaks run 3 + the opt-in wraparound.
+flush-torture ACTIVATES natively here -- and this folder's copy is the native
+SUPERSET (sections 7-10: value-never-defers, FLAG_SCHEDULED enqueue dedup via
+op 7, the invalid-token throw matrix, re-entrant flush) with the suite's
+exit-77 skip protocol patched in.
 
     npm run torture ; npm run torture:semantic ; npm run torture:soak
     node bench/torture/run.mjs --list
@@ -179,3 +182,17 @@ version-compare expressions are byte-identical; wraparound re-run at full
 distance, 12/12). The 1.6.0-only additions (burst-profile-torture, the zerogc
 scope lanes, contract section 10, introspect 7b) were probed live on 1.6.0-rc
 before their pins were written.
+
+1.7.0-beta migration note (2026-09-06): the full 27-scenario suite carried onto
+the 1.7.0 engine with ZERO pin flips -- contract, interop, retrack-dispose,
+burst-profile, the zerogc lanes, and the wraparound dormancy band (re-run at
+full distance, 12/12) all re-verified. flush-torture graduated from floor-skip
+to native execution using THIS folder's superset copy (the cross-strategy
+differential was written against the live 1.7.0 engine in July; sections 7-10
+add value-never-defers, op-7 enqueue dedup, the invalid-token matrix, and
+re-entrant flush). The 1.7.0 flushStrategy closure split changes no observed
+contract: creation anatomy re-measured IDENTICAL (mint --verify all pins PASS:
+signal 264, computed 208, effect 160, boxes 56 B/op all-space) and
+visit-anatomy's 21 structural pins hold after a deliberate re-anchor (the split
+duplicates the eq-dispatch source sites 3 -> 5; only one closure variant is
+instantiated per registry, so runtime counts are unchanged).
