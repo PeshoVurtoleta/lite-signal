@@ -1,0 +1,66 @@
+{
+  "schema": 2,
+  "label": "deep-chain",
+  "engine": "lite-signal@candidate-1.8.0-beta",
+  "timestamp": 1788651387930,
+  "budgetMs": 16.666666666666668,
+  "frameCount": 1200,
+  "capacity": 2048,
+  "frame": {
+    "avg": 1.265073861281077,
+    "min": 1.1253750324249268,
+    "max": 1.4031250476837158,
+    "p01": 1.1494170427322388,
+    "p99": 1.3412079811096191,
+    "fps": 790.4676798770864,
+    "jankRatio": 0,
+    "spikeRatio": 0,
+    "frameClass": "steady",
+    "bins": [
+      1200,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "phases": {
+    "write": {
+      "avg": 1.2648515938719114,
+      "min": 1.1250840425491333,
+      "max": 1.402999997138977,
+      "p01": 1.1491669416427612,
+      "p99": 1.340999960899353,
+      "last": 1.2295409440994263,
+      "count": 1200
+    },
+    "read": {
+      "avg": 0.00006195749981998234,
+      "min": 0,
+      "max": 0.007666999939829111,
+      "p01": 0.00004099999932805076,
+      "p99": 0.0001250000059371814,
+      "last": 0.00008299999899463728,
+      "count": 1200
+    }
+  },
+  "counters": {},
+  "env": {
+    "node": "v26.3.1",
+    "arch": "arm64",
+    "platform": "darwin 25.6.0",
+    "cpu": "Apple M4 Pro",
+    "cores": 12,
+    "date": "2026-09-05T23:36:26.132Z"
+  },
+  "reps": 5,
+  "aggregate": "median",
+  "evidence": {
+    "spreadPct": 6.2,
+    "spreadRawPct": 6.4,
+    "captureSpanMinutes": 1.2,
+    "counterDrift": 0
+  }
+}

@@ -9,12 +9,15 @@ a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
 wall clock (TORTURE_TIMEOUT_MS, default 300s -> FAIL, not a hang) and finish()
 fails any scenario that reaches PASS having asserted nothing.
 
-On THIS engine (1.7.0): 21 semantic execute and 2 skip at their floors
-(cleanup-return 1.8, dispose 1.9); the soaks run 3 + the opt-in wraparound.
-flush-torture ACTIVATES natively here -- and this folder's copy is the native
-SUPERSET (sections 7-10: value-never-defers, FLAG_SCHEDULED enqueue dedup via
-op 7, the invalid-token throw matrix, re-entrant flush) with the suite's
-exit-77 skip protocol patched in.
+On THIS engine (1.8.0): 22 semantic execute and 1 skips at its floor
+(dispose 1.9); the soaks run 3 + the opt-in wraparound. cleanup-return-torture
+ACTIVATES natively here -- and this folder's copy is the native SUPERSET
+(section 6b pins the 1.8 severTail cursor-repair by mechanism: five named
+deterministic dispose-mid-retrack geometries, including the cursor parked
+EXACTLY on the freed link and a survivors-intact headDep check) with the
+suite's exit-77 skip protocol patched in. flush-torture runs the 1.7.0-origin
+native superset (sections 7-10: value-never-defers, FLAG_SCHEDULED enqueue
+dedup via op 7, the invalid-token throw matrix, re-entrant flush).
 
     npm run torture ; npm run torture:semantic ; npm run torture:soak
     node bench/torture/run.mjs --list
@@ -196,3 +199,18 @@ signal 264, computed 208, effect 160, boxes 56 B/op all-space) and
 visit-anatomy's 21 structural pins hold after a deliberate re-anchor (the split
 duplicates the eq-dispatch source sites 3 -> 5; only one closure variant is
 instantiated per registry, so runtime counts are unchanged).
+
+1.8.0-beta migration note (2026-09-06): the suite carried onto the 1.8.0 engine
+with ZERO pin flips -- contract, interop, retrack-dispose, burst-profile, the
+zerogc lanes, and the wraparound dormancy band (re-run at full distance, 12/12)
+all re-verified. cleanup-return-torture graduated from floor-skip to native
+execution using THIS folder's superset copy (the four contract claims plus the
+6b cursor-repair pins were written against the live 1.8.0 engine in August;
+probed compose order: imperative onCleanup fires before the returned cleanup,
+per registration order). The out-of-line registerCleanupReturn ladder changes
+no observed contract: creation anatomy re-measured IDENTICAL for the fourth
+engine running (mint --verify all pins PASS: signal 264, computed 208, effect
+160, boxes 56 B/op all-space) and visit-anatomy's 21 structural pins hold with
+NO re-anchor needed (the cleanup ladder adds no eq-dispatch site; both failure
+paths re-witnessed in scratch clones: drift refusal exit 2 at 6x eq sites, the
+gutted-short-circuit mutant fires unrelated-read.depWalk 640,000 vs pinned 0).

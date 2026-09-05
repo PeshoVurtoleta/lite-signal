@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-signal v1.8.0-alpha.7
+ * @zakkster/lite-signal v1.8.0-beta
  * Copyright (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
  * MIT License
  * --------------------

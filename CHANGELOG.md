@@ -4,6 +4,103 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.8.0-beta] -- 2026-09-06
+
+The verification-infrastructure migration: the full 1.6.0-rc.1 / 1.7.0-beta audit
+toolchain forward-ported onto the 1.8.0 engine. **The engine is byte-frozen** --
+`Signal.js` changed by exactly one line (the version banner comment), `Signal.d.ts`
+and `Watch.js` by zero. Everything below is test, gate, harness, and doc
+infrastructure; no runtime behaviour moved.
+
+### Added -- torture suite 22 -> 27 scenarios, audit-hardened runner
+
+- **Five scenarios join the suite**: `contract-torture` (the probed behavioural
+  contract, pinned: throw-inside-batch commit+flush semantics, write-inside-computed
+  delivery, `flushPasses` exact counts), `interop-torture` (multi-registry isolation +
+  `destroy()` staleness degradation), `retrack-dispose-torture` (the
+  dispose-during-retracking cursor hazard as a seeded fuzz), `burst-profile-torture`
+  (the op-6/op-7 lane: coalescing exactly 1.0x, `BURST_BREAK=drop7|ghost6`
+  self-tests), and the opt-in `wraparound-torture` (`TORTURE_WRAPAROUND=1`: the 2^31
+  dormancy band pinned at full distance -- re-run here, 12/12).
+- **Audit-hardened runner** (`run.mjs`): 3-state skip protocol (exit 77 floor-skip /
+  exit 78 env-skip), **version-floor enforcement** (a scenario that skips while the
+  engine is at or above its floor FAILS the run), per-scenario wall-clock caps, and
+  assert-nothing detection. On this engine: **25 execute / 1 floor-skip
+  (`dispose-torture` 1.9.0) / 1 opt-in**.
+- **Folder-native supersets kept over the canonical copies** (reviewed per file):
+  `cleanup-return-torture` -- native here and RICHER than the canonical version: its
+  section 6b pins the 1.8 severTail cursor-repair **by mechanism** (five named
+  deterministic dispose-mid-retrack geometries, including the cursor parked exactly
+  on the freed link and a survivors-intact headDep check); `lifecycle-torture` with
+  the createScope-native root-vs-scope differential; the 1.8.0-re-anchored
+  `capacity`/`deep-chain`/`error` scenarios; `harness/smoke.mjs`; `test/30` with its
+  site audit anchored to 1.8.0 line numbers; the `test/34` config pair (OOM rows in
+  a child process under a 256MB cap). Both kept torture natives gained the runner's
+  exit-77 skip protocol (one-line patches).
+- The audit-hardened scenario set (`zerogc-torture` with scavenge witness +
+  bounded-churn graveyard + `ZEROGC_BREAK=1|transient`, soak sentinels with the
+  Int32Array value-oracle, `introspect-torture` with the native-scope section 7b,
+  hardened `oracle-fuzzer`/`owner-torture`/`scope-torture`/`graph-fuzzer`/
+  `scheduler-bench`/`torture-soak`) replaces the July copies.
+
+### Added -- test and gate lanes
+
+- `test/zgc/` -- the promoted zero-GC gate lane (`npm run test:zgc` +
+  `test:zgc:report`), Node-26 nursery-proofed. 7/7 + 3/3 here.
+- `test/ProfilerTests/` -- the gc-profiler hardening sub-package
+  (`npm run test:hardening`): 22 execute / 0 fail / 6 version-gated skips here.
+- `test/25-devtools-real-boot.test.mjs` REWRITTEN against **devtools 1.6.2** via the
+  single-instance import-rewrite rig; the 13-key `capabilities()` fingerprint was
+  probed live on this engine before pinning: **`cleanupReturn:true` is the one flip
+  vs 1.7.0** (`flushControl:T`, `statsKeys:14`; 14 tests).
+- `test/35-devtools-zerogc-probe.test.mjs` -- devtools attach/detach allocation
+  probes against the 14-key `stats()` surface (ported, renumbered above the folder
+  max).
+- **VersionMatrix** carries the read + creation + exact-counter lanes with
+  trimmed-spread aggregation and the NO-EVIDENCE refusal. **GATE PASSED 5/5** vs
+  floor-1.3.0 + rolling-1.5.0; creation counters exact (288 allocs/frame,
+  0 poolGrowths, zero variance across 1500 frames).
+
+### Measured on this engine (probe-before-pin)
+
+- **Creation anatomy IDENTICAL for the fourth engine running**: signal(1)+dispose
+  264 B/op, computed 208, effect 160, signalBox/computedBox 56 -- all-space,
+  tier-invariant (`node harness/run.mjs mint --verify`, all pins PASS). The
+  out-of-line `registerCleanupReturn` ladder is provably outside the creation path,
+  exactly as its ledger-#18 counter-placement comment claims.
+- **visit-anatomy: 21/21 exact structural pins hold with NO re-anchor needed** --
+  the cleanup ladder adds no `eq`-dispatch site (the eq x5 expectation from the 1.7
+  closure split carries unchanged). Both failure paths re-witnessed in scratch
+  clones: anchor drift refuses at exit 2 (6x vs expected 5), the gutted
+  short-circuit mutant fires `unrelated-read.depWalk` 640,000 vs pinned 0.
+- **jit-health --strict**: signal/computed/signalBox/computedBox handle families all
+  MONOMORPHIC; fresh Node-26 deopt baseline recorded (5 engine-attributed bailouts).
+- Probed cleanup-return compose order confirmed: imperative `onCleanup` fires before
+  the returned cleanup, in registration order, per run.
+- Full ladder: unit 539/540 (0 fail, 1 skip), torture 25/2/0 in 30.6s, wraparound
+  full-distance 12/12, zgc 7/7 + report 3/3, hardening 22/0/6, harness 5/5, all four
+  BREAK mutants exit 1.
+
+### Changed
+
+- devDeps: `@zakkster/lite-devtools` ^1.2.0 -> **^1.6.2**,
+  `@zakkster/lite-gc-profiler` ^1.15.0 -> **^1.16.0**.
+- Test scripts are now glob-scoped (`'test/*.test.mjs'`) so the new `test/zgc/` and
+  `test/ProfilerTests/` sub-lanes stay separate lanes instead of being swept into
+  bare `node --test` discovery (which would run them without their required flags);
+  added `test:report`, `test:hardening(:gc)`, `test:zgc(:report)`, `test:all`;
+  `test:harness` now runs the ProfilerTools sub-package via `npm --prefix`;
+  `verify` gained `test:zgc`.
+
+### Removed
+
+- The stale `bench-reactive` script -- its target (`bench/benchmarkReactive.mjs`)
+  was deliberately removed from the suite at 1.6.0-beta and does not exist in this
+  folder; the cross-framework standing lives in `bench/mirror.mjs` + `bench/sweep.mjs`.
+- The stale `llms.txt` File-layout claims: the `demo/index.html` line (no `demo/`
+  dir in this folder), the `benchmarkReactive.mjs` line, and the "wired as
+  prepublishOnly" description of the VersionMatrix gate (it is `npm run gate`).
+
 ## [1.8.0-alpha.7] -- 2026-08-20
 
 Backports the **1.4.5 `createRegistry` input validation** (all four findings) onto

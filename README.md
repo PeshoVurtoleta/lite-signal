@@ -878,15 +878,17 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds the complete **22-scenario superset (19 semantic + 3
-soak)** behind one runner (`run.mjs`), the forward-compatible set through 1.9.
-They are not perf benchmarks: the ops/sec figures reflect random workload
-composition, not engine throughput -- `bench/benchmark.mjs` remains the canonical
-perf harness. Every scenario feature-detects and **skips cleanly** below the
-engine version that introduces its feature, so on the 1.8.0 engine the runner
-executes **18 semantic** scenarios (including `cleanup-return-torture`) and
-reports a clean SKIP for the one remaining later-version scenario
-(`dispose-torture` 1.9.0).
+`bench/torture/` holds the complete **27-scenario superset (23 semantic + 4
+soak, one opt-in)** behind one runner (`run.mjs`), the forward-compatible set
+through 1.9. They are not perf benchmarks: the ops/sec figures reflect random
+workload composition, not engine throughput -- `bench/benchmark.mjs` remains the
+canonical perf harness. Every scenario feature-detects and **skips cleanly**
+(exit 77) below the engine version that introduces its feature, and the runner
+**enforces the floors**: a scenario that skips while the engine is at or above
+its floor FAILS the run -- a dropped export cannot masquerade as a green skip.
+On the 1.8.0 engine the runner executes **22 semantic** scenarios (including
+`cleanup-return-torture`, native here) and reports a clean SKIP for the one
+remaining later-version scenario (`dispose-torture` 1.9.0).
 
 ```bash
 npm run torture              # everything
@@ -920,7 +922,11 @@ tagged `1.9.0+` scenario feature-detects and SKIPs on this engine.
 | `error-torture` | throwing effect bodies: single throw re-thrown unwrapped, 2+ aggregate into an exact-order `AggregateError`, survivor still runs, buffer drains over 4096 cycles with `activeNodes`/`activeLinks` flat |
 | `deep-chain-torture` | `pullComputed` recursion fail-closed (a `RangeError` at some depth <= the ceiling; registry stays usable, deterministic re-throw) vs the heap-iterative push cascade that completes |
 | `flush-torture` (1.7.0) | the three `flushStrategy` modes by cross-strategy differential (same graph + op sequence under eager/sab/manual settling to identical values), per-strategy scheduling, re-entrant/empty `flush()`, and the `.subscribe()` contract under each |
-| `cleanup-return-torture` (1.8.0) | an effect's returned cleanup: timing at re-run/dispose, compose order (appended after `onCleanup` from the same body), the self-dispose guard, and the computed exclusion -- 400 seeds |
+| `cleanup-return-torture` (1.8.0) | an effect's returned cleanup: timing at re-run/dispose, compose order (appended after `onCleanup` from the same body), the self-dispose guard, and the computed exclusion -- 400 seeds; plus the 1.8 severTail cursor-repair pinned by mechanism (five named dispose-mid-retrack geometries, section 6b) |
+| `retrack-dispose-torture` (1.6.0) | dispose-during-retracking: the cursor hazard the 1.8 repair targets, driven as a seeded fuzz across cursor positions with scope-native sections |
+| `contract-torture` | the probed 1.5.0 behavioural contract, pinned: write-inside-computed staleness, throw-in-batch flush semantics, stranded scheduler thunks, `flushPasses` exact counts |
+| `interop-torture` | cross-surface interop: callable x box x scope x owner combinations against the value oracle |
+| `burst-profile-torture` (1.6.0) | the op-6/op-7 burst lane: batched write-bursts coalesce to exactly 1.0x (zero redundant recomputes), payload sanity, observe-only hook contract; `BURST_BREAK=drop7|ghost6` self-tests |
 | `zerogc-torture` | the falsifiable zero-GC gate: retained bytes (`measureAllocs`/`checkAllocs`, `maxBytesPerCall: 0`), major/pause window (`measureOps`/`checkNoGc`, `maxMajor: 0`), and `stats()` counters across steady + churn scenarios; `ZEROGC_BREAK=1` self-test |
 | `lifecycle-torture` (1.5.0) | `createRoot` detachment (children survive, deps isolated) + `destroy` full registry reset (handles stale, pool baseline restored) |
 | `dispose-torture` (1.9.0+) | `Symbol.dispose` / `using` on lifecycle objects -- SKIP on 1.8.0 |
@@ -930,8 +936,9 @@ tagged `1.9.0+` scenario feature-detects and SKIPs on this engine.
 Three soak harnesses build large randomised graphs (1,500 / 7,500 / 3,300 nodes)
 and run mixed fuzz workloads -- leaf writes, batched writes, computed rewires,
 effect rewires, nested-batch + untrack reads, and microtask-scheduled async
-flushes -- for 5-10 seconds. What they assert, with a non-zero exit code on
-failure:
+flushes -- for 5-10 seconds; a fourth, opt-in soak spins the 32-bit version
+counter across the full 2^31 dormancy band. What they assert, with a non-zero
+exit code on failure:
 
 - zero thrown exceptions during the run, and
 - after teardown, `activeNodes` / `activeLinks` return to the leaf-only baseline (the dispose path is sound under sustained churn), and
@@ -941,6 +948,7 @@ failure:
 node --expose-gc bench/torture/graph-fuzzer.mjs     # 10s random-DAG fuzz, 1500 nodes
 node --expose-gc bench/torture/torture-soak.mjs     #  5s high-volume churn, 7500 nodes
 node --expose-gc bench/torture/scheduler-bench.mjs  # 10s microtask-scheduled, 3300 nodes
+TORTURE_WRAPAROUND=1 node bench/torture/wraparound-torture.mjs  # ~50s full-distance 2^31 dormancy-band soak (opt-in)
 ```
 
 Run any of them with `TORTURE_SECONDS=N` for a longer soak. Indicative numbers from a development host (post-teardown pool returns to baseline in all three):
