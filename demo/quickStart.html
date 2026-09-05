@@ -435,6 +435,14 @@
             <button id="btn-stale"    class="revert">stale re-attach</button>
             <div class="note">signalBox/computedBox: non-callable .get()/.set() sharing one graph · createRoot: detached, survives owner re-runs · runWithOwner: re-attach across a gap, a stale handle degrades to rooted (never corrupts)</div>
         </div>
+
+        <div class="control-row">
+            <div class="label">v1.6</div>
+            <button id="btn-scope" class="owner">createScope</button>
+            <div class="counter-display" id="scope-readout" aria-live="polite">-</div>
+            <button id="btn-scope-dispose" class="warn">dispose scope</button>
+            <div class="note">createScope(fn): fn receives ONE disposer; the computed + effect built inside are ADOPTED and cascade-dispose together (the readout doubles the signalBox value - press "signalBox +5" while a scope is live). Signals are never adopted (1.2.0 rule).</div>
+        </div>
     </div>
 
     <!-- End-state overlay -->
@@ -446,7 +454,7 @@
     <!-- Grid -->
     <div class="grid" id="grid" aria-label="reactive output grid"></div>
 
-    <div class="footnote">v1.5.0 · zero-GC reactive graph · MIT</div>
+    <div class="footnote">v1.6.0-rc · zero-GC reactive graph · MIT</div>
 
 </div>
 
@@ -481,6 +489,7 @@
     const destroyedMsg = $('destroyed-msg');
     const toastEl = $('toast');
     const boxReadoutEl = $('box-readout');   // v1.5 computedBox live value
+    const scopeReadoutEl = $('scope-readout'); // v1.6 scope-adopted computed live value
 
     /** @type {{el: HTMLElement, parent: HTMLElement}[]} */
     const boxes = [];
@@ -594,6 +603,7 @@
     let capturedOwner = null;    // opaque gen-stamped handle from getOwner()
     let ownerCaptureEff = null;  // the effect whose owner we captured
     let detachedSurvivors = [];  // createRoot-spawned handles: caller-owned
+    let scopeDispose = null;     // v1.6: the single live demo scope's disposer
 
     // The current "kind" of fire — set by the user action that triggered it,
     // then every pulse painted by signal subscribe / effect body picks it up.
@@ -651,6 +661,8 @@
         capturedOwner = null;
         ownerCaptureEff = null;
         detachedSurvivors = [];
+        scopeDispose = null;
+        scopeReadoutEl.textContent = '-';
 
         nodesG.innerHTML = '';
         edgesG.innerHTML = '';
@@ -966,6 +978,8 @@
         capturedOwner = null;
         ownerCaptureEff = null;
         detachedSurvivors = [];
+        scopeDispose = null;
+        scopeReadoutEl.textContent = '-';
         boxReadoutEl.textContent = '0';
         grid.style.display = 'none';
         destroyedMsg.classList.add('active');
@@ -1035,8 +1049,32 @@
         showToast(`stale handle (owner disposed): runWithOwner degraded to ROOTED execution -- continuation ran (${ran}), graph intact. A raw pointer would adopt into a recycled stranger or crash the disposal walk.`, 'revert', 3400);
     });
 
+    /* -- v1.6: createScope -- one disposer, an adopted subtree --------- */
+    $('btn-scope').addEventListener('click', () => {
+        if (!r) return;
+        if (scopeDispose) { showToast('scope already live - dispose it first', 'warn'); return; }
+        const before = r.stats().activeNodes;
+        scopeDispose = r.createScope((dispose) => {
+            const doubled = r.computed(() => boxSignal.get() * 2);            // adopted
+            r.effect(() => { scopeReadoutEl.textContent = String(doubled()); }); // adopted
+            return dispose;
+        });
+        const delta = r.stats().activeNodes - before;
+        showToast(`createScope: computed+effect ADOPTED by the scope owner (+${delta} nodes incl the owner). One disposer owns the subtree - press "signalBox +5" and the scope readout follows (it doubles the box value).`, 'owner', 3400);
+    });
+
+    $('btn-scope-dispose').addEventListener('click', () => {
+        if (!r) return;
+        if (!scopeDispose) { showToast('no live scope - press createScope first', 'warn'); return; }
+        const before = r.stats().activeNodes;
+        scopeDispose();
+        scopeDispose = null;
+        scopeReadoutEl.textContent = '-';
+        showToast(`dispose(): the cascade freed ${before - r.stats().activeNodes} nodes (scope owner + computed + effect) in ONE call - every slot back in the pool.`, 'warn', 3000);
+    });
+
     function setControlsEnabled(on) {
-        const ids = ['btn-inc','btn-dec','btn-batch','btn-auto','btn-revert','btn-nest','btn-cascade','btn-dispose-first','btn-destroy','btn-box','btn-root','btn-capture','btn-reattach','btn-stale'];
+        const ids = ['btn-inc','btn-dec','btn-batch','btn-auto','btn-revert','btn-nest','btn-cascade','btn-dispose-first','btn-destroy','btn-box','btn-root','btn-capture','btn-reattach','btn-stale','btn-scope','btn-scope-dispose'];
         for (const id of ids) $(id).disabled = !on;
         $('btn-recreate').disabled = false;
     }

@@ -876,7 +876,7 @@
         <div class="brand">
             <span class="mark">◐</span>
             <span class="pkg">@zakkster/lite-signal</span>
-            <span class="ver">v1.5.0</span>
+            <span class="ver">v1.6.0-rc</span>
         </div>
         <div class="tagline"><span class="dot"></span>oscilloscope · live reactive graph</div>
     </header>
@@ -1186,6 +1186,14 @@
                     <p class="help-line">boxes occupy the SAME node pool (hollow cells) at ~1.7x cheaper construction · createRoot spawns detached, survives dispose 50% · runWithOwner re-attaches across a gap, a stale handle degrades to rooted</p>
                 </section>
                 <section>
+                    <h3>v1.6 · scope</h3>
+                    <div class="btn-row">
+                        <button class="btn" id="pool-scope">createScope</button>
+                        <button class="btn" id="pool-scope-dispose">dispose scope</button>
+                    </div>
+                    <p class="help-line">createScope adopts the computed + effect built inside it and hands back ONE disposer -> the whole subtree (incl. the scope owner node) returns to the pool in a single call - the per-item lifecycle a keyed-list reconciler needs; kept out of the spawn set, so it survives dispose 50%</p>
+                </section>
+                <section>
                     <h3>cleanup</h3>
                     <div class="btn-row">
                         <button class="btn" id="pool-dispose-half">dispose 50%</button>
@@ -1272,7 +1280,7 @@
 
     <!-- ───────── TELEMETRY STRIP ───────── -->
     <footer class="telemetry">
-        <div class="tele"><span class="k">version</span><span class="v">1.5.0</span></div>
+        <div class="tele"><span class="k">version</span><span class="v">1.6.0-rc</span></div>
         <div class="tele"><span class="k">fps</span><span class="v accent" id="t-fps">—</span></div>
         <div class="tele"><span class="k">ops/sec</span><span class="v" id="t-ops">—</span></div>
         <div class="tele"><span class="k">active links</span><span class="v" id="t-links">0</span></div>
@@ -2053,6 +2061,10 @@
         // v1.5 ownership fixtures (kept OUT of `spawned` so dispose-50% can't touch
         // them -- that is the whole point of createRoot/detached lifecycles).
         let capturedOwner = null, ownerEff = null, ownerTick = null, detached = [];
+        // v1.6 scope fixtures: one live demo scope at a time. scopeTick is created
+        // OUTSIDE the scope on purpose (signals are never owner-adopted, 1.2.0 rule)
+        // so the cascade dispose frees exactly owner+computed+effect.
+        let scopeDispose = null, scopeTick = null;
         const dom = {
             strip: $("pool-node-strip"), mn: $("pool-mn"), ml: $("pool-ml"), policy: $("pool-policy"),
             prealloc: $("pool-prealloc"),
@@ -2091,6 +2103,8 @@
             ownerEff = null;
             ownerTick = null;
             detached = [];
+            scopeDispose = null;
+            scopeTick = null;
             buildStrip();
             refresh();
             flash("registry built", "green");
@@ -2277,6 +2291,8 @@
             ownerEff = null;
             ownerTick = null;
             detached = [];
+            scopeDispose = null;
+            scopeTick = null;
             flash("registry destroyed · pools reset", "green");
             refresh();
         });
@@ -2329,6 +2345,32 @@
                 registry.effect(() => { ran++; SINK[slot] = 1; });
             });
             flash(`stale handle: runWithOwner degraded to ROOTED execution (ran ${ran}) -- graph intact, no corruption`, "green");
+            refresh();
+        });
+
+        // -- v1.6 scope: one disposer tears down an adopted subtree ----------
+        $("pool-scope").addEventListener("click", () => {
+            if (!registry) rebuild();
+            if (scopeDispose) { flash("scope already live -- dispose it first", "red"); return; }
+            if (!scopeTick) scopeTick = registry.signal(0);
+            const before = registry.stats().activeNodes;
+            scopeDispose = registry.createScope((dispose) => {
+                const slot = nextSinkSlot();
+                const c = registry.computed(() => scopeTick() + 1);   // adopted
+                registry.effect(() => { SINK[slot] = c(); });          // adopted
+                return dispose;
+            });
+            const delta = registry.stats().activeNodes - before;
+            flash(`createScope: +${delta} nodes (scope owner + adopted computed + effect) behind ONE disposer`, "green");
+            refresh();
+        });
+
+        $("pool-scope-dispose").addEventListener("click", () => {
+            if (!registry || !scopeDispose) { flash("create a scope first", "red"); return; }
+            const before = registry.stats().activeNodes;
+            scopeDispose();
+            scopeDispose = null;
+            flash(`dispose(): cascade freed ${before - registry.stats().activeNodes} nodes in one call -- slots back in the pool`, "green");
             refresh();
         });
 

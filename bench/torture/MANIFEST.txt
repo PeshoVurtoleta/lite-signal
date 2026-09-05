@@ -1,13 +1,17 @@
-lite-signal torture suite — complete set (26 scenarios)
+lite-signal torture suite — complete set (27 scenarios)
 ========================================================
 
-22 semantic (deterministic, fast, CI) + 4 soak (one opt-in). Full superset through 1.9.
+23 semantic (deterministic, fast, CI) + 4 soak (one opt-in). Full superset through 1.9.
 Every scenario feature-detects and skips cleanly below its feature; runs green
 from 1.4.x forward. Skips use exit 77 and the runner enforces version floors:
 a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
 (a dropped export cannot be a green skip); the runner also caps each scenario's
 wall clock (TORTURE_TIMEOUT_MS, default 300s -> FAIL, not a hang) and finish()
 fails any scenario that reaches PASS having asserted nothing.
+
+On THIS engine (1.6.0): 20 semantic execute and 3 skip at their floors (flush
+1.7, cleanup-return 1.8, dispose 1.9); the soaks run 3 + the opt-in wraparound.
+scope-torture, burst-profile-torture, and the zerogc scope lanes ACTIVATE here.
 
     npm run torture ; npm run torture:semantic ; npm run torture:soak
     node bench/torture/run.mjs --list
@@ -38,7 +42,11 @@ SEMANTIC (listed in run.mjs registration order)
                            churn (exact fire counts vs a shadow model, coalesced
                            writes keep the OLD value, a throwing equals leaves
                            the value UNMUTATED -- checked before the recovery
-                           write can mask it -- and isolates neighbors)
+                           write can mask it -- and isolates neighbors), and
+                           1.6.0 flushPasses on the ABNORMAL paths: a throwing
+                           batch's finally-flush counts exactly one pass, and
+                           CycleError counts exactly maxFlushPasses completed
+                           passes (skips below 1.6.0)
   interop-torture          multi-registry isolation (value flows, tracking
                            never links, batches don't cross; foreign dispose
                            no-ops for signal/computed handles but INVOKES an
@@ -65,12 +73,40 @@ SEMANTIC (listed in run.mjs registration order)
                            link that fails to return to the free list throws
                            CapacityError -- sensitivity 1 leaked link per 4M
                            severs, mutant-verified at 1-in-2^20);
+                           1.6.0 SCOPE LANES: churn-scope (createScope adopt +
+                           cascade-dispose under the churn floor + exact
+                           counters, with an in-loop value check so a corrupted
+                           scope crashes rather than greenly measuring) and
+                           bounded-scope, the zero-slack NODE twin of
+                           bounded-churn (maxNodes:4 -- the scope owner node,
+                           which no other churn lane covers, plus the adopted
+                           computed+effect must ALL recycle; 200k cycles,
+                           ledgers exact at 3 per cycle);
                            ZEROGC_BREAK=1 / =transient self-tests
   op-accounting            structural work via the engine's onGraphMutation
                            opcode lane (op 1-5); op5 identity, equality cutoff,
                            link/node balance, laziness, 400-seed op5 differential
+  burst-profile-torture    the 1.6.0 flush lane, engine-raw (op 6 pass-start,
+                           op 7 effect-enqueue, stats().flushPasses)   (1.6.0+):
+                           enqueue coalescing (a B-write batch over K effects
+                           emits exactly K op-7s -- coalescing == 1.0x visible
+                           BEFORE any body runs), 1000-burst exact linear
+                           accounting with zero drift, D-stage cascades drain in
+                           exactly D passes (strict 7,6,7,6 alternation -- the
+                           double-buffer contract), self-write = one pass with
+                           no re-enqueue (FLAG_COMPUTING guard) yet still
+                           responsive to external writes, detached = frozen
+                           counter + zero ops, destroy() resets, and stat ==
+                           op-6 count agreement. This is the substrate devtools
+                           burstProfile() reads; the devtools pairing itself is
+                           pinned in test/25. BURST_BREAK=drop7 / =ghost6
+                           self-tests prove the pins fire (both exit 1).
   introspect-torture       describe/forEach*/hasObservers/ownerOf + ABA
-                           gen-stamp guard
+                           gen-stamp guard; section 7 walks owners BOTH ways on
+                           1.6.0 -- the effect-body re-target (portable) AND the
+                           native createScope lane (ownerOf via descriptor and
+                           via the first-class disposer handle, cascade
+                           teardown gen-guard, exact pool restore)
   lifecycle-torture        createRoot detachment + destroy registry reset (1.5.0+)
 
 SOAK: graph-fuzzer, scheduler-bench, torture-soak, wraparound-torture
@@ -115,7 +151,7 @@ missing mark lane. Recommendation there: add a "compare lane" (op 11/12) so the
 short-circuit's benefit becomes a counted fact and its regression becomes
 catchable.
 
-FEATURE GATES: box/owner->1.5, scope->1.6, flush->1.7,
+FEATURE GATES: box/owner->1.5, scope->1.6, burst-profile->1.6, flush->1.7,
 cleanup-return->1.8, dispose->1.9. retrack-dispose, op-accounting, lifecycle,
 contract, interop, and all others: 1.4.0+. Floors are declared per scenario in
 run.mjs and ENFORCED: at/above its floor a skip is a FAIL (--lenient downgrades).
@@ -135,3 +171,11 @@ contract-torture / interop-torture (2026-08 Phase 2): every pin states the
 OBSERVED 1.5.0 contract, probed live before writing (same discipline as
 test/29-throwing-equals) -- a future engine that changes any of these semantics
 trips a loud assert instead of silently redefining the behavior.
+
+1.6.0-rc migration note (2026-09-05): every 1.5.0-observed pin above RE-VERIFIED
+UNCHANGED on the 1.6.0 engine -- contract, interop, retrack-dispose, and the
+wraparound dormancy band all passed without a single pin flip (the two engines'
+version-compare expressions are byte-identical; wraparound re-run at full
+distance, 12/12). The 1.6.0-only additions (burst-profile-torture, the zerogc
+scope lanes, contract section 10, introspect 7b) were probed live on 1.6.0-rc
+before their pins were written.

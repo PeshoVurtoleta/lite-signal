@@ -75,6 +75,7 @@ const SCENARIOS = [
     { name: "dispose-torture", group: "semantic", file: "dispose-torture.mjs", floor: "1.9.0", about: "Symbol.dispose / using on lifecycle objects (1.9.0+)" },
     { name: "zerogc-torture", group: "semantic", file: "zerogc-torture.mjs", floor: "1.4.0", about: "zero-GC hot path via measureAllocs/measureOps + stats counters; ZEROGC_BREAK self-test" },
     { name: "op-accounting", group: "semantic", file: "op-accounting.mjs", floor: "1.4.0", about: "structural work via onGraphMutation opcode lane" },
+    { name: "burst-profile-torture", group: "semantic", file: "burst-profile-torture.mjs", floor: "1.6.0", about: "op-6/7 flush lane: burst coalescing == 1.0x, pass accounting, flushPasses agreement (1.6.0+)" },
     { name: "introspect-torture", group: "semantic", file: "introspect-torture.mjs", floor: "1.4.0", about: "describe/forEach*/hasObservers/ownerOf + ABA gen-stamp guard" },
     { name: "lifecycle-torture", group: "semantic", file: "lifecycle-torture.mjs", floor: "1.4.0", about: "createRoot detachment + destroy registry reset" },
     { name: "graph-fuzzer", group: "soak", file: "graph-fuzzer.mjs", floor: "1.4.0", about: "1.5k-node random DAG churn" },

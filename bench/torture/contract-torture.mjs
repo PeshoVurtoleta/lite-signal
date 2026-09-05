@@ -301,4 +301,48 @@ const R = createReport("lite-signal contract torture — throw-in-batch, write-i
     R.eq("equals-throw", hostileRuns - 1, CYCLES, "the hostile node's own recovery writes did not all propagate");
 }
 
-process.exit(R.finish("throw-in-batch, write-in-computed, and the equals contract all hold under volume"));
+/* -- 10. flushPasses accounting on the abnormal paths (1.6.0+) --------------- */
+// Probed on 1.6.0-rc (2026-09-05): stats().flushPasses advances once per drain
+// pass ONLY while a mutation-hook listener is attached (zero-cost gate when
+// detached). burst-profile-torture pins the happy paths (batch = 1 pass,
+// k-cascade = k, self-write = 1); THIS section pins the two ABNORMAL exits:
+// (a) the finally-flush of a throwing batch still counts its one pass, and
+// (b) CycleError counts exactly maxFlushPasses COMPLETED passes -- the ceiling
+// check throws before the (n+1)th pass starts. Notes a clean skip below 1.6.0
+// (no flushPasses key).
+{
+    const r = createRegistry({ maxNodes: 64, maxLinks: 256, maxFlushPasses: 8 });
+    if (typeof r.stats().flushPasses === "number") {
+        r.onGraphMutation(() => {});   // attach: the counter only advances observed
+        const s = r.signal(0);
+        let runs = 0;
+        r.effect(() => { s(); runs++; });
+        const fp0 = r.stats().flushPasses;
+        const boom = new Error("boom");
+        let caught = null;
+        try { r.batch(() => { s.set(1); throw boom; }); } catch (e) { caught = e; }
+        R.eq("flushPasses", caught, boom, "the batch throw must surface unchanged");
+        R.eq("flushPasses", r.stats().flushPasses - fp0, 1,
+            "the abnormal-unwind flush must count exactly ONE pass");
+        R.eq("flushPasses", runs, 2, "the pre-throw write must still deliver (creation run + unwind flush)");
+        R.eq("flushPasses", s.peek(), 1, "the pre-throw write must commit");
+
+        const sa = r.signal(0), sb = r.signal(0);
+        let armed = false;
+        r.effect(() => { const v = sa(); if (armed) sb.set(v + 1); });
+        r.effect(() => { const v = sb(); if (armed) sa.set(v + 1); });
+        armed = true;
+        const fp1 = r.stats().flushPasses;
+        let cyc = null;
+        try { sa.set(100); } catch (e) { cyc = e; }
+        R.ok("flushPasses", cyc !== null && /CycleError/.test(cyc.message),
+            "the mutual write loop must trip CycleError");
+        R.eq("flushPasses", r.stats().flushPasses - fp1, 8,
+            "CycleError must count exactly maxFlushPasses (8) completed passes");
+        r.destroy();
+    } else {
+        R.note("flushPasses -- SKIP: stats().flushPasses requires 1.6.0+");
+    }
+}
+
+process.exit(R.finish("throw-in-batch, write-in-computed, equals, and 1.6 flushPasses contracts all hold under volume"));

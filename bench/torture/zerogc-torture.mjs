@@ -91,6 +91,7 @@ import v8 from "node:v8";
 import { measureAllocs, checkAllocs, measureOps, checkNoGc } from "@zakkster/lite-gc-profiler";
 import { createReport, mulberry32, flushAll } from "./helpers/index.mjs";
 
+import * as Signal from "../../Signal.js";
 import { createRegistry } from "../../Signal.js";
 
 /* -- configuration ---------------------------------------------------------- */
@@ -236,6 +237,33 @@ function buildChurnBox() {
     const r = createRegistry(CFG);
     if (typeof r.signalBox !== "function") return null; // SKIP: signalBox requires 1.5.0+
     return { statsOf: () => r.stats(), hot: (i) => { const a = r.signalBox(i); r.dispose(a); } };
+}
+
+/**
+ * createScope adopt + cascade-dispose churn (1.6.0+). Each cycle acquires the
+ * never-re-running scope OWNER effect plus an adopted computed and an adopted
+ * effect (3 nodes, 2 links -- probed live), and the single disposer must
+ * recycle all three. Bodies are hoisted through a module-let handoff so the
+ * only per-cycle allocations are the engine's own handles -- all transient.
+ * The in-loop value check is fail-closed non-vacuity: a scope whose children
+ * stop producing the right value mid-churn crashes the lane instead of
+ * greenly measuring garbage. Self-skips below 1.6.0 (no createScope).
+ */
+function buildChurnScope() {
+    const r = createRegistry(CFG);
+    if (typeof r.createScope !== "function") return null; // SKIP: createScope requires 1.6.0+
+    const base = r.signal(1);
+    let out = 0, curC = null;
+    const cBody = () => base() + 1;
+    const eBody = () => { out = curC(); };
+    const scopeBody = (dispose) => { curC = r.computed(cBody); r.effect(eBody); return dispose; };
+    return {
+        statsOf: () => r.stats(),
+        hot: () => {
+            r.createScope(scopeBody)();
+            if (out !== 2) throw new Error(`churn-scope value corrupted: expected 2, got ${out}`);
+        },
+    };
 }
 
 /**
@@ -390,9 +418,9 @@ async function gateSteady(name, build) {
 }
 
 /** Churn scenarios: the pool never grew and every acquired node was recycled. */
-function gateChurn(name, build) {
+function gateChurn(name, build, skipNote = "signalBox requires 1.5.0+") {
     const st = build();
-    if (st === null) { R.note(`${name} -- SKIP: signalBox requires 1.5.0+`); return; }
+    if (st === null) { R.note(`${name} -- SKIP: ${skipNote}`); return; }
     const { s0, s1 } = gateAllocAndGc(name, st, CHURN_BYTES_FLOOR);
     R.eq(name, s1.poolGrowths - s0.poolGrowths, 0, "the pool grew under create+dispose churn");
     R.eq(name, s1.activeNodes - s0.activeNodes, 0, "activeNodes did not return to baseline -- a churned node leaked");
@@ -455,6 +483,42 @@ await gateSteady("steady-retrack", buildRetrack);
 }
 gateChurn("churn-plain", buildChurnPlain);
 gateChurn("churn-box", buildChurnBox);
+gateChurn("churn-scope", buildChurnScope, "createScope requires 1.6.0+");
+
+/* -- bounded-pool SCOPE churn: the zero-slack NODE witness (1.6.0+) ----------
+ * The node-side twin of bounded-churn (which zero-slacks LINKS). Every
+ * createScope cycle acquires exactly 3 nodes -- the never-re-running scope
+ * OWNER effect, an adopted computed, an adopted effect -- and 2 links, all of
+ * which must return on the single cascade disposer (probed live: peak 4 nodes
+ * / 2 links incl the permanent base signal; post-dispose deltas 0/0). With
+ * maxNodes:4 there is NOTHING spare, so the FIRST node that fails to recycle
+ * -- including the scope owner node itself, which no other churn lane covers
+ * -- throws CapacityError on a later cycle. Policy "throw"; 200k cycles =
+ * 1-in-200k leak sensitivity on the cascade-dispose path, and the allocation
+ * ledgers must balance EXACTLY (3 per cycle + the base signal). */
+if (typeof Signal.createScope === "function") {
+    const rS = createRegistry({ maxNodes: 4, maxLinks: 2, prealloc: "eager", onCapacityExceeded: "throw" });
+    const base = rS.signal(1);
+    let out = 0, curC = null;
+    const cBody = () => base() + 1;
+    const eBody = () => { out = curC(); };
+    const scopeBody = (dispose) => { curC = rS.computed(cBody); rS.effect(eBody); return dispose; };
+    const SCOPE_CYCLES = 200_000;
+    let threw = null, cycles = 0;
+    try { for (; cycles < SCOPE_CYCLES; cycles++) rS.createScope(scopeBody)(); } catch (e) { threw = e; }
+    R.ok("bounded-scope", threw === null,
+        `scope churn on a zero-slack 4-node pool threw after ${cycles.toLocaleString()} cycles ` +
+        `(${threw && threw.message}) -- an owner/computed/effect failed to recycle on cascade dispose`);
+    const sS = rS.stats();
+    R.eq("bounded-scope", sS.poolGrowths, 0, "the bounded pool grew -- unreachable under policy \"throw\" except by accounting corruption");
+    R.eq("bounded-scope", sS.activeNodes, 1, "only the permanent base signal may remain live after the final cycle");
+    R.eq("bounded-scope", sS.totalAllocations, SCOPE_CYCLES * 3 + 1, "exact ledger: 3 acquisitions per cycle + the base signal");
+    R.eq("bounded-scope", sS.totalDisposals, SCOPE_CYCLES * 3, "exact ledger: 3 disposals per cycle");
+    R.eq("bounded-scope", out, 2, "the adopted computed+effect stopped producing the correct value during churn");
+    if (threw === null) R.note(`bounded-scope -- ok: ${SCOPE_CYCLES.toLocaleString()} createScope adopt+cascade-dispose cycles on a zero-slack 4-node pool, every node came back, ledgers exact`);
+} else {
+    R.note("bounded-scope -- SKIP: createScope requires 1.6.0+");
+}
 
 // The break control runs the same four-witness verdict. Without BREAK it is a
 // steady write that must PASS; with BREAK=1 its effect RETAINS and checkAllocs
