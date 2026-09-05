@@ -4,7 +4,11 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.5.1] -- 2026-09-05
+
+Docs + verification patch. `Signal.js` is byte-identical to 1.5.0 except the
+version banner comment; no API change, no behavior change. Ships the corrected
+allocation economics below to the `latest` line while `1.6.0-rc` bakes.
 
 ### Added -- mint-cycle allocation anatomy probe (harness, no engine change)
 
@@ -55,6 +59,19 @@ finalization -- rejected too.
 
 Run it: `node harness/run.mjs mint [--verify]` (`--verify` applies relative pins
 P1..P5; exit 0 iff every cell succeeded and every pin passed).
+
+### Added -- attribution instrument set (harness-only, none ship in the tarball)
+
+- `harness/costmodel.mjs`, `creation-anatomy.mjs` (+ child), `floors.mjs`
+  (+ `floors-history.json`), `jit-health.mjs` (+ `jit-baseline.json`),
+  `trend.mjs`, `visit-anatomy.mjs`; VersionMatrix `creation-churn` workload +
+  same-host 1.3.0/1.5.0 reference baselines. Verification instruments only.
+
+### Changed
+
+- devDependencies: `@zakkster/lite-devtools` ^1.2.0 -> ^1.3.1,
+  `@zakkster/lite-gc-profiler` ^1.15.0 -> ^1.16.0 (the instrument versions the
+  suite is gated with). Runtime dependencies remain zero.
 
 ## [1.5.0] -- 2026-08-21
 
