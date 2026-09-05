@@ -63,7 +63,7 @@ const { createRegistry } = Signal;
     } catch { supported = false; }
     if (!supported) {
         console.log("lite-signal cleanup-return torture — SKIP: effect cleanup return requires 1.8.0+");
-        process.exit(0);
+        process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
     }
 }
 

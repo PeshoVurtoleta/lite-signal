@@ -40,15 +40,23 @@ export function profile(Profiler, summarize, workload, E, meta, override) {
 
     const g = workload.build(E, cfg);
 
+    // Counter channels are ENGINE-dependent (a workload registers them only
+    // when the engine carries the exact counters it samples), so the built
+    // graph decides -- not the workload module. No channels on an engine
+    // without the surface means the counter lane is absent from the summary
+    // entirely, which checkRegression skips leniently for a baseline and
+    // fails closed for a candidate that DROPPED it.
+    const counters = g.counters || [];
+
     // warmup (unmeasured, throwaway profiler) -- JIT
     let rng = lcg(cfg.SEED ^ 0x9e3779b9);
-    const scratch = new Profiler(cfg.CAP, workload.phases);
+    const scratch = new Profiler(cfg.CAP, workload.phases, counters);
     for (let i = 0; i < cfg.WARMUP; i++) g.frame(scratch, rng);
     scratch.destroy();
 
     // measured -- reset rng to SEED so the sequence is identical across engines
     rng = lcg(cfg.SEED);
-    const p = new Profiler(cfg.CAP, workload.phases);
+    const p = new Profiler(cfg.CAP, workload.phases, counters);
     let sink = 0;
     for (let i = 0; i < cfg.MEASURE; i++) sink += g.frame(p, rng);
 

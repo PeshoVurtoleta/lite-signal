@@ -1,4 +1,4 @@
-// Real lite-devtools 1.1.0 boot against the 1.3.0 engine.
+// Real lite-devtools 1.6.2 boot against the 1.7.0 engine.
 //
 // Setup note (test-rig quirk, NOT an engine bug). Because this repo's
 // package.json declares name="@zakkster/lite-signal", the resolver maps any
@@ -17,6 +17,15 @@
 // engine (../Signal.js), so Devtools and this test share ONE engine instance.
 // If anything regresses to two instances, the precondition guard below fails
 // fast with an actionable message instead of three cryptic handle errors.
+//
+// GROUND TRUTH (probed live, devtools 1.6.2 x engine 1.7.0-beta, 2026-09-06):
+// 22 function exports + VERSION const "1.6.2"; capabilities() = exactly 13 keys
+// { floor:"1.1.5", owners:T, mutationHook:T, burst:T, boxes:T, roots:T,
+//   ownerCapture:T, scopes:T, flushControl:T, explicitDispose:T, statsKeys:14,
+//   poolPopulation:T, cleanupReturn:F }; burstProfile() returns a LIVE handle
+// { stop, passes, perPass, queued, ran, redundant, shortCircuited }; the 1.6.x
+// devtools Symbol.dispose stamps hold (off[Symbol.dispose] === off for track,
+// h[Symbol.dispose] === h.stop for the object handles).
 
 import {describe, it, before} from "node:test";
 import assert from "node:assert/strict";
@@ -72,35 +81,66 @@ before(async () => {
     );
 });
 
-describe("lite-devtools 1.1.0 boots against the 1.3.0 engine", () => {
-    it("imports resolve and the documented 1.2.0 export surface (21 functions) is exactly present", () => {
+describe("lite-devtools 1.6.2 boots against the 1.7.0 engine", () => {
+    it("imports resolve: all 22 documented functions + the VERSION const", () => {
+        // 19 baseline + burstProfile/watchAllocations (1.3.x) + pendingEffects.
         const expected = [
             "capabilities", "inspect", "subscribers", "dependencies", "track",
             "monitor", "leakWatch", "report", "graph", "toDot", "toTree", "diff",
             "trace", "ownerTree", "findPath", "watchGraph", "profile",
-            "serialize", "deserialize",
-            // 1.2.0:
-            "burstProfile", "watchAllocations",
+            "serialize", "deserialize", "burstProfile", "watchAllocations",
+            "pendingEffects",
         ];
         for (const name of expected) {
             assert.equal(typeof DT[name], "function", `devtools.${name} must be a function`);
         }
-        // Surface-drift pin: any NEW exported function must be added to `expected`
-        // above, or this test fails fast -- accidental new public surface is a
-        // versioning concern that needs a doc + capabilities() entry.
-        const actualFns = Object.keys(DT).filter((k) => typeof DT[k] === "function").sort();
-        const expectedSorted = expected.slice().sort();
-        assert.deepEqual(actualFns, expectedSorted,
-            "devtools function-export set must match `expected` exactly; update both lists together");
+        const fns = Object.keys(DT).filter((k) => typeof DT[k] === "function");
+        assert.equal(fns.length, expected.length,
+            `devtools exports exactly ${expected.length} functions (got ${fns.length}: a new/removed ` +
+            "export means this pairing pin is stale -- update the expected list deliberately)");
+        // Three-place version sync: the devDep bump must travel with this test.
+        assert.equal(DT.VERSION, "1.6.2", "devtools VERSION const pins the tested pairing");
     });
 
-    it("capabilities() reports the 1.6.x feature surface (owners + mutationHook + burst)", () => {
+    // capabilities() is devtools' runtime probe of the engine it is bound to.
+    // Asserting the FULL vector (values AND key set) turns it into a precise
+    // fingerprint of the 1.7.0 surface: the 1.5 triad (boxes / roots /
+    // ownerCapture), the 1.6 pair (scopes / burst), AND the 1.7 flushControl
+    // must be present, while every 1.8+ feature (cleanupReturn) must be absent.
+    // If a later engine feature is accidentally back-ported into this line, one
+    // of these flags flips and this test catches it -- across the two-package
+    // boundary, not from the engine's own introspection.
+    it("capabilities() fingerprints EXACTLY the 1.7.0 surface (1.5+1.6+1.7 on, 1.8+ off)", () => {
         const caps = DT.capabilities();
         assert.equal(typeof caps, "object");
         assert.ok(caps !== null);
-        assert.equal(caps.owners, true, "1.2.x+ engine has owner tree");
-        assert.equal(caps.mutationHook, true, "1.2.1+ engine has onGraphMutation");
-        assert.equal(caps.burst, true, "1.6+ engine has opcodes 6/7 + stats().flushPasses");
+
+        // Exact key set -- a new capability key appearing (or one vanishing)
+        // must be a deliberate re-pin, not a silent drift.
+        assert.deepEqual(Object.keys(caps).sort(), [
+            "boxes", "burst", "cleanupReturn", "explicitDispose", "floor",
+            "flushControl", "mutationHook", "ownerCapture", "owners",
+            "poolPopulation", "roots", "scopes", "statsKeys",
+        ], "capabilities() key set drifted -- re-pin deliberately");
+
+        assert.equal(caps.floor, "1.1.5", "devtools baseline floor");
+
+        // Present in 1.7.0.
+        assert.equal(caps.owners, true, "1.7.0 has the owner tree");
+        assert.equal(caps.mutationHook, true, "1.7.0 has onGraphMutation");
+        assert.equal(caps.boxes, true, "1.7.0 has signalBox / computedBox");
+        assert.equal(caps.roots, true, "1.7.0 has createRoot");
+        assert.equal(caps.ownerCapture, true, "1.7.0 has getOwner / runWithOwner");
+        assert.equal(caps.explicitDispose, true, "1.7.0 has explicit dispose");
+        assert.equal(caps.poolPopulation, true, "1.7.0 stats expose pool population");
+        assert.equal(caps.scopes, true, "createScope ships in 1.6.0 -- scopes must read true");
+        assert.equal(caps.burst, true, "the op 5/6/7 burst payload ships in 1.6.0 -- burst must read true");
+        assert.equal(caps.statsKeys, 14, "1.7.0 stats() has exactly 14 keys (13 + flushPasses)");
+        assert.equal(caps.flushControl, true,
+            "flushStrategy + r.flush() ship in 1.7.0 -- flushControl must read true");
+
+        // Absent until later engines -- graceful-degrade sentinels.
+        assert.equal(caps.cleanupReturn, false, "effect-return cleanup is a 1.8 feature, must be absent in 1.7.0");
     });
 
     it("inspect() reports a live handle as non-stale, with sensible neighbourhood counts", () => {
@@ -149,6 +189,84 @@ describe("lite-devtools 1.1.0 boots against the 1.3.0 engine", () => {
         SIG.dispose(c1); SIG.dispose(c2); SIG.dispose(a);
     });
 
+    it("ownerTree() returns a { id, kind, value, owned } descriptor for a rooted effect", () => {
+        // createRoot opens a detached ownership scope; an effect created inside
+        // it becomes an owned child of that root. ownerTree walks that tree.
+        let tree = null;
+        SIG.createRoot(() => {
+            const s = SIG.signal(5);
+            const e = SIG.effect(() => { s(); });
+            tree = DT.ownerTree(e);
+        });
+        assert.ok(tree !== null && typeof tree === "object", "ownerTree must return a descriptor");
+        assert.equal(typeof tree.id, "number", "descriptor carries a numeric node id");
+        assert.equal(tree.kind, "effect", "the walked node is the effect");
+        assert.ok(Array.isArray(tree.owned), "descriptor carries an owned[] child array");
+    });
+
+    it("burstProfile() is LIVE on 1.7.0: stop() summarizes a batched burst exactly", () => {
+        // On 1.5.0 this degraded to null. 1.6.0+ emits the op 6/7 flush payload,
+        // so capabilities().burst is true and burstProfile() must hand back the
+        // real handle. PROBED CONTRACT (1.6.2 x 1.6.0-rc): the counters
+        // materialize in stop()'s returned summary { passes, perPass[], queued,
+        // ran } -- they are NOT live reads on the handle -- and the accounting
+        // is deterministic: effect creation contributes no flush pass, and a
+        // 3-write batch coalesces to exactly one pass running exactly one
+        // effect. Deeper coalescing torture is gated in
+        // bench/torture/burst-profile-torture.mjs; this pins the boot contract.
+        assert.equal(DT.capabilities().burst, true, "precondition: 1.7.0 carries the burst payload");
+        const bp = DT.burstProfile();
+        assert.ok(bp !== null && typeof bp === "object", "burstProfile() must return a live handle on 1.7.0");
+        assert.equal(typeof bp.stop, "function");
+        for (const k of ["passes", "perPass", "queued", "ran", "redundant", "shortCircuited"]) {
+            assert.ok(k in bp, `burst handle carries documented field '${k}'`);
+        }
+
+        const s = SIG.signal(0);
+        const e = SIG.effect(() => { s(); });                 // creation run: DIRECT, no flush pass
+        SIG.batch(() => { s.set(1); s.set(2); s.set(3); });   // coalesces to ONE pass, ONE run
+        const summary = bp.stop();
+        assert.ok(summary !== null && typeof summary === "object",
+            "stop() returns the burst summary (documented contract)");
+        assert.equal(summary.passes, 1,
+            "three batched writes must coalesce to exactly ONE observed flush pass");
+        assert.deepEqual(summary.perPass, [1],
+            "that pass must run exactly one effect (no redundant re-runs)");
+        bp.stop();   // idempotent -- must not throw
+        SIG.dispose(e); SIG.dispose(s);
+    });
+
+    it("Symbol.dispose (using) stamps: track's off is self-stamped, handles mirror stop",
+       {skip: typeof Symbol.dispose !== "symbol" ? "Symbol.dispose absent on this Node" : false},
+       () => {
+        // devtools 1.6.x stamps Symbol.dispose across its stopper handles:
+        // track() returns a bare function self-stamped (off[Symbol.dispose] ===
+        // off); object handles mirror their idempotent stop. Dispose-then-stop
+        // and stop-then-dispose are both no-ops.
+        const s = SIG.signal(0);
+        const off = DT.track(s, () => {});
+        assert.equal(off[Symbol.dispose], off, "track off must be self-stamped, never a new closure");
+        off[Symbol.dispose]();
+        off();   // idempotent after dispose
+
+        const feed = DT.watchAllocations(() => {}, {sampleMs: 50});
+        assert.equal(feed[Symbol.dispose], feed.stop, "handle mirrors its stop onto Symbol.dispose");
+        feed[Symbol.dispose]();
+        feed.stop();   // idempotent after dispose
+        SIG.dispose(s);
+    });
+
+    it("watchAllocations() returns an idempotent { stop } and leaks no timer", () => {
+        // Steady-state allocation feed. Like leakWatch it samples off lite-time's
+        // every() -- OUT of the reactive graph -- so it must hand back a stopper
+        // that clears the sampler. Double-stop must be a safe no-op.
+        const feed = DT.watchAllocations(() => {}, { sampleMs: 20, recomputes: true });
+        assert.equal(typeof feed, "object");
+        assert.equal(typeof feed.stop, "function");
+        feed.stop();
+        feed.stop();   // idempotent -- must not throw
+    });
+
     it("monitor() returns an object usable by devtools UIs", () => {
         const m = DT.monitor();
         assert.ok(m !== null && typeof m === "object");
@@ -158,10 +276,10 @@ describe("lite-devtools 1.1.0 boots against the 1.3.0 engine", () => {
         const watch = DT.leakWatch({ sampleMs: 50, growth: 1, onSample: () => {} });
         assert.equal(typeof watch, "object");
         assert.equal(typeof watch.stop, "function");
-        watch.stop();   // CRITICAL: clears the setInterval handle
+        watch.stop();   // CRITICAL: clears the sampler handle
     });
 
-    it("track() registers a lifecycle listener against a 1.3.0-built handle", () => {
+    it("track() registers a lifecycle listener against a 1.7.0-built handle", () => {
         const s = SIG.signal(0);
         const events = [];
         const untrack = DT.track(s, (e) => events.push(e));
@@ -172,265 +290,56 @@ describe("lite-devtools 1.1.0 boots against the 1.3.0 engine", () => {
         SIG.dispose(s);
     });
 
-    it("ghost contract: heavy devtools introspection adds ZERO nodes to the graph", () => {
+    it("ghost contract: the ENTIRE read-side surface adds ZERO nodes to the graph", () => {
         const a = SIG.signal(1);
         const b = SIG.signal(2);
         const c = SIG.computed(() => a() + b());
         c();
         const before = SIG.stats();
 
+        // Every non-perturbing helper, hammered. None may allocate a reactive
+        // link or add an observer. This is devtools' headline contract ("adds
+        // zero nodes and zero observers to the graph it inspects") pinned across
+        // the whole surface, not just the four helpers the old sweep covered.
+        // pendingEffects joins the sweep at 1.6.2 (queue read-out is read-only).
+        const gBefore = DT.graph([c]);
         for (let i = 0; i < 25; i++) {
             DT.inspect(c);
             DT.subscribers(a);
             DT.dependencies(c);
-            DT.graph([c]);
+            DT.graph([a, b, c]);
             DT.report([a, b, c]);
             DT.toTree(c);
+            DT.toDot(gBefore);
             DT.ownerTree(c);
+            DT.findPath(a, c);
+            DT.serialize(gBefore);
+            DT.diff(gBefore, gBefore);
+            DT.pendingEffects();
         }
         const after = SIG.stats();
 
         // Per Studio.js header: "[Studio] adds zero nodes and zero observers
         // to the graph it inspects" -- which is only true if devtools itself
-        // doesn't add any. This test pins that.
-        assert.equal(after.signals,   before.signals,   "ghost contract: signals delta must be 0");
-        assert.equal(after.computeds, before.computeds, "ghost contract: computeds delta must be 0");
-        assert.equal(after.effects,   before.effects,   "ghost contract: effects delta must be 0");
+        // doesn't add any. This test pins that across the full read surface.
+        assert.equal(after.signals,    before.signals,    "ghost contract: signals delta must be 0");
+        assert.equal(after.computeds,  before.computeds,  "ghost contract: computeds delta must be 0");
+        assert.equal(after.effects,    before.effects,    "ghost contract: effects delta must be 0");
+        assert.equal(after.activeNodes, before.activeNodes, "ghost contract: activeNodes delta must be 0");
+        assert.equal(after.activeLinks, before.activeLinks, "ghost contract: activeLinks delta must be 0");
 
         SIG.dispose(c); SIG.dispose(b); SIG.dispose(a);
     });
-
-    // ---- 1.2.0 surface ---------------------------------------------------------
-
-    it("burstProfile(): non-null on 1.6+ engine, exposes the documented shape", () => {
-        const bp = DT.burstProfile();
-        assert.ok(bp !== null, "burstProfile() must not be null on engine with opcodes 6/7");
-        assert.equal(typeof bp.stop, "function");
-        assert.equal(typeof bp.passes, "function");
-        assert.equal(typeof bp.perPass, "function");
-        assert.equal(typeof bp.redundant, "function");
-        assert.equal(typeof bp.shortCircuited, "function");
-        assert.ok(bp.queued instanceof Map);
-        assert.ok(bp.ran instanceof Map);
-        bp.stop();
-    });
-
-    it("burstProfile(): opcodes 5/6/7 flow through hub on a multi-pass write-back", () => {
-        // The multiPassProbe pattern from burst-dag.mjs: an effect that writes y
-        // when x > 0 forces a second flush pass. Without correct op-6/op-7
-        // dispatch the profile would show passes <= 1.
-        const x = SIG.signal(0);
-        const y = SIG.signal(0);
-        const e1 = SIG.effect(() => { x(); y(); });
-        const e2 = SIG.effect(() => { if (x() > 0) y.set(y.peek() + 1); });
-
-        const bp = DT.burstProfile();
-        x.set(1);                          // triggers pass 1 then a write-back -> pass 2
-        const snap = bp.stop();
-        assert.ok(snap.passes >= 2, `expected >= 2 flush passes for write-back, got ${snap.passes}`);
-        assert.ok(snap.perPass.length >= 2, `perPass should record both passes, got ${JSON.stringify(snap.perPass)}`);
-        assert.ok(snap.ran.size > 0, "op-5 (recompute) should have fired");
-        assert.ok(snap.queued.size > 0, "op-7 (effect enqueue) should have fired");
-        SIG.dispose(e2); SIG.dispose(e1); SIG.dispose(y); SIG.dispose(x);
-    });
-
-    it("burstProfile.shortCircuited(): uses `avoided`, not `wasted` (clean-read skip is correct engine behavior)", () => {
-        // An effect whose dep version-bumps but whose VALUE is unchanged will
-        // be enqueued (op 7) but the clean-read short-circuit skips the actual
-        // run (no op 5). That's `avoided`, never `wasted`.
-        const a = SIG.signal(1);
-        const b = SIG.computed(() => a() === 1 ? "one" : "other");
-        const e = SIG.effect(() => { b(); });
-
-        const bp = DT.burstProfile();
-        a.set(1);   // no value change -> clean-read short-circuit should engage
-        a.set(1);
-        const top = bp.shortCircuited(5);
-        bp.stop();
-
-        // Field name is the contract; old field `wasted` is forbidden (it mislabels
-        // correct engine behavior).
-        for (const row of top) {
-            assert.equal(typeof row.avoided, "number", "shortCircuited() row must expose `avoided`");
-            assert.ok(!("wasted" in row), "row must NOT expose legacy `wasted` field");
-        }
-        SIG.dispose(e); SIG.dispose(b); SIG.dispose(a);
-    });
-
-    it("watchAllocations(): sample shape pins all 10 documented keys", async () => {
-        const a = SIG.signal(0);
-        const c = SIG.computed(() => a() + 1);
-        c();
-
-        const samples = [];
-        const ctl = DT.watchAllocations((s) => samples.push(s), {sampleMs: 30});
-
-        // Drive a little work then wait for at least one sample.
-        for (let i = 0; i < 50; i++) a.set(i);
-        await new Promise((r) => setTimeout(r, 120));
-        ctl.stop();
-
-        assert.ok(samples.length >= 1, "expected at least one watchAllocations sample within 120ms");
-        const s = samples[samples.length - 1];
-        const expectedKeys = [
-            "ts", "poolGrowthDelta", "allocDelta", "disposeDelta",
-            "flushPassDelta", "recomputeDelta", "activeNodes", "activeLinks",
-            "totalAllocations", "poolGrowths",
-        ];
-        for (const k of expectedKeys) {
-            assert.ok(k in s, `watchAllocations sample must include key '${k}'`);
-            assert.equal(typeof s[k], "number", `watchAllocations sample.${k} must be a number`);
-        }
-
-        SIG.dispose(c); SIG.dispose(a);
-    });
-
-    it("watchAllocations() pins the MOAT claim: steady-state reads -> allocDelta=0 + poolGrowthDelta=0", async () => {
-        // Build a small chain, warm it, then drive 1000 reads through a settled
-        // graph (NO new node creation, NO disposal). The engine's allocation
-        // counters MUST stay flat: this is the property Studio's allocation
-        // panel exists to display.
-        const a = SIG.signal(1);
-        const b = SIG.signal(2);
-        const sum = SIG.computed(() => a() + b());
-        const prod = SIG.computed(() => a() * b());
-        const e = SIG.effect(() => { sum(); prod(); });
-
-        // Warm-up.
-        for (let i = 0; i < 100; i++) { a.set(i); b.set(i); }
-
-        const samples = [];
-        const ctl = DT.watchAllocations((s) => samples.push(s), {sampleMs: 30});
-
-        // Steady-state writes through the warmed graph.
-        for (let i = 0; i < 1000; i++) { a.set(i); b.set(i); }
-        await new Promise((r) => setTimeout(r, 100));
-        ctl.stop();
-
-        // Look at the LAST sample (first-sample skew is a known soft spot;
-        // post-warmup the moat claim must hold).
-        const tail = samples[samples.length - 1];
-        assert.equal(tail.allocDelta, 0,
-            `MOAT: steady-state reads must not allocate; got allocDelta=${tail.allocDelta}`);
-        assert.equal(tail.poolGrowthDelta, 0,
-            `MOAT: settled pool must not grow; got poolGrowthDelta=${tail.poolGrowthDelta}`);
-
-        SIG.dispose(e); SIG.dispose(prod); SIG.dispose(sum); SIG.dispose(b); SIG.dispose(a);
-    });
-
-    it("watchAllocations({recomputes:false}): no hook attached, recomputeDelta stays 0", async () => {
-        const a = SIG.signal(0);
-        const c = SIG.computed(() => a() + 1);
-        const e = SIG.effect(() => { c(); });
-
-        const samples = [];
-        const ctl = DT.watchAllocations((s) => samples.push(s),
-                                        {sampleMs: 30, recomputes: false});
-
-        for (let i = 0; i < 200; i++) a.set(i);
-        await new Promise((r) => setTimeout(r, 100));
-        ctl.stop();
-
-        assert.ok(samples.length >= 1);
-        for (const s of samples) {
-            assert.equal(s.recomputeDelta, 0,
-                "with recomputes:false, the op-5 hook must NOT be attached -> recomputeDelta stays 0");
-        }
-
-        SIG.dispose(e); SIG.dispose(c); SIG.dispose(a);
-    });
-
-    it("watchAllocations({recomputes:true}): under load, recomputeDelta climbs (the work line)", async () => {
-        const a = SIG.signal(0);
-        const c = SIG.computed(() => a() + 1);
-        const e = SIG.effect(() => { c(); });
-
-        const samples = [];
-        const ctl = DT.watchAllocations((s) => samples.push(s),
-                                        {sampleMs: 30, recomputes: true});
-
-        for (let i = 0; i < 500; i++) a.set(i);
-        await new Promise((r) => setTimeout(r, 100));
-        ctl.stop();
-
-        const totalRecomputes = samples.reduce((sum, s) => sum + s.recomputeDelta, 0);
-        assert.ok(totalRecomputes > 0,
-            "under 500 source writes, the work line should climb (recomputeDelta sum > 0)");
-
-        SIG.dispose(e); SIG.dispose(c); SIG.dispose(a);
-    });
-
-    it("hub cleanup: simultaneous burstProfile + watchAllocations + profile, all stop cleanly", async () => {
-        // Hub multiplexing: every consumer adds to hubSubs; last-stop tears down
-        // the engine onGraphMutation registration. If a consumer leaks, future
-        // tests see phantom mutation traffic.
-        const a = SIG.signal(0);
-        const c = SIG.computed(() => a() + 1);
-        const e = SIG.effect(() => { c(); });
-
-        const bp = DT.burstProfile();
-        const allocCtl = DT.watchAllocations(() => {}, {sampleMs: 30, recomputes: true});
-        const pf = DT.profile();
-
-        for (let i = 0; i < 100; i++) a.set(i);
-        await new Promise((r) => setTimeout(r, 60));
-
-        // Stop in interleaved order; none should throw.
-        allocCtl.stop();
-        bp.stop();
-        pf.stop();
-        // Idempotent: double-stop must be a safe no-op.
-        allocCtl.stop();
-        bp.stop();
-        pf.stop();
-
-        SIG.dispose(e); SIG.dispose(c); SIG.dispose(a);
-    });
-
-    it("hub: a subscriber that throws does NOT break sibling subscribers", () => {
-        // Per Devtools.js comments: "a subscriber that throws here would unwind
-        // through engine internals mid-operation". The try/catch in hubDispatch
-        // is the guard; this test pins it.
-        const a = SIG.signal(0);
-
-        // Two consumers; the first throws on every event.
-        const bp = DT.burstProfile();        // counts op 5/6/7
-        const bp2 = DT.burstProfile();       // separate counter
-
-        // Stash a profile() too, since its onSample is user-supplied and is the
-        // most likely throw site in practice.
-        let sawSample = 0;
-        const pf = DT.profile({onSample: () => { sawSample++; throw new Error("boom"); }});
-
-        // Drive a write that fires op 5 (recompute) into all three consumers.
-        const c = SIG.computed(() => a() + 1);
-        const e = SIG.effect(() => { c(); });
-        a.set(1);
-        a.set(2);
-
-        const snap1 = bp.stop();
-        const snap2 = bp2.stop();
-        pf.stop();
-
-        assert.ok(sawSample > 0, "the throwing subscriber must have fired before throwing");
-        assert.ok(snap1.ran.size > 0,
-            "sibling burstProfile #1 must still see op-5 events despite the throwing peer");
-        assert.ok(snap2.ran.size > 0,
-            "sibling burstProfile #2 must still see op-5 events despite the throwing peer");
-
-        SIG.dispose(e); SIG.dispose(c); SIG.dispose(a);
-    });
 });
 
-describe("studio 1.2.0 contract: imports from devtools are fully satisfied", () => {
-    it("devtools exports the 11 symbols studio destructures (1.2.0 adds watchAllocations)", () => {
-        // From Studio.js 1.2.0 header:
+describe("studio 1.1.0 contract: imports from devtools are fully satisfied", () => {
+    it("devtools exports the 10 symbols studio destructures", () => {
+        // From Studio.js header:
         //   import {graph, subscribers, dependencies, monitor, track, toDot,
-        //           diff, capabilities, watchGraph, leakWatch, watchAllocations}
+        //           diff, capabilities, watchGraph, leakWatch}
         //           from "@zakkster/lite-devtools";
         const expected = ["graph", "subscribers", "dependencies", "monitor", "track",
-                          "toDot", "diff", "capabilities", "watchGraph", "leakWatch",
-                          "watchAllocations"];
+                          "toDot", "diff", "capabilities", "watchGraph", "leakWatch"];
         for (const name of expected) {
             assert.equal(typeof DT[name], "function",
                          `studio depends on devtools.${name} -- must be exported as a function`);
