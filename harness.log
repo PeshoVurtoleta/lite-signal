@@ -1,0 +1,432 @@
+
+> @zakkster/lite-signal@1.7.0-preview.2 harness:all
+> node harness/run.mjs all
+
+
+== harness:smoke ==
+T1: initial runs= 1
+T1: after set runs= 2
+T1: after 3 more sets runs= 5 (eager: should be 5)
+T2: initial runs= 1
+T2: after set (no batch) runs= 1 (sab: should still be 1 -- deferred)
+T2: after 1000 writes runs= 1 (sab: should still be 1 -- dedup)
+T2: after batch exit runs= 2 (sab: should be 2)
+T3: initial runs= 1
+T3: after set runs= 1 (manual: should be 1)
+T3: after batch runs= 1 (manual: should STILL be 1 -- no auto-flush at batch exit)
+T3: after r.flush() runs= 2 (manual: should be 2)
+T4: initial c read = 30 (sab: should be 30)
+T4: c read after set without flush = 60 (sab: should be 60 -- lazy pull)
+T5: validation rejects bogus strategy: flushStrategy must be one of: 'eager', 'sab', 'manual'
+
+ALL SMOKE TESTS PASSED
+
+== harness:field ==
+lite-signal field kit
+  host: node v26.3.1  darwin/arm64  Apple M4 Pro
+  gc exposed: true 
+  engine A: /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.7.0-preview/Signal.js
+
+-- verify (engine A) --
+  FAIL  fixed point: conditional self-write converges observing each step -- final: 6 !== 8
+  FAIL  fixed point: unconditional self-write is CycleError, not a hang -- expected CycleError
+  PASS  fixed point: untracked writes never refire (spam filter)
+  PASS  fixed point: batched self-writes coalesce atomically (upstream #235 shape)
+  PASS  computed self-write ABSORBS (deliberate contract -- ledger #15, upstream #179 excluded)
+  FAIL  onSettled: fires once per clean drain, never on no-op writes -- r.onSettled is not a function
+  FAIL  link counters: stable topology reads as flat, flips read as churn -- stable allocs: NaN !== 0
+  FAIL  Symbol.dispose: effect disposer + box + registry -- stop[Symbol.dispose] is not a function
+  FAIL  sab: fixed point defers to batch-exit delivery -- converged at batch exit: 6 !== 8
+
+-- bench: 5 interleaved cold processes per engine per shape (min | median, ms; plateau = depth) --
+  shape          A min     A med     
+  createSignals  8.17      11.54     
+  createEffects  12.72     13.92     
+  1to1           7.87      8.08      
+  1to1batch      9.82      9.88      
+  selfnoop       18.6      18.71     
+  unrelatedwrite 20.8      21.18     
+  fan64batch     40.6      41.55     
+  chain900       90.07     91.2      
+  plateau        2294      2294      
+
+Notes: chain900 is the known bimodality-prone shape (per-process V8 tier-up
+coin flip, strikes ANY engine); trust interleaved medians, inspect mins.
+plateau depends on registry scope size and --stack-size, not engine quality.
+
+== harness:dispose ==
+dispose-recycle  N=100,000  median of 10
+
+framework          creation    dispose   recreate      total
+------------------------------------------------------------
+lite-callable         3.9ms      1.8ms      8.3ms     14.0ms
+lite-box              2.0ms      1.8ms      1.9ms      5.8ms
+
+box vs callable creation: 2.0ms vs 3.9ms (48% faster)
+box vs callable recreate: 1.9ms vs 8.3ms (77% faster)
+
+== harness:churn ==
+broadcast-stable       recomputes=1600000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+chain-stable           recomputes= 802000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+dep-flip-churn         recomputes= 400000  linkAlloc=400000  linkDisp=400000  churn/recompute=2.0000
+diamond-dag-stable     recomputes= 140000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+
+> @zakkster/lite-signal@1.7.0-preview.2 harness:all
+> node harness/run.mjs all
+
+
+== harness:smoke ==
+T1: initial runs= 1
+T1: after set runs= 2
+T1: after 3 more sets runs= 5 (eager: should be 5)
+T2: initial runs= 1
+T2: after set (no batch) runs= 1 (sab: should still be 1 -- deferred)
+T2: after 1000 writes runs= 1 (sab: should still be 1 -- dedup)
+T2: after batch exit runs= 2 (sab: should be 2)
+T3: initial runs= 1
+T3: after set runs= 1 (manual: should be 1)
+T3: after batch runs= 1 (manual: should STILL be 1 -- no auto-flush at batch exit)
+T3: after r.flush() runs= 2 (manual: should be 2)
+T4: initial c read = 30 (sab: should be 30)
+T4: c read after set without flush = 60 (sab: should be 60 -- lazy pull)
+T5: validation rejects bogus strategy: flushStrategy must be one of: 'eager', 'sab', 'manual'
+
+ALL SMOKE TESTS PASSED
+
+== harness:field ==
+lite-signal field kit
+  host: node v26.3.1  darwin/arm64  Apple M4 Pro
+  gc exposed: true 
+  engine A: /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.7.0-preview/Signal.js
+
+-- verify (engine A) --
+  FAIL  fixed point: conditional self-write converges observing each step -- final: 6 !== 8
+  FAIL  fixed point: unconditional self-write is CycleError, not a hang -- expected CycleError
+  PASS  fixed point: untracked writes never refire (spam filter)
+  PASS  fixed point: batched self-writes coalesce atomically (upstream #235 shape)
+  PASS  computed self-write ABSORBS (deliberate contract -- ledger #15, upstream #179 excluded)
+  FAIL  onSettled: fires once per clean drain, never on no-op writes -- r.onSettled is not a function
+  FAIL  link counters: stable topology reads as flat, flips read as churn -- stable allocs: NaN !== 0
+  FAIL  Symbol.dispose: effect disposer + box + registry -- stop[Symbol.dispose] is not a function
+  FAIL  sab: fixed point defers to batch-exit delivery -- converged at batch exit: 6 !== 8
+
+-- bench: 5 interleaved cold processes per engine per shape (min | median, ms; plateau = depth) --
+  shape          A min     A med     
+  createSignals  8.44      11.75     
+  createEffects  13.05     14.11     
+  1to1           7.92      8.24      
+  1to1batch      9.81      10.16     
+  selfnoop       18.54     19.07     
+  unrelatedwrite 20.83     21.06     
+  fan64batch     40.65     42.28     
+  chain900       87.7      89.36     
+  plateau        2294      2294      
+
+Notes: chain900 is the known bimodality-prone shape (per-process V8 tier-up
+coin flip, strikes ANY engine); trust interleaved medians, inspect mins.
+plateau depends on registry scope size and --stack-size, not engine quality.
+
+== harness:dispose ==
+dispose-recycle  N=100,000  median of 10
+
+framework          creation    dispose   recreate      total
+------------------------------------------------------------
+lite-callable         3.8ms      1.9ms      8.0ms     13.7ms
+lite-box              2.0ms      1.8ms      1.9ms      5.7ms
+
+box vs callable creation: 2.0ms vs 3.8ms (46% faster)
+box vs callable recreate: 1.9ms vs 8.0ms (76% faster)
+
+== harness:churn ==
+broadcast-stable       recomputes=1600000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+chain-stable           recomputes= 802000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+dep-flip-churn         recomputes= 400000  linkAlloc=400000  linkDisp=400000  churn/recompute=2.0000
+diamond-dag-stable     recomputes= 140000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+
+> @zakkster/lite-signal@1.7.0-preview.2 harness:all
+> node harness/run.mjs all
+
+
+== harness:smoke ==
+T1: initial runs= 1
+T1: after set runs= 2
+T1: after 3 more sets runs= 5 (eager: should be 5)
+T2: initial runs= 1
+T2: after set (no batch) runs= 1 (sab: should still be 1 -- deferred)
+T2: after 1000 writes runs= 1 (sab: should still be 1 -- dedup)
+T2: after batch exit runs= 2 (sab: should be 2)
+T3: initial runs= 1
+T3: after set runs= 1 (manual: should be 1)
+T3: after batch runs= 1 (manual: should STILL be 1 -- no auto-flush at batch exit)
+T3: after r.flush() runs= 2 (manual: should be 2)
+T4: initial c read = 30 (sab: should be 30)
+T4: c read after set without flush = 60 (sab: should be 60 -- lazy pull)
+T5: validation rejects bogus strategy: flushStrategy must be one of: 'eager', 'sab', 'manual'
+
+ALL SMOKE TESTS PASSED
+
+== harness:field ==
+lite-signal field kit
+  host: node v26.3.1  darwin/arm64  Apple M4 Pro
+  gc exposed: true 
+  engine A: /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.7.0-preview/Signal.js
+
+-- verify (engine A) --
+  FAIL  fixed point: conditional self-write converges observing each step -- final: 6 !== 8
+  FAIL  fixed point: unconditional self-write is CycleError, not a hang -- expected CycleError
+  PASS  fixed point: untracked writes never refire (spam filter)
+  PASS  fixed point: batched self-writes coalesce atomically (upstream #235 shape)
+  PASS  computed self-write ABSORBS (deliberate contract -- ledger #15, upstream #179 excluded)
+  FAIL  onSettled: fires once per clean drain, never on no-op writes -- r.onSettled is not a function
+  FAIL  link counters: stable topology reads as flat, flips read as churn -- stable allocs: NaN !== 0
+  FAIL  Symbol.dispose: effect disposer + box + registry -- stop[Symbol.dispose] is not a function
+  FAIL  sab: fixed point defers to batch-exit delivery -- converged at batch exit: 6 !== 8
+
+-- bench: 5 interleaved cold processes per engine per shape (min | median, ms; plateau = depth) --
+  shape          A min     A med     
+  createSignals  8.37      11.19     
+  createEffects  13.43     14.5      
+  1to1           7.96      8.17      
+  1to1batch      9.93      10.18     
+  selfnoop       18.69     19.06     
+  unrelatedwrite 20.97     21.4      
+  fan64batch     41.12     43.58        [A spread 25% -- bimodal host?]
+  chain900       87.45     90.67     
+  plateau        2294      2294      
+
+Notes: chain900 is the known bimodality-prone shape (per-process V8 tier-up
+coin flip, strikes ANY engine); trust interleaved medians, inspect mins.
+plateau depends on registry scope size and --stack-size, not engine quality.
+
+== harness:dispose ==
+dispose-recycle  N=100,000  median of 10
+
+framework          creation    dispose   recreate      total
+------------------------------------------------------------
+lite-callable         3.5ms      2.5ms      8.0ms     14.0ms
+lite-box              2.1ms      1.8ms      1.9ms      5.8ms
+
+box vs callable creation: 2.1ms vs 3.5ms (42% faster)
+box vs callable recreate: 1.9ms vs 8.0ms (76% faster)
+
+== harness:churn ==
+broadcast-stable       recomputes=1600000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+chain-stable           recomputes= 802000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+dep-flip-churn         recomputes= 400000  linkAlloc=400000  linkDisp=400000  churn/recompute=2.0000
+diamond-dag-stable     recomputes= 140000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+
+> @zakkster/lite-signal@1.7.0-alpha.0 harness:all
+> node harness/run.mjs all
+
+
+== harness:smoke ==
+T1: initial runs= 1
+T1: after set runs= 2
+T1: after 3 more sets runs= 5 (eager: should be 5)
+T2: initial runs= 1
+T2: after set (no batch) runs= 1 (sab: should still be 1 -- deferred)
+T2: after 1000 writes runs= 1 (sab: should still be 1 -- dedup)
+T2: after batch exit runs= 2 (sab: should be 2)
+T3: initial runs= 1
+T3: after set runs= 1 (manual: should be 1)
+T3: after batch runs= 1 (manual: should STILL be 1 -- no auto-flush at batch exit)
+T3: after r.flush() runs= 2 (manual: should be 2)
+T4: initial c read = 30 (sab: should be 30)
+T4: c read after set without flush = 60 (sab: should be 60 -- lazy pull)
+T5: validation rejects bogus strategy: flushStrategy must be one of: 'eager', 'sab', 'manual'
+
+ALL SMOKE TESTS PASSED
+
+== harness:field ==
+lite-signal field kit
+  host: node v26.3.1  darwin/arm64  Apple M4 Pro
+  gc exposed: true 
+  engine A: /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.7.0-preview/Signal.js
+
+-- verify (engine A) --
+  FAIL  fixed point: conditional self-write converges observing each step -- final: 6 !== 8
+  FAIL  fixed point: unconditional self-write is CycleError, not a hang -- expected CycleError
+  PASS  fixed point: untracked writes never refire (spam filter)
+  PASS  fixed point: batched self-writes coalesce atomically (upstream #235 shape)
+  PASS  computed self-write ABSORBS (deliberate contract -- ledger #15, upstream #179 excluded)
+  FAIL  onSettled: fires once per clean drain, never on no-op writes -- r.onSettled is not a function
+  FAIL  link counters: stable topology reads as flat, flips read as churn -- stable allocs: NaN !== 0
+  FAIL  Symbol.dispose: effect disposer + box + registry -- stop[Symbol.dispose] is not a function
+  FAIL  sab: fixed point defers to batch-exit delivery -- converged at batch exit: 6 !== 8
+
+-- bench: 5 interleaved cold processes per engine per shape (min | median, ms; plateau = depth) --
+  shape          A min     A med     
+  createSignals  7.7       10.57     
+  createEffects  12.53     13.31        [A spread 16% -- bimodal host?]
+  1to1           7.76      8         
+  1to1batch      9.36      9.96      
+  selfnoop       18.05     18.37        [A spread 15% -- bimodal host?]
+  unrelatedwrite 20.03     20.64     
+  fan64batch     39.51     40.48     
+  chain900       83.75     85.61     
+  plateau        2294      2294      
+
+Notes: chain900 is the known bimodality-prone shape (per-process V8 tier-up
+coin flip, strikes ANY engine); trust interleaved medians, inspect mins.
+plateau depends on registry scope size and --stack-size, not engine quality.
+
+== harness:dispose ==
+dispose-recycle  N=100,000  median of 10
+
+framework          creation    dispose   recreate      total
+------------------------------------------------------------
+lite-callable         3.6ms      1.8ms      7.6ms     13.0ms
+lite-box              1.8ms      1.8ms      1.8ms      5.5ms
+
+box vs callable creation: 1.8ms vs 3.6ms (49% faster)
+box vs callable recreate: 1.8ms vs 7.6ms (76% faster)
+
+== harness:churn ==
+broadcast-stable       recomputes=1600000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+chain-stable           recomputes= 802000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+dep-flip-churn         recomputes= 400000  linkAlloc=400000  linkDisp=400000  churn/recompute=2.0000
+diamond-dag-stable     recomputes= 140000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+
+> @zakkster/lite-signal@1.7.0-alpha.0 harness:all
+> node harness/run.mjs all
+
+
+== harness:smoke ==
+T1: initial runs= 1
+T1: after set runs= 2
+T1: after 3 more sets runs= 5 (eager: should be 5)
+T2: initial runs= 1
+T2: after set (no batch) runs= 1 (sab: should still be 1 -- deferred)
+T2: after 1000 writes runs= 1 (sab: should still be 1 -- dedup)
+T2: after batch exit runs= 2 (sab: should be 2)
+T3: initial runs= 1
+T3: after set runs= 1 (manual: should be 1)
+T3: after batch runs= 1 (manual: should STILL be 1 -- no auto-flush at batch exit)
+T3: after r.flush() runs= 2 (manual: should be 2)
+T4: initial c read = 30 (sab: should be 30)
+T4: c read after set without flush = 60 (sab: should be 60 -- lazy pull)
+T5: validation rejects bogus strategy: flushStrategy must be one of: 'eager', 'sab', 'manual'
+
+ALL SMOKE TESTS PASSED
+
+== harness:field ==
+lite-signal field kit
+  host: node v26.3.1  darwin/arm64  Apple M4 Pro
+  gc exposed: true 
+  engine A: /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.7.0-preview/Signal.js
+
+-- verify (engine A) --
+  FAIL  fixed point: conditional self-write converges observing each step -- final: 6 !== 8
+  FAIL  fixed point: unconditional self-write is CycleError, not a hang -- expected CycleError
+  PASS  fixed point: untracked writes never refire (spam filter)
+  PASS  fixed point: batched self-writes coalesce atomically (upstream #235 shape)
+  PASS  computed self-write ABSORBS (deliberate contract -- ledger #15, upstream #179 excluded)
+  FAIL  onSettled: fires once per clean drain, never on no-op writes -- r.onSettled is not a function
+  FAIL  link counters: stable topology reads as flat, flips read as churn -- stable allocs: NaN !== 0
+  FAIL  Symbol.dispose: effect disposer + box + registry -- stop[Symbol.dispose] is not a function
+  FAIL  sab: fixed point defers to batch-exit delivery -- converged at batch exit: 6 !== 8
+
+-- bench: 5 interleaved cold processes per engine per shape (min | median, ms; plateau = depth) --
+  shape          A min     A med     
+  createSignals  7.86      11.24        [A spread 12% -- bimodal host?]
+  createEffects  12.5      13.17        [A spread 30% -- bimodal host?]
+  1to1           7.84      8.1       
+  1to1batch      9.62      9.93      
+  selfnoop       17.77     18.61     
+  unrelatedwrite 20.42     20.92     
+  fan64batch     40.26     41.01     
+  chain900       84.07     86.15     
+  plateau        2294      2294      
+
+Notes: chain900 is the known bimodality-prone shape (per-process V8 tier-up
+coin flip, strikes ANY engine); trust interleaved medians, inspect mins.
+plateau depends on registry scope size and --stack-size, not engine quality.
+
+== harness:dispose ==
+dispose-recycle  N=100,000  median of 10
+
+framework          creation    dispose   recreate      total
+------------------------------------------------------------
+lite-callable         3.3ms      2.4ms      7.8ms     13.5ms
+lite-box              1.9ms      1.7ms      1.9ms      5.5ms
+
+box vs callable creation: 1.9ms vs 3.3ms (43% faster)
+box vs callable recreate: 1.9ms vs 7.8ms (76% faster)
+
+== harness:churn ==
+broadcast-stable       recomputes=1600000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+chain-stable           recomputes= 802000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+dep-flip-churn         recomputes= 400000  linkAlloc=400000  linkDisp=400000  churn/recompute=2.0000
+diamond-dag-stable     recomputes= 140000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+
+> @zakkster/lite-signal@1.7.0-alpha.0 harness:all
+> node harness/run.mjs all
+
+
+== harness:smoke ==
+T1: initial runs= 1
+T1: after set runs= 2
+T1: after 3 more sets runs= 5 (eager: should be 5)
+T2: initial runs= 1
+T2: after set (no batch) runs= 1 (sab: should still be 1 -- deferred)
+T2: after 1000 writes runs= 1 (sab: should still be 1 -- dedup)
+T2: after batch exit runs= 2 (sab: should be 2)
+T3: initial runs= 1
+T3: after set runs= 1 (manual: should be 1)
+T3: after batch runs= 1 (manual: should STILL be 1 -- no auto-flush at batch exit)
+T3: after r.flush() runs= 2 (manual: should be 2)
+T4: initial c read = 30 (sab: should be 30)
+T4: c read after set without flush = 60 (sab: should be 60 -- lazy pull)
+T5: validation rejects bogus strategy: flushStrategy must be one of: 'eager', 'sab', 'manual'
+
+ALL SMOKE TESTS PASSED
+
+== harness:field ==
+lite-signal field kit
+  host: node v26.3.1  darwin/arm64  Apple M4 Pro
+  gc exposed: true 
+  engine A: /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.7.0-preview/Signal.js
+
+-- verify (engine A) --
+  FAIL  fixed point: conditional self-write converges observing each step -- final: 6 !== 8
+  FAIL  fixed point: unconditional self-write is CycleError, not a hang -- expected CycleError
+  PASS  fixed point: untracked writes never refire (spam filter)
+  PASS  fixed point: batched self-writes coalesce atomically (upstream #235 shape)
+  PASS  computed self-write ABSORBS (deliberate contract -- ledger #15, upstream #179 excluded)
+  FAIL  onSettled: fires once per clean drain, never on no-op writes -- r.onSettled is not a function
+  FAIL  link counters: stable topology reads as flat, flips read as churn -- stable allocs: NaN !== 0
+  FAIL  Symbol.dispose: effect disposer + box + registry -- stop[Symbol.dispose] is not a function
+  FAIL  sab: fixed point defers to batch-exit delivery -- converged at batch exit: 6 !== 8
+
+-- bench: 5 interleaved cold processes per engine per shape (min | median, ms; plateau = depth) --
+  shape          A min     A med     
+  createSignals  8.27      11.12     
+  createEffects  12.75     13.49     
+  1to1           7.84      8.06      
+  1to1batch      9.51      9.98      
+  selfnoop       18.39     18.66     
+  unrelatedwrite 20.57     20.95     
+  fan64batch     40.15     41.1      
+  chain900       84.37     87.44     
+  plateau        2294      2294      
+
+Notes: chain900 is the known bimodality-prone shape (per-process V8 tier-up
+coin flip, strikes ANY engine); trust interleaved medians, inspect mins.
+plateau depends on registry scope size and --stack-size, not engine quality.
+
+== harness:dispose ==
+dispose-recycle  N=100,000  median of 10
+
+framework          creation    dispose   recreate      total
+------------------------------------------------------------
+lite-callable         3.9ms      1.9ms      7.8ms     13.6ms
+lite-box              2.1ms      1.8ms      1.9ms      5.7ms
+
+box vs callable creation: 2.1ms vs 3.9ms (48% faster)
+box vs callable recreate: 1.9ms vs 7.8ms (76% faster)
+
+== harness:churn ==
+broadcast-stable       recomputes=1600000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+chain-stable           recomputes= 802000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000
+dep-flip-churn         recomputes= 400000  linkAlloc=400000  linkDisp=400000  churn/recompute=2.0000
+diamond-dag-stable     recomputes= 140000  linkAlloc=     0  linkDisp=     0  churn/recompute=0.0000

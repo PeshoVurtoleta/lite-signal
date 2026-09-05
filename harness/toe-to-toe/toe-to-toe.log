@@ -1,0 +1,207 @@
+
+=== TOE-TO-TOE (median of 3 cold processes x 7 in-process samples; INTERLEAVED order) ===
+
+Scenario        |          1.5.0 |          1.6.0 |    1.7.0-eager |      1.7.0-sab |          1.8.0 |          1.9.0 |         1.10.0 |         1.11.0 |         1.12.0 |        1.12.0a |        1.12.0b |   1.11-settled |     1.12-trace | 1.6.0-sentinel
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kairos          |      546.78 ms |      522.00 ms |      523.14 ms |      533.44 ms |      532.31 ms |      531.50 ms |      499.94 ms |      509.44 ms |      530.99 ms |      498.83 ms |      530.80 ms |      501.99 ms |      806.82 ms |      496.69 ms
+broadcast       |      282.60 ms |      283.84 ms |      285.07 ms |      276.85 ms |      271.31 ms |      269.39 ms |      275.03 ms |      279.12 ms |      279.11 ms |      282.73 ms |      271.00 ms |      271.13 ms |     1672.02 ms |      294.49 ms
+deepChain       |      167.80 ms |      156.31 ms |      167.01 ms |      175.81 ms |      178.78 ms |      162.41 ms |      167.10 ms |      170.45 ms |      171.04 ms |      180.32 ms |      172.56 ms |      164.78 ms |      251.75 ms |      156.15 ms
+mux             |       21.58 ms |       21.01 ms |       20.70 ms |       20.36 ms |       20.65 ms |       20.44 ms |       20.16 ms |       20.78 ms |       20.49 ms |       20.65 ms |       20.33 ms |       20.73 ms |       23.23 ms |       23.78 ms
+upd1to1         |        2.05 ms |        1.81 ms |        1.83 ms |        1.67 ms |        1.68 ms |        1.72 ms |        1.67 ms |        1.67 ms |        1.70 ms |        1.76 ms |        1.69 ms |        1.72 ms |        1.99 ms |        1.91 ms
+upd1to4         |        1.91 ms |        1.98 ms |        1.81 ms |        1.74 ms |        1.73 ms |        1.67 ms |        1.67 ms |        1.71 ms |        1.70 ms |        1.75 ms |        1.72 ms |        1.69 ms |        1.87 ms |        1.91 ms
+fanout64        |       15.01 ms |       15.06 ms |       15.17 ms |       14.96 ms |       14.82 ms |       15.06 ms |       15.15 ms |       15.44 ms |       15.61 ms |       15.68 ms |       15.32 ms |       15.17 ms |      107.18 ms |       14.98 ms
+churn           |       17.79 ms |       17.09 ms |       16.90 ms |       16.74 ms |       16.86 ms |       16.91 ms |       16.89 ms |       17.26 ms |       17.21 ms |       16.73 ms |       17.09 ms |       17.10 ms |       61.33 ms |       17.14 ms
+
+=== Speedup over 1.6.0 baseline ===
+
+Scenario        |          1.5.0 |          1.6.0 |    1.7.0-eager |      1.7.0-sab |          1.8.0 |          1.9.0 |         1.10.0 |         1.11.0 |         1.12.0 |        1.12.0a |        1.12.0b |   1.11-settled |     1.12-trace | 1.6.0-sentinel
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kairos          |          0.95x |          1.00x |          1.00x |          0.98x |          0.98x |          0.98x |          1.04x |          1.02x |          0.98x |          1.05x |          0.98x |          1.04x |          0.65x |          1.05x
+broadcast       |          1.00x |          1.00x |          1.00x |          1.03x |          1.05x |          1.05x |          1.03x |          1.02x |          1.02x |          1.00x |          1.05x |          1.05x |          0.17x |          0.96x
+deepChain       |          0.93x |          1.00x |          0.94x |          0.89x |          0.87x |          0.96x |          0.94x |          0.92x |          0.91x |          0.87x |          0.91x |          0.95x |          0.62x |          1.00x
+mux             |          0.97x |          1.00x |          1.01x |          1.03x |          1.02x |          1.03x |          1.04x |          1.01x |          1.03x |          1.02x |          1.03x |          1.01x |          0.90x |          0.88x
+upd1to1         |          0.88x |          1.00x |          0.99x |          1.09x |          1.08x |          1.06x |          1.09x |          1.09x |          1.06x |          1.03x |          1.07x |          1.05x |          0.91x |          0.95x
+upd1to4         |          1.04x |          1.00x |          1.09x |          1.14x |          1.14x |          1.19x |          1.19x |          1.16x |          1.17x |          1.13x |          1.15x |          1.17x |          1.06x |          1.04x
+fanout64        |          1.00x |          1.00x |          0.99x |          1.01x |          1.02x |          1.00x |          0.99x |          0.98x |          0.97x |          0.96x |          0.98x |          0.99x |          0.14x |          1.01x
+churn           |          0.96x |          1.00x |          1.01x |          1.02x |          1.01x |          1.01x |          1.01x |          0.99x |          0.99x |          1.02x |          1.00x |          1.00x |          0.28x |          1.00x
+
+=== Noise (max/min ratio across the cold processes' medians) ===
+Higher = more inconsistency between cold runs. <1.10 = very stable.
+
+Scenario        |          1.5.0 |          1.6.0 |    1.7.0-eager |      1.7.0-sab |          1.8.0 |          1.9.0 |         1.10.0 |         1.11.0 |         1.12.0 |        1.12.0a |        1.12.0b |   1.11-settled |     1.12-trace | 1.6.0-sentinel
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kairos          |          1.12x |          1.06x |          1.09x |          1.13x |          1.16x |          1.04x |          1.03x |          1.07x |          1.06x |          1.10x |          1.08x |          1.03x |          1.02x |          1.04x
+broadcast       |          1.03x |          1.02x |          1.05x |          1.08x |          1.02x |          1.01x |          1.33x |          1.42x |          1.08x |          1.28x |          1.06x |          1.02x |          1.00x |          1.05x
+deepChain       |          1.05x |          1.05x |          1.04x |          1.13x |          1.11x |          1.08x |          1.03x |          1.21x |          1.24x |          1.12x |          1.10x |          1.04x |          1.01x |          1.19x
+mux             |          1.07x |          1.11x |          1.20x |          1.03x |          1.08x |          1.02x |          1.02x |          1.15x |          1.05x |          1.03x |          1.02x |          1.09x |          1.02x |          1.10x
+upd1to1         |          1.13x |          1.00x |          1.06x |          1.05x |          1.05x |          1.03x |          1.02x |          1.04x |          1.04x |          1.04x |          1.03x |          1.11x |          1.01x |          1.06x
+upd1to4         |          1.06x |          1.09x |          1.00x |          1.09x |          1.04x |          1.04x |          1.04x |          1.04x |          1.03x |          1.02x |          1.03x |          1.05x |          1.02x |          1.07x
+fanout64        |          1.09x |          1.10x |          1.08x |          1.02x |          1.01x |          1.02x |          1.00x |          1.03x |          1.03x |          1.05x |          1.03x |          1.02x |          1.00x |          1.04x
+churn           |          1.02x |          1.03x |          1.02x |          1.03x |          1.03x |          1.02x |          1.06x |          1.02x |          1.01x |          1.05x |          1.02x |          1.06x |          1.01x |          1.02x
+
+=== Capability cost when ON (vs the SAME engine with it off) ===
+settled: 1.11-settled vs 1.11.0 | trace: 1.12-trace vs 1.12.0. >1.00x = slower with it on.
+
+Scenario        |   1.11-settled |     1.12-trace
+-------------------------------------------------
+kairos          |          0.99x |          1.52x
+broadcast       |          0.97x |          5.99x
+deepChain       |          0.97x |          1.47x
+mux             |          1.00x |          1.13x
+upd1to1         |          1.03x |          1.17x
+upd1to4         |          0.98x |          1.10x
+fanout64        |          0.98x |          6.87x
+churn           |          0.99x |          3.56x
+
+=== Drift sentinel ===
+  kairos       sentinel/baseline = 0.952x 
+  broadcast    sentinel/baseline = 1.038x 
+  deepChain    sentinel/baseline = 0.999x 
+  mux          sentinel/baseline = 1.132x   <-- DRIFTED
+  upd1to1      sentinel/baseline = 1.053x   <-- DRIFTED
+  upd1to4      sentinel/baseline = 0.964x 
+  fanout64     sentinel/baseline = 0.994x 
+  churn        sentinel/baseline = 1.003x 
+
+  WARNING: the sentinel moved more than 5% from the baseline it duplicates.
+  The machine drifted (thermal/background load) DURING this sweep -- version deltas
+  in this run are not trustworthy. Quiesce the machine and re-run.
+
+
+=== TOE-TO-TOE (median of 3 cold processes x 7 in-process samples; INTERLEAVED order) ===
+
+Scenario        |          1.5.0 |          1.6.0 |    1.7.0-eager |      1.7.0-sab |          1.8.0 |          1.9.0 |         1.10.0 |         1.11.0 |         1.12.0 |        1.12.0a |        1.12.0b |   1.11-settled |     1.12-trace | 1.6.0-sentinel
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kairos          |      510.89 ms |      518.73 ms |      500.25 ms |      505.22 ms |      515.01 ms |      526.61 ms |      501.38 ms |      502.35 ms |      505.01 ms |      521.43 ms |      489.46 ms |      495.16 ms |      798.56 ms |      512.26 ms
+broadcast       |      279.64 ms |      283.85 ms |      284.62 ms |      269.94 ms |      273.25 ms |      267.64 ms |      281.72 ms |      302.51 ms |      270.63 ms |      275.74 ms |      272.71 ms |      291.88 ms |     1672.01 ms |      276.58 ms
+deepChain       |      157.99 ms |      160.91 ms |      157.33 ms |      173.76 ms |      165.24 ms |      159.00 ms |      166.51 ms |      163.39 ms |      207.44 ms |      159.81 ms |      157.30 ms |      164.65 ms |      251.49 ms |      158.95 ms
+mux             |       21.42 ms |       22.55 ms |       21.94 ms |       21.23 ms |       20.53 ms |       20.28 ms |       20.04 ms |       20.78 ms |       20.90 ms |       20.31 ms |       20.41 ms |       20.36 ms |       23.68 ms |       22.22 ms
+upd1to1         |        1.81 ms |        1.91 ms |        1.92 ms |        1.68 ms |        1.71 ms |        1.66 ms |        1.68 ms |        1.70 ms |        1.68 ms |        1.68 ms |        1.72 ms |        1.99 ms |        2.00 ms |        1.88 ms
+upd1to4         |        1.91 ms |        1.81 ms |        2.02 ms |        1.71 ms |        1.66 ms |        1.74 ms |        1.68 ms |        1.74 ms |        1.68 ms |        1.71 ms |        1.69 ms |        1.70 ms |        1.83 ms |        1.91 ms
+fanout64        |       15.07 ms |       14.91 ms |       14.88 ms |       14.82 ms |       14.82 ms |       14.89 ms |       14.81 ms |       15.24 ms |       15.41 ms |       15.24 ms |       15.42 ms |       15.16 ms |      107.01 ms |       15.02 ms
+churn           |       17.57 ms |       17.16 ms |       16.97 ms |       16.73 ms |       16.88 ms |       16.46 ms |       17.29 ms |       17.07 ms |       16.75 ms |       17.32 ms |       16.98 ms |       17.05 ms |       60.85 ms |       16.73 ms
+
+=== Speedup over 1.6.0 baseline ===
+
+Scenario        |          1.5.0 |          1.6.0 |    1.7.0-eager |      1.7.0-sab |          1.8.0 |          1.9.0 |         1.10.0 |         1.11.0 |         1.12.0 |        1.12.0a |        1.12.0b |   1.11-settled |     1.12-trace | 1.6.0-sentinel
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kairos          |          1.02x |          1.00x |          1.04x |          1.03x |          1.01x |          0.99x |          1.03x |          1.03x |          1.03x |          0.99x |          1.06x |          1.05x |          0.65x |          1.01x
+broadcast       |          1.02x |          1.00x |          1.00x |          1.05x |          1.04x |          1.06x |          1.01x |          0.94x |          1.05x |          1.03x |          1.04x |          0.97x |          0.17x |          1.03x
+deepChain       |          1.02x |          1.00x |          1.02x |          0.93x |          0.97x |          1.01x |          0.97x |          0.98x |          0.78x |          1.01x |          1.02x |          0.98x |          0.64x |          1.01x
+mux             |          1.05x |          1.00x |          1.03x |          1.06x |          1.10x |          1.11x |          1.13x |          1.08x |          1.08x |          1.11x |          1.10x |          1.11x |          0.95x |          1.01x
+upd1to1         |          1.05x |          1.00x |          0.99x |          1.13x |          1.11x |          1.15x |          1.14x |          1.12x |          1.13x |          1.14x |          1.11x |          0.96x |          0.95x |          1.01x
+upd1to4         |          0.95x |          1.00x |          0.89x |          1.06x |          1.09x |          1.04x |          1.08x |          1.04x |          1.08x |          1.06x |          1.07x |          1.07x |          0.99x |          0.95x
+fanout64        |          0.99x |          1.00x |          1.00x |          1.01x |          1.01x |          1.00x |          1.01x |          0.98x |          0.97x |          0.98x |          0.97x |          0.98x |          0.14x |          0.99x
+churn           |          0.98x |          1.00x |          1.01x |          1.03x |          1.02x |          1.04x |          0.99x |          1.01x |          1.02x |          0.99x |          1.01x |          1.01x |          0.28x |          1.03x
+
+=== Noise (max/min ratio across the cold processes' medians) ===
+Higher = more inconsistency between cold runs. <1.10 = very stable.
+
+Scenario        |          1.5.0 |          1.6.0 |    1.7.0-eager |      1.7.0-sab |          1.8.0 |          1.9.0 |         1.10.0 |         1.11.0 |         1.12.0 |        1.12.0a |        1.12.0b |   1.11-settled |     1.12-trace | 1.6.0-sentinel
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kairos          |          1.08x |          1.08x |          1.03x |          1.08x |          1.05x |          1.06x |          1.05x |          1.04x |          1.05x |          1.08x |          1.08x |          1.05x |          1.03x |          1.10x
+broadcast       |          1.03x |          1.08x |          1.09x |          1.01x |          1.02x |          1.01x |          1.06x |          1.31x |          1.02x |          1.28x |          1.05x |          1.16x |          1.01x |          1.02x
+deepChain       |          1.06x |          1.06x |          1.06x |          1.12x |          1.17x |          1.01x |          1.05x |          1.12x |          1.35x |          1.39x |          1.06x |          1.14x |          1.03x |          1.07x
+mux             |          1.07x |          1.17x |          1.04x |          1.05x |          1.05x |          1.04x |          1.01x |          1.08x |          1.19x |          1.02x |          1.03x |          1.01x |          1.04x |          1.03x
+upd1to1         |          1.02x |          1.07x |          1.17x |          1.01x |          1.10x |          1.05x |          1.07x |          1.02x |          1.33x |          1.04x |          1.04x |          1.25x |          1.03x |          1.04x
+upd1to4         |          1.06x |          1.01x |          1.13x |          1.06x |          1.08x |          1.03x |          1.03x |          1.17x |          1.02x |          1.04x |          1.04x |          1.06x |          1.01x |          1.06x
+fanout64        |          1.06x |          1.03x |          1.02x |          1.03x |          1.01x |          1.03x |          1.05x |          1.01x |          1.01x |          1.05x |          1.02x |          1.06x |          1.01x |          1.06x
+churn           |          1.04x |          1.04x |          1.04x |          1.03x |          1.04x |          1.08x |          1.03x |          1.01x |          1.01x |          1.04x |          1.03x |          1.02x |          1.02x |          1.03x
+
+=== Capability cost when ON (vs the SAME engine with it off) ===
+settled: 1.11-settled vs 1.11.0 | trace: 1.12-trace vs 1.12.0. >1.00x = slower with it on.
+
+Scenario        |   1.11-settled |     1.12-trace
+-------------------------------------------------
+kairos          |          0.99x |          1.58x
+broadcast       |          0.96x |          6.18x
+deepChain       |          1.01x |          1.21x
+mux             |          0.98x |          1.13x
+upd1to1         |          1.17x |          1.19x
+upd1to4         |          0.98x |          1.09x
+fanout64        |          0.99x |          6.94x
+churn           |          1.00x |          3.63x
+
+=== Drift sentinel ===
+  kairos       sentinel/baseline = 0.988x 
+  broadcast    sentinel/baseline = 0.974x 
+  deepChain    sentinel/baseline = 0.988x 
+  mux          sentinel/baseline = 0.986x 
+  upd1to1      sentinel/baseline = 0.986x 
+  upd1to4      sentinel/baseline = 1.052x   <-- DRIFTED
+  fanout64     sentinel/baseline = 1.007x 
+  churn        sentinel/baseline = 0.975x 
+
+  WARNING: the sentinel moved more than 5% from the baseline it duplicates.
+  The machine drifted (thermal/background load) DURING this sweep -- version deltas
+  in this run are not trustworthy. Quiesce the machine and re-run.
+
+
+=== TOE-TO-TOE (median of 3 cold processes x 7 in-process samples; INTERLEAVED order) ===
+
+Scenario        |          1.5.0 |          1.6.0 |    1.7.0-eager |      1.7.0-sab |          1.8.0 |          1.9.0 |         1.10.0 |         1.11.0 |         1.12.0 |        1.12.0a |        1.12.0b |   1.11-settled |     1.12-trace | 1.6.0-sentinel
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kairos          |      494.68 ms |      503.38 ms |      493.22 ms |      535.54 ms |      519.75 ms |      495.23 ms |      524.96 ms |      492.13 ms |      513.46 ms |      493.21 ms |      492.13 ms |      506.51 ms |      804.42 ms |      511.69 ms
+broadcast       |      286.07 ms |      276.92 ms |      275.66 ms |      270.45 ms |      271.48 ms |      268.06 ms |      300.23 ms |      268.71 ms |      279.42 ms |      371.22 ms |      336.35 ms |      283.72 ms |     1660.92 ms |      287.15 ms
+deepChain       |      162.70 ms |      166.52 ms |      165.19 ms |      162.37 ms |      160.22 ms |      167.44 ms |      161.53 ms |      180.70 ms |      158.59 ms |      165.50 ms |      160.18 ms |      161.20 ms |      251.42 ms |      171.94 ms
+mux             |       21.10 ms |       21.58 ms |       20.36 ms |       20.38 ms |       20.54 ms |       20.25 ms |       21.05 ms |       20.96 ms |       20.06 ms |       20.19 ms |       20.51 ms |       20.53 ms |       22.99 ms |       22.95 ms
+upd1to1         |        1.86 ms |        1.82 ms |        2.18 ms |        1.63 ms |        1.74 ms |        1.70 ms |        1.75 ms |        1.76 ms |        1.67 ms |        1.69 ms |        1.75 ms |        1.69 ms |        1.96 ms |        1.85 ms
+upd1to4         |        1.82 ms |        1.88 ms |        1.94 ms |        1.72 ms |        1.72 ms |        1.69 ms |        1.70 ms |        1.70 ms |        1.75 ms |        1.67 ms |        1.58 ms |        1.65 ms |        1.86 ms |        1.81 ms
+fanout64        |       14.67 ms |       15.02 ms |       14.91 ms |       15.02 ms |       14.99 ms |       14.79 ms |       14.93 ms |       15.25 ms |       15.28 ms |       15.35 ms |       15.13 ms |       15.27 ms |      106.35 ms |       15.27 ms
+churn           |       17.35 ms |       16.74 ms |       17.09 ms |       16.98 ms |       17.05 ms |       17.02 ms |       17.12 ms |       17.12 ms |       17.04 ms |       17.27 ms |       17.14 ms |       16.87 ms |       60.24 ms |       17.15 ms
+
+=== Speedup over 1.6.0 baseline ===
+
+Scenario        |          1.5.0 |          1.6.0 |    1.7.0-eager |      1.7.0-sab |          1.8.0 |          1.9.0 |         1.10.0 |         1.11.0 |         1.12.0 |        1.12.0a |        1.12.0b |   1.11-settled |     1.12-trace | 1.6.0-sentinel
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kairos          |          1.02x |          1.00x |          1.02x |          0.94x |          0.97x |          1.02x |          0.96x |          1.02x |          0.98x |          1.02x |          1.02x |          0.99x |          0.63x |          0.98x
+broadcast       |          0.97x |          1.00x |          1.00x |          1.02x |          1.02x |          1.03x |          0.92x |          1.03x |          0.99x |          0.75x |          0.82x |          0.98x |          0.17x |          0.96x
+deepChain       |          1.02x |          1.00x |          1.01x |          1.03x |          1.04x |          0.99x |          1.03x |          0.92x |          1.05x |          1.01x |          1.04x |          1.03x |          0.66x |          0.97x
+mux             |          1.02x |          1.00x |          1.06x |          1.06x |          1.05x |          1.07x |          1.03x |          1.03x |          1.08x |          1.07x |          1.05x |          1.05x |          0.94x |          0.94x
+upd1to1         |          0.98x |          1.00x |          0.84x |          1.12x |          1.05x |          1.07x |          1.04x |          1.04x |          1.09x |          1.08x |          1.04x |          1.08x |          0.93x |          0.98x
+upd1to4         |          1.03x |          1.00x |          0.97x |          1.10x |          1.09x |          1.12x |          1.10x |          1.10x |          1.08x |          1.12x |          1.19x |          1.14x |          1.01x |          1.04x
+fanout64        |          1.02x |          1.00x |          1.01x |          1.00x |          1.00x |          1.02x |          1.01x |          0.98x |          0.98x |          0.98x |          0.99x |          0.98x |          0.14x |          0.98x
+churn           |          0.97x |          1.00x |          0.98x |          0.99x |          0.98x |          0.98x |          0.98x |          0.98x |          0.98x |          0.97x |          0.98x |          0.99x |          0.28x |          0.98x
+
+=== Noise (max/min ratio across the cold processes' medians) ===
+Higher = more inconsistency between cold runs. <1.10 = very stable.
+
+Scenario        |          1.5.0 |          1.6.0 |    1.7.0-eager |      1.7.0-sab |          1.8.0 |          1.9.0 |         1.10.0 |         1.11.0 |         1.12.0 |        1.12.0a |        1.12.0b |   1.11-settled |     1.12-trace | 1.6.0-sentinel
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kairos          |          1.07x |          1.10x |          1.12x |          1.13x |          1.10x |          1.05x |          1.23x |          1.03x |          1.21x |          1.02x |          1.27x |          1.05x |          1.01x |          1.07x
+broadcast       |          1.09x |          1.07x |          1.06x |          1.04x |          1.04x |          1.03x |          1.25x |          1.06x |          1.22x |          1.05x |          1.30x |          1.25x |          1.02x |          1.06x
+deepChain       |          1.07x |          1.09x |          1.07x |          1.08x |          1.06x |          1.06x |          1.04x |          1.19x |          1.11x |          1.01x |          1.05x |          1.02x |          1.03x |          1.09x
+mux             |          1.03x |          1.04x |          1.04x |          1.02x |          1.06x |          1.04x |          1.05x |          1.05x |          1.02x |          1.06x |          1.08x |          1.04x |          1.02x |          1.17x
+upd1to1         |          1.05x |          1.03x |          1.22x |          1.66x |          1.08x |          1.02x |          1.12x |          1.11x |          1.05x |          1.11x |          1.34x |          1.04x |          1.05x |          1.05x
+upd1to4         |          1.04x |          1.12x |          1.11x |          1.13x |          1.58x |          1.05x |          1.12x |          1.10x |          1.16x |          1.04x |          1.76x |          1.03x |          1.02x |          1.05x
+fanout64        |          1.03x |          1.04x |          1.07x |          1.01x |          1.03x |          1.03x |          1.00x |          1.01x |          1.03x |          1.01x |          1.04x |          1.04x |          1.01x |          1.02x
+churn           |          1.03x |          1.02x |          1.03x |          1.04x |          1.05x |          1.03x |          1.01x |          1.03x |          1.05x |          1.04x |          1.04x |          1.00x |          1.05x |          1.06x
+
+=== Capability cost when ON (vs the SAME engine with it off) ===
+settled: 1.11-settled vs 1.11.0 | trace: 1.12-trace vs 1.12.0. >1.00x = slower with it on.
+
+Scenario        |   1.11-settled |     1.12-trace
+-------------------------------------------------
+kairos          |          1.03x |          1.57x
+broadcast       |          1.06x |          5.94x
+deepChain       |          0.89x |          1.59x
+mux             |          0.98x |          1.15x
+upd1to1         |          0.96x |          1.17x
+upd1to4         |          0.97x |          1.06x
+fanout64        |          1.00x |          6.96x
+churn           |          0.99x |          3.54x
+
+=== Drift sentinel ===
+  kairos       sentinel/baseline = 1.016x 
+  broadcast    sentinel/baseline = 1.037x 
+  deepChain    sentinel/baseline = 1.033x 
+  mux          sentinel/baseline = 1.063x   <-- DRIFTED
+  upd1to1      sentinel/baseline = 1.016x 
+  upd1to4      sentinel/baseline = 0.963x 
+  fanout64     sentinel/baseline = 1.017x 
+  churn        sentinel/baseline = 1.024x 
+
+  WARNING: the sentinel moved more than 5% from the baseline it duplicates.
+  The machine drifted (thermal/background load) DURING this sweep -- version deltas
+  in this run are not trustworthy. Quiesce the machine and re-run.
+

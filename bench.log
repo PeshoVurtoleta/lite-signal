@@ -1,0 +1,65 @@
+
+==========================================================================
+                      EXECUTION TIME (median across reps)                 
+==========================================================================
+
+scenario          @zakkster/lite-signal  alien-signals preact-signals  solid-signals
+------------------------------------------------------------------------------------
+KAIROS                    524.4ms        459.5ms        631.1ms       2027.9ms
+BROADCAST                 434.9ms        410.0ms        441.6ms       1096.1ms
+DEEP CHAIN                171.6ms         99.2ms        177.6ms        555.6ms
+MUX                        23.5ms         35.6ms         42.4ms        202.2ms
+DYNAMIC DAG              3622.2ms       4541.6ms       3010.8ms       5178.6ms
+SELECTIVE DAG            1997.5ms       2577.6ms       2946.9ms       3561.6ms
+LARGE WEB APP            1142.0ms       1062.2ms             --             --
+WIDE DENSE               1087.1ms       1015.1ms             --             --
+SMALL SELECTIVE           804.4ms        866.5ms             --             --
+
+% faster than alien-signals (positive = lite is faster):
+scenario          @zakkster/lite-signal
+---------------------------------------
+KAIROS                       -14%
+BROADCAST                     -6%
+DEEP CHAIN                   -73%
+MUX                          +34%
+DYNAMIC DAG                  +20%
+SELECTIVE DAG                +23%
+LARGE WEB APP                 -8%
+WIDE DENSE                    -7%
+SMALL SELECTIVE               +7%
+
+Speed wins vs alien-signals (scenarios where lite is faster):
+  @zakkster/lite-signal 4/9
+
+
+==========================================================================
+                      HEAP ALLOCATION (average delta-heap across reps)    
+==========================================================================
+
+scenario          @zakkster/lite-signal  alien-signals preact-signals  solid-signals
+------------------------------------------------------------------------------------
+KAIROS                    201.8KB       2138.1KB        634.8KB       7521.4KB
+BROADCAST                  64.0KB         20.2KB       1220.5KB      28017.6KB
+DEEP CHAIN                  4.5KB       2659.0KB        254.3KB      13285.7KB
+MUX                        48.6KB       3930.3KB        313.0KB      20745.8KB
+DYNAMIC DAG              3802.4KB      62321.6KB       3815.6KB      18338.5KB
+SELECTIVE DAG            5561.0KB      22136.4KB      15841.5KB      21012.2KB
+LARGE WEB APP               1.4KB       2645.1KB             --             --
+WIDE DENSE                 28.6KB      28896.6KB             --             --
+SMALL SELECTIVE             1.4KB      50085.0KB             --             --
+
+Transient heap vs alien-signals (x less = lite allocates that many times less):
+scenario          @zakkster/lite-signal
+---------------------------------------
+KAIROS                      10.6x
+BROADCAST                   -3.2x
+DEEP CHAIN                 590.9x
+MUX                         80.9x
+DYNAMIC DAG                 16.4x
+SELECTIVE DAG                4.0x
+LARGE WEB APP             1889.4x
+WIDE DENSE                1010.4x
+SMALL SELECTIVE          35775.0x
+
+Heap wins vs alien-signals (scenarios where lite allocates less-or-equal):
+  @zakkster/lite-signal 8/9
