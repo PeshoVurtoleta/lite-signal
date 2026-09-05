@@ -53,6 +53,7 @@ for (const w of workloads) {
         const bad = (e.spreadPct !== undefined && e.spreadPct > MAX_SPREAD) ? `spread ${e.spreadPct}% > ${MAX_SPREAD}%`
                   : (e.captureSpanMinutes !== undefined && e.captureSpanMinutes > MAX_SPAN) ? `capture span ${e.captureSpanMinutes}min > ${MAX_SPAN}min (mixed sessions)`
                   : (s.reps !== undefined && s.reps < MIN_REPS) ? `only ${s.reps} rep(s) < ${MIN_REPS}`
+                  : (e.counterDrift !== undefined && e.counterDrift > 0) ? `exact counters differ across reps (${e.counterDrift} metric(s)) -- deterministic lane broken`
                   : null;
         if (bad) { console.error(`  ! NO EVIDENCE [${side} ${v} / ${w}]: ${bad}`); noEvidence++; }
     }

@@ -475,7 +475,7 @@ allocation against the JS heap?"
 
 ## Torture soaks (`bench/torture/`)
 
-`torture/` holds seventeen scenarios in two groups, a shared `helpers/` module and a
+`torture/` holds twenty-five scenarios in two groups, a shared `helpers/` module and a
 runner. **None are benchmarks.**
 
 ```bash
@@ -619,7 +619,6 @@ These three close that gap, each on a different axis:
 | `concurrent-storm.mjs` | Do the documented reentrancy and flush-ordering contracts hold? | The self-write exception (a self-cycle runs once, still propagates to other observers, stays responsive to later external writes), `A->B->A` tripping `CycleError`, nested batches flushing only at the outermost boundary, cascades draining in the *next* pass, writes and reads inside cleanup, dispose mid-flush, self-disposal, and a 200-write async storm. |
 | `dispose-torture.mjs` | Does `Symbol.dispose` stamp the right lifecycle objects, exclude callables, and dispose equivalently? | The 1.9.0 `using`/`Symbol.dispose` feature: the five stamped sites (registry, effect stop, signalBox, computedBox, createScope disposer), the deliberate *exclusion* of callable value handles (asserting the stamp's ABSENCE — `using s = signal()` must not dispose the node), per-site equivalence to the plain disposer, idempotence, prototype-stamping for boxes (no per-instance cost), and post-destroy non-resurrection. Skips on pre-1.9.0 / pre-Node-20. |
 | `cleanup-return-torture.mjs` | Does an effect's returned cleanup honour timing, compose order, and the self-dispose guard? | The 1.8.0 cleanup-return path: a returned cleanup runs before re-run and on dispose, composes AFTER imperative `onCleanup(fn)` in forward call order, is suppressed by the self-dispose gen-guard, and leaves computeds' function-values untouched. Flagship is a differential — `return fn` must be observationally identical to `onCleanup(fn)` as the last statement — across 400 seeds. Skips on pre-1.8.0. |
-| `introspect-torture.mjs` | Does the read-only introspection surface agree with the graph, and does the ABA guard hold? | `describe`/`nodeId`/`forEachSource`/`forEachObserver`/`forEachOwned`/`ownerOf`/`hasObservers`/`isTracking`/`observeObservers`: walk agreement against the reference dep set (incl. dynamic rewiring and a 300-seed fuzz), `hasObservers` transitions, `observeObservers` onConnect/onDisconnect (0→1 / 1→0 only), and the load-bearing ABA gen-stamp guard (a descriptor captured before dispose+recycle must resolve to nothing, never the new resident). Devtools substrate; invisible to every value/wakeup/work oracle. Runs 1.4.0+. |
 | `op-accounting.mjs` | Does the engine do exactly the work it should, counted from its own opcode lane? | Uses `onGraphMutation` (op 1-5) as ground truth instead of wall-clock: pins the op5 identity (op5 == computed recomputes + effect executions), equality cutoff, diamond glitch-freedom by recompute count, link add/remove balance across rewiring (leak signature), node balance across churn, laziness, and a 400-seed op5-vs-wrapper differential. Documents the 1.5.0 instrumentation gap (the clean short-circuit saves dep-comparisons, which no opcode emits — the analogue of the pre-1.13 missing mark lane). Runs 1.4.0+. |
 | `flush-torture.mjs` | Do the flush strategies converge, and does `.subscribe()` honour its contract under each? | The three `flushStrategy` modes (`eager`/`sab`/`manual`) and `r.flush()`, checked by a cross-strategy differential: the same graph and op sequence under all three must reach identical settled values once drained — they differ only in *when* draining happens. Plus per-strategy scheduling (eager flushes on `.set()`, sab only at batch exit, manual only on `flush()`), re-entrant/empty `flush()`, and `.subscribe()` on callable signals and computeds (immediate fire, equal-write suppression, untracked callback detected via the subscription's own re-fire, idempotent unsub, deferred delivery under manual). Skips on pre-1.7.0. |
 | `async-torture.mjs` | Do `watch` / `when` / `whenAsync` honour their contracts? | `watch`'s `Object.is` projection guard (a raw dep mutation with an unchanged projection must not fire), correct `oldValue`, `stop` from inside the callback, NaN-projection edges, plus a 300-seed differential storm against an independent shadow of the projected sequence; `when` fires exactly once then auto-disposes, synchronous when already truthy, cancellable, no re-arm; `whenAsync` resolves once, never rejects, never re-settles. |
@@ -697,7 +696,9 @@ rewiring at scale under an oracle, which belongs as a density knob on
 ### Version compatibility
 
 Every scenario is written against the 1.4.x public surface and runs unchanged on
-1.5.0-beta.7 and 1.6.0-alpha.3 — the whole suite was executed against all three.
+1.5.0-rc.1 and 1.6.0-alpha.3 — the whole suite was executed against all three.
+On the 1.5.0 engine the semantic group is 9 executed + 4 clean skips (13/13),
+and the soak group is 3/3.
 `box-torture.mjs` feature-detects `signalBox`/`computedBox` (1.5.0+) and
 `scope-torture.mjs` feature-detects `createScope` (1.6.0+); each reports a clean
 skip rather than failing to load on branches that predate it, so the runner

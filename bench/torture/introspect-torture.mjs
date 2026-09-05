@@ -1,18 +1,17 @@
 /**
- * bench/torture/introspect-torture.mjs — the read-only introspection surface (1.6.0).
+ * bench/torture/introspect-torture.mjs -- the read-only introspection surface.
  *
- * 1.6.0 (and the 1.2.1 keystone it builds on) exposes a diagnostic surface that
- * lite-devtools / lite-studio build on: describe, nodeId, hasObservers,
- * isTracking, forEachObserver, forEachSource, forEachOwned, ownerOf,
- * observeObservers. The whole suite exercised NONE of it. These are read-only, so
- * they cannot corrupt a value — which is exactly why a value oracle is blind to
- * them, and why a wrong hasObservers or a forEachSource that skips a link is a
- * silent correctness bug in every tool that trusts it.
+ * 1.5.0 exposes a diagnostic surface that lite-devtools / lite-studio build on:
+ * describe, nodeId, hasObservers, isTracking, forEachObserver, forEachSource,
+ * forEachOwned, ownerOf, observeObservers. These are read-only, so they cannot
+ * corrupt a value -- which is exactly why a value oracle is blind to them, and
+ * why a wrong hasObservers or a forEachSource that skips a link is a silent
+ * correctness bug in every tool that trusts it.
  *
  * Two properties carry the real risk, and both are load-bearing for devtools:
  *
  *   1. WALK AGREEMENT. forEachSource / forEachObserver are one view of the edge
- *      set; the propagation engine is another. They must agree — a source walk
+ *      set; the propagation engine is another. They must agree -- a source walk
  *      must visit exactly the deps a computed actually reads, and track dynamic
  *      rewiring (a computed that stops reading a dep must stop listing it). This
  *      file cross-checks the walk against BOTH the reference dep set AND the
@@ -21,17 +20,23 @@
  *   2. THE ABA GEN-STAMP GUARD. Descriptors are re-walkable (a describe()
  *      descriptor may be passed back into forEachObserver/forEachSource/ownerOf)
  *      and gen-stamped. A descriptor captured before a node is disposed and its
- *      slot recycled must NOT resolve to the new resident — describe/nodeId must
+ *      slot recycled must NOT resolve to the new resident -- describe/nodeId must
  *      return undefined and the walks must visit nothing. A broken guard here
  *      would let devtools read a recycled node's edges as if they were the old
  *      node's: a silent, confusing, data-corrupting bug.
  *
  * Also pinned: hasObservers transitions (acquires/loses its last observer),
- * isTracking inside vs outside a reactive body, ownerOf resolving the scope owner,
- * forEachOwned enumerating a scope's adopted children, and observeObservers
+ * isTracking inside vs outside a reactive body, ownerOf resolving an owner,
+ * forEachOwned enumerating an owner's adopted children, and observeObservers
  * firing on observer add/remove.
  *
- * Skips cleanly if the introspection surface is absent.
+ * PORT NOTE (1.5.0). 1.5.0's owner surface is getOwner/runWithOwner/createRoot --
+ * there is NO createScope. Section 7 (ownerOf/forEachOwned), which the 1.4.4
+ * source drove through createScope, is RE-TARGETED here to capture an owner via
+ * r.getOwner() INSIDE an r.effect(...) body (where currentOwner is the effect
+ * node) and adopt a child computed+effect under it. ownerOf(child) then resolves
+ * that effect and forEachOwned enumerates the adopted children -- the same
+ * property, exercised through the surface 1.5.0 actually ships. No section skips.
  *
  * Exit code: 0 iff every introspection contract held.
  *
@@ -53,19 +58,19 @@ const { createRegistry } = Signal;
              typeof r.hasObservers === "function" && typeof r.forEachObserver === "function";
     } catch { ok = false; }
     if (!ok) {
-        console.log("lite-signal introspect torture — SKIP: introspection surface not available");
-        process.exit(0);
+        console.log("lite-signal introspect torture -- SKIP: introspection surface not available");
+        process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
     }
 }
 
 const SEEDS = Number(process.env.INTROSPECT_SEEDS || 300);
-const R = createReport(`lite-signal introspect torture — describe/forEach*/hasObservers, ${SEEDS} seeds`);
+const R = createReport(`lite-signal introspect torture -- describe/forEach*/hasObservers, ${SEEDS} seeds`);
 const reg = () => createRegistry({ maxNodes: 4096, maxLinks: 16384, onCapacityExceeded: "grow" });
 
 function countSources(r, handle) { let n = 0; r.forEachSource(handle, () => n++); return n; }
 function countObservers(r, handle) { let n = 0; r.forEachObserver(handle, () => n++); return n; }
 
-/* ── 1. describe / nodeId basics ──────────────────────────────────────────── */
+/* -- 1. describe / nodeId basics -------------------------------------------- */
 {
     const r = reg();
     const a = r.signal(7);
@@ -83,7 +88,7 @@ function countObservers(r, handle) { let n = 0; r.forEachObserver(handle, () => 
     stop();
 }
 
-/* ── 2. Walk agreement: forEachSource / forEachObserver vs the real edge set ── */
+/* -- 2. Walk agreement: forEachSource / forEachObserver vs the real edge set -- */
 {
     const r = reg();
     const a = r.signal(1), b = r.signal(2), cc = r.signal(3);
@@ -99,7 +104,7 @@ function countObservers(r, handle) { let n = 0; r.forEachObserver(handle, () => 
     stop();
 }
 
-/* ── 3. Walk tracks DYNAMIC rewiring ──────────────────────────────────────── */
+/* -- 3. Walk tracks DYNAMIC rewiring ---------------------------------------- */
 {
     const r = reg();
     const cond = r.signal(true);
@@ -119,7 +124,7 @@ function countObservers(r, handle) { let n = 0; r.forEachObserver(handle, () => 
     stop();
 }
 
-/* ── 4. Cross-check the walk against the op-3/op-4 link lane ──────────────── */
+/* -- 4. Cross-check the walk against the op-3/op-4 link lane ---------------- */
 if (typeof reg().onGraphMutation === "function") {
     const r = reg();
     let net = 0;
@@ -136,7 +141,7 @@ if (typeof reg().onGraphMutation === "function") {
     stop();
 }
 
-/* ── 5. hasObservers transitions ──────────────────────────────────────────── */
+/* -- 5. hasObservers transitions -------------------------------------------- */
 {
     const r = reg();
     const s = r.signal(0);
@@ -156,7 +161,7 @@ if (typeof reg().onGraphMutation === "function") {
     R.eq("hasObservers", r.hasObservers(s), false, "s still reports observers after its only reader was disposed");
 }
 
-/* ── 6. isTracking inside vs outside ──────────────────────────────────────── */
+/* -- 6. isTracking inside vs outside ---------------------------------------- */
 {
     const r = reg();
     R.eq("isTracking", r.isTracking(), false, "isTracking() true at top level");
@@ -168,35 +173,45 @@ if (typeof reg().onGraphMutation === "function") {
     R.eq("isTracking", insideUntrack, false, "isTracking() true inside untrack()");
 }
 
-/* ── 7. ownerOf / forEachOwned on a scope ─────────────────────────────────── */
-if (typeof reg().createScope === "function" && typeof reg().forEachOwned === "function") {
+/* -- 7. ownerOf / forEachOwned via an EFFECT-body owner (1.5.0 re-target) ---- */
+// 1.5.0 has no createScope. The owner that adopts effects/computeds is any
+// live effect/computed node: inside an effect body currentOwner IS that effect,
+// so r.getOwner() there captures it and children created under it (directly, or
+// via runWithOwner) are adopted. Disposing the effect cascade-disposes them.
+if (typeof reg().forEachOwned === "function" && typeof reg().ownerOf === "function" &&
+    typeof reg().getOwner === "function") {
     const r = reg();
-    let innerC = null, innerE = null;
-    const dispose = r.createScope((d) => {
+    let innerC = null, innerE = null, capturedOwner;
+    // The outer effect body reads no signal, so it runs exactly once and never
+    // re-fires (which would rebuild and re-adopt the children mid-walk).
+    const ownerStop = r.effect(() => {
+        capturedOwner = r.getOwner();
         innerC = r.computed(() => 1);
         innerE = r.effect(() => { innerC(); });
-        return d;
     });
-    // forEachOwned on the scope owner should enumerate the adopted computed + effect.
-    // The owner handle is the disposer's node; ownerOf(innerC) should resolve to it.
-    const ownerDesc = typeof r.ownerOf === "function" ? r.ownerOf(innerC) : undefined;
-    R.ok("ownerOf", ownerDesc !== undefined, "ownerOf(adopted computed) did not resolve the scope owner");
+    R.ok("owner-capture", capturedOwner !== undefined,
+        "getOwner() inside an effect body returned no owner handle");
+
+    // ownerOf(child) should resolve the enclosing effect that adopted it.
+    const ownerDesc = r.ownerOf(innerC);
+    R.ok("ownerOf", ownerDesc !== undefined, "ownerOf(adopted computed) did not resolve the effect owner");
 
     if (ownerDesc !== undefined) {
         let owned = 0;
         r.forEachOwned(ownerDesc, () => owned++);
-        R.eq("forEachOwned", owned, 2, `forEachOwned enumerated ${owned} children, expected exactly 2 (computed+effect)`);
+        // The effect body deterministically adopts BOTH children (the inner
+        // computed and the inner effect), so the count is exactly 2 on 1.5.0.
+        R.eq("forEachOwned", owned, 2,
+            `forEachOwned enumerated ${owned} children, expected exactly 2 (adopted computed + effect)`);
     }
-    dispose();
+    ownerStop();   // cascade-dispose the adopted children
 }
 
-/* ── 8. observeObservers fires on observer add/remove ─────────────────────── */
+/* -- 8. observeObservers fires on observer add/remove ----------------------- */
 if (typeof reg().observeObservers === "function") {
     const r = reg();
     // The hooks fire on the 0->1 (onConnect) and 1->0 (onDisconnect) transitions,
-    // not on every individual add/remove. (An earlier draft guessed
-    // onObserverAdded/onObserverRemoved and failed against the real contract —
-    // the engine was right; the test had the wrong hook names.)
+    // not on every individual add/remove.
     const s = r.signal(0);
     let connects = 0, disconnects = 0;
     const un = r.observeObservers(s, {
@@ -216,7 +231,7 @@ if (typeof reg().observeObservers === "function") {
     R.ok("observeObservers", threw === null, `repeated unobserve threw: ${threw && threw.message}`);
 }
 
-/* ── 9. THE ABA GEN-STAMP GUARD (the load-bearing safety property) ────────── */
+/* -- 9. THE ABA GEN-STAMP GUARD (the load-bearing safety property) ---------- */
 {
     // A descriptor captured before dispose+recycle must not resolve to the new
     // resident. describe/nodeId must return undefined; the walks must visit nothing.
@@ -234,17 +249,17 @@ if (typeof reg().observeObservers === "function") {
     const recyc = [];
     for (let i = 0; i < 16; i++) recyc.push(r.signal(1000 + i));
 
-    R.eq("aba-guard", r.describe(stale), undefined, "re-describing a stale descriptor resolved a node — ABA guard failed");
-    R.eq("aba-guard", r.nodeId(stale), undefined, "nodeId on a stale descriptor returned an id — ABA guard failed");
+    R.eq("aba-guard", r.describe(stale), undefined, "re-describing a stale descriptor resolved a node -- ABA guard failed");
+    R.eq("aba-guard", r.nodeId(stale), undefined, "nodeId on a stale descriptor returned an id -- ABA guard failed");
     let walked = 0;
     let threw = null;
     try { r.forEachObserver(stale, () => walked++); r.forEachSource(stale, () => walked++); }
     catch (e) { threw = e; }
     R.ok("aba-guard", threw === null, `walking a stale descriptor threw: ${threw && threw.message}`);
-    R.eq("aba-guard", walked, 0, "walking a stale descriptor visited the recycled resident's edges — silent corruption");
+    R.eq("aba-guard", walked, 0, "walking a stale descriptor visited the recycled resident's edges -- silent corruption");
 }
 
-/* ── 10. Fuzz: forEachSource always matches the reference dep set ─────────── */
+/* -- 10. Fuzz: forEachSource always matches the reference dep set ----------- */
 
 function fuzzSeed(seed) {
     const rnd = mulberry32(seed);
@@ -253,12 +268,6 @@ function fuzzSeed(seed) {
     const leaves = Array.from({ length: L }, (_, i) => r.signal(i));
     // A computed whose dep set is steered by a selector signal, so it rewires.
     const sel = r.signal(0);
-    const picks = () => {
-        const k = 2 + (sel.peek() % 3);
-        const set = [];
-        for (let i = 0; i < k; i++) set.push(leaves[(sel.peek() + i) % L]);
-        return set;
-    };
     const c = r.computed(() => {
         const s = sel();
         const k = 2 + (s % 3);

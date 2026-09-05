@@ -48,7 +48,7 @@ const { createRegistry } = Signal;
     } catch { ok = false; }
     if (!ok) {
         console.log("lite-signal flush torture — SKIP: flushStrategy/flush() require 1.7.0+");
-        process.exit(0);
+        process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
     }
 }
 
