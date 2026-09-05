@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>@zakkster/lite-signal — quickstart</title>
+    <style>
+        :root {
+            --bg: #0e0e11;
+            --panel: #18181b;
+            --panel-2: #1f1f23;
+            --border: #27272a;
+            --border-soft: #1c1c1f;
+            --text: #e4e4e7;
+            --muted: #71717a;
+            --muted-bright: #a1a1aa;
+            --accent: #5fe39f;
+            --accent-dim: rgba(95, 227, 159, 0.18);
+            --accent-glow: rgba(95, 227, 159, 0.30);
+            --batch: #7dd3fc;
+            --batch-dim: rgba(125, 211, 252, 0.20);
+            --batch-glow: rgba(125, 211, 252, 0.32);
+            --owner: #c4b5fd;
+            --owner-dim: rgba(196, 181, 253, 0.20);
+            --owner-glow: rgba(196, 181, 253, 0.32);
+            --revert: #fbcfe8;
+            --revert-dim: rgba(251, 207, 232, 0.20);
+            --revert-glow: rgba(251, 207, 232, 0.32);
+            --warn: #f5b942;
+            --danger: #f87171;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: ui-sans-serif, system-ui, -apple-system, "Inter", sans-serif;
+            margin: 0;
+            padding: 40px 20px 80px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-feature-settings: "ss01", "cv11";
+        }
+
+        .container {
+            width: 100%;
+            max-width: 960px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* ── Header ─────────────────────────────────────────────── */
+        .header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-soft);
+        }
+
+        .header .title { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+        .header .title .dot { color: var(--accent); margin-right: 6px; }
+
+        .header .topology {
+            font-family: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .header .topology em { color: var(--accent); font-style: normal; }
+
+        /* ── Telemetry strip ────────────────────────────────────── */
+        .telemetry {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+            gap: 1px;
+            background: var(--border-soft);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .tele-cell {
+            background: var(--panel);
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 56px;
+        }
+
+        .tele-cell .k {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+        }
+
+        .tele-cell .v {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 17px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+        }
+
+        .tele-cell .v.accent  { color: var(--accent); }
+        .tele-cell .v.batch   { color: var(--batch); }
+        .tele-cell .v.owner   { color: var(--owner); }
+        .tele-cell .v.revert  { color: var(--revert); }
+        .tele-cell .v.warn    { color: var(--warn); }
+
+        /* ── Graph viz ──────────────────────────────────────────── */
+        .graph-wrap {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 18px 18px 14px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .graph-wrap .axes {
+            display: flex;
+            justify-content: space-between;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 10px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 10px;
+            padding: 0 8px;
+        }
+
+        .graph-svg { width: 100%; height: 280px; display: block; }
+
+        .edge {
+            stroke: rgba(113, 113, 122, 0.35);
+            stroke-width: 1;
+            fill: none;
+            transition: stroke 200ms, stroke-width 200ms, opacity 200ms;
+        }
+        .edge.fire-direct  { stroke: var(--accent); stroke-width: 1.5; opacity: 1; }
+        .edge.fire-batch   { stroke: var(--batch);  stroke-width: 1.5; opacity: 1; }
+        .edge.fire-owner   { stroke: var(--owner);  stroke-width: 1.5; opacity: 1; }
+        .edge.fire-revert  { stroke: var(--revert); stroke-width: 1.5; opacity: 0.6; stroke-dasharray: 4 3; }
+
+        .node { cursor: default; transition: filter 200ms; }
+
+        .node-shape {
+            fill: var(--panel-2);
+            stroke: var(--muted);
+            stroke-width: 1.2;
+            transition: fill 220ms, stroke 220ms, transform 220ms;
+            transform-origin: center;
+            transform-box: fill-box;
+        }
+
+        .node-label {
+            fill: var(--muted-bright);
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 9px;
+            text-anchor: middle;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        .node.fire-direct .node-shape { fill: var(--accent); stroke: var(--accent); transform: scale(1.18); }
+        .node.fire-batch  .node-shape { fill: var(--batch);  stroke: var(--batch);  transform: scale(1.18); }
+        .node.fire-owner  .node-shape { fill: var(--owner);  stroke: var(--owner);  transform: scale(1.18); }
+        .node.fire-revert .node-shape { fill: var(--revert); stroke: var(--revert); transform: scale(1.10); opacity: 0.55; }
+
+        .node.dead .node-shape  { stroke: var(--muted); stroke-dasharray: 3 2; opacity: 0.35; }
+        .node.dead .node-label  { opacity: 0.4; }
+
+        .node.is-child .node-shape { stroke: var(--owner); }
+
+        /* ── Controls ───────────────────────────────────────────── */
+        .controls {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .control-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .control-row .label {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 11px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            min-width: 70px;
+        }
+
+        .control-row .note {
+            color: var(--muted);
+            font-size: 11px;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            margin-left: auto;
+            opacity: 0.85;
+            text-align: right;
+        }
+
+        .counter-display {
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--accent);
+            min-width: 60px;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+
+        button {
+            background: var(--panel-2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 7px 14px;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+        button:hover:not(:disabled)  { background: #2a2a2f; border-color: #3a3a40; }
+        button:active:not(:disabled) { transform: translateY(1px); }
+        button:disabled              { opacity: 0.4; cursor: not-allowed; }
+
+        button.primary { background: var(--accent); border-color: var(--accent); color: #0a0a0c; font-weight: 600; }
+        button.primary:hover:not(:disabled) { background: #6deeac; border-color: #6deeac; }
+
+        button.batch { background: transparent; border-color: var(--batch); color: var(--batch); font-weight: 600; }
+        button.batch:hover:not(:disabled) { background: var(--batch-dim); }
+
+        button.owner { background: transparent; border-color: var(--owner); color: var(--owner); font-weight: 600; }
+        button.owner:hover:not(:disabled) { background: var(--owner-dim); }
+
+        button.revert { background: transparent; border-color: var(--revert); color: var(--revert); font-weight: 600; }
+        button.revert:hover:not(:disabled) { background: var(--revert-dim); }
+
+        button.warn   { background: transparent; border-color: var(--warn);   color: var(--warn); }
+        button.warn:hover:not(:disabled)   { background: rgba(245, 185, 66, 0.18); }
+
+        button.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+        button.danger:hover:not(:disabled) { background: rgba(248, 113, 113, 0.18); }
+
+        button.toggled { background: var(--accent); border-color: var(--accent); color: #0a0a0c; font-weight: 600; }
+
+        /* ── Grid ───────────────────────────────────────────────── */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+            gap: 8px;
+        }
+
+        .box {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 10px;
+            text-align: center;
+            transition: border-color 120ms, box-shadow 120ms, background 120ms;
+        }
+
+        .box .k {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+
+        .box .v {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 15px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+        }
+
+        .box.flash       { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-dim), 0 0 16px var(--accent-glow); }
+        .box.flash-batch { border-color: var(--batch);  box-shadow: 0 0 0 1px var(--batch-dim),  0 0 16px var(--batch-glow); }
+        .box.dead        { opacity: 0.32; border-style: dashed; }
+        .box.dead .v     { color: var(--muted); }
+
+        /* ── End states ─────────────────────────────────────────── */
+        .destroyed {
+            display: none;
+            padding: 28px 20px;
+            text-align: center;
+            border: 1px dashed var(--danger);
+            border-radius: 10px;
+            color: var(--danger);
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 13px;
+            letter-spacing: 0.04em;
+        }
+        .destroyed.active { display: block; }
+        .destroyed strong { display: block; font-size: 14px; margin-bottom: 6px; letter-spacing: 0.06em; }
+        .destroyed em     { color: var(--muted); font-style: normal; font-size: 11px; }
+
+        /* ── Footer ─────────────────────────────────────────────── */
+        .footnote {
+            font-size: 11px;
+            color: var(--muted);
+            text-align: center;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            letter-spacing: 0.04em;
+        }
+
+        /* ── Toast / status banner ──────────────────────────────── */
+        .toast {
+            position: fixed;
+            left: 50%;
+            top: 24px;
+            transform: translate(-50%, -20px);
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 12px;
+            color: var(--text);
+            opacity: 0;
+            transition: transform 220ms, opacity 220ms;
+            pointer-events: none;
+            z-index: 50;
+            max-width: 80vw;
+        }
+        .toast.show { opacity: 1; transform: translate(-50%, 0); }
+        .toast.revert { border-color: var(--revert); color: var(--revert); }
+        .toast.owner  { border-color: var(--owner);  color: var(--owner); }
+        .toast.batch  { border-color: var(--batch);  color: var(--batch); }
+        .toast.accent { border-color: var(--accent); color: var(--accent); }
+    </style>
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+
+<div class="container">
+
+    <!-- Header -->
+    <div class="header">
+        <div class="title"><span class="dot">◐</span>@zakkster/lite-signal — quickstart</div>
+        <div class="topology">
+            <em id="topo-sig">0</em> signals · <em id="topo-comp">0</em> computeds · <em id="topo-eff">0</em> effects
+        </div>
+    </div>
+
+    <!-- Telemetry -->
+    <div class="telemetry" role="status" aria-live="polite">
+        <div class="tele-cell"><div class="k">active nodes</div>  <div class="v accent" id="t-nodes">0</div></div>
+        <div class="tele-cell"><div class="k">active links</div>  <div class="v accent" id="t-links">0</div></div>
+        <div class="tele-cell"><div class="k">effect runs</div>   <div class="v batch"  id="t-ops">0</div></div>
+        <div class="tele-cell"><div class="k">ops/sec</div>       <div class="v"        id="t-rate">0</div></div>
+        <div class="tele-cell"><div class="k">heap Δ</div>        <div class="v"        id="t-heap">— KB</div></div>
+        <div class="tele-cell"><div class="k">saved reruns</div>  <div class="v revert" id="t-saved">0</div></div>
+        <div class="tele-cell"><div class="k">owned kids</div>    <div class="v owner"  id="t-kids">0</div></div>
+        <div class="tele-cell"><div class="k">last batch</div>    <div class="v warn"   id="t-bench">— ms</div></div>
+    </div>
+
+    <!-- Graph viz -->
+    <div class="graph-wrap">
+        <div class="axes">
+            <span>● signal</span>
+            <span>■ computed</span>
+            <span>▶ effect</span>
+        </div>
+        <svg class="graph-svg" id="graph" viewBox="0 0 880 280" xmlns="http://www.w3.org/2000/svg" aria-label="live reactive graph">
+            <g id="edges"></g>
+            <g id="nodes"></g>
+        </svg>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+        <div class="control-row">
+            <div class="label">drive</div>
+            <button id="btn-dec" aria-label="decrement">−1</button>
+            <div class="counter-display" id="main-counter" aria-live="polite">0</div>
+            <button id="btn-inc" class="primary" aria-label="increment">+1</button>
+            <button id="btn-batch" class="batch">batch ×4</button>
+            <button id="btn-auto"  class="batch">auto-drive 3s</button>
+            <div class="note">+1 fires every effect · batch coalesces · auto-drive runs at 60 Hz</div>
+        </div>
+
+        <div class="control-row">
+            <div class="label">v1.2</div>
+            <button id="btn-revert"  class="revert">no-op batch</button>
+            <button id="btn-nest"    class="owner">spawn 5 nested</button>
+            <button id="btn-cascade" class="owner">re-run parent</button>
+            <div class="note">no-op batch: set 99 then back → 0 effect runs · nested: owner tree auto-disposes children</div>
+        </div>
+
+        <div class="control-row">
+            <div class="label">lifecycle</div>
+            <button id="btn-dispose-first" class="warn">dispose first effect</button>
+            <button id="btn-recreate">recreate</button>
+            <button id="btn-destroy"  class="danger">destroy registry</button>
+            <div class="note">dispose() returns a node to the pool · destroy() resets everything</div>
+        </div>
+    </div>
+
+    <!-- End-state overlay -->
+    <div class="destroyed" id="destroyed-msg">
+        <strong>REGISTRY DESTROYED</strong>
+        <em>all pool slots returned · stats zeroed · press "recreate" to rebuild</em>
+    </div>
+
+    <!-- Grid -->
+    <div class="grid" id="grid" aria-label="reactive output grid"></div>
+
+    <div class="footnote">v1.2.0 · zero-GC reactive graph · MIT</div>
+
+</div>
+
+<script type="module">
+    import {createRegistry} from '../Signal.js';
+
+    /* ──────────────────────────────────────────────────────────────────────
+       TOPOLOGY (chosen to be GRAPH-VIEWABLE — every node is in the SVG).
+
+         1 counter + 4 batch signals    →    5 computeds    →    5 effects
+                                                                  └─ each effect drives 6 boxes (30 total)
+         +1 counter-readout effect (drives the centre number, not graphed)
+
+       The SVG mirrors the reactive wiring 1:1. The pulses you see ARE the
+       engine firing — driven by real subscribe() callbacks on the signals
+       and computeds, and from inside the effect bodies themselves. No fake
+       animation. The viz pulses cost 5+5+1 = 11 extra effects (one
+       subscribe per signal + per computed + per effect-readout), which is
+       why "effects" in stats reads higher than the topology line above.
+       ────────────────────────────────────────────────────────────────────── */
+
+    const N_BATCH = 4;
+    const N_COMP  = 5;
+    const N_EFF   = 5;
+    const BOXES_PER_EFF = 6;
+    const N_BOX   = N_EFF * BOXES_PER_EFF;
+
+    // ─── DOM scaffolding ─────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const grid = $('grid');
+    const counterEl = $('main-counter');
+    const destroyedMsg = $('destroyed-msg');
+    const toastEl = $('toast');
+
+    /** @type {{el: HTMLElement, parent: HTMLElement}[]} */
+    const boxes = [];
+    for (let i = 0; i < N_BOX; i++) {
+        const parent = document.createElement('div');
+        parent.className = 'box';
+        parent.innerHTML = `<div class="k">comp ${i + 1}</div><div class="v">0</div>`;
+        grid.appendChild(parent);
+        boxes.push({el: parent.querySelector('.v'), parent});
+    }
+
+    // ─── SVG topology helpers ────────────────────────────────────────────
+    const SVG_NS  = 'http://www.w3.org/2000/svg';
+    const svgRoot = $('graph');
+    const edgesG  = $('edges');
+    const nodesG  = $('nodes');
+
+    const LAYOUT = {
+        signals:   {x: 90,  yStart: 30, yStep: 42},
+        computeds: {x: 440, yStart: 50, yStep: 38},
+        effects:   {x: 790, yStart: 50, yStep: 38},
+    };
+
+    const vizNodes = new Map();   // id -> {el, kind, x, y}
+    const vizEdges = new Map();   // 'from→to' -> path element
+
+    function createNode(id, kind, x, y, label) {
+        const g = document.createElementNS(SVG_NS, 'g');
+        g.setAttribute('class', `node ${kind}`);
+        g.setAttribute('transform', `translate(${x},${y})`);
+        g.dataset.id = id;
+
+        let shape;
+        if (kind === 'signal') {
+            shape = document.createElementNS(SVG_NS, 'circle');
+            shape.setAttribute('r', 9);
+        } else if (kind === 'computed') {
+            shape = document.createElementNS(SVG_NS, 'rect');
+            shape.setAttribute('x', -9); shape.setAttribute('y', -9);
+            shape.setAttribute('width', 18); shape.setAttribute('height', 18);
+            shape.setAttribute('rx', 3);
+        } else {
+            shape = document.createElementNS(SVG_NS, 'polygon');
+            shape.setAttribute('points', '-9,-9 11,0 -9,9');
+        }
+        shape.setAttribute('class', 'node-shape');
+        g.appendChild(shape);
+
+        const text = document.createElementNS(SVG_NS, 'text');
+        text.setAttribute('class', 'node-label');
+        text.setAttribute('y', kind === 'computed' ? 25 : 23);
+        text.textContent = label;
+        g.appendChild(text);
+
+        nodesG.appendChild(g);
+        vizNodes.set(id, {el: g, kind, x, y});
+        return g;
+    }
+
+    function createEdge(fromId, toId) {
+        const a = vizNodes.get(fromId);
+        const b = vizNodes.get(toId);
+        if (!a || !b) return;
+        const path = document.createElementNS(SVG_NS, 'path');
+        const dx = (b.x - a.x) * 0.45;
+        const d = `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`;
+        path.setAttribute('d', d);
+        path.setAttribute('class', 'edge');
+        edgesG.appendChild(path);
+        vizEdges.set(fromId + '→' + toId, path);
+    }
+
+    function removeNode(id) {
+        const n = vizNodes.get(id);
+        if (n) { n.el.remove(); vizNodes.delete(id); }
+        for (const [key, path] of vizEdges) {
+            if (key.startsWith(id + '→') || key.endsWith('→' + id)) {
+                path.remove();
+                vizEdges.delete(key);
+            }
+        }
+    }
+
+    const PULSE_MS = 280;
+    function pulseNode(id, kind) {
+        const n = vizNodes.get(id);
+        if (!n) return;
+        const cls = 'fire-' + kind;
+        n.el.classList.add(cls);
+        setTimeout(() => n.el.classList.remove(cls), PULSE_MS);
+    }
+    function pulseEdgesFrom(fromId, kind) {
+        for (const [key, path] of vizEdges) {
+            if (key.startsWith(fromId + '→')) {
+                const cls = 'fire-' + kind;
+                path.classList.add(cls);
+                setTimeout(() => path.classList.remove(cls), PULSE_MS);
+            }
+        }
+    }
+
+    /* ── Reactive graph (rebuildable) ──────────────────────────────────── */
+    let r = null;
+    let counter, batchSigs, computeds, effectHandles, counterReadoutEff;
+    let pulseSubs = [];          // viz-side subscribe handles, disposed on rebuild
+    let nestedParent = null;
+    let nestedChildren = [];
+
+    // The current "kind" of fire — set by the user action that triggered it,
+    // then every pulse painted by signal subscribe / effect body picks it up.
+    let fireMode = 'direct';
+
+    let effectRuns = 0;
+    let lastBatchMs = 0;
+    let savedReruns = 0;
+    let batching = false;
+
+    // ops/sec rolling 1s window — parallel ring buffer, zero alloc per push.
+    // 128 slots is ~2 s at 60 Hz; one full revolution overwrites stale entries
+    // without ever allocating. tBuf / runsBuf are typed arrays so the per-cell
+    // write doesn't churn the boxed-number representation either.
+    const RATE_CAP = 128;
+    const tBuf = new Float64Array(RATE_CAP);
+    const runsBuf = new Float64Array(RATE_CAP);
+    let rateHead = 0;          // next write index (mod RATE_CAP)
+    let rateCount = 0;         // live entry count, max RATE_CAP
+    function pushRate(now) {
+        tBuf[rateHead] = now;
+        runsBuf[rateHead] = effectRuns;
+        rateHead = (rateHead + 1) % RATE_CAP;
+        if (rateCount < RATE_CAP) rateCount++;
+    }
+    /** Earliest entry within the rolling 1s window, as a {t, runs} window pair.
+     *  Returns -1 for the oldest index if none qualifies. Caller reads tBuf[idx]
+     *  and runsBuf[idx] directly — no object allocation crosses the boundary. */
+    function oldestInWindow(now, windowMs) {
+        const cutoff = now - windowMs;
+        // Walk backwards from the most-recent until we find the oldest still in window
+        let oldest = -1;
+        for (let i = 0; i < rateCount; i++) {
+            const idx = (rateHead - 1 - i + RATE_CAP) % RATE_CAP;
+            if (tBuf[idx] < cutoff) break;
+            oldest = idx;
+        }
+        return oldest;
+    }
+
+    let heapBaseline = mem();
+    function mem() { return (performance.memory && performance.memory.usedJSHeapSize) || 0; }
+
+    // Single allocations for the 60Hz hot paths.
+    // Intl.NumberFormat is heavy to construct; reusing one instance lets V8
+    // intern the format-cache. The `incOne` closure replaces the per-frame
+    // `c => c + 1` and `v => v + 1` that update() needs.
+    const RATE_FMT = new Intl.NumberFormat(undefined, {maximumFractionDigits: 0});
+    const incOne = (n) => n + 1;
+
+    function build() {
+        r = createRegistry();
+        nestedParent = null;
+        nestedChildren = [];
+
+        nodesG.innerHTML = '';
+        edgesG.innerHTML = '';
+        vizNodes.clear();
+        vizEdges.clear();
+
+        // ─── Real reactive graph ──────────────────────────────────────────
+        counter   = r.signal(0);
+        batchSigs = Array.from({length: N_BATCH}, () => r.signal(1));
+
+        computeds = Array.from({length: N_COMP}, (_, i) =>
+            r.computed(() => counter() * (i + 1) + batchSigs[i % N_BATCH]())
+        );
+
+        effectHandles = [];
+        for (let i = 0; i < N_EFF; i++) {
+            const effIdx = i;
+            const base   = effIdx * BOXES_PER_EFF;
+            effectHandles.push(r.effect(() => {
+                effectRuns++;
+                const v = computeds[effIdx]();
+                for (let j = 0; j < BOXES_PER_EFF; j++) {
+                    boxes[base + j].el.textContent = v + j;
+                }
+                pulseNode('eff' + effIdx, fireMode);
+                flashEffectBoxes(base, batching);
+            }));
+        }
+
+        counterReadoutEff = r.effect(() => {
+            effectRuns++;
+            counterEl.textContent = counter();
+        });
+
+        // ─── SVG topology mirrors the reactive wiring 1:1 ─────────────────
+        const sigLay = LAYOUT.signals;
+        createNode('counter', 'signal', sigLay.x, sigLay.yStart, 'counter');
+        for (let i = 0; i < N_BATCH; i++) {
+            createNode('sig' + i, 'signal', sigLay.x, sigLay.yStart + (i + 1) * sigLay.yStep, 'sig ' + (i + 1));
+        }
+        const compLay = LAYOUT.computeds;
+        for (let i = 0; i < N_COMP; i++) {
+            createNode('comp' + i, 'computed', compLay.x, compLay.yStart + i * compLay.yStep, 'c' + (i + 1));
+        }
+        const effLay = LAYOUT.effects;
+        for (let i = 0; i < N_EFF; i++) {
+            createNode('eff' + i, 'effect', effLay.x, effLay.yStart + i * effLay.yStep, 'eff ' + (i + 1));
+        }
+
+        for (let i = 0; i < N_COMP; i++) {
+            createEdge('counter', 'comp' + i);
+            createEdge('sig' + (i % N_BATCH), 'comp' + i);
+            createEdge('comp' + i, 'eff' + i);
+        }
+
+        // Viz-side pulses come from real subscribe handles. subscribe() fires
+        // once immediately with the current value — we suppress that single
+        // initial fire so the graph doesn't light up at boot.
+        pulseSubs = [];
+        const skipFirst = new WeakMap();
+        const sub = (handle, vizId) => {
+            skipFirst.set(handle, true);
+            pulseSubs.push(handle.subscribe(() => {
+                if (skipFirst.get(handle)) { skipFirst.set(handle, false); return; }
+                pulseNode(vizId, fireMode);
+                pulseEdgesFrom(vizId, fireMode);
+            }));
+        };
+        sub(counter, 'counter');
+        for (let i = 0; i < N_BATCH; i++) sub(batchSigs[i], 'sig' + i);
+        for (let i = 0; i < N_COMP;  i++) sub(computeds[i], 'comp' + i);
+
+        for (const {parent} of boxes) parent.classList.remove('dead');
+        destroyedMsg.classList.remove('active');
+        grid.style.display = '';
+        setControlsEnabled(true);
+
+        heapBaseline = mem();
+        renderTopology();
+    }
+
+    function flashEffectBoxes(base, batchFlash) {
+        const cls = batchFlash ? 'flash-batch' : 'flash';
+        for (let j = 0; j < BOXES_PER_EFF; j++) {
+            const p = boxes[base + j].parent;
+            p.classList.add(cls);
+            setTimeout(() => p.classList.remove(cls), 180);
+        }
+    }
+
+    function renderTopology() {
+        $('topo-sig').textContent  = 1 + N_BATCH;
+        $('topo-comp').textContent = N_COMP;
+        $('topo-eff').textContent  = N_EFF + 1 + nestedChildren.length + (nestedParent ? 1 : 0);
+    }
+
+    /* ── Toast ──────────────────────────────────────────────────────── */
+    let toastTimer = 0;
+    function showToast(text, kind = 'accent', ms = 1600) {
+        toastEl.textContent = text;
+        toastEl.className = 'toast show ' + kind;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { toastEl.className = 'toast ' + kind; }, ms);
+    }
+
+    /* ── drive ──────────────────────────────────────────────────────── */
+    const decOne = (n) => n - 1;
+    function batchPlus1000Body() {
+        for (let i = 0; i < N_BATCH; i++) batchSigs[i].update(addThousand);
+    }
+    const addThousand = (v) => v + 1000;
+
+    $('btn-inc').addEventListener('click', () => {
+        if (!r) return;
+        fireMode = 'direct';
+        counter.update(incOne);
+    });
+    $('btn-dec').addEventListener('click', () => {
+        if (!r) return;
+        fireMode = 'direct';
+        counter.update(decOne);
+    });
+
+    $('btn-batch').addEventListener('click', () => {
+        if (!r) return;
+        fireMode = 'batch';
+        batching = true;
+        const t0 = performance.now();
+        r.batch(batchPlus1000Body);
+        lastBatchMs = performance.now() - t0;
+        batching = false;
+        showToast(`batch ×${N_BATCH}: ${N_BATCH} writes → 1 flush, only the affected effects re-ran`, 'batch');
+    });
+
+    /* ── auto-drive (60 Hz × 3s) ────────────────────────────────────── */
+    let autoTimer = 0;
+    let autoEndAt = 0;
+    // Hoisted batch body — same closure every frame, so the 60 Hz ticker is
+    // genuinely allocation-free in steady state. Math.random() returns a
+    // primitive (no allocation) and r.batch / signal.update reuse pool slots.
+    function autoTickBody() {
+        counter.update(incOne);
+        if (Math.random() < 0.25) {
+            batchSigs[(Math.random() * N_BATCH) | 0].update(incOne);
+        }
+    }
+    function tickAutoDrive() {
+        if (!r) return;
+        if (performance.now() >= autoEndAt) {
+            autoTimer = 0;
+            $('btn-auto').classList.remove('toggled');
+            $('btn-auto').textContent = 'auto-drive 3s';
+            showToast('auto-drive done · note heap Δ stayed near zero', 'accent', 2200);
+            return;
+        }
+        fireMode = 'direct';
+        r.batch(autoTickBody);
+        autoTimer = requestAnimationFrame(tickAutoDrive);
+    }
+    $('btn-auto').addEventListener('click', () => {
+        if (!r) return;
+        if (autoTimer) {
+            cancelAnimationFrame(autoTimer);
+            autoTimer = 0;
+            $('btn-auto').classList.remove('toggled');
+            $('btn-auto').textContent = 'auto-drive 3s';
+            return;
+        }
+        autoEndAt = performance.now() + 3000;
+        $('btn-auto').classList.add('toggled');
+        $('btn-auto').textContent = 'stop auto-drive';
+        showToast('auto-driving at 60 Hz for 3 s', 'accent');
+        autoTimer = requestAnimationFrame(tickAutoDrive);
+    });
+
+    /* ── v1.2: no-op batch (pre-batch revert) ──────────────────────── */
+    $('btn-revert').addEventListener('click', () => {
+        if (!r) return;
+        const beforeRuns = effectRuns;
+        const orig = batchSigs[0]();
+        fireMode = 'revert';
+
+        // Paint the "tried to write, then reverted" path
+        pulseNode('sig0', 'revert');
+        pulseEdgesFrom('sig0', 'revert');
+
+        r.batch(() => {
+            batchSigs[0].set(99);
+            batchSigs[0].set(orig);   // engine detects revert, suppresses propagation
+        });
+
+        const wasted = effectRuns - beforeRuns;
+        // Without v1.2's pre-batch revert, this no-op pair would have caused
+        // the effect that observes sig0 to re-run once. We save that.
+        savedReruns += (1 - wasted);
+        if (wasted === 0) {
+            showToast('pre-batch revert: 0 effect re-runs · 1 saved', 'revert');
+        } else {
+            showToast(`unexpected: ${wasted} effect ran during revert`, 'warn');
+        }
+    });
+
+    /* ── v1.2: owner-tree spawn / cascade-dispose ──────────────────── */
+    const OWNER_X = 790, OWNER_Y = 230;
+    function clearNestedViz() {
+        for (let i = 0; i < nestedChildren.length; i++) removeNode('kid' + i);
+        if (vizNodes.has('owner')) removeNode('owner');
+    }
+
+    $('btn-nest').addEventListener('click', () => {
+        if (!r) return;
+        if (nestedParent) {
+            // Dispose the existing parent first — clean repeat
+            nestedParent();
+            nestedParent = null;
+            nestedChildren = [];
+            clearNestedViz();
+        }
+
+        fireMode = 'owner';
+
+        // SVG owner + 5 child placeholders
+        createNode('owner', 'effect', OWNER_X, OWNER_Y, 'owner');
+        vizNodes.get('owner').el.classList.add('is-child');
+        createEdge('counter', 'owner');
+        for (let i = 0; i < 5; i++) {
+            createNode('kid' + i, 'effect', OWNER_X - 60 - i * 24, OWNER_Y + 22, '');
+            vizNodes.get('kid' + i).el.classList.add('is-child');
+        }
+
+        // Real parent effect that creates 5 nested children. Reading counter()
+        // makes it re-run on counter change — which is the "cascade" demo.
+        nestedParent = r.effect(() => {
+            counter();
+            nestedChildren = [];
+            for (let i = 0; i < 5; i++) {
+                const idx = i;
+                nestedChildren.push(r.effect(() => {
+                    batchSigs[idx % N_BATCH]();
+                    pulseNode('kid' + idx, 'owner');
+                }));
+            }
+            pulseNode('owner', 'owner');
+        });
+
+        renderTopology();
+        showToast('owner effect created · 5 nested children adopted (watch the owned-kids cell)', 'owner', 2200);
+    });
+
+    $('btn-cascade').addEventListener('click', () => {
+        if (!r || !nestedParent) {
+            showToast('spawn nested first', 'warn');
+            return;
+        }
+        const before = r.stats().effects;
+        fireMode = 'owner';
+
+        // Trigger the parent's dep so it re-runs: the owner cascade disposes
+        // the previous 5 children, then the new run creates 5 fresh ones.
+        counter.update(c => c + 1);
+
+        const after = r.stats().effects;
+        // Net should be zero (5 disposed + 5 created during the same run).
+        showToast(`parent re-ran · old 5 children disposed, 5 new created (Δeffects = ${after - before})`, 'owner', 2200);
+    });
+
+    /* ── lifecycle ──────────────────────────────────────────────────── */
+    $('btn-dispose-first').addEventListener('click', () => {
+        if (!r || !effectHandles[0]) return;
+        r.dispose(effectHandles[0]);
+        effectHandles[0] = null;
+        const eff = vizNodes.get('eff0');
+        if (eff) eff.el.classList.add('dead');
+        for (let j = 0; j < BOXES_PER_EFF; j++) boxes[j].parent.classList.add('dead');
+        showToast('first effect disposed · its 6 boxes are frozen, its pool slot returned', 'warn');
+    });
+
+    $('btn-recreate').addEventListener('click', () => {
+        if (r) {
+            for (const s of pulseSubs) s();
+            r.destroy();
+        }
+        effectRuns = 0;
+        lastBatchMs = 0;
+        savedReruns = 0;
+        rateHead = 0;
+        rateCount = 0;
+        nestedChildren = [];
+        nestedParent = null;
+        build();
+        showToast('registry rebuilt', 'accent');
+    });
+
+    $('btn-destroy').addEventListener('click', () => {
+        if (!r) return;
+        for (const s of pulseSubs) s();
+        r.destroy();
+        r = null;
+        nestedParent = null;
+        nestedChildren = [];
+        grid.style.display = 'none';
+        destroyedMsg.classList.add('active');
+        setControlsEnabled(false);
+        renderTelemetry(true);
+        renderTopology();
+        showToast('registry destroyed · every pool slot returned', 'warn', 2400);
+    });
+
+    function setControlsEnabled(on) {
+        const ids = ['btn-inc','btn-dec','btn-batch','btn-auto','btn-revert','btn-nest','btn-cascade','btn-dispose-first','btn-destroy'];
+        for (const id of ids) $(id).disabled = !on;
+        $('btn-recreate').disabled = false;
+    }
+
+    /* ── Telemetry loop ─────────────────────────────────────────────── */
+    const tel = {
+        nodes: $('t-nodes'), links: $('t-links'),
+        ops:   $('t-ops'),   rate:  $('t-rate'),
+        heap:  $('t-heap'),  saved: $('t-saved'),
+        kids:  $('t-kids'),  bench: $('t-bench'),
+    };
+    const telLast = {
+        nodes: -1, links: -1, ops: -1, rateInt: -1,
+        heapKBint: 0x7fffffff, saved: -1, kids: -1, benchMs: -1,
+        heapAvail: -2,        // -2 = unset, 0 = n/a printed, 1 = numeric printed
+    };
+    const ZERO = {activeNodes: 0, activeLinks: 0};
+
+    function writeText(node, key, value) {
+        if (telLast[key] !== value) { telLast[key] = value; node.textContent = value; }
+    }
+
+    function renderTelemetry(forceZero) {
+        const now = performance.now();
+        const st = (r && !forceZero) ? r.stats() : ZERO;
+
+        writeText(tel.nodes, 'nodes', st.activeNodes);
+        writeText(tel.links, 'links', st.activeLinks);
+        writeText(tel.ops,   'ops',   effectRuns);
+        writeText(tel.saved, 'saved', savedReruns);
+
+        pushRate(now);
+        let rate = 0;
+        if (rateCount >= 2) {
+            // Use the entire buffer span (newest minus oldest in window) — zero alloc.
+            const newest = (rateHead - 1 + RATE_CAP) % RATE_CAP;
+            const oldestIdx = oldestInWindow(now, 1000);
+            if (oldestIdx >= 0 && oldestIdx !== newest) {
+                const dt = tBuf[newest] - tBuf[oldestIdx];
+                if (dt > 0) rate = (runsBuf[newest] - runsBuf[oldestIdx]) / dt * 1000;
+            }
+        }
+        // Cache integer rate; only re-format when it changes.
+        const rateInt = rate | 0;
+        if (telLast.rateInt !== rateInt) {
+            telLast.rateInt = rateInt;
+            tel.rate.textContent = rateInt < 1000 ? String(rateInt) : RATE_FMT.format(rateInt);
+        }
+
+        if (performance.memory) {
+            // Cache the rounded int; only build a new string when it actually
+            // changed. This is the hot path that PROVES zero-GC; allocating
+            // a fresh string every frame here would undermine the message.
+            const dKB = Math.round((mem() - heapBaseline) / 1024);
+            if (telLast.heapKBint !== dKB) {
+                telLast.heapKBint = dKB;
+                tel.heap.textContent = (dKB >= 0 ? '+' : '') + dKB + ' KB';
+            }
+            if (telLast.heapAvail !== 1) telLast.heapAvail = 1;
+        } else {
+            if (telLast.heapAvail !== 0) {
+                telLast.heapAvail = 0;
+                tel.heap.textContent = 'n/a';
+            }
+        }
+
+        writeText(tel.kids, 'kids', nestedChildren.length);
+
+        if (lastBatchMs !== telLast.benchMs) {
+            telLast.benchMs = lastBatchMs;
+            // String build is fine here — only runs when a batch button is clicked.
+            tel.bench.textContent = lastBatchMs > 0 ? lastBatchMs.toFixed(2) + ' ms' : '— ms';
+        }
+    }
+
+    function telemetryLoop() {
+        renderTelemetry(false);
+        requestAnimationFrame(telemetryLoop);
+    }
+
+    /* ── Boot ───────────────────────────────────────────────────────── */
+    build();
+    requestAnimationFrame(telemetryLoop);
+</script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+lite-signal torture suite -- complete set (22 scenarios)
+========================================================
+
+19 semantic (deterministic, fast, CI) + 3 soak. Full superset through 1.9.
+Every scenario feature-detects and skips cleanly below its feature; runs green
+from 1.4.x forward.
+
+    npm run torture ; npm run torture:semantic ; npm run torture:soak
+    node bench/torture/run.mjs --list
+
+SEMANTIC (listed in run.mjs registration order)
+  oracle-fuzzer            values vs an independent reference evaluator
+  glitch-hunter            glitch freedom + exact wakeup accounting
+  work-accounting          minimum body-execution counts (wrapper-based)
+  concurrent-storm         reentrancy, nesting, flush ordering
+  scheduler-storm          deferred execution, ABA thunks, coalescing
+  box-torture              signalBox / computedBox interop + surface   (1.5.0+)
+  scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0+)
+  owner-torture            getOwner/runWithOwner capture-restore + ABA
+                           degradation                                 (1.5.0+)
+  async-torture            watch / when / whenAsync contracts + fuzz
+  capacity-torture         fail-closed pool boundary + CapacityError + the
+                           16x grow ceiling
+  error-torture            throwing effect bodies: per-effect buffering,
+                           AggregateError, buffer drain
+  deep-chain-torture       pullComputed recursion fail-closed (RangeError)
+                           vs iterative push path
+  flush-torture            flushStrategy eager/sab/manual + subscribe  (1.7.0+)
+  cleanup-return-torture   effect return cleanup + compose order       (1.8.0+)
+  dispose-torture          Symbol.dispose / using on lifecycle objects (1.9.0+)
+  zerogc-torture           zero-GC hot path via measureAllocs/measureOps +
+                           stats counters; ZEROGC_BREAK self-test
+  op-accounting            structural work via onGraphMutation opcodes 1-5
+  introspect-torture       describe/forEach*/hasObservers/ownerOf/observeObservers
+                           + the ABA gen-stamp guard (devtools substrate)
+  lifecycle-torture        createRoot detachment + destroy registry reset (1.5.0+)
+
+SOAK (originals, unchanged): graph-fuzzer, scheduler-bench, torture-soak
+
+--- 1.6.0 GAP REVIEW ---
+1.6.0 adds createScope + describe and fixes the disposal crash. scope-torture
+already covered createScope adoption + the crash fuzz. The UNCHECKED surface was
+the read-only INTROSPECTION API (describe, nodeId, hasObservers, isTracking,
+forEachObserver/Source/Owned, ownerOf, observeObservers) -- the substrate
+lite-devtools / lite-studio build on. The whole suite exercised none of it.
+
+introspect-torture closes that. Two load-bearing properties:
+  1. WALK AGREEMENT -- forEachSource/Observer must match the real edge set and
+     track dynamic rewiring (cross-checked vs the reference dep set + op-3/4 lane).
+  2. THE ABA GEN-STAMP GUARD -- a descriptor captured before dispose+recycle must
+     resolve to nothing, never the new resident. Broken, devtools would read a
+     recycled node's edges as the old node's: silent data corruption. This guard
+     is invisible to every value/wakeup/work oracle; introspect-torture is the
+     ONLY scenario that catches its removal.
+
+Note (self-correction recorded): observeObservers hooks are onConnect (0->1) and
+onDisconnect (1->0) transitions, NOT per-add/remove. An early draft guessed
+onObserverAdded/onObserverRemoved and failed; the engine was right, the test was
+wrong. The scenario now pins the transition-only semantics explicitly.
+
+FEATURE GATES: box/owner/lifecycle->1.5, scope->1.6, flush->1.7,
+cleanup-return->1.8, dispose->1.9. op-accounting, introspect-torture, and all
+others: 1.4.0+.
