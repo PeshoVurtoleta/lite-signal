@@ -847,19 +847,21 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds the complete **22-scenario superset (19 semantic + 3
-soak)** behind one runner (`run.mjs`), the forward-compatible set through 1.9 --
-full parity with the shipped 1.4.4 sibling (verification-only; the engine is
-unchanged). They are not perf benchmarks: the ops/sec figures reflect random
-workload composition, not engine throughput -- `bench/benchmark.mjs` remains the
-canonical perf harness. Every scenario feature-detects and **skips cleanly** below
-the engine version that introduces its feature, so on the 1.6.0 engine the runner
-executes **16 semantic** scenarios (including `lifecycle-torture`, `owner-torture`,
-`error-torture`, `deep-chain-torture`, and `zerogc-torture` -- the owner/scope/
-createRoot scenarios run natively here because 1.6.0 ships `createScope` /
-`getOwner` / `runWithOwner` / `createRoot`) and reports a clean SKIP for the three
-later-version ones (`flush-torture` 1.7.0, `cleanup-return-torture` 1.8.0,
-`dispose-torture` 1.9.0).
+`bench/torture/` holds the complete **27-scenario superset (23 semantic + 4
+soak, one opt-in)** behind one runner (`run.mjs`), the forward-compatible set
+through 1.9 -- the canonical line's audited suite (three-state skip protocol:
+skips exit 77 and version floors are ENFORCED, so a scenario that skips while
+the engine is at or above its floor FAILS the run; scenario wall-clock is
+capped; a PASS that asserted nothing is a failure). They are not perf
+benchmarks: the ops/sec figures reflect random workload composition, not engine
+throughput -- `bench/benchmark.mjs` remains the canonical perf harness. Every
+scenario feature-detects and **skips cleanly** below the engine version that
+introduces its feature, so on the 1.6.0 engine the runner executes **20
+semantic** scenarios (the owner/scope/createRoot scenarios run natively here
+because 1.6.0 ships `createScope` / `getOwner` / `runWithOwner` / `createRoot`,
+and `burst-profile-torture` activates on the op-6/7 flush lane) and reports a
+clean SKIP for the three later-version ones (`flush-torture` 1.7.0,
+`cleanup-return-torture` 1.8.0, `dispose-torture` 1.9.0).
 
 ```bash
 npm run torture              # everything
@@ -870,9 +872,10 @@ node bench/torture/run.mjs --list
 
 #### `semantic` -- deterministic, fast, asserts on **meaning**
 
-Run these on every commit. The nine untagged scenarios run on any 1.4.x+ engine;
-`scope-torture` (1.6.0) runs here because `createScope` exists; the three tagged
-`1.7.0+`/`1.8.0+`/`1.9.0+` feature-detect and SKIP on this engine.
+Run these on every commit. The untagged scenarios run on any 1.4.x+ engine;
+`scope-torture` and `burst-profile-torture` (both 1.6.0) run here natively; the
+three tagged `1.7.0+`/`1.8.0+`/`1.9.0+` feature-detect and SKIP on this engine
+(legitimately -- their floors sit above it).
 
 | scenario | pins |
 | -------- | ---- |
@@ -887,6 +890,14 @@ Run these on every commit. The nine untagged scenarios run on any 1.4.x+ engine;
 | `scope-torture` (1.6.0) | `createScope` adoption contract, the disposal-crash repro + a 300-seed fuzz, `runWithOwner` re-attachment into a scope, pool balance over 200 rounds |
 | `async-torture` | `watch`/`when`/`whenAsync` contracts + a 300-seed projection-guard storm |
 | `capacity-torture` | the fail-closed pool boundary: exact ceilings, re-throw-on-read, `grow` crossing the same boundary |
+| `retrack-dispose-torture` | dispose-during-retracking cursor hazard + a seeded disposal fuzz with a survivor-value oracle and a pool oracle |
+| `error-torture` | throwing effect bodies: per-effect buffering, exact-order `AggregateError`, 4096-cycle buffer drain |
+| `deep-chain-torture` | `pullComputed` recursion fails closed (`RangeError`) while the iterative push path stays open at equal depth |
+| `contract-torture` | throw-inside-batch (commit+flush on the abnormal exit, revert honored, pending scheduler thunk still dispatched), write-inside-computed, equals under churn (exact fire counts vs a shadow model), and the 1.6 `flushPasses` abnormal-path pins (throwing batch = exactly 1 pass; `CycleError` = exactly `maxFlushPasses`) |
+| `interop-torture` | multi-registry isolation (values flow, tracking never links, batches don't cross) + `destroy()` staleness degradation + a 20k-op stale-handle hammer |
+| `burst-profile-torture` (1.6.0) | the op-6/7 flush lane engine-raw: enqueue coalescing == 1.0x (K op-7s for a B-write batch, visible before any body runs), exact pass accounting incl. D-pass cascades and the self-write single-pass guard, `flushPasses`/op-6 agreement, frozen-when-detached; `BURST_BREAK` self-tests |
+| `zerogc-torture` | the zero-GC hot path made falsifiable: retention floors, exact pool counters, a dual transient witness (scavenge count AND nursery delta), zero-slack bounded-churn graveyard witnesses for links AND (1.6.0) createScope nodes, plus box/scope churn lanes; `ZEROGC_BREAK` self-tests |
+| `lifecycle-torture` | `createRoot` detachment + `destroy()` registry reset |
 | `flush-torture` (1.7.0+) | `flushStrategy` eager/sab/manual convergence + the `.subscribe()` contract -- SKIP on 1.6.0 |
 | `cleanup-return-torture` (1.8.0+) | an effect's returned cleanup: timing, compose order, self-dispose guard -- SKIP on 1.6.0 |
 | `dispose-torture` (1.9.0+) | `Symbol.dispose` / `using` on lifecycle objects -- SKIP on 1.6.0 |
@@ -899,11 +910,16 @@ silent data-corruption bug in every tool built on the surface.
 
 #### `soak` -- wall-clock bound, asserts on **resources**
 
-Three soak harnesses build large randomised graphs (1,500 / 7,500 / 3,300 nodes)
-and run mixed fuzz workloads -- leaf writes, batched writes, computed rewires,
-effect rewires, nested-batch + untrack reads, and microtask-scheduled async
-flushes -- for 5-10 seconds. What they assert, with a non-zero exit code on
-failure:
+Three standing soak harnesses build large randomised graphs (1,500 / 7,500 /
+3,300 nodes) and run mixed fuzz workloads -- leaf writes, batched writes,
+computed rewires, effect rewires, nested-batch + untrack reads, and
+microtask-scheduled async flushes -- for 5-10 seconds. Each carries three
+witnesses beyond the teardown checks: mid-run high-water gauges vs the
+topology's theoretical maxima, a post-GC heap high-water cap, and sentinel
+DELIVERY oracles (effects that record what they actually observe). A fourth
+soak, `wraparound-torture`, is OPT-IN (`TORTURE_WRAPAROUND=1`, ~30-50s): it
+pins the 2^31 dormancy band at full distance -- re-verified on this engine.
+What they assert, with a non-zero exit code on failure:
 
 - zero thrown exceptions during the run, and
 - after teardown, `activeNodes` / `activeLinks` return to the leaf-only baseline (the dispose path is sound under sustained churn).
@@ -912,6 +928,7 @@ failure:
 node --expose-gc bench/torture/graph-fuzzer.mjs     # 10s random-DAG fuzz, 1500 nodes
 node --expose-gc bench/torture/torture-soak.mjs     #  5s high-volume churn, 7500 nodes
 node --expose-gc bench/torture/scheduler-bench.mjs  # 10s microtask-scheduled, 3300 nodes
+TORTURE_WRAPAROUND=1 node bench/torture/wraparound-torture.mjs   # opt-in 2^31 band
 ```
 
 Run any of them with `TORTURE_SECONDS=N` for a longer soak. Indicative numbers from a development host (post-teardown pool returns to baseline in all three):

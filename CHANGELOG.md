@@ -4,6 +4,120 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.6.0-rc] -- 2026-09-05
+
+The release-candidate hardening pass. **No engine change past the version banner
+comment** -- `Signal.js` hot paths are byte-identical to beta-1 (shasum-verified
+before and after, and a line diff against the canonical 1.5.0 engine confirmed
+1.6.0 is a strict superset: nothing from the 1.5.0 line is missing here). What
+moves is the entire verification surface: the canonical repo's audited 1.5.0
+torture/harness/test infrastructure is merged in, re-targeted to this engine, and
+then extended with 1.6.0-only gates.
+
+### Changed -- torture suite: 22 -> 27 scenarios, three-state protocol
+
+`bench/torture/run.mjs` now registers **27 scenarios (23 semantic + 4 soak, one
+opt-in)** under the audited runner protocol: skips exit 77 and version floors are
+ENFORCED (a scenario that skips while the engine is at/above its floor FAILS the
+run -- a dropped export cannot be a green skip), scenario wall-clock is capped,
+and a PASS that asserted nothing is a failure. Ported from the canonical line:
+`contract-torture`, `interop-torture`, `retrack-dispose-torture`, and the opt-in
+full-distance `wraparound-torture` (the 2^31 dormancy band re-verified at
+~2.1B-spin distance ON THIS ENGINE, 12/12 -- the version-compare expressions are
+byte-identical to 1.5.0). Every 1.5.0-observed behavioral pin re-verified
+UNCHANGED here -- zero pin flips. On this engine the runner executes 20 semantic
+scenarios with 3 legitimate floor skips (flush 1.7, cleanup-return 1.8,
+Symbol.dispose 1.9); `scope-torture` and the owner/lifecycle lanes run natively.
+
+### Added -- the 1.6 flush lane gated engine-raw: `burst-profile-torture`
+
+A new semantic scenario (floor 1.6.0) pins opcodes 6/7 + `stats().flushPasses`
+exactly, with no devtools dependency: a B-write batch over K effects emits
+exactly K op-7 enqueues (coalescing == 1.0x visible BEFORE any body runs),
+1000-burst linear accounting with zero drift, a D-stage cross-effect cascade
+drains in exactly D passes with strict 7,6,7,6 alternation (the double-buffer
+contract), a self-write takes one pass with no re-enqueue yet stays responsive
+to external writes, the counter is FROZEN while no mutation hook is attached,
+`destroy()` resets it, and the stat agrees with the op-6 count to the integer.
+`BURST_BREAK=drop7` / `=ghost6` fault-injection self-tests prove the pins fire
+(both exit 1). `contract-torture` adds the abnormal-path pins: a throwing
+batch's finally-flush counts exactly ONE pass, and `CycleError` counts exactly
+`maxFlushPasses` completed passes.
+
+### Added -- zero-GC scope lanes
+
+`zerogc-torture` gains **churn-scope** (createScope adopt + cascade-dispose
+churn under the sub-object retention floor + exact counters, with an in-loop
+value check that crashes the lane on corruption instead of greenly measuring)
+and **bounded-scope**, the zero-slack NODE twin of the link-graveyard witness:
+`maxNodes:4` leaves nothing spare beyond the base signal, so the scope owner
+node -- which no other churn lane covers -- plus the adopted computed+effect
+must ALL recycle on the single disposer; 200,000 cycles with EXACT allocation
+ledgers (3 per cycle). 56 asserts total; `ZEROGC_BREAK=1`/`=transient`
+self-tests still exit 1.
+
+### Changed -- devtools pairing: lite-devtools 1.6.2 (burst tier LIVE)
+
+devDependency `^1.2.0 -> ^1.6.2`; `test/25-devtools-real-boot` is rewritten
+against the probed 1.6.2 x 1.6.0 ground truth: 22 function exports + the
+`VERSION` const pinned, the FULL 13-key `capabilities()` fingerprint asserted
+as an exact key set (`scopes:T burst:T statsKeys:14`, `flushControl:F
+cleanupReturn:F` -- a silent capability drift now fails loudly),
+`burstProfile()` is live and its stop()-summary is pinned exactly (a 3-write
+batch = `passes:1, perPass:[1]`), and the 1.6.x `Symbol.dispose` stopper stamps
+are asserted (`off[Symbol.dispose] === off`, `h[Symbol.dispose] === h.stop`).
+The devtools zero-GC probe ports as `test/32` (canonical's test 31, renumbered
+around this line's `31-config-validation`). `@zakkster/lite-gc-profiler` moves
+`^1.15.0 -> ^1.16.0` with the per-scenario churn-floor refactor already carried
+by the ported `zerogc-torture` (steady lanes still gate at exactly 0 B/call).
+
+### Added -- harness instruments + VersionMatrix lanes (canonical parity)
+
+`harness/` gains the canonical attribution program: `visit-anatomy` (the
+instrumented-engine structural-counter gate -- **all 21 exact pins hold on this
+engine unchanged**, including the clean-short-circuit gate: 64 scHit/pull and
+`depWalk == 0` on unrelated reads), `jit-health --strict` (all four handle
+families MONOMORPHIC; deopt census baseline recorded for Node 26),
+`creation-anatomy`/`costmodel`/`floors`/`trend`/`burst-real`, and the repaired
+`creation-isolated`. VersionMatrix carries the calibrated read lane + the
+exact-counter creation-churn lane (288 allocs/frame, 0 poolGrowths, zero
+tolerance). Creation cost measured IDENTICAL to 1.5.0 (signal 27.2 vs 27.1
+ns/op, signalBox 19.8 vs 19.9) -- the +19% cross-folder lead the trend
+instrument flagged at beta-1 does not reproduce on this folder's own gate.
+
+### Fixed -- repo hygiene
+
+- `test/28-scope.test.mjs` removed: byte-identical duplicate of `29-scope`
+  (collided with `28-run-with-owner`; inflated the suite by 4 tests).
+- `test/zgc` positive control re-armed for Node 26: V8's adaptive/MinorMS
+  nursery absorbed the old 1-object-per-iter planted volume at 2 scavenges
+  (under the > MAX_SCAVENGES+3 budget) -- the meter still worked, it was
+  under-fed. Four fresh objects per iteration (~50 MB/run, mostly dropped)
+  restore a double-digit margin; negative control untouched. 7/7.
+- `test:hardening` unbroken: the `test/ProfilerTests` sub-package it points at
+  now ships in-tree (ported from canonical).
+- Stale `bench-reactive` script removed (its target was deleted at beta with
+  the bench-reactive-legacy deprecation; bench protocol v3 `mirror`/`sweep` is
+  the cross-framework instrument).
+- Demos: both demos carry the 1.5.0-surface panels plus a new **v1.6 - scope**
+  control (createScope adopt/dispose with live readout; browser-verified, zero
+  console errors, exact node-count deltas). Non-shipping.
+
+### Verified (full ladder, this host, Node 26)
+
+| gate | result |
+| ---- | ------ |
+| `npm test` / `test:gc` | 522/521/0 fail/1 skip · 530/529/0/1 |
+| `npm run torture` | 27 registered: 23 pass, 4 legit skips, 0 fail |
+| `TORTURE_WRAPAROUND=1` full-distance soak | PASS 12/12 (~51s) |
+| `test:zgc` + `test:zgc:report` | 7/7 · ZERO-GC GATE PASS 3/3 |
+| `test:hardening` / `test:harness` | 22/0/6 · 5/5 |
+| `zerogc-torture` + both `ZEROGC_BREAK` modes | 56 asserts; both breaks exit 1 |
+| `burst-profile-torture` + both `BURST_BREAK` modes | 26 asserts; both breaks exit 1 |
+| `visit-anatomy --verify` | 21/21 exact pins |
+| `jit-health --strict` | 4/4 monomorphic; baseline pinned |
+| `npm run gate` (VersionMatrix pre-publish) | **GATE PASSED 5/5** vs floor 1.3.0 + rolling 1.5.0, same-host interleaved capture; creation counters exact (288 allocs/frame, 0 growths); per-workload sinks identical across all three versions |
+
 ## [1.6.0-beta-1] -- 2026-08-20
 
 Backports the **1.4.5 `createRegistry` input validation** (all four findings) onto

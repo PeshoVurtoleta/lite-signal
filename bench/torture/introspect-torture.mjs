@@ -248,6 +248,11 @@ if (typeof reg().createScope === "function" && typeof reg().forEachOwned === "fu
         "describe(cascade-disposed child) must resolve to nothing (gen guard)");
     R.eq("scope-pool-restored", r.stats().activeNodes, nodesBefore,
         "activeNodes must return exactly to the pre-scope baseline after dispose()");
+} else {
+    // Visible skip so a non-run of the native lane is legible in the output
+    // (same discipline as zerogc's bounded-scope note) -- on a 1.6.0+ engine
+    // the runner's floor protocol makes a missing createScope a FAIL upstream.
+    R.note("scope lane (7b) -- SKIP: createScope requires 1.6.0+");
 }
 
 /* -- 8. observeObservers fires on observer add/remove ----------------------- */

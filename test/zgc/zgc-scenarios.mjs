@@ -24,7 +24,29 @@ export const ctrlPositive = {
   name: "CONTROL+ (allocates {x,y,z,w} per iter — meter MUST flag)",
   setup: () => ({}),
   hot(s, n) {
-    for (let i = 0; i < n; i++) __posKeep.push({ x: i, y: i + 1, z: i + 2, w: i + 3 });
+    // 2026-09 re-arm: the original 1-object-per-iter volume (~12 MB/run) rotted
+    // under Node 26's adaptive/MinorMS nursery, which absorbed it at 2 scavenges
+    // vs the > MAX_SCAVENGES+3 budget -- the meter still worked, it was merely
+    // under-fed (same V8 lesson as the torture suite's dual transient witness).
+    // Four fresh objects per iter (~50 MB/run of young-gen garbage, most of it
+    // dropped) restores a comfortable double-digit margin under the gate's
+    // 4 MB semi-space cap. The 1-in-4096 retain keeps escape analysis honest;
+    // the arithmetic sink keeps the drops from being dead-stored.
+    let t = 0;
+    for (let i = 0; i < n; i++) {
+      const a = { x: i, y: i + 1, z: i + 2, w: i + 3 };
+      const b = { x: i + 4, y: i + 5, z: i + 6, w: i + 7 };
+      const c = { x: t, y: i, z: t + 1, w: i + 1 };
+      const d = { x: i, y: t, z: i + 2, w: t + 2 };
+      t += a.x + b.y + c.z + d.w;
+      // ALL FOUR objects are phi-reachable at a conditional escape site, so
+      // scalar replacement cannot elide any of them (a future V8 SRA that
+      // dropped b/c/d would quietly shrink the planted volume back under the
+      // budget -- the exact rot this control just recovered from).
+      const pick = (i & 3) === 0 ? a : (i & 3) === 1 ? b : (i & 3) === 2 ? c : d;
+      if ((i & 4095) === 0) __posKeep.push(pick);
+    }
+    s.t = (s.t | 0) + t;
     if (__posKeep.length > 3_000_000) __posKeep.length = 0;
   },
 };
