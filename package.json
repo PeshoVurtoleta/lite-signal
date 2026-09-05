@@ -10,9 +10,9 @@
   "types": "./Signal.d.ts",
   "exports": {
     ".": {
+      "types": "./Signal.d.ts",
       "node": "./Signal.js",
       "import": "./Signal.js",
-      "types": "./Signal.d.ts",
       "default": "./Signal.js"
     }
   },
@@ -26,12 +26,17 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node --test --test-reporter=spec test/*.test.mjs",
-    "test:gc": "node --expose-gc --test --test-reporter=spec test/*.test.mjs",
-    "test:coverage": "c8 --include=Signal.js --include=Watch.js --all node --expose-gc --test --test-reporter=spec test/*.test.mjs",
-    "test:harness": "node --test --test-reporter=spec harness/ProfilerTools/",
+    "test": "node --test --test-reporter=spec 'test/*.test.mjs'",
+    "test:gc": "node --expose-gc --test --test-reporter=spec 'test/*.test.mjs'",
+    "test:coverage": "c8 node --test --test-reporter=spec 'test/*.test.mjs'",
+    "test:report": "c8 --reporter=lcov --reporter=text node --test --test-reporter=spec 'test/*.test.mjs'",
+    "test:hardening": "npm --prefix test/ProfilerTests test",
+    "test:hardening:gc": "npm --prefix test/ProfilerTests run test:gc",
+    "test:harness": "npm --prefix harness/ProfilerTools test",
+    "test:zgc": "node --expose-gc --max-semi-space-size=4 --test 'test/zgc/*.test.mjs'",
+    "test:zgc:report": "node --expose-gc test/zgc/zero-gc-gate.mjs",
+    "test:all": "npm test && npm run test:hardening && npm run test:harness && npm run test:zgc",
     "bench": "node --expose-gc bench/benchmark.mjs",
-    "bench-reactive": "node --expose-gc bench/benchmarkReactive.mjs",
     "harness": "node harness/run.mjs",
     "harness:smoke": "node harness/run.mjs smoke",
     "harness:field": "node harness/run.mjs field",
@@ -45,7 +50,7 @@
     "profile:burst": "node --expose-gc harness/burst-dag.mjs ./Signal.js",
     "profile:pull": "node --expose-gc harness/pull-stress.mjs",
     "gate": "node harness/VersionMatrix/pre-publish.mjs",
-    "verify": "npm test && npm run harness:smoke && npm run bench",
+    "verify": "npm test && npm run test:zgc && npm run harness:smoke && npm run bench",
     "torture": "node bench/torture/run.mjs",
     "torture:semantic": "node bench/torture/run.mjs --group semantic",
     "torture:soak": "node bench/torture/run.mjs --group soak"
@@ -85,8 +90,8 @@
   },
   "sideEffects": false,
   "devDependencies": {
-    "@zakkster/lite-devtools": "^1.2.0",
-    "@zakkster/lite-gc-profiler": "^1.15.0",
+    "@zakkster/lite-devtools": "^1.6.2",
+    "@zakkster/lite-gc-profiler": "^1.16.0",
     "@zakkster/lite-profiler": "^1.1.0",
     "@zakkster/lite-profiler-signal": "^1.2.0",
     "@zakkster/lite-signal": "^1.3.0 || >=1.4.0-beta.0 || >=1.6.0-preview.0",

@@ -1,9 +1,17 @@
-lite-signal torture suite -- complete set (22 scenarios)
+lite-signal torture suite — complete set (27 scenarios)
 ========================================================
 
-19 semantic (deterministic, fast, CI) + 3 soak. Full superset through 1.9.
+23 semantic (deterministic, fast, CI) + 4 soak (one opt-in). Full superset through 1.9.
 Every scenario feature-detects and skips cleanly below its feature; runs green
-from 1.4.x forward.
+from 1.4.x forward. Skips use exit 77 and the runner enforces version floors:
+a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
+(a dropped export cannot be a green skip); the runner also caps each scenario's
+wall clock (TORTURE_TIMEOUT_MS, default 300s -> FAIL, not a hang) and finish()
+fails any scenario that reaches PASS having asserted nothing.
+
+On THIS engine (1.6.0): 20 semantic execute and 3 skip at their floors (flush
+1.7, cleanup-return 1.8, dispose 1.9); the soaks run 3 + the opt-in wraparound.
+scope-torture, burst-profile-torture, and the zerogc scope lanes ACTIVATE here.
 
     npm run torture ; npm run torture:semantic ; npm run torture:soak
     node bench/torture/run.mjs --list
@@ -16,73 +24,158 @@ SEMANTIC (listed in run.mjs registration order)
   scheduler-storm          deferred execution, ABA thunks, coalescing
   box-torture              signalBox / computedBox interop + surface   (1.5.0+)
   scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0+)
+  retrack-dispose-torture  dispose-during-retracking cursor hazard + seeded
+                           disposal fuzz w/ survivor value + pool oracle
+                           (hoisted from scope-torture so it runs from 1.4)
   owner-torture            getOwner/runWithOwner capture-restore + ABA
-                           degradation                                 (1.5.0+)
+                           degradation + owner handle across destroy() (1.5.0+)
   async-torture            watch / when / whenAsync contracts + fuzz
   capacity-torture         fail-closed pool boundary + CapacityError + the
                            16x grow ceiling
   error-torture            throwing effect bodies: per-effect buffering,
                            AggregateError, buffer drain
+  contract-torture         throw-inside-batch (commit+flush on abnormal exit,
+                           revert honored, no wedge, PENDING SCHEDULER thunk
+                           still dispatched, 4096-cycle drain),
+                           write-inside-computed (in-pass delivery, self-write
+                           invisible to own staleness, recovery), equals under
+                           churn (exact fire counts vs a shadow model, coalesced
+                           writes keep the OLD value, a throwing equals leaves
+                           the value UNMUTATED -- checked before the recovery
+                           write can mask it -- and isolates neighbors), and
+                           1.6.0 flushPasses on the ABNORMAL paths: a throwing
+                           batch's finally-flush counts exactly one pass, and
+                           CycleError counts exactly maxFlushPasses completed
+                           passes (skips below 1.6.0)
+  interop-torture          multi-registry isolation (value flows, tracking
+                           never links, batches don't cross; foreign dispose
+                           no-ops for signal/computed handles but INVOKES an
+                           effect-stop handle -- the function-call contract
+                           crosses registries; both halves pinned) + destroy()
+                           staleness (reads undefined,
+                           writes/stops no-op, stranded scheduler thunks hit
+                           the gen guard, registry reusable; 20k-op hammer)
   deep-chain-torture       pullComputed recursion fail-closed (RangeError)
                            vs iterative push path
   flush-torture            flushStrategy eager/sab/manual + subscribe  (1.7.0+)
   cleanup-return-torture   effect return cleanup + compose order       (1.8.0+)
   dispose-torture          Symbol.dispose / using on lifecycle objects (1.9.0+)
   zerogc-torture           zero-GC hot path via measureAllocs/measureOps +
-                           stats counters; ZEROGC_BREAK self-test
-  op-accounting            structural work via onGraphMutation opcodes 1-5
-  introspect-torture       describe/forEach*/hasObservers/ownerOf/observeObservers
-                           + the ABA gen-stamp guard (devtools substrate)
+                           stats counters + a DUAL transient witness over a
+                           1M-op un-forced window: scavenge count AND nursery
+                           used-bytes delta (Node 26 V8 grows new_space
+                           adaptively -- measured 8.8->38.8 MB with ZERO
+                           scavenges -- so a count alone certifies the exact
+                           class it exists to catch; the garbage cannot dodge
+                           both signals) + steady-retrack (branch-flip link
+                           churn) + the bounded-churn graveyard witness (1M
+                           flips on a TRUE zero-slack 6-link pool: the FIRST
+                           link that fails to return to the free list throws
+                           CapacityError -- sensitivity 1 leaked link per 4M
+                           severs, mutant-verified at 1-in-2^20);
+                           1.6.0 SCOPE LANES: churn-scope (createScope adopt +
+                           cascade-dispose under the churn floor + exact
+                           counters, with an in-loop value check so a corrupted
+                           scope crashes rather than greenly measuring) and
+                           bounded-scope, the zero-slack NODE twin of
+                           bounded-churn (maxNodes:4 -- the scope owner node,
+                           which no other churn lane covers, plus the adopted
+                           computed+effect must ALL recycle; 200k cycles,
+                           ledgers exact at 3 per cycle);
+                           ZEROGC_BREAK=1 / =transient self-tests
+  op-accounting            structural work via the engine's onGraphMutation
+                           opcode lane (op 1-5); op5 identity, equality cutoff,
+                           link/node balance, laziness, 400-seed op5 differential
+  burst-profile-torture    the 1.6.0 flush lane, engine-raw (op 6 pass-start,
+                           op 7 effect-enqueue, stats().flushPasses)   (1.6.0+):
+                           enqueue coalescing (a B-write batch over K effects
+                           emits exactly K op-7s -- coalescing == 1.0x visible
+                           BEFORE any body runs), 1000-burst exact linear
+                           accounting with zero drift, D-stage cascades drain in
+                           exactly D passes (strict 7,6,7,6 alternation -- the
+                           double-buffer contract), self-write = one pass with
+                           no re-enqueue (FLAG_COMPUTING guard) yet still
+                           responsive to external writes, detached = frozen
+                           counter + zero ops, destroy() resets, and stat ==
+                           op-6 count agreement. This is the substrate devtools
+                           burstProfile() reads; the devtools pairing itself is
+                           pinned in test/25. BURST_BREAK=drop7 / =ghost6
+                           self-tests prove the pins fire (both exit 1).
+  introspect-torture       describe/forEach*/hasObservers/ownerOf + ABA
+                           gen-stamp guard; section 7 walks owners BOTH ways on
+                           1.6.0 -- the effect-body re-target (portable) AND the
+                           native createScope lane (ownerOf via descriptor and
+                           via the first-class disposer handle, cascade
+                           teardown gen-guard, exact pool restore)
   lifecycle-torture        createRoot detachment + destroy registry reset (1.5.0+)
 
-SOAK (originals, unchanged): graph-fuzzer, scheduler-bench, torture-soak
+SOAK: graph-fuzzer, scheduler-bench, torture-soak, wraparound-torture
+  wraparound-torture (2026-08 Phase 4, OPT-IN via TORTURE_WRAPAROUND=1, ~30s;
+  exits 78 otherwise): pins the 2^31 dormancy band at FULL DISTANCE (~2.1B
+  real version spins per crossing). Pinned truth on 1.5.0: below the band
+  (gap <= 2^31-65 verified) delivery is exact; inside the band
+  (gap in [2^31-1, 2^32)) the FIRST dependency write after the dormancy is
+  invisible -- unobserved pulls serve the stale cache, and observed cones
+  skip the effect body entirely (executeEffect's dep-validation walk hits the
+  same aliased signed diff); recovery is automatic and one-shot (the stale
+  pull re-stamps evalVersion; the next write propagates). Raw signals immune.
+  These pins document ACTUAL behavior; an engine that closes the band flips
+  them deliberately. NOTE: the "indefinite uptime" doc claim is crash-true
+  but needs the dormancy caveat.
+  2026-08 Phase 2 -- every soak now carries three witnesses the post-teardown
+  checks are structurally blind to:
+  - MID-RUN HIGH-WATER: activeNodes/activeLinks sampled per tick, gated against
+    the topology's theoretical maxima (mutant-verified vs a deferred-sever
+    engine: fires on tick 1).
+  - POST-GC heapUsed: forced-GC heap high-water within a fixed slack of the
+    post-build baseline -- retention the pool counters cannot see
+    (mutant-verified vs a full link graveyard: +151 MB in 2s).
+  - SENTINEL DELIVERY: dedicated effects record the values they OBSERVE (the
+    shadow oracles peek() storage only, so a flush/scheduler path that stopped
+    DELIVERING passed forever). torture-soak/graph-fuzzer check synchronous
+    delivery immediately after each write with exact run counts;
+    scheduler-bench pins DELIVERY-BY-NEXT-TICK for its microtask sentinels
+    (a dropped thunk or wedged drain fails; a delivery merely moved to a
+    later-but-still-prior event-loop turn passes by design) plus exact
+    counts at teardown.
+    Mutant-verified vs a flush-loop drop. Random SUB-sentinel drops are caught
+    probabilistically (the drop must land on a sentinel node); systematic
+    wedges deterministically.
 
---- 1.6.0 GAP REVIEW ---
-1.6.0 adds createScope + describe and fixes the disposal crash. scope-torture
-already covered createScope adoption + the crash fuzz. The UNCHECKED surface was
-the read-only INTROSPECTION API (describe, nodeId, hasObservers, isTracking,
-forEachObserver/Source/Owned, ownerOf, observeObservers) -- the substrate
-lite-devtools / lite-studio build on. The whole suite exercised none of it.
+op-accounting uses the engine's OWN opcode counters instead of wall-clock — the
+lesson from the 1.13 mark-lane review: count deterministic work, don't time it.
+It runs from 1.4.0 (needs only onGraphMutation). See op-accounting-review/
+FINDINGS.md for the instrumentation gap it uncovered: 1.5.0's clean short-circuit
+saves dep-COMPARISONS, which no opcode emits — the analogue of the pre-1.13
+missing mark lane. Recommendation there: add a "compare lane" (op 11/12) so the
+short-circuit's benefit becomes a counted fact and its regression becomes
+catchable.
 
-introspect-torture closes that. Two load-bearing properties:
-  1. WALK AGREEMENT -- forEachSource/Observer must match the real edge set and
-     track dynamic rewiring (cross-checked vs the reference dep set + op-3/4 lane).
-  2. THE ABA GEN-STAMP GUARD -- a descriptor captured before dispose+recycle must
-     resolve to nothing, never the new resident. Broken, devtools would read a
-     recycled node's edges as the old node's: silent data corruption. This guard
-     is invisible to every value/wakeup/work oracle; introspect-torture is the
-     ONLY scenario that catches its removal.
+FEATURE GATES: box/owner->1.5, scope->1.6, burst-profile->1.6, flush->1.7,
+cleanup-return->1.8, dispose->1.9. retrack-dispose, op-accounting, lifecycle,
+contract, interop, and all others: 1.4.0+. Floors are declared per scenario in
+run.mjs and ENFORCED: at/above its floor a skip is a FAIL (--lenient downgrades).
 
-Note (self-correction recorded): observeObservers hooks are onConnect (0->1) and
-onDisconnect (1->0) transitions, NOT per-add/remove. An early draft guessed
-onObserverAdded/onObserverRemoved and failed; the engine was right, the test was
-wrong. The scenario now pins the transition-only semantics explicitly.
+oracle-fuzzer (2026-08 audit): checking is now PROBABILISTIC (p=0.4 per op +
+always at seed end) so staleness accumulates across writes before validation;
+a write-burst op drives 2-5 writes into one cone with no intermediate pull
+(the second-invalidation class an after-every-op oracle structurally masks);
+checkAll walks nodes in a fresh seeded-shuffled order per call (sink-first
+recursive pulls). Verified: the clean-short-circuit off-by-one mutant
+(<=0 -> <=1 in pullComputed) is still caught on 400/400 seeds. Phase 2: the
+VALUE_POOL adds REF_A/REF_B -- two distinct frozen objects with an identical
+data shape -- so identity equality is distinguishable from structural
+comparison on the write path.
 
+contract-torture / interop-torture (2026-08 Phase 2): every pin states the
+OBSERVED 1.5.0 contract, probed live before writing (same discipline as
+test/29-throwing-equals) -- a future engine that changes any of these semantics
+trips a loud assert instead of silently redefining the behavior.
 
---- 1.7.0 GAP REVIEW (flush-torture extended) ---
-flush-torture already covered cross-strategy value convergence and .subscribe().
-The UNCHECKED contracts found and added:
-  1. VALUE-NEVER-DEFERS invariant: a computed pull is fresh WHILE effects are
-     still deferred (the .d.ts's emphatic guarantee: only delivery defers). The
-     suite previously checked effect convergence, never the synchronous pull a
-     manual-mode consumer relies on.
-  2. FLAG_QUEUED enqueue-dedup, counted via op-7. Run-count alone is MASKED by a
-     second, execute-time dedup layer: a broken enqueue-dedup still yields 1 run
-     while bloating the queue with 50 duplicate slots. Only op-7 (effect-enqueued)
-     sees it. Deterministic-work lesson again.
-  3. Invalid flushStrategy token throws (documented @throws; a silent fall-through
-     to eager would hide a config typo in a real-time loop).
-  4. Re-entrant flush (isFlushing guard), explicit flush INSIDE a batch draining
-     mid-batch (pinned), and sab nested-batch flushing only at the outermost exit.
-
-Mutation evidence: invalid-token and enqueue-dedup(op-7) are caught by
-flush-torture uniquely. The isFlushing guard removal is caught by concurrent-storm
-(reachable there via nested-flush/dispose-mid-flush), so flush-torture's
-re-entrancy block is a focused pin rather than the sole catcher. The
-value-never-defers invariant is a robust positive pin: the engine's pull path
-compares dep VERSION independently of marking, so the value is correct even if
-marking is skipped -- redundant correctness worth pinning.
-
-FEATURE GATES: box/owner/lifecycle->1.5, scope->1.6, flush->1.7,
-cleanup-return->1.8, dispose->1.9. op-accounting, introspect-torture, and all
-others: 1.4.0+.
+1.6.0-rc migration note (2026-09-05): every 1.5.0-observed pin above RE-VERIFIED
+UNCHANGED on the 1.6.0 engine -- contract, interop, retrack-dispose, and the
+wraparound dormancy band all passed without a single pin flip (the two engines'
+version-compare expressions are byte-identical; wraparound re-run at full
+distance, 12/12). The 1.6.0-only additions (burst-profile-torture, the zerogc
+scope lanes, contract section 10, introspect 7b) were probed live on 1.6.0-rc
+before their pins were written.
