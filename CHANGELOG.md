@@ -4,6 +4,32 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.6.0-rc.1] -- 2026-09-05
+
+Verification + docs increment over `1.6.0-rc`; **no engine change past the
+version banner comment** (shasum-verified). Ports the mint-cycle allocation
+anatomy probe from the canonical 1.5.1 line and re-measures it on this engine.
+
+### Added -- mint-cycle allocation anatomy probe (harness, ported from 1.5.1)
+
+- `harness/mint-anatomy.mjs` + `node harness/run.mjs mint [--verify]`: per-op
+  all-space heap bytes for every creation primitive's mint+dispose cycle on a
+  pre-grown throw-policy registry (`maxNodes:1<<16, maxLinks:1<<18,
+  onCapacityExceeded:"throw"`), fresh child process per (variant, warmup) cell
+  (JIT tier state poisons same-process comparisons), relative pins P1..P5. See
+  the canonical CHANGELOG `[1.5.1]` for the full methodology: the LS-06
+  all-space accounting correction (a new-space-only witness undercounts the
+  callable mint by ~56 B/op of closure-feedback plumbing at pre-TurboFan tiers)
+  and the closure-pooling rejection rationale (reused accessor identity makes
+  the birthGen ABA guard undecidable -- fails open).
+- **Measured on this engine (node v26.3.1 darwin/arm64): identical to the 1.5.x
+  line** -- `signal(1)`+dispose 264 B/op all-space (tier-invariant), `computed`
+  208, `effect` 160, `signalBox`/`computedBox` 56, dispose side 0 (mint-and-hold
+  equals the cycle to +-0.3 B); all pins PASS at both warmups (12k / 250k). The
+  1.6.0 additions (`createScope`, `flushPasses`, opcodes 6/7) sit outside the
+  creation path, and the measurement confirms it: creation economics carry over
+  from 1.5.x unchanged.
+
 ## [1.6.0-rc] -- 2026-09-05
 
 The release-candidate hardening pass. **No engine change past the version banner

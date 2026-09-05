@@ -17,6 +17,8 @@
 //   churn   [engine]              topology-churn-per-recompute (1.11 cone-cache gate)
 //   owner   [engine]             async-gap owner-recycling hazard verdict
 //   creation                      per-framework-per-process createComputations matrix
+//   mint    [--verify]            mint+dispose cycle allocation anatomy (spawns
+//                                 its own flagged children; --verify applies pins)
 //   all                           field + dispose + churn, in sequence
 //
 // NOTES
@@ -60,6 +62,10 @@ const COMMANDS = {
         script: "creation-isolated.mjs",
         flags: ["--expose-gc"],
     },
+    mint: {
+        script: "mint-anatomy.mjs",
+        flags: [],                // parent spawns its own flagged children
+    },
 };
 
 const ORDER_ALL = ["field", "dispose", "churn"];
@@ -73,6 +79,7 @@ function usage() {
         "  churn   [engine]              topology-churn-per-recompute\n" +
         "  owner   [engine]              async-gap owner-recycling hazard verdict\n" +
         "  creation                      per-framework createComputations matrix\n" +
+        "  mint    [--verify]            mint+dispose cycle allocation anatomy\n" +
         "  all                           field + dispose + churn\n"
     );
 }
