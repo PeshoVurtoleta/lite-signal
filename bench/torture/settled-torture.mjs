@@ -357,5 +357,7 @@ function mkCounter(r) {
 
 process.exit(R.finish(
     "onSettled exact: per-strategy drain accounting, fan/batch/cascade coalescing, clean-quiescence negatives, observer isolation, mid-fire safety, destroy, soaks",
-    { minAsserts: 30 }
+    // Reviewer-tightened floor: exactly the shipped assert count, so a harness
+    // path that silently drops ANY assert trips the floor (was 30).
+    { minAsserts: 39 }
 ));
