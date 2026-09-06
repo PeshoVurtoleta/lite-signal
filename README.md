@@ -813,8 +813,8 @@ Three tiers, all reproducible.
 
 ### Tier 1 -- Behavior (unit tests, fast)
 
-On the 1.9.0 engine `npm test` reports **512 tests, 511 pass, 0 fail, 1 skip**, and
-`npm run test:gc` (Tier 2, `--expose-gc`) reports **520 tests, 519 pass, 0 fail, 1
+On the 1.9.0 engine `npm test` reports **547 tests, 546 pass, 0 fail, 1 skip**, and
+`npm run test:gc` (Tier 2, `--expose-gc`) reports **555 tests, 554 pass, 0 fail, 1
 skip**. `npm test` runs the suite in `test/`, covering:
 
 - **`01-core.test.mjs`** -- signal/computed/effect basics, equality semantics, NaN/+/-0, subscribe/peek/update, untrack, batch, cleanup ordering, first-run error recovery, nested object reference-identity gotchas.
@@ -842,9 +842,10 @@ skip**. `npm test` runs the suite in `test/`, covering:
 - **`24-signalbox.test.mjs`** -- the `signalBox` / `computedBox` allocation-light handle API, **activated in 1.5.0** (committed `{skip:true}` since 1.3.0, now running against the real implementation). 12 tests: box get/set/peek/update, `computedBox` derive + memoize, peek-does-not-track, subscribe fires-and-untracks, box<->callable interop both directions, batch coalescing (including set-then-revert net no-op), dispose with ABA-safety, the `equals` short-circuit, `computedBox.peek`, and the top-level helpers bound to the default registry.
 - **`27-create-root.test.mjs`** -- `createRoot` (1.5.0), the ownership escape hatch. A watcher spawned inside a consumer effect via `createRoot` survives the consumer's re-run (the exact `lite-query` lazy-watcher pattern); the contrast case confirms an *unwrapped* spawn is cascade-disposed; `createRoot` returns `fn`'s value, detaches tracking in `fn`'s direct body while inner effect bodies still track, and composes with box handles. 7 tests, including a top-level-export binding case that closes the otherwise-uncovered top-level `createRoot` path.
 - **`29-scope.test.mjs`** -- `createScope` (1.6.0), the adopting counterpart to `createRoot`. 4 tests: the scope owner runs exactly once on creation; direct-body signal reads in `fn` are untracked while inner effect/computed bodies track normally; `dispose()` cascade-disposes the owned subtree (effects + computeds) while a directly-allocated signal correctly survives (the engine never owner-adopts signals); a scope created inside a consumer effect SURVIVES that consumer's re-run -- the reconciler-critical detach property; `dispose()` is idempotent; the disposer is introspection-stamped to its owner effect (`describe(dispose).kind === "effect"`); and `totalAllocations - totalDisposals === activeNodes` holds across the entire lifecycle.
-- **`25-devtools-real-boot.test.mjs`** -- Devtools/Studio contract (10 tests). Boots the actual `Devtools.js` against the 1.5.0 engine and exercises all 19 Devtools exports plus the 10 symbols Studio imports from Devtools. Pins the ghost contract: heavy introspection (graph walk, owner-tree, observer descriptors) adds **zero** nodes to the live graph. Catches the real-rig failure mode where importing the package by its own name from a repo whose `package.json` declares `name: "@zakkster/lite-signal"` resolves to the published build instead of the local engine.
+- **`25-devtools-real-boot.test.mjs`** -- the devtools pairing contract (14 tests). Boots the REAL installed `@zakkster/lite-devtools` 1.6.2 against this engine through an import-rewrite rig (both share ONE engine instance -- the rig catches the two-instance failure mode where the package resolves to the published build instead of the local engine). Pins the live-probed ground truth: all 22 function exports + the `VERSION` const, the EXACT 13-key `capabilities()` fingerprint (1.5 through 1.8 all true, `statsKeys: 14` -- devtools 1.6.2 has no 1.9 cap key, so the exact key set is itself the 1.9-era pin), the `burstProfile()` live-handle and `stop()` summary shapes, and the 1.6.x `Symbol.dispose` stamps on devtools' own stopper handles.
 - **`26-free-list-invariant.test.mjs`** -- the 1.2.2 audit's cleanliness pins (3 invariant tests + 1 targeted coverage test). Asserts directly -- by inspecting freshly-allocated nodes through the documented `describe()` -> `NODE_PTR` introspection protocol -- that the `ReactiveNode` constructor and the fresh-pool-growth path initialize the ten fields the audit removed from `createNode` to identical values, so the deleted writes were defending against a state the engine cannot produce on a clean free list. The 4th test covers the swallow-on-self-dispose-then-throw branch in `pullComputed` (the path that lifted branch coverage from 98.07% to 98.43%).
 - **`30-throwing-equals.test.mjs`** -- a user `equals` that THROWS, pinned at all five 1.9.0 invocation sites (9 tests): the three callable sites (signal set pre-check, batch revert, computed re-eval -- with a CONTRAST anti-tautology test proving the batch-revert pin is caused by the throw, not the set-then-back shape) and the two `signalBox` `boxSet` sites (pre-check leaves the box unmutated; batch-revert strands the version bump so the net value fires downstream).
+- **`36-devtools-zerogc-probe.test.mjs`** -- the zero-GC claim on the Andrii-Volynets weak-group shapes (5 tests), through TWO independent witnesses: the engine's own `stats().poolGrowths` counter and devtools 1.6.2's `watchAllocations()` feed. Runs the CREATION and UPDATE shapes the reactive benchmark calls slow and asserts the pool never grows its backing store (`poolGrowths` delta == 0) -- per-node CPU is the deliberate price of the pool; heap growth would be a bug.
 
 ```bash
 npm test
@@ -861,8 +862,16 @@ npm test
 
 If these fail, something allocates in the hot path and we want to find it before publish.
 
+Beyond the in-suite checks, two dedicated lanes gate the same claim harder:
+`npm run test:zgc` (+ `test:zgc:report`) runs the `test/zgc/` scenario gate under
+a 4 MB semi-space (steady-state propagation must force ZERO scavenges over 1.6M
+updates; churn must never grow the pool), and `npm run test:hardening` (+
+`test:harness`) runs the `test/ProfilerTests` and `harness/ProfilerTools`
+sub-packages -- the profiler-toolchain pairing suites.
+
 ```bash
 npm run test:gc
+npm run test:zgc && npm run test:zgc:report
 ```
 
 ### Tier 3 -- Performance (comparative benchmark)
@@ -875,13 +884,17 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds the complete **22-scenario suite (19 semantic + 3 soak)**
-behind one runner (`run.mjs`). They are not perf benchmarks: the ops/sec figures
-reflect random workload composition, not engine throughput -- `bench/benchmark.mjs`
-remains the canonical perf harness. Every scenario feature-detects and skips
-cleanly below the engine version that introduces its feature; on the **1.9.0
-engine all 19 semantic scenarios execute with zero feature-skips** -- the first
-engine version to run the complete superset, since `dispose` was the last gate.
+`bench/torture/` holds the complete **27-scenario superset (23 semantic + 4
+soak, one opt-in)** behind one runner (`run.mjs`), the forward-compatible set
+through 1.9. They are not perf benchmarks: the ops/sec figures reflect random
+workload composition, not engine throughput -- `bench/benchmark.mjs` remains the
+canonical perf harness. Every scenario feature-detects and **skips cleanly**
+(exit 77) below the engine version that introduces its feature, and the runner
+**enforces the floors**: a scenario that skips while the engine is at or above
+its floor FAILS the run -- a dropped export cannot masquerade as a green skip.
+On the **1.9.0 engine all 23 semantic scenarios execute with zero
+feature-skips** -- the first engine version to run the complete superset, since
+`dispose` was the last gate.
 
 ```bash
 npm run torture              # everything
@@ -892,7 +905,12 @@ node bench/torture/run.mjs --list
 
 #### `semantic` -- deterministic, fast, asserts on **meaning**
 
-Run these on every commit.
+Run these on every commit. Most scenarios run on any 1.4.x+ engine;
+`box-torture`, `owner-torture` and `lifecycle-torture` (1.5.0),
+`scope-torture` / `introspect-torture` / `burst-profile-torture` (1.6.0),
+`flush-torture` (1.7.0), `cleanup-return-torture` (1.8.0), and
+`dispose-torture` (1.9.0) all run here because their features exist --
+nothing floor-skips on this engine.
 
 | scenario | pins |
 | -------- | ---- |
@@ -900,19 +918,23 @@ Run these on every commit.
 | `glitch-hunter` | glitch freedom across diamonds, plus exact wakeup counts |
 | `work-accounting` | minimum body-execution counts across 10 fixed topologies |
 | `op-accounting` | structural work counted from the `onGraphMutation` opcode lane (op 1-5), not wall-clock |
+| `burst-profile-torture` (1.6.0) | the op-6/op-7 burst lane: batched write-bursts coalesce to exactly 1.0x (zero redundant recomputes) visible BEFORE any body runs, D-stage cascades drain in exactly D passes, self-write stays one pass; `BURST_BREAK=drop7\|ghost6` self-tests prove the pins fire |
 | `introspect-torture` (1.6.0) | the read-only introspection surface: walk-agreement against the reference dep set + op-3/op-4 lane, and the ABA gen-stamp guard on re-walkable descriptors |
 | `concurrent-storm` | eight reentrancy and flush-ordering contracts |
 | `scheduler-storm` | deferred execution under 10,000 effects: gen-bound thunk ABA guard, `FLAG_QUEUED` coalescing, a throwing scheduler contained |
 | `box-torture` (1.5.0) | `signalBox`/`computedBox` interop: the oracle differential fuzz with every node realised as **either** a callable or a box |
 | `scope-torture` (1.6.0) | `createScope` adoption contract, the disposal-crash repro + a 300-seed fuzz, pool balance over 200 rounds |
-| `owner-torture` (1.6.0) | `getOwner`/`runWithOwner` capture-restore: the gen-stamped owner handle, adoption of nodes created inside `runWithOwner`, cascade-dispose when the captured owner is torn down |
+| `retrack-dispose-torture` | dispose-during-retracking: the cursor hazard the 1.8 severTail repair targets, driven as a seeded fuzz across cursor positions with a survivor value + pool oracle |
+| `owner-torture` (1.5.0) | `getOwner`/`runWithOwner` capture-restore: the gen-stamped owner handle, adoption of nodes created inside `runWithOwner`, cascade-dispose when the captured owner is torn down, ABA degradation to rooted execution under allocation pressure |
 | `lifecycle-torture` | `createRoot` (1.5.0+) detachment of an owned subtree, and the direct `destroy` (1.4.0+) reset contract -- both previously unexercised by any scenario |
 | `async-torture` | `watch`/`when`/`whenAsync` contracts + a 300-seed projection-guard storm |
 | `capacity-torture` | the fail-closed pool boundary: exact ceilings, re-throw-on-read, `grow` crossing the same boundary, and the 16x link grow ceiling (`maxLinks * 16`) that fails closed too |
 | `error-torture` | throwing effect bodies under flush: a single throw re-thrown unwrapped, 2+ aggregated into an `AggregateError` carrying exactly those errors, the survivor still runs, and the error buffer drains to baseline over 4096 throw/clean cycles |
+| `contract-torture` | the probed behavioural contract, pinned: write-inside-computed staleness, throw-in-batch flush semantics (commit + flush on abnormal exit, revert honored, no wedge), stranded scheduler thunks, equals-under-churn vs a shadow model, and `flushPasses` exact counts on the abnormal paths |
+| `interop-torture` | multi-registry isolation (value flows, tracking never links, batches don't cross, the foreign-dispose contract both ways) + `destroy()` staleness with a 20k-op hammer |
 | `deep-chain-torture` | `pullComputed` recursion fails closed with a `RangeError` at a ramped depth (<= 100000) while the heap-iterative effect-cascade push path stays open at the same depth |
 | `flush-torture` (1.7.0) | the three `flushStrategy` modes by cross-strategy differential, per-strategy scheduling, re-entrant/empty `flush()`, and the `.subscribe()` contract under each |
-| `cleanup-return-torture` (1.8.0) | an effect's returned cleanup: timing at re-run/dispose, compose order after `onCleanup`, the self-dispose guard, and the computed exclusion |
+| `cleanup-return-torture` (1.8.0) | an effect's returned cleanup: timing at re-run/dispose, compose order after `onCleanup`, the self-dispose guard, and the computed exclusion; plus the 1.8 severTail cursor-repair pinned by mechanism (five named dispose-mid-retrack geometries, section 6b) |
 | `dispose-torture` (1.9.0) | `Symbol.dispose` stamped at five sites (registry, effect stop handle, scope/root disposers, both box prototypes) driven through the TC39 `using` path; idempotent disposal, feature-detected via the box-prototype stamp |
 | `zerogc-torture` | the zero-GC claim as a gate via `@zakkster/lite-gc-profiler`: `measureAllocs`/`checkAllocs` at `maxBytesPerCall: 0` + `measureOps`/`checkNoGc` at `maxMajor: 0`/`maxPauseMs: 2` + `stats()` deltas over steady + create/dispose churn (callable and `signalBox`); `ZEROGC_BREAK=1` self-tests that the gate rejects a planted allocation |
 
@@ -921,8 +943,9 @@ Run these on every commit.
 Three soak harnesses build large randomised graphs (1,500 / 7,500 / 3,300 nodes)
 and run mixed fuzz workloads -- leaf writes, batched writes, computed rewires,
 effect rewires, nested-batch + untrack reads, and microtask-scheduled async
-flushes -- for 5-10 seconds. What they assert, with a non-zero exit code on
-failure:
+flushes -- for 5-10 seconds; a fourth, opt-in soak spins the 32-bit version
+counter across the full 2^31 dormancy band. What they assert, with a non-zero
+exit code on failure:
 
 - zero thrown exceptions during the run,
 - after teardown, `activeNodes` / `activeLinks` return to the leaf-only baseline (the dispose path is sound under sustained churn),
@@ -933,18 +956,19 @@ failure:
 node --expose-gc bench/torture/graph-fuzzer.mjs     # 10s random-DAG fuzz, 1500 nodes
 node --expose-gc bench/torture/torture-soak.mjs     #  5s high-volume churn, 7500 nodes
 node --expose-gc bench/torture/scheduler-bench.mjs  # 10s microtask-scheduled, 3300 nodes
+TORTURE_WRAPAROUND=1 node bench/torture/wraparound-torture.mjs  # ~50s full-distance 2^31 dormancy-band soak (opt-in)
 ```
 
 Run any of them with `TORTURE_SECONDS=N` for a longer soak. Indicative numbers from a development host (post-teardown pool returns to baseline in all three):
 
 |                       | duration | ops      | errors | post-teardown nodes / links |
 | --------------------- | --------:| --------:| ------:| --------------------------- |
-| graph-fuzzer          |    10 s  |  7.6 M   |    0   | 500  / 0                    |
-| torture-soak          |     5 s  |  1.2 M   |    0   | 2500 / 0                    |
-| scheduler-bench       |    10 s  | 28.8 M   |    0   | 1000 / 0                    |
+| graph-fuzzer          |    10 s  | 20.2 M   |    0   | 500  / 0                    |
+| torture-soak          |     5 s  |  3.3 M   |    0   | 2500 / 0                    |
+| scheduler-bench       |    10 s  | 63.1 M   |    0   | 1000 / 0                    |
 
 ```bash
-npm run verify   # test + test:gc + a sanity bench
+npm run verify   # test + the zgc gate + harness smoke + a sanity bench
 ```
 
 ---

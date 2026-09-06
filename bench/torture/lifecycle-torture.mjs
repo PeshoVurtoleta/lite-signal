@@ -27,9 +27,9 @@
  *   - the registry is REUSABLE -- new signals/computeds/effects work normally;
  *   - destroy is idempotent.
  *
- * 1.8.0 NOTE: both halves run NATIVELY here -- HAS_ROOT (createRoot) and
+ * 1.9.0 NOTE: both halves run NATIVELY here -- HAS_ROOT (createRoot) and
  * HAS_DESTROY (destroy) are both true, and scenario 2 (root-vs-scope) uses
- * createScope natively (no SKIP). Scenarios 1-10 were confirmed against 1.8.0
+ * createScope natively (no SKIP). Scenarios 1-10 were confirmed against 1.9.0
  * and passed as written; scenario 10 (destroy-baseline) leaves
  * stats().activeNodes === 0. Nothing needed pinning to a divergent behaviour.
  *

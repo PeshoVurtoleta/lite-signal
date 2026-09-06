@@ -9,15 +9,18 @@ a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
 wall clock (TORTURE_TIMEOUT_MS, default 300s -> FAIL, not a hang) and finish()
 fails any scenario that reaches PASS having asserted nothing.
 
-On THIS engine (1.8.0): 22 semantic execute and 1 skips at its floor
-(dispose 1.9); the soaks run 3 + the opt-in wraparound. cleanup-return-torture
-ACTIVATES natively here -- and this folder's copy is the native SUPERSET
-(section 6b pins the 1.8 severTail cursor-repair by mechanism: five named
-deterministic dispose-mid-retrack geometries, including the cursor parked
-EXACTLY on the freed link and a survivors-intact headDep check) with the
-suite's exit-77 skip protocol patched in. flush-torture runs the 1.7.0-origin
-native superset (sections 7-10: value-never-defers, FLAG_SCHEDULED enqueue
-dedup via op 7, the invalid-token throw matrix, re-entrant flush).
+On THIS engine (1.9.0): ALL 23 semantic execute -- the first folder in the
+line with ZERO floor-skips -- and the soaks run 3 + the opt-in wraparound.
+dispose-torture ACTIVATES natively here (Symbol.dispose / `using` on
+lifecycle objects: registry -> destroy, effect + createScope disposers ->
+themselves, box PROTOTYPES shared per registry; callable value handles
+deliberately unstamped). cleanup-return-torture runs the 1.8.0-origin native
+SUPERSET (section 6b pins the 1.8 severTail cursor-repair by mechanism: five
+named deterministic dispose-mid-retrack geometries, including the cursor
+parked EXACTLY on the freed link and a survivors-intact headDep check).
+flush-torture runs the 1.7.0-origin native superset (sections 7-10:
+value-never-defers, FLAG_SCHEDULED enqueue dedup via op 7, the invalid-token
+throw matrix, re-entrant flush).
 
     npm run torture ; npm run torture:semantic ; npm run torture:soak
     node bench/torture/run.mjs --list
@@ -157,6 +160,12 @@ missing mark lane. Recommendation there: add a "compare lane" (op 11/12) so the
 short-circuit's benefit becomes a counted fact and its regression becomes
 catchable.
 
+FULL-SURFACE COVERAGE (1.9.0-native consolidated audit, preserved): all 32
+module exports of 1.9.0 are exercised by at least one scenario (re-probed
+2026-09-06: module exports = 32). The consolidated audit had found createRoot
+(never called) and destroy (reached only indirectly) at zero coverage;
+lifecycle-torture closes both.
+
 FEATURE GATES: box/owner->1.5, scope->1.6, burst-profile->1.6, flush->1.7,
 cleanup-return->1.8, dispose->1.9. retrack-dispose, op-accounting, lifecycle,
 contract, interop, and all others: 1.4.0+. Floors are declared per scenario in
@@ -214,3 +223,26 @@ engine running (mint --verify all pins PASS: signal 264, computed 208, effect
 NO re-anchor needed (the cleanup ladder adds no eq-dispatch site; both failure
 paths re-witnessed in scratch clones: drift refusal exit 2 at 6x eq sites, the
 gutted-short-circuit mutant fires unrelated-read.depWalk 640,000 vs pinned 0).
+
+1.9.0-alpha migration note (2026-09-06): the suite carried onto the 1.9.0
+engine (the REBUILT 1.9 line: the 1.8.0 base + Symbol.dispose only -- see
+ROADMAP-1_9-REBUILT.md) with ZERO pin flips -- contract, interop,
+retrack-dispose, burst-profile, the zerogc lanes, and the wraparound dormancy
+band (re-run at full distance, 12/12) all re-verified. dispose-torture
+graduated from floor-skip to native execution -- the LAST feature-gated
+floor-skip in the suite, so every semantic scenario now executes (23/23; the
+canonical dispose body needed no folder superset: this folder's pre-migration
+copy was byte-identical to it modulo the exit-77/78 protocol lines). The five
+Symbol.dispose stamp sites change no observed contract: creation anatomy
+re-measured IDENTICAL for the FIFTH engine running (mint --verify all pins
+PASS: signal 264, computed 208, effect 160, boxes 56 B/op all-space -- the
+effect disposer's third symbol prop still fits the cap-3 PropertyArray, so
+minting stays flat) and visit-anatomy's 21 structural pins hold with NO
+re-anchor needed (the stamps add no eq-dispatch site; both failure paths
+re-witnessed in scratch clones: drift refusal exit 2 at 6x eq sites, the
+gutted-short-circuit mutant fires unrelated-read.depWalk 640,000 vs pinned 0).
+Doc-truth: the Signal.js line-ref comments in the capacity / deep-chain /
+error / owner tortures and test/30 were REFRESHED against the current engine
+(the 2026-08-20 createRegistry-validation cascade had shifted every ref
+written on 2026-08-18; the same stale-ref class ships in the published
+1.6.0 / 1.7.0 / 1.8.0 folders -- on the graduation reconcile list).

@@ -4,7 +4,95 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [1.9.0-preview.6] -- 2026-08-20
+## [1.9.0-alpha] -- 2026-09-06
+
+The **verification-infrastructure parity cut** on the rebuilt 1.9 line, and the
+first alpha of it. The engine is **byte-identical to 1.9.0-preview.6 past the
+version banner** -- still the 1.8.0 base plus the five existence-guarded
+`Symbol.dispose` stamp sites (registry -> `destroy`, effect + `createScope`
+disposers -> themselves, both box prototypes; callable value handles
+deliberately unstamped). What changed is everything that WATCHES the engine:
+the full 1.8.0-beta audit infrastructure is forward-ported and re-proven here.
+
+### Added -- the 27-scenario torture suite (was 22)
+
+- The 2026-08 audit-phase scenarios: `contract-torture`, `interop-torture`,
+  `retrack-dispose-torture`, `burst-profile-torture`, and the opt-in
+  `wraparound-torture` (full-distance 2^31 dormancy-band soak, 12/12 asserts).
+- The audit-hardened runner (`run.mjs`): 3-state skip protocol (exit 77
+  floor-skip / 78 env-skip), **enforced floors** (a skip at/above the
+  scenario's floor FAILS the run), per-scenario wall-clock caps, and
+  assert-nothing detection.
+- The folder supersets carried forward: flush-torture (1.7.0-origin sections
+  7-10) and cleanup-return-torture (1.8.0-origin section 6b severTail
+  cursor-repair pins).
+- **On this engine all 23 semantic scenarios execute with ZERO floor-skips --
+  the first engine in the line to run the complete superset** (`dispose` was
+  the last feature gate; `dispose-torture` activates natively). Suite verdict:
+  26 pass / 1 opt-in skip / 0 fail in ~31s.
+
+### Added -- test and gate lanes
+
+- `test/25-devtools-real-boot` rewritten against the REAL installed
+  **devtools 1.6.2** (14 tests): the exact 13-key `capabilities()` fingerprint
+  probed live (identical to the 1.8.0 pairing -- devtools 1.6.2 has no 1.9 cap
+  key, so the exact key set is itself the 1.9-era pin), all 22 exports +
+  `VERSION`, `burstProfile()` shapes, the 1.6.x `Symbol.dispose` stamps.
+- `test/36-devtools-zerogc-probe` (ported, renumbered above the folder max):
+  poolGrowths == 0 on the reactive-benchmark weak-group shapes through both
+  the engine counter and devtools `watchAllocations()`.
+- `test/zgc/` lane (`test:zgc` + `test:zgc:report`): 7/7 + 3/3 under a 4 MB
+  semi-space; `test/ProfilerTests` (`test:hardening`, 22/0/6) and
+  `harness/ProfilerTools` (`test:harness`, 5/5) sub-package lanes.
+- Phase-1/2/3 harness instruments: `visit-anatomy` (21 exact structural pins),
+  `jit-health` (strict, fresh Node-26 baseline), `mint-anatomy`, `costmodel`,
+  `floors`, `trend`, `creation-anatomy`, `burst-real`; `harness/run.mjs` gains
+  the `mint` entry.
+- VersionMatrix read+counter lanes with trimmed-spread aggregation and the
+  NO-EVIDENCE refusal protocol; **gate-self PASSED 5/5** vs floor-1.3.0 +
+  rolling-1.5.0 tarballs, creation counter lane exact (288 allocs/frame,
+  min=max=p99 over 1500 frames; 0 poolGrowths).
+
+### Measured on this engine
+
+- **Mint anatomy IDENTICAL for the fifth engine running**: signal 264.3 /
+  computed 208.1 / effect 160.0 / signalBox 56.0 / computedBox 56.0 B/op
+  all-space. The effect disposer's `Symbol.dispose` stamp is its THIRD symbol
+  property and still fits the cap-3 PropertyArray -- creation stays flat,
+  exactly as the rebuilt-line roadmap's creation bar demands.
+- visit-anatomy: 21/21 pins with **NO re-anchor needed** (the stamp sites add
+  no eq-dispatch site; drift refusal and the gutted-short-circuit mutant both
+  re-witnessed in scratch clones).
+- jit-health strict: all four handle families MONOMORPHIC -- the shared-proto
+  box stamps do not split handle maps.
+- Cleanup-return compose order, wraparound band, and every audit-era pin:
+  carried with ZERO pin flips.
+
+### Changed
+
+- devDeps: `@zakkster/lite-devtools` ^1.2.0 -> **^1.6.2**,
+  `@zakkster/lite-gc-profiler` ^1.15.0 -> **^1.16.0**.
+- `npm test` / `test:gc` / `test:coverage` are now glob-scoped to
+  `'test/*.test.mjs'` (bare `node --test` recursive discovery would sweep the
+  ported `test/zgc/` + `test/ProfilerTests/` lanes without their required
+  flags; the OOM child stays out of the glob structurally). Unit suite:
+  **547 tests, 546 pass, 0 fail, 1 skip** (`test:gc`: 555/554/0/1).
+- `verify` now chains `npm test && test:zgc && harness:smoke && bench`.
+- Signal.js line-ref comments in capacity/deep-chain/error/owner tortures and
+  `test/30` refreshed against the current engine (the preview.6 validation
+  insertion had shifted them).
+
+### Removed
+
+- `test/33-computed-selfdirty-prev-owner.test.mjs` -- byte-identical duplicate
+  of `test/34-...` (sha `0f48d434`), and its `33-` prefix collided with
+  `33-cleanup-return`; the glob ran the suite twice.
+- The stale `bench-reactive` script (pointed at a `benchmarkReactive.mjs` this
+  folder does not carry) and the stale llms `demo/index.html` +
+  "wired as prepublishOnly" claims (the gate is `npm run gate` ->
+  `pre-publish.mjs`; no such npm hook exists).
+
+
 
 Backports the **1.4.5 `createRegistry` input validation** (all four findings) onto
 the 1.9.0-preview.5 engine. Supersedes 1.9.0-preview.5. Only `createRegistry`'s *cold*

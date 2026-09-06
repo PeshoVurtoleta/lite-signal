@@ -10,12 +10,12 @@
 // and boxSet into TWO build variants (eager vs sab/manual, selected once at
 // creation), so each callable/box site appears twice physically -- the eager
 // build is the default this file drives; the mirror line is noted in parens:
-//   (a) signal set pre-check      :1272  eq(node.value, value)          (mirror :1293)
-//   (b) batch revert check        :1279  eq(node.preBatchValue, value)  (mirror :1300)
-//   (c) computed re-eval          :1143  eq(node.value, newValue)
-// 1.9.0 ALSO ships signalBox, whose boxSet (Signal.js :1398-1437) mirrors the
-// callable set path with its OWN two eq() calls (:1403 pre-check, :1410 revert;
-// sab/manual mirror :1423 / :1430) -- so a raw grep shows eq() calls across both
+//   (a) signal set pre-check      :1410  eq(node.value, value)          (mirror :1431)
+//   (b) batch revert check        :1417  eq(node.preBatchValue, value)  (mirror :1438)
+//   (c) computed re-eval          :1281  eq(node.value, newValue)
+// 1.9.0 ALSO ships signalBox, whose boxSet (Signal.js :1536-1575) mirrors the
+// callable set path with its OWN two eq() calls (:1541 pre-check, :1548 revert;
+// sab/manual mirror :1561 / :1568) -- so a raw grep shows eq() calls across both
 // build variants, but they collapse to the same three logical sites; the
 // signalBox pair is byte-identical in logic to (a)/(b). Its two boxSet sites are
 // pinned DIRECTLY below in describe "(box)": a throwing pre-check propagates
@@ -24,8 +24,8 @@
 // divergence from 1.4.4 was observed on either path -- every assertion here holds
 // identically.
 //
-// Site (b) is DOCUMENTED, not asserted-as-atomic: the throw at :1279 happens
-// AFTER node.value was written at :1278 but BEFORE the version bump/revert. We
+// Site (b) is DOCUMENTED, not asserted-as-atomic: the throw at :1417 happens
+// AFTER node.value was written at :1416 but BEFORE the version bump/revert. We
 // pin exactly what the engine does -- value written, version left bumped,
 // downstream fires -- so a future move to a truly atomic revert trips this pin
 // rather than silently claiming a rollback the engine never provided.
@@ -63,9 +63,9 @@ describe("throwing equals (a): signal set pre-check", () => {
 
 describe("throwing equals (b): batch revert check", () => {
     // Set X then set back to the original value inside one batch. The revert
-    // check at :1279 compares preBatchValue against the value on the SECOND set.
+    // check at :1417 compares preBatchValue against the value on the SECOND set.
     // We craft equals to throw ONLY on that specific comparison (both operands
-    // are the sentinel), so the pre-check at :1272 never throws.
+    // are the sentinel), so the pre-check at :1410 never throws.
     const POISON = { tag: "poison" };
     const X = { tag: "x" };
     const makeEquals = () => (a, b) => {
