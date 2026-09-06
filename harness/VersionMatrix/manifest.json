@@ -1,11 +1,11 @@
 {
   "floor": "1.3.0",
-  "rolling": "1.5.0-alpha.1",
-  "history": ["1.3.0", "1.4.0-beta.1", "1.5.0-alpha.1", "1.6.0-preview.2"],
-  "workloads": ["reactive-graph-mix", "deep-chain", "broadcast-fanout", "dynamic-dep-churn"],
+  "rolling": "1.5.0",
+  "history": ["1.3.0", "1.4.0-beta.1", "1.5.0-alpha.1", "1.5.0", "1.6.0-preview.2"],
+  "workloads": ["reactive-graph-mix", "deep-chain", "broadcast-fanout", "dynamic-dep-churn", "creation-churn"],
   "tolerances": {
-    "floor":   { "frame.avg": 0.10, "frame.p99": 0.30, "phase.write.p99": 0.30 },
-    "rolling": { "frame.avg": 0.05, "frame.p99": 0.18, "phase.write.p99": 0.18 }
+    "floor":   { "frame.avg": 0.10, "frame.p99": 0.30, "phase.write.p99": 0.30, "phase.read.avg": 0.40, "phase.read.p99": 1.00, "phase.create.avg": 0.40, "phase.create.p99": 0.60, "phase.dispose.avg": 0.40, "phase.dispose.p99": 0.50, "counter.allocs.max": 0, "counter.poolGrowths.max": 0 },
+    "rolling": { "frame.avg": 0.05, "frame.p99": 0.18, "phase.write.p99": 0.18, "phase.read.avg": 0.25, "phase.read.p99": 0.80, "phase.create.avg": 0.25, "phase.create.p99": 0.35, "phase.dispose.avg": 0.25, "phase.dispose.p99": 0.30, "counter.allocs.max": 0, "counter.poolGrowths.max": 0 }
   },
-  "_notes": "Calibrated against measured self-noise (npm run calibrate: frame.avg <=3.4%, frame.p99 up to 14%). frame.avg is the tight stable anchor (5% rolling, safely above its ~3% noise). p99 gates sit above the 14% p99 self-noise so they only fire on gross tail regressions. A p99 FAIL should be confirmed with a re-run, since p99 has a wider run-to-run band."
+  "_notes": "Calibrated against measured self-noise (npm run calibrate: frame.avg <=3.4%, frame.p99 up to 14%). frame.avg is the tight stable anchor (5% rolling, safely above its ~3% noise). p99 gates sit above the 14% p99 self-noise so they only fire on gross tail regressions. A p99 FAIL should be confirmed with a re-run, since p99 has a wider run-to-run band. READ LANE (2026-08 audit): phase.read.avg/p99 close the previously-ungated read-tail escape (amortized per-Nth-read maintenance spikes land at integer multiples, far above these bands). Calibrated from per-rep spread of the 2026-08 same-host captures: read.avg noise 2-11% typical / 17% worst -> 25% rolling; read.p99 on sub-microsecond phases (deep-chain reads ~0.0002 ms) shows up to 66% pure timer jitter -> 80%/100% catches only gross tail regressions by design. CREATION LANE (2026-08 audit Phase 2, creation-churn workload): phase.create/dispose gate the previously-ungated birth + teardown paths; calibrated from the 2026-08 interleaved 1.3.0/1.5.0 capture -- create.avg noise 4.5-12.5% -> 25%/40%, create.p99 noise 9-15% -> 35%/60%, dispose.avg noise 4.6-6.7% -> 25%/40%, dispose.p99 noise 2-3% -> 30%/50% (kept loose vs one quiet session; an O(active) dispose walk lands at integer multiples). counter.allocs.max / counter.poolGrowths.max are the engine's own EXACT counters under the fixed LCG schedule (288 allocs/frame, 0 growths) -- zero tolerance, no timing noise; engines without the 1.4.0 counters (the 1.3.0 floor) skip the lane leniently, and a candidate that DROPS the counters fails closed. Tighten only after a two-capture npm run calibrate on a quiet host (calibrate.mjs now reports the read + creation lanes)."
 }

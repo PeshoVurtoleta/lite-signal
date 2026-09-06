@@ -17,6 +17,8 @@
 //   churn   [engine]              topology-churn-per-recompute (1.11 cone-cache gate)
 //   owner   [engine]             async-gap owner-recycling hazard verdict
 //   creation                      per-framework-per-process createComputations matrix
+//   mint    [--verify]            mint+dispose cycle allocation anatomy (spawns
+//                                 its own flagged children; --verify applies pins)
 //   all                           field + dispose + churn, in sequence
 //
 // NOTES
@@ -81,6 +83,10 @@ const COMMANDS = {
         script: "toe-to-toe/toe-to-toe.mjs",
         flags: [],                // cross-version sweep; needs the PRIVATE engines/ dir (gitignored)
     },
+    mint: {
+        script: "mint-anatomy.mjs",
+        flags: [],                // parent spawns its own flagged children
+    },
 };
 
 // `smoke` first: it is the only command that ASSERTS (throws on a flushStrategy
@@ -101,6 +107,7 @@ function usage() {
         "  burst   [engine]              burst-shape characterization (strided vs contiguous)\n" +
         "  pull    [--maxDepth=..]       pull-mode depth + exact overflow point\n" +
         "  toe                           cross-version sweep (needs PRIVATE toe-to-toe/engines/)\n" +
+        "  mint    [--verify]            mint+dispose cycle allocation anatomy\n" +
         "  all                           smoke + field + dispose + churn\n"
     );
 }

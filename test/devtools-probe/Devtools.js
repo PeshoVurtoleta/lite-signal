@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-devtools -- reactive-graph inspection for @zakkster/lite-signal. v1.2.0
+ * @zakkster/lite-devtools -- reactive-graph inspection for @zakkster/lite-signal. v1.6.2
  * -----------------------------------------------------------------------------
  * Built entirely on lite-signal's public introspection surface (no private symbols,
  * no patched objects). Requires lite-signal >= 1.1.5: the source eagerly imports
@@ -26,6 +26,50 @@
  * 1.2.0: burstProfile() (flush/burst diagnostics; needs lite-signal >= 1.6 opcodes 6/7)
  *        and watchAllocations() (steady-state allocation-panel feed for lite-studio).
  *        Both are cold/debug paths, feature-detected via capabilities().burst.
+ * 1.3.0: capabilities() reports a full probe-derived capability vector (nine new
+ *        keys: boxes / roots / ownerCapture / scopes / flushControl / explicitDispose
+ *        / statsKeys / poolPopulation / cleanupReturn). Every key is a memoized
+ *        load-time feature probe (Law 4 -- never a version fingerprint) that fails
+ *        closed to `false` (Law 3). cleanupReturn is the one behaviour probe: it
+ *        runs ONCE at load inside a throwaway createRegistry(), never touching the
+ *        default registry, so the non-perturbing contract holds through detection.
+ * 1.3.1: no behaviour change -- test-hardening only. The "indistinguishable to
+ *        devtools" promise (Finding D) becomes a gate: box / createRoot-detached /
+ *        createScope-owner / getOwner-capture handles are driven through every read
+ *        op and the non-perturbing law (T0) is re-asserted shape-independently over
+ *        that expanded corpus.
+ * 1.4.0: flush-strategy awareness + 14-key stats. One new export -- pendingEffects()
+ *        -- an attach-time-forward effect-queue-depth gauge (op 7 enqueue - op 6
+ *        effectsToRun, clamped >= 0). It takes an OPTIONAL registry: the default
+ *        registry reuses the single top-level hub; a caller's sab/manual registry
+ *        gets its OWN hub via a module-level WeakMap so the default registry's stats()
+ *        is never perturbed. leakWatch() and watchAllocations() gain
+ *        nodePoolPopulation / linkPoolPopulation on each sample when
+ *        capabilities().poolPopulation is true (fields ABSENT below floor -- null is
+ *        not zero). The eager default path takes ZERO behaviour change: the engine
+ *        hot body, hubAdd/hubDispatch, and the eager .set path are untouched.
+ * 1.6.2: Test-oracle + doc-correctness patch -- no source or behaviour change. The
+ *        T8 five-engine matrix (LITE_DEVTOOLS_T8_MATRIX=1) was armed for the first
+ *        time, falsifying four hand-derived oracle floors: ownerCapture /
+ *        explicitDispose / poolPopulation are present at 1.5.0 (not 1.7/1.9), and the
+ *        statsKeys band is 13/14 (the 11/12 bands were fiction). Three prerelease
+ *        floors (scopes/flushControl/cleanupReturn) took the -0 tuple form so they
+ *        admit their own prerelease band. The shipped poolPopulation doc floor
+ *        (llms.txt/README/Devtools.d.ts and the comments below) is corrected from
+ *        ">= 1.9-preview.6" to the Law-4 framing (gate on the probe; present >= 1.5.0).
+ *        VERSION three-place synced.
+ * 1.6.1: Docs/demo refresh only -- no source or behaviour change. README gains
+ *        `using` (1.6) + labelResolver (1.5) workflows; llms.txt gains a Symbol.dispose
+ *        invariant + `using`/labelResolver idioms; demo/index.html gains LABEL-RESOLVER
+ *        and USING/DISPOSE regression scenarios. VERSION three-place synced.
+ * 1.6.0: Symbol.dispose across every stopper (S4). A module const SYMBOL_DISPOSE
+ *        feature-detects Symbol.dispose (null on < Node 20). All 7 stopper handles
+ *        -- track (bare-fn self-ref), leakWatch, watchGraph (push + poll),
+ *        profile, burstProfile, pendingEffects, watchAllocations -- mirror their
+ *        idempotent `stop` onto Symbol.dispose at CONSTRUCTION (one guarded own-prop
+ *        write per handle, cold path). Dispose routes to the same idempotent stop,
+ *        so double/interleaved dispose is a no-op. Engine-version-independent; every
+ *        T8 column unchanged; zero behaviour/alloc delta on every existing path.
  *
  * MIT (c) Zahary Shinikchiev
  */
@@ -33,6 +77,9 @@ import {
     stats, hasObservers, observeObservers, forEachObserver, forEachSource, nodeId, describe,
 } from "../../Signal.js";
 import * as SIG from "../../Signal.js";
+
+/** Package version. Three-place synced with package.json and llms.txt. */
+export const VERSION = "1.6.2";
 
 // Optional engine APIs, feature-detected so this module keeps loading on the
 // 1.1.5 floor. Named imports above are the hard floor (ESM link error below it);
@@ -50,10 +97,103 @@ const HAS_BURST = HAS_HOOK && (() => {
     }
 })();
 
-/** Engine capability snapshot -- lets a consumer (lite-studio) pick push vs poll
- *  and show/hide the ownership view without try/catch probing. */
+// S4 (1.6): Symbol.dispose slot for `using`. Every stopper handle this module
+// hands back gets its idempotent `stop` mirrored onto Symbol.dispose at CONSTRUCTION
+// (cold path, one guarded own-prop write per handle, zero per-call bytes). Dispose
+// routes to the same idempotent stop, so double/interleaved dispose is a no-op.
+// The `: null` fallback is for runtimes predating Symbol.dispose (< Node 20); on every
+// supported runtime Symbol.dispose is a symbol and the true arm is taken, so the
+// guard `SYMBOL_DISPOSE !== null` never stamps an `undefined`-keyed method.
+/* c8 ignore next -- pre-Symbol.dispose runtime fallback; unreachable on Node 20+ */
+const SYMBOL_DISPOSE = (typeof Symbol.dispose === "symbol") ? Symbol.dispose : null;
+
+// --- S1 capability vector (1.3): memoized load-time feature probes -------------
+// Law 4: capability tiers are decided by `typeof` probes and a stats()-key band
+// at LOAD, memoized -- never by assuming a version. Law 3: every probe fails
+// closed to `false`. None runs per-call; capabilities() is an O(1) return built
+// from these consts. Each maps to one lite-signal surface:
+//   boxes           signalBox + computedBox   (lite-signal >= 1.5)
+//   roots           createRoot                (>= 1.5)
+//   ownerCapture    getOwner                   (owner-capture family; S2 consumes)
+//   scopes          createScope                (>= 1.6)
+//   flushControl    flush                      (>= 1.7)
+//   explicitDispose dispose and/or destroy     (>= 1.5.0)
+const probeFn = (fn) => {
+    try {
+        return fn() === true;
+    } catch (_) {
+        return false;
+    }
+};
+const HAS_BOXES = probeFn(() => typeof SIG.signalBox === "function" && typeof SIG.computedBox === "function");
+const HAS_ROOTS = probeFn(() => typeof SIG.createRoot === "function");
+const HAS_OWNER_CAPTURE = probeFn(() => typeof SIG.getOwner === "function");
+const HAS_SCOPES = probeFn(() => typeof SIG.createScope === "function");
+const HAS_FLUSH = probeFn(() => typeof SIG.flush === "function");
+const HAS_EXPLICIT_DISPOSE = probeFn(() => typeof SIG.dispose === "function" || typeof SIG.destroy === "function");
+
+// stats()-key band (Law 4: a coarse tier HINT only -- no helper branches on it).
+// 13 pre-1.6 / 14 (>=1.6.0-0, flushPasses).
+const STATS_KEYS = (() => {
+    try {
+        return Object.keys(stats()).length;
+    } catch (_) {
+        return 0;
+    }
+})();
+// poolPopulation: stats() carries BOTH pool-population counters (present on every
+// supported cut; gate on this probe, never a version -- Law 4).
+const HAS_POOL_POP = (() => {
+    try {
+        const k = Object.keys(stats());
+        return k.indexOf("nodePoolPopulation") !== -1 && k.indexOf("linkPoolPopulation") !== -1;
+    } catch (_) {
+        return false;
+    }
+})();
+
+// cleanupReturn (>=1.8): an effect body may `return` a cleanup. NOT typeof-probeable
+// -- it is a BEHAVIOUR. Probe it exactly once at load inside a THROWAWAY registry so
+// the default registry is never touched (T0/T6 would see any perturbation). Fails
+// closed to false if createRegistry is absent, the probe throws, or the cleanup did
+// not fire (pre-1.8 engines ignore a returned function). Engine-asks ledger #5: a
+// first-class capability flag would retire this scratch probe.
+const HAS_CLEANUP_RETURN = (() => {
+    try {
+        if (typeof SIG.createRegistry !== "function") return false;
+        const r = SIG.createRegistry();
+        let flipped = false;
+        const stop = r.effect(() => () => { flipped = true; });
+        if (typeof stop === "function") stop();
+        else if (typeof r.dispose === "function") r.dispose(stop);
+        if (typeof r.destroy === "function") r.destroy();
+        return flipped === true;
+    } catch (_) {
+        return false;
+    }
+})();
+
+/** Engine capability snapshot -- lets a consumer (lite-studio) pick push vs poll,
+ *  show/hide the ownership view, and gate box/scope/flush features without
+ *  try/catch probing. Four legacy keys (floor/owners/mutationHook/burst) keep
+ *  their exact 1.2.1 semantics; nine keys added in 1.3 report the probe-derived
+ *  capability vector. O(1) return built from the memoized load-time consts above. */
 export function capabilities() {
-    return {floor: "1.1.5", owners: HAS_OWNERS, mutationHook: HAS_HOOK, burst: HAS_BURST};
+    return {
+        floor: "1.1.5",
+        owners: HAS_OWNERS,
+        mutationHook: HAS_HOOK,
+        burst: HAS_BURST,
+        boxes: HAS_BOXES,
+        roots: HAS_ROOTS,
+        ownerCapture: HAS_OWNER_CAPTURE,
+        scopes: HAS_SCOPES,
+        flushControl: HAS_FLUSH,
+        explicitDispose: HAS_EXPLICIT_DISPOSE,
+        statsKeys: STATS_KEYS,
+        poolPopulation: HAS_POOL_POP,
+        cleanupReturn: HAS_CLEANUP_RETURN,
+    };
 }
 
 // One engine listener, many internal consumers (watchGraph / profile). The
@@ -92,6 +232,49 @@ function hubAdd(fn) {
         if (hubSubs.size === 0 && hubOff !== null) {
             hubOff();
             hubOff = null;
+        }
+    };
+}
+
+// Per-FOREIGN-registry hub (1.4). The DEFAULT registry keeps the single top-level
+// hub above (hubAdd / hubDispatch, one SIG.onGraphMutation listener). A caller's
+// own createRegistry({flushStrategy}) world -- where a pending-effect queue is
+// actually meaningful -- gets its OWN hub here, keyed weakly by the registry so it
+// never perturbs the default registry's hub or its stats() (T0/T6). One listener
+// per registry, torn down (and the WeakMap entry deleted) when the last subscriber
+// on that registry leaves, returning it to its zero-cost state.
+const registryHubs = new WeakMap();     // registry -> { subs:Set, off:fn|null }
+
+function foreignHubAdd(registry, fn) {
+    let hub = registryHubs.get(registry);
+    if (hub === undefined) {
+        hub = {subs: new Set(), off: null};
+        registryHubs.set(registry, hub);
+    }
+    hub.subs.add(fn);
+    if (hub.off === null) {
+        const subs = hub.subs;
+        // Same never-throw contract the default hubDispatch enforces: a subscriber
+        // that throws would unwind through the foreign engine mid-mutation.
+        hub.off = registry.onGraphMutation((op, a, b) => {
+            for (const f of subs) {
+                try {
+                    f(op, a, b);
+                } catch (e) {
+                    try {
+                        console.error("[lite-devtools] graph-mutation subscriber threw:", e);
+                    } catch (_) { /* no console */
+                    }
+                }
+            }
+        });
+    }
+    return () => {
+        hub.subs.delete(fn);
+        if (hub.subs.size === 0 && hub.off !== null) {
+            hub.off();
+            hub.off = null;
+            registryHubs.delete(registry);
         }
     };
 }
@@ -211,10 +394,15 @@ export function track(handle, onEvent) {
             if (op === 2 && a === id) onEvent({type: "dispose", id, observed: false, ts: now()});
         });
     }
-    return () => {
+    const off = () => {
         if (offHook !== null) offHook();
         return offLifecycle();
     };
+    // S4: bare-fn self-reference stamp -- `using off = track(...)` disposes at block
+    // exit through the same idempotent unsubscribe. Never a new closure, never a
+    // mutation of the engine's lifecycle handle.
+    if (SYMBOL_DISPOSE !== null) off[SYMBOL_DISPOSE] = off;
+    return off;
 }
 
 /**
@@ -259,11 +447,22 @@ export function leakWatch({sampleMs = 1000, growth = 32, onSample} = {}) {
         const delta = live - prev;
         prev = live;
         const rec = {ts: now(), activeNodes: live, delta, leakSuspected: delta >= growth};
+        // 1.4: pool-population counters, gated on capabilities().poolPopulation.
+        // When that probe is false the fields are ABSENT (not 0 -- null is
+        // not zero, Law 3), so a consumer can tell "engine has no counter" from
+        // "counter reads 0". The existing activeNodes/delta/leakSuspected fields
+        // above are byte-unchanged.
+        if (HAS_POOL_POP) {
+            rec.nodePoolPopulation = s.nodePoolPopulation;
+            rec.linkPoolPopulation = s.linkPoolPopulation;
+        }
         samples.push(rec);
         if (samples.length > 128) samples.shift();
         if (onSample) onSample(rec);
     });
-    return {stop, samples};
+    const h = {stop, samples};
+    if (SYMBOL_DISPOSE !== null) h[SYMBOL_DISPOSE] = h.stop;   // S4: `using` -> stop
+    return h;
 }
 
 /**
@@ -384,22 +583,59 @@ export function graph(roots, {maxNodes = 10000, owners = false} = {}) {
     return {nodes: [...nodes.values()], edges};
 }
 
+// Shared cold label hook (1.5). A host-supplied labelResolver (concretely,
+// @zakkster/lite-signal-decorators passing its labelOf) annotates rendered nodes
+// inline; both renderers route resolver output through this ONE site. Never-throw
+// law, identical to hubDispatch above: a resolver that throws is caught, surfaced
+// ONCE, and the node falls through to its default label. Non-string returns
+// (undefined / null included) fall through silently. Control chars are stripped
+// (\n \r \t -> space) so a resolver string can never corrupt toTree indentation;
+// toDot additionally runs its own esc() + maxLabel truncation over the result.
+let labelResolverThrew = false;
+
+function resolveLabel(fn, id, fallback) {
+    let r;
+    try {
+        r = fn(id);
+    } catch (e) {
+        if (!labelResolverThrew) {
+            labelResolverThrew = true;
+            try {
+                console.error("[lite-devtools] labelResolver threw:", e);
+            } catch (_) { /* no console */
+            }
+        }
+        return fallback;
+    }
+    return typeof r === "string" ? r.replace(/[\n\r\t]/g, " ") : fallback;
+}
+
 /**
  * Render a graph() result as Graphviz DOT -- paste into any DOT viewer.
  * Signals are ellipses, computeds boxes, effects diamonds.
  *
  * @param {{nodes:Array<{id:number,kind:string,value:unknown}>, edges:Array<{from:number,to:number}>}} g
  *        Output of graph().
- * @param {{name?:string, maxLabel?:number}} [opts]  name: digraph identifier (default "reactive").
- *        maxLabel: truncate value strings in labels to this many chars (default 24).
+ * @param {{name?:string, maxLabel?:number, labelResolver?:(id:number)=>(string|undefined)}} [opts]
+ *        name: digraph identifier (default "reactive"). maxLabel: truncate value strings in
+ *        labels to this many chars (default 24). labelResolver: optional host hook mapping a
+ *        node id to a label string; a string return replaces the default value label (and still
+ *        passes through esc()+maxLabel), any non-string return (undefined/null included) falls
+ *        through to the default, and a throw is caught and logged once.
  * @returns {string}  DOT source.
  */
-export function toDot(g, {name = "reactive", maxLabel = 24} = {}) {
+export function toDot(g, {name = "reactive", maxLabel = 24, labelResolver} = {}) {
+    if (labelResolver !== undefined && typeof labelResolver !== "function") {
+        throw new TypeError("toDot: labelResolver must be a function");
+    }
     const shape = (k) => (k === "signal" ? "ellipse" : k === "computed" ? "box" : k === "effect" ? "diamond" : "plaintext");
     const esc = (v) => String(v).replace(/["\\\n]/g, " ").slice(0, maxLabel);
     const lines = [`digraph ${name} {`, "  rankdir=LR;", '  node [fontname="monospace"];'];
 
-    for (const n of g.nodes) lines.push(`  n${n.id} [label="${n.kind}#${n.id}\\n${esc(n.value)}", shape=${shape(n.kind)}];`);
+    for (const n of g.nodes) {
+        const val = labelResolver ? resolveLabel(labelResolver, n.id, n.value) : n.value;
+        lines.push(`  n${n.id} [label="${n.kind}#${n.id}\\n${esc(val)}", shape=${shape(n.kind)}];`);
+    }
     for (const e of g.edges) lines.push(e.kind === "owner" ? `  n${e.from} -> n${e.to} [style=dashed, color=gray, arrowhead=odot];` : `  n${e.from} -> n${e.to};`);
 
     lines.push("}");
@@ -412,12 +648,18 @@ export function toDot(g, {name = "reactive", maxLabel = 24} = {}) {
  * nodes are marked with a a `(seen)` marker rather than expanded (the graph is a DAG, not a tree).
  *
  * @param {object} root  A signal / computed / effect-handle.
- * @param {{direction?:"down"|"up", maxDepth?:number}} [opts]  direction: "down" walks observers
- *        (subscribers), "up" walks sources (dependencies). Default "down". maxDepth: depth cap
- *        (default Infinity).
+ * @param {{direction?:"down"|"up", maxDepth?:number, labelResolver?:(id:number)=>(string|undefined)}} [opts]
+ *        direction: "down" walks observers (subscribers), "up" walks sources (dependencies).
+ *        Default "down". maxDepth: depth cap (default Infinity). labelResolver: optional host hook
+ *        mapping a node id to a label string; a string return replaces the default value label
+ *        (control chars stripped, then sliced to 24 chars), any non-string return (undefined/null
+ *        included) falls through to the default, and a throw is caught and logged once.
  * @returns {string}  Indented text. Empty string on a non-handle.
  */
-export function toTree(root, {direction = "down", maxDepth = Infinity} = {}) {
+export function toTree(root, {direction = "down", maxDepth = Infinity, labelResolver} = {}) {
+    if (labelResolver !== undefined && typeof labelResolver !== "function") {
+        throw new TypeError("toTree: labelResolver must be a function");
+    }
     const walk = direction === "up" ? forEachSource : forEachObserver;
     const out = [];
     const seen = new Set();
@@ -426,7 +668,8 @@ export function toTree(root, {direction = "down", maxDepth = Infinity} = {}) {
         const d = describe(h);
         if (!d) return;
         const pad = "  ".repeat(depth);
-        const tag = `${d.kind}#${d.id} = ${String(d.value).slice(0, 24)}`;
+        const label = labelResolver ? resolveLabel(labelResolver, d.id, String(d.value)) : String(d.value);
+        const tag = `${d.kind}#${d.id} = ${label.slice(0, 24)}`;
         if (seen.has(d.id)) {
             out.push(pad + "(seen) " + tag);
             return;
@@ -643,10 +886,14 @@ export function watchGraph(roots, cb, {maxNodes, owners, pollMs = 250, immediate
                 });
             }
         });
-        return {stop: off, mode: "push"};
+        const h = {stop: off, mode: "push"};
+        if (SYMBOL_DISPOSE !== null) h[SYMBOL_DISPOSE] = h.stop;   // S4: `using` -> stop
+        return h;
     }
     const t = every(pollMs, () => flush(0));
-    return {stop: t, mode: "poll"};
+    const h = {stop: t, mode: "poll"};
+    if (SYMBOL_DISPOSE !== null) h[SYMBOL_DISPOSE] = h.stop;   // S4: `using` -> stop
+    return h;
 }
 
 // --- Recompute profiler (1.1, lite-signal >= 1.2.1 hook) -----------------------
@@ -673,12 +920,16 @@ export function profile({onSample} = {}) {
     });
     const top = (n = 10) => [...counts.entries()].map(([id, count]) => ({id, count}))
         .sort((x, y) => y.count - x.count).slice(0, n);
-    return {
+    const h = {
         stop: () => {
             off();
             return counts;
         }, counts, top
     };
+    // S4: `using p = profile()` disposes at block exit. Note: the stop return value
+    // (the counts Map) is discarded under `using` -- read it via an explicit call.
+    if (SYMBOL_DISPOSE !== null) h[SYMBOL_DISPOSE] = h.stop;
+    return h;
 }
 
 // --- Snapshot serialization (1.1) -----------------------------------------------
@@ -785,7 +1036,7 @@ export function burstProfile() {
             return {id: e[0], queued: e[1], ran: r, wasted: e[1] - r};
         })
         .filter((x) => x.wasted > 0).sort((x, y) => y.wasted - x.wasted).slice(0, n);
-    return {
+    const h = {
         stop: () => {
             off();
             return {passes, perPass: perPass.slice(), queued, ran};
@@ -794,6 +1045,94 @@ export function burstProfile() {
         perPass: () => perPass.slice(),
         queued, ran, redundant, shortCircuited,
     };
+    // S4: `using b = burstProfile()` disposes at block exit. Note: the stop return
+    // value (the pass summary) is discarded under `using` -- read it via an explicit call.
+    if (SYMBOL_DISPOSE !== null) h[SYMBOL_DISPOSE] = h.stop;
+    return h;
+}
+
+// --- Pending-effect queue-depth gauge (1.4; lite-signal >= 1.6 opcodes 6/7) -----
+
+/**
+ * An effect-queue-depth gauge for a registry, derived from the graph-mutation hub.
+ * The depth is the number of effects currently enqueued but not yet drained:
+ *
+ *     depth = sum(op 7 enqueues) - sum(op 6 effectsToRun), clamped >= 0
+ *
+ * op 6's payload `b` is the exact count of effects a flush pass drains, so this is
+ * the true queue delta -- NOT `op7 - op5`. Opcode 5 fires for COMPUTED recomputes
+ * too (a pulled computed re-evaluating is an op 5), so subtracting it would
+ * under-read the queue and clamp to a false 0. Only op 6 marks effects LEAVING the
+ * queue.
+ *
+ * ACCURACY IS ATTACH-TIME-FORWARD. The gauge counts from the moment it attaches;
+ * it is never a retroactive absolute depth of a queue that was already filling
+ * before attach. On an `eager` registry the depth is honestly ~0 outside a
+ * `batch()` (each write auto-flushes synchronously); on a `manual` registry it
+ * climbs until `registry.flush()`; on `sab` until the batch-exit flush fires.
+ *
+ * REGISTRY SCOPING (planning decision -- path (b)): `pendingEffects()` with no
+ * argument gauges the DEFAULT registry via the existing single top-level hub
+ * (honest, but ~always 0 on the default eager registry). Pass a registry from
+ * `createRegistry({flushStrategy})` to gauge THAT world -- it attaches to the
+ * registry's own `onGraphMutation` through a per-registry hub that never touches
+ * the default registry's hub or stats().
+ *
+ * Fails closed to `null` (never a plausible wrong number, never a throw):
+ *   - default path: unless `capabilities().mutationHook && capabilities().burst`.
+ *   - foreign path: unless the registry exposes `onGraphMutation` AND a numeric
+ *     `stats().flushPasses` (its own burst surface, probed on the registry itself).
+ *
+ * @param {object} [registry]  A createRegistry() handle. Omit for the default registry.
+ * @returns {{depth:()=>number, peak:()=>number, stop:()=>void}|null}
+ *          depth(): current attach-time-forward queue depth (>= 0).
+ *          peak(): max depth seen since attach.
+ *          stop(): idempotent detach -- releases the hub subscription, leaving no
+ *                  retained listener (the per-registry hub is torn down when its
+ *                  last subscriber leaves).
+ */
+export function pendingEffects(registry) {
+    let add, ok;
+    if (registry === undefined) {
+        // Default registry: reuse the single top-level hub. Probe the default
+        // surface exactly as capabilities() reports it.
+        if (!HAS_HOOK || !HAS_BURST) return null;
+        add = hubAdd;
+    } else {
+        // Foreign registry: probe ITS own surface, attach to ITS own hub.
+        if (typeof registry.onGraphMutation !== "function" || typeof registry.stats !== "function") return null;
+        try {
+            if (typeof registry.stats().flushPasses !== "number") return null;
+        } catch (_) {
+            return null;
+        }
+        add = (fn) => foreignHubAdd(registry, fn);
+    }
+
+    let running = 0;                     // enqueued - drained, since attach
+    let peak = 0;
+    const off = add((op, a, b) => {
+        if (op === 7) {
+            running++;
+            if (running > peak) peak = running;
+        } else if (op === 6) {
+            running -= (b | 0);          // b = effectsToRun this pass (op 6 payload)
+            if (running < 0) running = 0;
+        }
+    });
+
+    let stopped = false;
+    const h = {
+        depth: () => (running < 0 ? 0 : running),
+        peak: () => peak,
+        stop: () => {
+            if (stopped) return;         // idempotent -- routes Symbol.dispose too
+            stopped = true;
+            off();
+        },
+    };
+    if (SYMBOL_DISPOSE !== null) h[SYMBOL_DISPOSE] = h.stop;   // S4: `using` -> stop
+    return h;
 }
 
 // --- Steady-state allocation panel feed (1.4 counters; 1.6 flushPasses) ---------
@@ -838,7 +1177,7 @@ export function watchAllocations(cb, {sampleMs = 250, recomputes = true} = {}) {
         const s = stats();
         const alloc = s.totalAllocations ?? 0, dispose = s.totalDisposals ?? 0;
         const growth = s.poolGrowths ?? 0, fpasses = s.flushPasses ?? 0;
-        cb({
+        const payload = {
             ts: now(),
             poolGrowthDelta: growth - pGrowth,      // 0 always, post-warmup -- the headline flat line
             allocDelta: alloc - pAlloc,             // 0 steady; spikes under churn, by design
@@ -848,17 +1187,28 @@ export function watchAllocations(cb, {sampleMs = 250, recomputes = true} = {}) {
             activeNodes: s.activeNodes ?? ((s.signals | 0) + (s.computeds | 0) + (s.effects | 0)),
             activeLinks: s.activeLinks ?? 0,
             totalAllocations: alloc, poolGrowths: growth,   // cumulative -> "flat since boot"
-        });
+        };
+        // 1.4: pool-population counters off the SAME stats() snapshot -- no new
+        // hook. Gated on capabilities().poolPopulation; ABSENT when that probe is
+        // false (Law 3). The always-on moat lines above
+        // (poolGrowthDelta / allocDelta) are byte-identical.
+        if (HAS_POOL_POP) {
+            payload.nodePoolPopulation = s.nodePoolPopulation;
+            payload.linkPoolPopulation = s.linkPoolPopulation;
+        }
+        cb(payload);
         pAlloc = alloc;
         pDispose = dispose;
         pGrowth = growth;
         pPasses = fpasses;
         pRecompute = recompute;
     });
-    return {
+    const h = {
         stop: () => {
             if (offHook !== null) offHook();
             return cancel();
         }
     };
+    if (SYMBOL_DISPOSE !== null) h[SYMBOL_DISPOSE] = h.stop;   // S4: `using` -> stop
+    return h;
 }

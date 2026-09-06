@@ -47,6 +47,11 @@ shape can't hide behind another:
 - `deep-chain` -- long linear computed chain (lite-signal's DEEP CHAIN weak spot).
 - `broadcast-fanout` -- one source -> many leaves (the BROADCAST pattern).
 - `dynamic-dep-churn` -- branch-flipping bodies that retrack every cycle (DYNAMIC DAG).
+- `creation-churn` -- per-frame create -> write -> dispose triples (the CREATION lane,
+  previously ungated); also carries the exact-counter lane: the engine's own
+  `totalAllocations`/`poolGrowths` deltas per frame, gated at zero tolerance
+  (`counter.allocs.max` / `counter.poolGrowths.max`) -- deterministic under the LCG,
+  cross-rep identity enforced by aggregate.mjs (drift = evidence refusal).
 
 Graphs are sized under lite-signal's default 1024-node pool cap; frame cost is scaled by
 `ITER` (more update cycles), not more nodes, and each workload runs in its own cold process.

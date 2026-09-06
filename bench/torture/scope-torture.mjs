@@ -46,7 +46,7 @@ const createScope = Signal.createScope;
 
 if (typeof createScope !== "function") {
     console.log("lite-signal scope torture — SKIP: createScope requires 1.6.0+");
-    process.exit(0);
+    process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
 }
 
 const SEEDS = Number(process.env.SCOPE_SEEDS || 300);

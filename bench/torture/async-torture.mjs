@@ -41,7 +41,7 @@ const { watch, when, whenAsync } = Signal;
 
 if (typeof watch !== "function" || typeof when !== "function" || typeof whenAsync !== "function") {
     console.log("lite-signal async torture — SKIP: watch/when/whenAsync not all present");
-    process.exit(0);
+    process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
 }
 
 // These are top-level helpers bound to the default registry, so give it a pool

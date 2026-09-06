@@ -1,14 +1,14 @@
 /**
- * bench/torture/lifecycle-torture.mjs — createRoot detachment + destroy reset
+ * bench/torture/lifecycle-torture.mjs -- createRoot detachment + destroy reset
  * (createRoot: 1.5.0+, destroy: 1.4.0+).
  *
  * Found by the consolidated coverage audit: of the 32 exports, two were exercised
- * by NO scenario except in passing comments — `createRoot` (never called at all)
+ * by NO scenario except in passing comments -- `createRoot` (never called at all)
  * and `destroy` (only reached indirectly via `registry[Symbol.dispose]()` in
  * dispose-torture, its DIRECT contract never asserted). Both are load-bearing
  * registry/root lifecycle primitives, so this closes them.
  *
- * createRoot(fn): runs fn DETACHED — no owner, no observer, no tracking. Unlike
+ * createRoot(fn): runs fn DETACHED -- no owner, no observer, no tracking. Unlike
  * createScope (which ADOPTS and hands back one cascade-disposer), createRoot only
  * DETACHES: nodes created inside SURVIVE and the caller disposes them by hand.
  * The distinction is the whole point, so this file asserts it directly:
@@ -18,14 +18,20 @@
  *     (the createRoot pairing nulls the observer, same as runWithOwner);
  *   - fn's return value passes through; nesting composes.
  *
- * destroy(): a full registry reset — every node's gen is bumped (so every
+ * destroy(): a full registry reset -- every node's gen is bumped (so every
  * outstanding handle goes stale), all state cleared, free lists rebuilt. Its
  * contract, never asserted directly:
  *   - after destroy, every prior handle is stale: nodeId/describe return
  *     undefined, and a stale .set() is a safe no-op (not a crash, and it drives
  *     no effect);
- *   - the registry is REUSABLE — new signals/computeds/effects work normally;
+ *   - the registry is REUSABLE -- new signals/computeds/effects work normally;
  *   - destroy is idempotent.
+ *
+ * 1.8.0 NOTE: both halves run NATIVELY here -- HAS_ROOT (createRoot) and
+ * HAS_DESTROY (destroy) are both true, and scenario 2 (root-vs-scope) uses
+ * createScope natively (no SKIP). Scenarios 1-10 were confirmed against 1.8.0
+ * and passed as written; scenario 10 (destroy-baseline) leaves
+ * stats().activeNodes === 0. Nothing needed pinning to a divergent behaviour.
  *
  * Exit code: 0 iff every lifecycle contract held.
  *
@@ -42,13 +48,13 @@ const HAS_ROOT = typeof reg().createRoot === "function";
 const HAS_DESTROY = typeof reg().destroy === "function";
 
 if (!HAS_ROOT && !HAS_DESTROY) {
-    console.log("lite-signal lifecycle torture — SKIP: neither createRoot nor destroy available");
-    process.exit(0);
+    console.log("lite-signal lifecycle torture -- SKIP: neither createRoot nor destroy available");
+    process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
 }
 
-const R = createReport("lite-signal lifecycle torture — createRoot detachment + destroy reset");
+const R = createReport("lite-signal lifecycle torture -- createRoot detachment + destroy reset");
 
-/* ── createRoot: DETACHMENT (nodes survive; not auto-disposed) ────────────── */
+/* -- createRoot: DETACHMENT (nodes survive; not auto-disposed) -------------- */
 if (HAS_ROOT) {
     // 1. An effect created inside createRoot survives the call and keeps reacting.
     {
@@ -65,7 +71,7 @@ if (HAS_ROOT) {
     }
 
     // 2. createRoot is DISTINCT from createScope: scope children cascade-dispose,
-    //    root children do not — even when the createRoot is called INSIDE a scope.
+    //    root children do not -- even when the createRoot is called INSIDE a scope.
     //    (Nesting it inside a scope is essential: at top level currentOwner is
     //    already null, so a broken detachment would be invisible. Inside a scope,
     //    a createRoot that fails to null currentOwner would adopt its child into
@@ -87,7 +93,7 @@ if (HAS_ROOT) {
         s.set(2);
         R.eq("root-vs-scope", scopeRuns - sb2, 0, "scope child ran after its scope was disposed");
         R.ok("root-vs-scope", rootRuns - rb2 >= 1,
-            "a createRoot child INSIDE a scope died when the scope was disposed — createRoot did not detach (currentOwner not nulled)");
+            "a createRoot child INSIDE a scope died when the scope was disposed -- createRoot did not detach (currentOwner not nulled)");
     }
 
     // 3. Return-value passthrough.
@@ -107,7 +113,7 @@ if (HAS_ROOT) {
         const base = outerReruns;
         trap.set(1); trap.set(2); trap.set(3);
         R.eq("root-dep-isolation", outerReruns - base, 0,
-            "a signal read only inside createRoot re-ran the enclosing effect — a dep edge leaked");
+            "a signal read only inside createRoot re-ran the enclosing effect -- a dep edge leaked");
         stop();
     }
 
@@ -122,7 +128,7 @@ if (HAS_ROOT) {
     }
 }
 
-/* ── destroy: FULL REGISTRY RESET ─────────────────────────────────────────── */
+/* -- destroy: FULL REGISTRY RESET ------------------------------------------- */
 if (HAS_DESTROY) {
     // 6. After destroy, every prior handle is stale.
     {
@@ -202,4 +208,7 @@ if (HAS_DESTROY) {
     }
 }
 
-process.exit(R.finish("createRoot detaches (children survive, deps isolated); destroy resets the pool and stales every handle"));
+const lifecycleSummary = [];
+if (HAS_ROOT) lifecycleSummary.push("createRoot detaches (children survive, deps isolated)");
+if (HAS_DESTROY) lifecycleSummary.push("destroy resets the pool and stales every handle");
+process.exit(R.finish(lifecycleSummary.join("; ")));
