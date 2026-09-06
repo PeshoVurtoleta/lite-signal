@@ -4,30 +4,80 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [1.11.0-candidate] -- 2026-07-XX (rebuilt line, candidate)
+## [1.11.0-preview] -- 2026-09-06
 
 **Feature of the cut: `onSettled`, rebuilt as a creation-time capability.** The
 redemption of the feature whose naive always-checked drain hook was the +27-31%
 1to1batch regression (ledger #17). It returns with the cost model inverted.
+This preview also carries the full verification-infrastructure parity of the
+rebuilt line (assembled from the finalized 1.10.0-preview tree) and a one-time,
+user-authorized engine port of the same two cold-path fixes 1.10.0 needed.
 
 ### Added
 - `createRegistry({ settled: true })` -- selects, ONCE at build time, a `flushEffects`
   variant with a drain-complete tail, using the same const-selection discipline as the
   1.7.0 `flushStrategy` closures.
 - `onSettled(fn)` (registry method + top-level) -- fires once per top-level, non-empty,
-  clean drain; returns an unsubscribe. Throws `onSettled requires createRegistry({
-  settled: true })` on a registry built without the capability. Does not fire on
-  re-entrant flushes, empty flushes, or a flush that threw. Coalesces under batch and
-  multi-effect drains.
+  clean drain; returns an idempotent unsubscribe. Throws `onSettled requires
+  createRegistry({ settled: true })` on a registry built without the capability. Does
+  not fire on re-entrant flushes, empty flushes, or a flush that threw. Coalesces under
+  batch and multi-effect drains; callbacks fire in subscription order and a throwing
+  callback is swallowed (observer, not control path). Module surface: 34 exports /
+  registry 28 fns.
+- `settled` joins the validated config family (7 keys) as a **strict boolean**: a
+  truthy non-boolean (`{settled: "yes"}`) throws
+  `createRegistry: "settled" must be true or false` rather than silently binding the
+  plain drain, and `setled` gets a did-you-mean suggestion.
+- `bench/torture/settled-torture.mjs` -- the 28th scenario (native, floor 1.11.0,
+  39 asserts): exact settle accounting across all three `flushStrategy` builds,
+  fan/batch/cascade coalescing, clean-quiescence negatives, observer isolation,
+  mid-fire un/subscribe safety, destroy, 10k-cycle + 1000-batch exact soaks;
+  `SETTLED_BREAK=phantom|lost` self-tests verified to fail the gate.
+- `zerogc-torture` gains the 1.11.0-gated `steady-settled` lane: a LIVE subscriber
+  under the full witness battery (retained 0 B, poolGrowths 0, zero scavenges over
+  the 1M-op un-forced window) with in-loop fail-closed non-vacuity.
+- `test/38-onsettled.test.mjs` (the authored discriminator, 9 tests) and ten new
+  `test/35` cases (the settled matrix rows, the suggestion-set test, and a
+  first-class option describe).
+
+### Fixed (engine port, user-authorized, one-time)
+- The staged `v1.11.0-candidate.1` engine had forked the rebuilt line at the SAME
+  pre-fix point as the 1.10.0 canary. Ported verbatim from the 1.10.0 engine:
+  the `disposeNode` **cursor repair** (+ branch-free `freeLink`) -- without it,
+  `scope-torture`, `retrack-dispose-torture` and `cleanup-return-torture` all
+  crashed (`Cannot set properties of null (setting 'headSub')`) -- and the
+  **1.4.5 `createRegistry` validation cascade** (+ the 2 pool-population stats
+  keys, 12 -> 14), whose absence failed ~34 unit tests including a real OOM
+  SIGABRT where the missing eager ceiling let the guard child OOM. Residual
+  engine diff vs 1.10.0 = the 8 authored onSettled hunks + the two `settled`
+  validation lines; **no hot body touched** (`flushEffectsPlain`'s body is
+  byte-identical to 1.10.0's `flushEffects` -- only the binding became a
+  build-time-selected const).
 
 ### Unchanged (proven, not asserted)
 - A default registry (`settled` off) binds the **verbatim plain drain**, so its
   `flushEffects` -- and the hot write path that calls it -- is **byte-identical** to
   1.10.0 (body sha256). `markDownstream` / `executeEffect` / `pullComputed` untouched.
-  The only default-build change is the `flushEffects` *binding* becoming a build-time
-  selected const. Zero cost BY CONSTRUCTION -- there is no per-flush check.
-- Bars: `1to1batch` neutral on a default registry; `createSignals` / `createEffects`
-  within noise. `test/31-onsettled.test.mjs` (9), `test/30-*` (6) green.
+  Zero cost BY CONSTRUCTION -- there is no per-flush check.
+- Creation anatomy re-measured **IDENTICAL for the seventh engine running**
+  (`mint --verify` all pins PASS: signal 264.3 / computed 208.1 / effect 160.0 /
+  boxes 56.0 B/op all-space -- `CAP_SETTLED` is read once at `createRegistry`,
+  off the mint path). `visit-anatomy --verify` holds all 21 structural pins with
+  NO re-anchor. JIT strict: 4x monomorphic on a fresh Node-26 baseline.
+  VersionMatrix **GATE PASSED 5/5 first try** (floor 1.3.0 + rolling 1.5.0,
+  REPS=5 trimmed-spread; counter lane exact 288 allocs/frame min=max=p99 over
+  1500 frames, poolGrowths 0).
+- Full ladder: unit 572/571/0/1 (`test:gc` 580/579/0/1); torture 27 pass /
+  1 opt-in skip / 0 fail with **zero floor-skips** (wraparound re-run at full
+  distance, 12/12); zgc 7/7 + report; hardening 23/0/5; harness 5/5; smoke PASS.
+
+### Known sharp edge (observed, deliberately un-asserted)
+- `fireSettled` iterates the live callbacks array while unsubscribe splices it:
+  a callback that unsubscribes ITSELF mid-fire makes its next sibling miss THAT
+  drain (recovery from the next drain on is exact); a mid-fire subscribe is
+  delivered in the same drain; `destroy()` retains `settledCallbacks` (bounded,
+  freed with the registry). Flagged for an explicit decision rather than pinned
+  as law -- see `settled-torture`'s header.
 
 
 ## [1.10.0-preview] -- 2026-09-06

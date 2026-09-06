@@ -1,7 +1,7 @@
-lite-signal torture suite — complete set (27 scenarios)
+lite-signal torture suite — complete set (28 scenarios)
 ========================================================
 
-23 semantic (deterministic, fast, CI) + 4 soak (one opt-in). Full superset through 1.9.
+24 semantic (deterministic, fast, CI) + 4 soak (one opt-in). Full superset through 1.11.
 Every scenario feature-detects and skips cleanly below its feature; runs green
 from 1.4.x forward. Skips use exit 77 and the runner enforces version floors:
 a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
@@ -9,9 +9,15 @@ a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
 wall clock (TORTURE_TIMEOUT_MS, default 300s -> FAIL, not a hang) and finish()
 fails any scenario that reaches PASS having asserted nothing.
 
-On THIS engine (1.10.0): ALL 23 semantic execute with ZERO floor-skips (as on
-1.9.0 -- dispose was the last feature gate), and the soaks run 3 + the opt-in
-wraparound. dispose-torture ACTIVATES natively (Symbol.dispose / `using` on
+On THIS engine (1.11.0): ALL 24 semantic execute with ZERO floor-skips (as on
+1.9.0/1.10.0 -- dispose was the last feature gate), and the soaks run 3 + the
+opt-in wraparound. settled-torture ACTIVATES natively (the 1.11.0 onSettled
+creation-time capability: exact settle accounting across all three
+flushStrategy builds, fan/batch/cascade coalescing, clean-quiescence
+negatives, observer isolation, mid-fire safety, exact-count soaks;
+SETTLED_BREAK=phantom|lost self-tests must fail the gate). The zerogc
+steady-settled lane proves the notification tail allocation-free with a live
+subscriber. dispose-torture runs natively (Symbol.dispose / `using` on
 lifecycle objects: registry -> destroy, effect + createScope disposers ->
 themselves, box PROTOTYPES shared per registry; callable value handles
 deliberately unstamped). cleanup-return-torture runs the 1.8.0-origin native
@@ -21,8 +27,8 @@ parked EXACTLY on the freed link and a survivors-intact headDep check).
 flush-torture runs the 1.7.0-origin native superset (sections 7-10:
 value-never-defers, FLAG_SCHEDULED enqueue dedup via op 7, the invalid-token
 throw matrix, re-entrant flush). The 1.10.0 feature surface (named nodes +
-whyDirty()) is a read-only cold diagnostic with no torture scenario of its
-own -- its discriminator lives in test/36-named-and-whydirty; the torture
+whyDirty()) remains a read-only cold diagnostic with no torture scenario of
+its own -- its discriminator lives in test/36-named-and-whydirty; the torture
 suite pins the propagation contract whyDirty only reads, which is unchanged.
 
     npm run torture ; npm run torture:semantic ; npm run torture:soak
@@ -72,6 +78,9 @@ SEMANTIC (listed in run.mjs registration order)
   flush-torture            flushStrategy eager/sab/manual + subscribe  (1.7.0+)
   cleanup-return-torture   effect return cleanup + compose order       (1.8.0+)
   dispose-torture          Symbol.dispose / using on lifecycle objects (1.9.0+)
+  settled-torture          onSettled creation-time capability: exact drain
+                           accounting x flushStrategy, observer isolation,
+                           mid-fire safety; SETTLED_BREAK self-test (1.11.0+)
   zerogc-torture           zero-GC hot path via measureAllocs/measureOps +
                            stats counters + a DUAL transient witness over a
                            1M-op un-forced window: scavenge count AND nursery
@@ -272,3 +281,37 @@ re-anchor needed (both failure paths re-witnessed in scratch clones: drift
 refusal exit 2 at 6x eq sites, the gutted-short-circuit mutant fires
 unrelated-read.depWalk 640,000 vs pinned 0). Line-ref comments refreshed again
 (the cursor-repair + validation port shifted them ~+28/+29).
+
+1.11.0-preview migration note (2026-09-06): the suite carried onto the 1.11.0
+engine (onSettled as a creation-time capability on the 1.10.0 base -- see
+WHY-1_11.md) with ZERO pin flips: contract, interop, retrack-dispose,
+burst-profile, the zerogc lanes, and the wraparound dormancy band (full
+distance, 12/12) all re-verified. ENGINE PORT (user-authorized, one-time,
+same class as 1.10.0's): the staged v1.11.0-candidate.1 engine had forked at
+the SAME pre-fix point as the 1.10.0 canary -- the disposeNode CURSOR REPAIR
+and the 1.4.5 validation cascade were ported VERBATIM from
+LiteSignal1.10.0/Signal.js (baseline: scope-torture, retrack-dispose-torture
+and cleanup-return-torture all CRASHED "Cannot set properties of null
+(setting headSub)" + ~34 unit fails incl a real OOM SIGABRT where the missing
+eager ceiling let the guard child OOM), with two plan-scoped adaptations the
+new feature requires: ALLOWED_KEYS gains "settled", plus a strict boolean
+guard ({settled:"yes"} throws by name, never silently binds the plain drain).
+Residual engine diff vs 1.10.0 = the 8 authored onSettled hunks + those two
+lines; no hot body touched (flushEffectsPlain's body is byte-identical to
+1.10.0's flushEffects -- only the binding became a build-time-selected const,
+the 1.7.0 flushStrategy discipline). settled-torture is the 28th scenario
+(NATIVE here, 39 asserts; SETTLED_BREAK=phantom|lost verified exit 1); the
+zerogc steady-settled lane activates first-time (full witness battery green
+with a live subscriber over the 1M-op window). KNOWN SHARP EDGE (observed,
+un-asserted, flagged upstream): a callback that unsubscribes ITSELF mid-fire
+makes its next sibling miss THAT drain (indexOf+splice in the live fire
+loop); mid-fire subscribes deliver same-drain; destroy() retains
+settledCallbacks. The capability changes no observed contract elsewhere:
+creation anatomy re-measured IDENTICAL for the SEVENTH engine running (mint
+--verify all pins PASS: signal 264, computed 208, effect 160, boxes 56 B/op
+all-space -- CAP_SETTLED is read once at createRegistry, off the mint path)
+and visit-anatomy's 21 structural pins hold with NO re-anchor needed (the
+const-selected flushEffects adds no eq-dispatch site). Line-ref comments
+refreshed again, each re-MEASURED on the 2518-line engine (the old
+error-torture :1102-1103 ref was already 3 lines off -- measured, not
+trusted).

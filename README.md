@@ -475,6 +475,44 @@ whyDirty(shield);   // [ { id, kind: "signal", name: "hp", value: 80 } ]
 - **Named nodes.** `signal(v, {name})`, `computed(fn, {name})`, `effect(fn, {name})`. The name lives in a registry-side `Map<id, name>` populated **only** when you pass one -- no field is added to the node, so the `21-perf-pins` handle shapes (signal 6 own props, computed 4) are unchanged and unnamed nodes pay nothing. `describe()` / `describeNode()` gain `name` when present; devtools and the profilers render `hp` instead of `#412`.
 - **`whyDirty(handle)`.** The pull-side answer to "why will this recompute / why did this fire". For a computed it walks the deps and returns each one whose version moved past the observer's `evalVersion` -- the **exact** predicate `pullComputed` runs (`((dep.version - evalVer) | 0) > 0`, modular, not `!==`) -- and traces transitively to the underlying signal write as `rootCause`. It **never pulls**, so it cannot recompute anything or move the clock it is describing; it allocates freely, as a diagnostic on your cold path the engine never invokes. Empty for a clean computed and for non-computeds.
 
+### onSettled (1.11.0)
+
+The redemption of the feature that once reset the line: the original always-checked
+drain hook cost ~7ns per flush through V8's inline budget (a +27-31% batched-update
+regression, ledger #17). 1.11.0 brings it back with the cost model **inverted** -- a
+**creation-time capability**, decided once at `createRegistry` and never again:
+
+```ts
+const r = createRegistry({ settled: true });   // selects the drain variant at BUILD time
+const off = r.onSettled(() => paint());        // fires once per settled drain
+r.batch(() => { hp.set(80); mana.set(20); });  // many writes, ONE settle
+off();                                          // unsubscribe
+```
+
+- **Zero cost by construction.** `flushEffects` is a `const` chosen once from
+  `{ plain, settled }` -- the same build-time selection discipline as the 1.7.0
+  `flushStrategy` closures. A default registry binds the **verbatim plain drain**
+  (byte-identical body), so the hot write path never checks anything: there is no
+  per-flush branch to mispredict, and no cost to not using the feature.
+- **"Settled" means the graph actually quiesced.** The callback fires **once per
+  top-level, non-empty, clean drain**: not per effect, not on a re-entrant flush
+  during a drain, not on an empty `flush()`, and not on a drain that threw. A
+  `batch()` of many writes, or one write fanning out to many effects -- including
+  cascades where effects write further signals -- is exactly one settle.
+- **Observer, not control path.** A throwing callback is swallowed; the write that
+  triggered the drain never sees it and sibling callbacks still fire, in
+  subscription order. `onSettled` on a registry built *without* the capability
+  throws, pointing at the option; `settled` is validated as a strict boolean
+  (`{settled: "yes"}` throws by name rather than silently binding the plain drain).
+- **Allocation-free delivery.** The notification tail iterates a pre-existing
+  array of pre-existing closures -- the `zerogc-torture` `steady-settled` lane
+  proves a live subscriber sustains a 1M-op window with zero retained bytes and
+  zero scavenges. Subscribe/unsubscribe are cold-path by design.
+
+This is what a scheduler, a test harness, or a frame coordinator needs to know a
+reactive update has fully landed -- and the notification the 1.12.0 trace twin
+will hang its per-flush records off.
+
 ### onGraphMutation (1.2.1)
 
 ```ts
@@ -574,7 +612,8 @@ const r = createRegistry({
   maxLinks:           4 * 1024,   // default = maxNodes * 4 (ledger)
   prealloc:           "eager",    // default. Other: "lazy"
   maxFlushPasses:     100,        // default
-  onCapacityExceeded: "throw"     // default. Other: "grow"
+  onCapacityExceeded: "throw",    // default. Other: "grow"
+  settled:            false       // default. true builds the onSettled tail (1.11.0)
 });
 
 const s = r.signal(0);
@@ -829,8 +868,8 @@ Three tiers, all reproducible.
 
 ### Tier 1 -- Behavior (unit tests, fast)
 
-On the 1.10.0 engine `npm test` reports **553 tests, 552 pass, 0 fail, 1 skip**, and
-`npm run test:gc` (Tier 2, `--expose-gc`) reports **561 tests, 560 pass, 0 fail, 1
+On the 1.11.0 engine `npm test` reports **572 tests, 571 pass, 0 fail, 1 skip**, and
+`npm run test:gc` (Tier 2, `--expose-gc`) reports **580 tests, 579 pass, 0 fail, 1
 skip**. `npm test` runs the glob-scoped suite in `test/`, covering:
 
 - **`01-core.test.mjs`** -- signal/computed/effect basics, equality semantics, NaN/+/-0, subscribe/peek/update, untrack, batch, cleanup ordering, first-run error recovery, nested object reference-identity gotchas.
@@ -860,12 +899,13 @@ skip**. `npm test` runs the glob-scoped suite in `test/`, covering:
 - **`29-scope.test.mjs`** -- `createScope` (1.6.0), the adopting counterpart to `createRoot`. 4 tests: the scope owner runs exactly once on creation; direct-body signal reads in `fn` are untracked while inner effect/computed bodies track normally; `dispose()` cascade-disposes the owned subtree (effects + computeds) while a directly-allocated signal correctly survives (the engine never owner-adopts signals); a scope created inside a consumer effect SURVIVES that consumer's re-run -- the reconciler-critical detach property; `dispose()` is idempotent; the disposer is introspection-stamped to its owner effect (`describe(dispose).kind === "effect"`); and `totalAllocations - totalDisposals === activeNodes` holds across the entire lifecycle.
 - **`25-devtools-real-boot.test.mjs`** -- the devtools pairing contract (14 tests). Boots the REAL installed `@zakkster/lite-devtools` 1.6.2 against this engine through an import-rewrite rig (both share ONE engine instance -- the rig catches the two-instance failure mode where the package resolves to the published build instead of the local engine). Pins the live-probed ground truth: all 22 function exports + the `VERSION` const, the EXACT 13-key `capabilities()` fingerprint (1.5 through 1.8 all true, `statsKeys: 14` -- devtools 1.6.2 has no 1.9 or 1.10 cap key, so the exact key set is itself the pin), the `burstProfile()` live-handle and `stop()` summary shapes, and the 1.6.x `Symbol.dispose` stamps on devtools' own stopper handles.
 - **`26-free-list-invariant.test.mjs`** -- the 1.2.2 audit's cleanliness pins (3 invariant tests + 1 targeted coverage test). Asserts directly -- by inspecting freshly-allocated nodes through the documented `describe()` -> `NODE_PTR` introspection protocol -- that the `ReactiveNode` constructor and the fresh-pool-growth path initialize the ten fields the audit removed from `createNode` to identical values, so the deleted writes were defending against a state the engine cannot produce on a clean free list. The 4th test covers the swallow-on-self-dispose-then-throw branch in `pullComputed` (the path that lifted branch coverage from 98.07% to 98.43%).
-- **`30-throwing-equals.test.mjs`** -- a user `equals` that THROWS, pinned at all five 1.10.0 invocation sites (9 tests): the three callable sites (signal set pre-check, batch revert, computed re-eval -- with a CONTRAST anti-tautology test proving the batch-revert pin is caused by the throw, not the set-then-back shape) and the two `signalBox` `boxSet` sites (pre-check leaves the box unmutated; batch-revert strands the version bump so the net value fires downstream).
+- **`30-throwing-equals.test.mjs`** -- a user `equals` that THROWS, pinned at all five 1.11.0 invocation sites (9 tests): the three callable sites (signal set pre-check, batch revert, computed re-eval -- with a CONTRAST anti-tautology test proving the batch-revert pin is caused by the throw, not the set-then-back shape) and the two `signalBox` `boxSet` sites (pre-check leaves the box unmutated; batch-revert strands the version bump so the net value fires downstream).
 - **`33-cleanup-return.test.mjs`** -- the 1.8.0 effect cleanup-return contract at unit grain (7 tests): timing (fires before re-run + on dispose), compose order with `onCleanup`, non-function returns ignored, the computed exclusion.
 - **`34-computed-selfdirty-prev-owner.test.mjs`** -- forward-compat suite for the roadmap 1.10.x+ surface (11 tests): `computed(fn(prev), {initial})` and the gen-guarded owner APIs, feature-discriminated so legacy engines degrade cleanly; plus the DELIBERATE #179/#15 absorption pin (a computed writing its own tracked dep ABSORBS) that holds on every 1.x engine.
-- **`35-config-validation.test.mjs`** -- the 1.4.5 `createRegistry` validation matrix on the 6-key config family incl `flushStrategy` (13 tests): per-option `TypeError`s, did-you-mean hints, the eager-construction ceiling, the two pool-population stats keys, and OOM rows spawned as child processes under a 256 MB cap via `35-config-oom.child.mjs`.
+- **`35-config-validation.test.mjs`** -- the 1.4.5 `createRegistry` validation matrix on the 7-key config family incl `flushStrategy` and the 1.11.0 `settled` capability key (23 tests): per-option `TypeError`s, did-you-mean hints (`setled` suggests `settled`), the strict-boolean `settled` guard, the eager-construction ceiling, the two pool-population stats keys, and OOM rows spawned as child processes under a 256 MB cap via `35-config-oom.child.mjs`.
 - **`36-named-and-whydirty.test.mjs`** -- the 1.10.0 discriminator (6 tests): `signal(v, {name})` / `computed` / `effect` names surface in `describe().name` (and are absent for unnamed nodes -- zero node-shape change); `whyDirty(computed)` returns EXACTLY the dep whose version moved past the observer's `evalVersion` (never the whole dep set -- the rejected-sketch bug), traces transitively to the root signal write, and is read-only (a `whyDirty` call never pulls, so it cannot perturb the clock it describes).
 - **`37-devtools-zerogc-probe.test.mjs`** -- the zero-GC claim on the reactive-benchmark weak-group shapes (5 tests), through both the engine's `stats().poolGrowths` counter and devtools 1.6.2's `watchAllocations()` feed: the pool never grows its backing store (`poolGrowths` delta == 0).
+- **`38-onsettled.test.mjs`** -- the 1.11.0 discriminator (9 tests, authored with the engine): `onSettled` throws without the capability and stays inert when off; fires once per top-level drain; coalesces under multi-effect fan-out, `batch()`, and nested writes during a drain; stays silent on empty and thrown flushes; unsubscribes cleanly with sibling callbacks unaffected.
 
 ```bash
 npm test
@@ -896,17 +936,17 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds the complete **27-scenario superset (23 semantic + 4
+`bench/torture/` holds the complete **28-scenario superset (24 semantic + 4
 soak, one opt-in)** behind one runner (`run.mjs`), the forward-compatible set
-through 1.9. They are not perf benchmarks: the ops/sec figures reflect random
+through 1.11. They are not perf benchmarks: the ops/sec figures reflect random
 workload composition, not engine throughput -- `bench/benchmark.mjs` remains the
 canonical perf harness. Every scenario feature-detects and **skips cleanly**
 (exit 77) below the engine version that introduces its feature, and the runner
 **enforces the floors**: a scenario that skips while the engine is at or above
 its floor FAILS the run -- a dropped export cannot masquerade as a green skip.
-On the **1.10.0 engine all 23 semantic scenarios execute with zero
-feature-skips** -- the first engine version to run the complete superset, since
-`dispose` was the last gate.
+On the **1.11.0 engine all 24 semantic scenarios execute with zero
+feature-skips** (as on 1.9.0/1.10.0 -- `dispose` was the last gate), and the
+new `settled-torture` runs natively.
 
 ```bash
 npm run torture              # everything
@@ -920,9 +960,9 @@ node bench/torture/run.mjs --list
 Run these on every commit. Most scenarios run on any 1.4.x+ engine;
 `box-torture`, `owner-torture` and `lifecycle-torture` (1.5.0),
 `scope-torture` / `introspect-torture` / `burst-profile-torture` (1.6.0),
-`flush-torture` (1.7.0), `cleanup-return-torture` (1.8.0), and
-`dispose-torture` (1.9.0) all run here because their features exist --
-nothing floor-skips on this engine.
+`flush-torture` (1.7.0), `cleanup-return-torture` (1.8.0),
+`dispose-torture` (1.9.0), and `settled-torture` (1.11.0) all run here
+because their features exist -- nothing floor-skips on this engine.
 
 | scenario | pins |
 | -------- | ---- |
@@ -948,6 +988,7 @@ nothing floor-skips on this engine.
 | `flush-torture` (1.7.0) | the three `flushStrategy` modes by cross-strategy differential, per-strategy scheduling, re-entrant/empty `flush()`, and the `.subscribe()` contract under each |
 | `cleanup-return-torture` (1.8.0) | an effect's returned cleanup: timing at re-run/dispose, compose order after `onCleanup`, the self-dispose guard, and the computed exclusion; plus the 1.8 severTail cursor-repair pinned by mechanism (five named dispose-mid-retrack geometries, section 6b) |
 | `dispose-torture` (1.9.0) | `Symbol.dispose` stamped at five sites (registry, effect stop handle, scope/root disposers, both box prototypes) driven through the TC39 `using` path; idempotent disposal, feature-detected via the box-prototype stamp |
+| `settled-torture` (1.11.0) | the `onSettled` creation-time capability: exact settle accounting across all three `flushStrategy` builds, fan/batch/cascade coalescing, clean-quiescence negatives (empty / re-entrant / thrown drains), observer isolation with ordered siblings, mid-fire un/subscribe safety, destroy, 10k-cycle exact soaks; `SETTLED_BREAK=phantom\|lost` self-tests must fail the gate |
 | `zerogc-torture` | the zero-GC claim as a gate via `@zakkster/lite-gc-profiler`: `measureAllocs`/`checkAllocs` at `maxBytesPerCall: 0` + `measureOps`/`checkNoGc` at `maxMajor: 0`/`maxPauseMs: 2` + `stats()` deltas over steady + create/dispose churn (callable and `signalBox`); `ZEROGC_BREAK=1` self-tests that the gate rejects a planted allocation |
 
 #### `soak` -- wall-clock bound, asserts on **resources**
