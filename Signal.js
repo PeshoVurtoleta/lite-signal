@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-signal v1.11.0-candidate.1 (ledger #18 corrected)
+ * @zakkster/lite-signal v1.11.0-preview
  * Copyright (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
  * MIT License
  * --------------------
@@ -198,6 +198,10 @@ const FLAG_SIGNAL = 1 << 5;
 // cost). Callable signal()/computed() handles deliberately unstamped: one
 // extra own-prop write per primitive is real creation-path cost, and
 // auto-disposing VALUE handles at block exit is a footgun.
+// The `: null` fallback is for runtimes predating Symbol.dispose (< Node 20 / older
+// engines); on every supported runtime Symbol.dispose is a symbol and the true arm is
+// taken. The fallback keeps the box protos from installing an `undefined`-keyed method.
+/* c8 ignore next -- pre-Symbol.dispose runtime fallback; unreachable on Node 20+ */
 const SYMBOL_DISPOSE = (typeof Symbol.dispose === "symbol") ? Symbol.dispose : null;
 
 /**
@@ -340,9 +344,140 @@ export class CapacityError extends Error {
  *                                                   Error prefixed `"CycleError:"`.
  * @returns {Registry}
  */
+/** The only config keys {@link createRegistry} recognizes. Anything else is
+ *  rejected at construction with a did-you-mean hint (fail closed on an
+ *  unverified state -- an unknown key is an error, never a silent ignore). */
+const ALLOWED_KEYS = ["maxNodes", "maxLinks", "prealloc", "onCapacityExceeded", "maxFlushPasses", "flushStrategy", "settled"];
+
+/** Ceiling on eager pool construction: `(maxNodes + maxLinks)` objects. A finite
+ *  but absurd `maxNodes` (e.g. `1e9`, a plausible typo for `1e5`) that would
+ *  otherwise OOM the process is refused BY NAME at construction rather than
+ *  allocating forever. Only the `"eager"` path is bounded; `"lazy"` keeps its
+ *  unbounded ledger. `1 << 24` == 16777216. */
+const EAGER_CONSTRUCT_CEILING = 1 << 24;
+
+/**
+ * Levenshtein edit distance between two short strings. Cold: called only on the
+ * constructor error path, over the known option names, so its per-call array
+ * allocation never touches any hot path.
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function editDistance(a, b) {
+    const m = a.length;
+    const n = b.length;
+    const prev = new Array(n + 1);
+    const cur = new Array(n + 1);
+    for (let j = 0; j <= n; j++) prev[j] = j;
+    for (let i = 1; i <= m; i++) {
+        cur[0] = i;
+        for (let j = 1; j <= n; j++) {
+            const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+            let min = prev[j] + 1;
+            if (cur[j - 1] + 1 < min) min = cur[j - 1] + 1;
+            if (prev[j - 1] + cost < min) min = prev[j - 1] + cost;
+            cur[j] = min;
+        }
+        for (let j = 0; j <= n; j++) prev[j] = cur[j];
+    }
+    return prev[n];
+}
+
+/**
+ * The closest known config key to `key` within edit distance 2 (case-folded so
+ * `preAlloc`/`MAXNODES` resolve), or null when nothing is close. Cold path only.
+ * @param {string} key
+ * @returns {string|null}
+ */
+function suggestKey(key) {
+    const lk = key.toLowerCase();
+    let best = null;
+    let bestD = 3;
+    for (let i = 0; i < ALLOWED_KEYS.length; i++) {
+        const d = editDistance(lk, ALLOWED_KEYS[i].toLowerCase());
+        if (d < bestD) { bestD = d; best = ALLOWED_KEYS[i]; }
+    }
+    return bestD <= 2 ? best : null;
+}
+
+/**
+ * Render a rejected value for an error message, e.g. `42 (number)`.
+ * Cold: this runs only on a throw path, never on any hot path. `String(symbol)`
+ * throws, so symbols are stringified defensively.
+ * @param {*} v
+ * @returns {string}
+ */
+function received(v) {
+    return (typeof v === "symbol" ? v.toString() : String(v)) + " (" + typeof v + ")";
+}
+
+/**
+ * Validate that a numeric option is a finite integer >= 1. Cold: constructor
+ * error path only. Throws a {@link TypeError} prefixed `createRegistry: "<name>"`.
+ * @param {*} v
+ * @param {string} name
+ */
+function requirePositiveInt(v, name) {
+    if (!Number.isInteger(v) || v < 1) {
+        throw new TypeError(
+            'createRegistry: "' + name + '" must be a finite integer >= 1, received ' + received(v) + '.'
+        );
+    }
+}
+
 export function createRegistry(config) {
     const NODE_PTR = Symbol("node_ptr");
     const NODE_GEN = Symbol("node_gen");
+
+    // --- 1.4.5 backport: createRegistry input validation (all cold, constructor-only).
+    // Config-shape gate: accept `undefined` or a non-null, non-array object; reject
+    // `null`, primitives and arrays BY NAME rather than dying later on `config.maxNodes`
+    // or an internal `nextFree` read (fail closed on an unverified state).
+    if (config !== undefined && (config === null || typeof config !== "object" || Array.isArray(config))) {
+        throw new TypeError(
+            'createRegistry: "config" must be a plain object or undefined, received ' + received(config) + '.'
+        );
+    }
+    if (config !== undefined) {
+        // Per-option validation BY NAME -- a bad value throws `createRegistry: "<option>"`
+        // at construction, not a delayed internal TypeError on first use.
+        if (config.maxNodes !== undefined) requirePositiveInt(config.maxNodes, "maxNodes");
+        if (config.maxLinks !== undefined) requirePositiveInt(config.maxLinks, "maxLinks");
+        if (config.maxFlushPasses !== undefined) requirePositiveInt(config.maxFlushPasses, "maxFlushPasses");
+        if (config.prealloc !== undefined && config.prealloc !== "eager" && config.prealloc !== "lazy") {
+            throw new TypeError(
+                'createRegistry: "prealloc" must be "eager" or "lazy", received ' + received(config.prealloc) + '.'
+            );
+        }
+        if (config.onCapacityExceeded !== undefined && config.onCapacityExceeded !== "throw" && config.onCapacityExceeded !== "grow") {
+            throw new TypeError(
+                'createRegistry: "onCapacityExceeded" must be "throw" or "grow", received ' + received(config.onCapacityExceeded) + '.'
+            );
+        }
+        // 1.11.0: `settled` is a strict boolean -- a truthy non-boolean (e.g. "yes")
+        // must throw here, never silently bind the plain drain below (fail closed).
+        if (config.settled !== undefined && config.settled !== true && config.settled !== false) {
+            throw new TypeError(
+                'createRegistry: "settled" must be true or false, received ' + received(config.settled) + '.'
+            );
+        }
+        // Unknown-key rejection with a did-you-mean hint (`preAlloc` -> `prealloc`,
+        // `maxNods` -> `maxNodes`). Own enumerable keys only; cold path.
+        const badKeys = Object.keys(config);
+        for (let bi = 0; bi < badKeys.length; bi++) {
+            const bk = badKeys[bi];
+            if (ALLOWED_KEYS.indexOf(bk) === -1) {
+                const hint = suggestKey(bk);
+                throw new TypeError(
+                    'createRegistry: "' + bk + '" is not a recognized option' +
+                    (hint !== null ? ' (did you mean "' + hint + '"?)' : '') +
+                    '. Allowed: ' + ALLOWED_KEYS.join(", ") + '.'
+                );
+            }
+        }
+    }
+    // --- end 1.4.5 backport.
     // 1.10.0: cold registry-side name table, keyed by node.id. Written only on
     // named creation, read only by describeNode()/whyDirty() (both cold). Node
     // ids are monotonic (fresh identity per allocation), so a recycled slot
@@ -378,6 +513,20 @@ export function createRegistry(config) {
     // steady state is identical after warm-up, but the heap no longer carries
     // never-used live objects for every major GC to mark.
     const prealloc = (config !== undefined && config.prealloc !== undefined) ? config.prealloc : "eager";
+    // Eager-construction ceiling (cold): `"eager"` builds `(maxNodes + maxLinks)`
+    // objects up front; a finite-but-absurd capacity (e.g. `1e9`) would OOM the
+    // process with an uncatchable SIGABRT, not a throw. Refuse BY NAME before
+    // allocating. Named for the larger driver. `"lazy"` keeps its unbounded ledger.
+    if (prealloc === "eager" && (currentNodesCapacity + currentLinkCapacity) > EAGER_CONSTRUCT_CEILING) {
+        const driver = currentLinkCapacity > currentNodesCapacity ? "maxLinks" : "maxNodes";
+        throw new TypeError(
+            'createRegistry: "' + driver + '" eager construction of ' +
+            (currentNodesCapacity + currentLinkCapacity) + ' objects (maxNodes ' +
+            currentNodesCapacity + ' + maxLinks ' + currentLinkCapacity + ') exceeds the ceiling of ' +
+            EAGER_CONSTRUCT_CEILING + '. Use prealloc:"lazy" for an unbounded on-demand ledger, ' +
+            'or lower the capacity.'
+        );
+    }
     const nodePool = [];
     let freeNodeHead = null;
     const linkPool = [];
@@ -538,6 +687,14 @@ export function createRegistry(config) {
             if (linkPool.length > currentLinkCapacity) {
                 let doubled = currentLinkCapacity;
                 while (doubled < linkPool.length) doubled *= 2;
+                // The `> maxLinkLimit` arm is provably unreachable, retained as a clamp.
+                // Proof: maxLinkLimit === initialLinkCapacity * 16, currentLinkCapacity is
+                // only ever assigned a power-of-2 multiple of that same initial capacity,
+                // so 16x is ON the doubling chain (m, 2m, 4m, 8m, 16m). The guard above
+                // (`linkPool.length >= maxLinkLimit -> CapacityError`) plus the chunk math
+                // (`chunk = limit - linkPool.length`) cap linkPool.length AT maxLinkLimit,
+                // so `doubled` terminates at exactly 16m and can never exceed it.
+                /* c8 ignore next -- unreachable clamp; see proof above + COVERAGE-NOTES.md */
                 currentLinkCapacity = doubled > maxLinkLimit ? maxLinkLimit : doubled;
                 statPoolGrowths++;   // 1.4: link capacity ledger crossed
             }
@@ -570,7 +727,12 @@ export function createRegistry(config) {
 
     /** Return a link to the free pool and unlink it from the source's sub list. @private */
     function freeLink(link, target, source) {
-        if (mutationHook !== null) mutationHook(4, link.source !== null ? link.source.id : -1, link.target !== null ? link.target.id : -1);
+        // Every caller (allocateLink sever, severTail, disposeNode dep-walk) passes a
+        // LIVE link: `source === link.source`, `target === link.target`. The 1.3.x
+        // `link.source !== null ? ... : -1` guards existed only to survive a cursor
+        // dangling at an already-freed link -- a state disposeNode's CURSOR REPAIR now
+        // makes unreachable. Reading the params directly is equivalent and branch-free.
+        if (mutationHook !== null) mutationHook(4, source.id, target.id);
         const pSub = link.prevSub;
         const nSub = link.nextSub;
         if (pSub !== null) pSub.nextSub = nSub; else source.headSub = nSub;
@@ -680,6 +842,17 @@ export function createRegistry(config) {
             const nDep = sLink.nextDep;
             if (pDep !== null) pDep.nextDep = nDep; else target.headDep = nDep;
             if (nDep !== null) nDep.prevDep = pDep; else target.tailDep = pDep;
+
+            // CURSOR REPAIR (1.4.0): `target` may be an observer that is MID-RUN with
+            // its re-tracking cursor parked on this very link -- it linked `source` on
+            // the previous run, has not reached that read yet on this one, and now
+            // disposes `source` from its own body. Splicing the link out and handing it
+            // to the free list would leave activeObserverCurrentDep dangling at a freed
+            // slot: severTail would then read a nulled prevDep, wipe target.headDep
+            // (orphaning every surviving dep), and double-free the link -- freeLink
+            // null-derefs on `source.headSub`. Advance the cursor to the next surviving
+            // dep instead. Disposal path only; no steady-state cost.
+            if (activeObserverCurrentDep === sLink) activeObserverCurrentDep = nDep;
 
             sLink.source = null;
             sLink.target = null;
@@ -1720,6 +1893,10 @@ export function createRegistry(config) {
     function batch(fn) {
         if (batchDepth === 0) {
             batchEpoch = (batchEpoch + 1) | 0;
+            // 2^32 wraparound sentinel: batchEpoch is bumped ONLY here (and reset to 1 by
+            // destroy()), so reaching 0 costs 4,294,967,295 top-level batch() calls. Kept
+            // because revertEpoch comparisons treat 0 as "no capture".
+            /* c8 ignore next -- 2^32 wraparound; unreachable without ~4.3e9 batches */
             if (batchEpoch === 0) batchEpoch = 1;
         }
         batchDepth = (batchDepth + 1) | 0;
@@ -1961,6 +2138,12 @@ export function createRegistry(config) {
             pooledLinks: currentLinkCapacity - activeLinks,
             linkPoolCapacity: currentLinkCapacity,
             nodePoolCapacity: currentNodesCapacity,
+            // 1.4.5 backport: TRUE pool population (nodePool.length / linkPool.length),
+            // distinct from the *Capacity ledgers above. Under prealloc:"lazy" (or a
+            // silently-flipped `prealloc` typo) population stays 0 while capacity reads
+            // the ledger -- so a mis-set prealloc is now observable, not telemetry-blind.
+            nodePoolPopulation: nodePool.length,
+            linkPoolPopulation: linkPool.length,
             activeNodes,
             // 1.4: cumulative lifecycle counters (monotonic; reset by destroy()).
             // Derive: allocationRate = deltatotalAllocations/deltat; poolReuseRate =
