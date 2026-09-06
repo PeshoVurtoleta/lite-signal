@@ -9,9 +9,9 @@ a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
 wall clock (TORTURE_TIMEOUT_MS, default 300s -> FAIL, not a hang) and finish()
 fails any scenario that reaches PASS having asserted nothing.
 
-On THIS engine (1.9.0): ALL 23 semantic execute -- the first folder in the
-line with ZERO floor-skips -- and the soaks run 3 + the opt-in wraparound.
-dispose-torture ACTIVATES natively here (Symbol.dispose / `using` on
+On THIS engine (1.10.0): ALL 23 semantic execute with ZERO floor-skips (as on
+1.9.0 -- dispose was the last feature gate), and the soaks run 3 + the opt-in
+wraparound. dispose-torture ACTIVATES natively (Symbol.dispose / `using` on
 lifecycle objects: registry -> destroy, effect + createScope disposers ->
 themselves, box PROTOTYPES shared per registry; callable value handles
 deliberately unstamped). cleanup-return-torture runs the 1.8.0-origin native
@@ -20,7 +20,10 @@ named deterministic dispose-mid-retrack geometries, including the cursor
 parked EXACTLY on the freed link and a survivors-intact headDep check).
 flush-torture runs the 1.7.0-origin native superset (sections 7-10:
 value-never-defers, FLAG_SCHEDULED enqueue dedup via op 7, the invalid-token
-throw matrix, re-entrant flush).
+throw matrix, re-entrant flush). The 1.10.0 feature surface (named nodes +
+whyDirty()) is a read-only cold diagnostic with no torture scenario of its
+own -- its discriminator lives in test/36-named-and-whydirty; the torture
+suite pins the propagation contract whyDirty only reads, which is unchanged.
 
     npm run torture ; npm run torture:semantic ; npm run torture:soak
     node bench/torture/run.mjs --list
@@ -246,3 +249,26 @@ error / owner tortures and test/30 were REFRESHED against the current engine
 (the 2026-08-20 createRegistry-validation cascade had shifted every ref
 written on 2026-08-18; the same stale-ref class ships in the published
 1.6.0 / 1.7.0 / 1.8.0 folders -- on the graduation reconcile list).
+
+1.10.0-preview migration note (2026-09-06): the suite carried onto the 1.10.0
+engine (named nodes + whyDirty() on the 1.9.0 base -- see WHY-1_10.md) with
+ZERO pin flips: contract, interop, retrack-dispose, burst-profile, the zerogc
+lanes, and the wraparound dormancy band (full distance, 12/12) all re-verified.
+ENGINE PORT (user-authorized, one-time): the folder's v1.10.0-canary.1 engine
+had FORKED the rebuilt-1.9 line BEFORE two later cold-path fixes landed on it --
+the disposeNode CURSOR REPAIR and the 1.4.5 createRegistry validation cascade
+(+ the 2 pool-population stats keys). Without the cursor repair, scope-torture
+(dispose-linked-unread) and all five cleanup-return 6b geometries CRASHED
+("Cannot set properties of null (setting headSub)"), and the missing validation
+failed 37 unit tests; both were ported VERBATIM from LiteSignal1.9.0/Signal.js,
+after which the residual engine diff vs 1.9.0 is the 1.10.0 feature ONLY and no
+hot propagation body is touched (the four bodies stay byte-identical to 1.9.0,
+sha-proven by WHY-1_10.md). Named nodes + whyDirty change no observed
+propagation contract: creation anatomy re-measured IDENTICAL for the SIXTH
+engine running (mint --verify all pins PASS: signal 264, computed 208, effect
+160, boxes 56 B/op all-space -- the cold nodeNames.set on named creation is off
+the unnamed fast path) and visit-anatomy's 21 structural pins hold with NO
+re-anchor needed (both failure paths re-witnessed in scratch clones: drift
+refusal exit 2 at 6x eq sites, the gutted-short-circuit mutant fires
+unrelated-read.depWalk 640,000 vs pinned 0). Line-ref comments refreshed again
+(the cursor-repair + validation port shifted them ~+28/+29).

@@ -4,6 +4,76 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.10.0-preview] -- 2026-09-06
+
+The **verification-infrastructure parity cut** for the named-nodes + `whyDirty()`
+feature (introduced in the 1.10.0-canary entry below, unchanged in behaviour).
+The engine is byte-identical to the canary past the version banner EXCEPT for two
+cold-path fixes ported from the 1.9.0 line (see Fixed); the four hot propagation
+bodies stay byte-identical to 1.9.0 (sha-proven, WHY-1_10.md). This cut brings the
+full 1.9.0-alpha audit infrastructure onto the folder and re-proves it here.
+
+### Fixed -- two cold-path ports from LiteSignal1.9.0 (user-authorized, one-time)
+
+- **disposeNode cursor repair.** The folder's v1.10.0-canary.1 engine had FORKED
+  the rebuilt-1.9 line before this fix landed: disposing a linked-but-unread source
+  from an observer's own body mid-retrack left the re-tracking cursor
+  (`activeObserverCurrentDep`) dangling at a freed link, then crashed `severTail` /
+  `freeLink` with `Cannot set properties of null (setting 'headSub')`. Reproduced by
+  scope-torture (dispose-linked-unread) and all five cleanup-return 6b geometries.
+  Ported verbatim from 1.9.0: advance the cursor to the next surviving dep when the
+  parked link is freed. Disposal path only; no steady-state cost.
+- **createRegistry validation (1.4.5 backport).** The canary also predated the
+  config-validation cascade the other five folders carry: `ALLOWED_KEYS` /
+  did-you-mean / eager-construction ceiling, plus the `nodePoolPopulation` /
+  `linkPoolPopulation` stats keys (`stats()` 12 -> 14). Its absence failed 37 unit
+  tests. Ported verbatim; all cold, constructor-only.
+
+### Added -- the 27-scenario torture suite (was 22) + audit lanes
+
+- The 2026-08 audit scenarios (`contract`, `interop`, `retrack-dispose`,
+  `burst-profile`, opt-in `wraparound`), the 3-state runner with ENFORCED floors,
+  and the flush/cleanup-return folder supersets. On this engine **all 23 semantic
+  execute with zero floor-skips** (as on 1.9.0 -- `dispose` was the last gate);
+  suite verdict 26 pass / 1 opt-in skip / 0 fail.
+- `test/25` rewritten against the REAL devtools 1.6.2 (14 tests): the exact 13-key
+  `capabilities()` fingerprint (identical to the 1.8.0/1.9.0 pairings -- devtools
+  1.6.2 has no 1.9/1.10 cap key, so the exact key set is the pin). New
+  `test/37-devtools-zerogc-probe` (renumbered above the native `36-named-and-whydirty`).
+- `test/zgc/` (`test:zgc` 7/7 + report 3/3), `test/ProfilerTests` (`test:hardening`
+  22/0/6), `harness/ProfilerTools` (`test:harness` 5/5), and the phase-1/2/3 harness
+  instruments (`visit-anatomy`, `jit-health`, `mint-anatomy`, `costmodel`, `floors`,
+  `trend`, `creation-anatomy`, `burst-real`); `harness/run.mjs` gains `mint`.
+- VersionMatrix read+counter lanes; **gate-self PASSED 5/5** vs floor-1.3.0 +
+  rolling-1.5.0, counter lane exact (288 allocs/frame, 0 poolGrowths).
+
+### Measured on this engine
+
+- **Mint anatomy IDENTICAL for the sixth engine running**: signal 264.3 / computed
+  208.1 / effect 160.0 / signalBox 56.0 / computedBox 56.0 B/op all-space -- the cold
+  `nodeNames.set` on named creation is off the unnamed fast path.
+- visit-anatomy 21/21 with NO re-anchor (named/whyDirty add no eq-dispatch site;
+  both failure paths re-witnessed in scratch clones). jit-health strict: 4x
+  monomorphic. Cleanup-return compose order, the wraparound band, and every
+  audit-era pin: carried with ZERO pin flips.
+
+### Changed
+
+- devDeps: `@zakkster/lite-devtools` ^1.2.0 -> **^1.6.2**,
+  `@zakkster/lite-gc-profiler` ^1.15.0 -> **^1.16.0**.
+- `test` / `test:gc` / `test:coverage` glob-scoped to `'test/*.test.mjs'`; unit suite
+  **553 tests, 552 pass, 0 fail, 1 skip** (`test:gc` 561/560/0/1). `verify` chains the
+  zgc gate. Banner v1.10.0-canary.1 -> v1.10.0-preview.
+- Signal.js line-ref comments (capacity / deep-chain / error / owner tortures, test/30)
+  refreshed against the ported engine.
+
+### Removed
+
+- `test/33-computed-selfdirty-prev-owner.test.mjs` -- byte-identical duplicate of
+  `test/34-...` (sha `0f48d434`); its `33-` prefix collided with `33-cleanup-return`.
+- The stale `bench-reactive` script and the llms `demo/index.html` +
+  "wired as prepublishOnly" claims (the gate is `npm run gate` -> `pre-publish.mjs`).
+
 ## [1.10.0-canary] -- 2026-07-XX (rebuilt line, candidate)
 
 **Feature of the cut: named nodes + `whyDirty()` -- the tracing foundation.**
