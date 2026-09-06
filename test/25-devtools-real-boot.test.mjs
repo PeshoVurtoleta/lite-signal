@@ -1,4 +1,4 @@
-// Real lite-devtools 1.6.2 boot against the 1.10.0 engine.
+// Real lite-devtools 1.6.2 boot against the 1.11.0 engine.
 //
 // Setup note (test-rig quirk, NOT an engine bug). Because this repo's
 // package.json declares name="@zakkster/lite-signal", the resolver maps any
@@ -18,9 +18,9 @@
 // If anything regresses to two instances, the precondition guard below fails
 // fast with an actionable message instead of three cryptic handle errors.
 //
-// GROUND TRUTH (probed live, devtools 1.6.2 x engine 1.10.0-preview, 2026-09-06;
-// fingerprint IDENTICAL to the 1.8.0-beta and 1.9.0-alpha pairings -- 1.6.2 has
-// no 1.9 or 1.10 cap key):
+// GROUND TRUTH (probed live, devtools 1.6.2 x engine 1.11.0-preview, 2026-09-06;
+// fingerprint IDENTICAL to the 1.8.0-beta / 1.9.0-alpha / 1.10.0-preview
+// pairings -- 1.6.2 has no 1.9, 1.10 or 1.11 cap key):
 // 22 function exports + VERSION const "1.6.2"; capabilities() = exactly 13 keys
 // { floor:"1.1.5", owners:T, mutationHook:T, burst:T, boxes:T, roots:T,
 //   ownerCapture:T, scopes:T, flushControl:T, explicitDispose:T, statsKeys:14,
@@ -83,7 +83,7 @@ before(async () => {
     );
 });
 
-describe("lite-devtools 1.6.2 boots against the 1.10.0 engine", () => {
+describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
     it("imports resolve: all 22 documented functions + the VERSION const", () => {
         // 19 baseline + burstProfile/watchAllocations (1.3.x) + pendingEffects.
         const expected = [
@@ -106,18 +106,19 @@ describe("lite-devtools 1.6.2 boots against the 1.10.0 engine", () => {
 
     // capabilities() is devtools' runtime probe of the engine it is bound to.
     // Asserting the FULL vector (values AND key set) turns it into a precise
-    // fingerprint of the 1.10.0 surface: the 1.5 triad (boxes / roots /
+    // fingerprint of the 1.11.0 surface: the 1.5 triad (boxes / roots /
     // ownerCapture), the 1.6 pair (scopes / burst), the 1.7 flushControl, AND
     // the 1.8 cleanupReturn must ALL be present -- 1.8.0 remains the newest
     // engine devtools 1.6.2 has a capability flag for; the 1.9.0 feature
-    // (Symbol.dispose on lifecycle objects) and the 1.10.0 feature (named nodes
-    // + whyDirty) have NO cap key in 1.6.2, so the EXACT 13-key set below is
-    // itself the 1.9/1.10-era pin: a 14th key appearing means devtools grew a
-    // 1.9/1.10-aware flag -- re-pin deliberately, never let it drift in
+    // (Symbol.dispose on lifecycle objects), the 1.10.0 feature (named nodes
+    // + whyDirty) and the 1.11.0 feature (the onSettled capability) have NO cap
+    // key in 1.6.2, so the EXACT 13-key set below is itself the
+    // 1.9/1.10/1.11-era pin: a 14th key appearing means devtools grew a
+    // 1.9/1.10/1.11-aware flag -- re-pin deliberately, never let it drift in
     // silently. If a flag ever reads false here, a feature was dropped (or the
     // devtools floor probe broke) -- caught across the two-package boundary,
     // not from the engine's own introspection.
-    it("capabilities() fingerprints EXACTLY the 1.10.0 surface (1.5 through 1.8 all on; no 1.9/1.10 key exists in devtools 1.6.2)", () => {
+    it("capabilities() fingerprints EXACTLY the 1.11.0 surface (1.5 through 1.8 all on; no 1.9/1.10/1.11 key exists in devtools 1.6.2)", () => {
         const caps = DT.capabilities();
         assert.equal(typeof caps, "object");
         assert.ok(caps !== null);

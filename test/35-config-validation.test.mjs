@@ -1,4 +1,6 @@
-// createRegistry input validation (1.4.5 backport, carried onto 1.10.0-preview).
+// createRegistry input validation (1.4.5 backport, carried onto 1.11.0-preview;
+// extended with the 1.11.0 `settled` capability key: strict boolean, in the
+// allowlist and the did-you-mean suggestion set).
 //
 // The full config matrix from BRIEF_SIGNAL.md. Every malformed row must throw a
 // TypeError prefixed `createRegistry: "<name>"` -- naming the bad OPTION (or the
@@ -15,7 +17,7 @@ import { createRegistry } from "../Signal.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-const NAMED_OPTION = /^createRegistry: "(maxNodes|maxLinks|prealloc|onCapacityExceeded|maxFlushPasses|config)"/;
+const NAMED_OPTION = /^createRegistry: "(maxNodes|maxLinks|prealloc|onCapacityExceeded|maxFlushPasses|settled|config)"/;
 const NAMED_UNKNOWN = /^createRegistry: "[^"]+" is not a recognized option/;
 const NEXTFREE = /nextFree/;
 
@@ -38,7 +40,13 @@ const MATRIX = [
     ["onCapacityExceeded: 1", { onCapacityExceeded: 1 }, "option"],
     ["maxFlushPasses: 0", { maxFlushPasses: 0 }, "option"],
     ["maxFlushPasses: -5", { maxFlushPasses: -5 }, "option"],
+    // 1.11.0: `settled` is a strict boolean -- a truthy non-boolean must throw by
+    // name here, never silently bind the plain drain (fail closed).
+    ["settled: \"yes\"", { settled: "yes" }, "option"],
+    ["settled: 1", { settled: 1 }, "option"],
+    ["settled: 0", { settled: 0 }, "option"],
     ["maxNods: 32 (typo key)", { maxNods: 32 }, "unknown"],
+    ["setled: true (typo key)", { setled: true }, "unknown"],
     ["preAlloc: \"lazy\" (case)", { preAlloc: "lazy" }, "unknown"],
     ["unknown: whatever", { unknown: "whatever" }, "unknown"],
     ["config: null", null, "option"],
@@ -48,6 +56,8 @@ const MATRIX = [
     ["config: [1,2,3] (array)", [1, 2, 3], "option"],
     ["flushStrategy: \"sab\"", { flushStrategy: "sab" }, "accept"],
     ["flushStrategy: \"manual\"", { flushStrategy: "manual" }, "accept"],
+    ["settled: true", { settled: true }, "accept"],
+    ["settled: false", { settled: false }, "accept"],
     // Accepted baselines.
     ["config: undefined", undefined, "accept"],
     ["config: {}", {}, "accept"],
@@ -94,6 +104,10 @@ describe("createRegistry unknown-key did-you-mean (1.4.5 backport)", () => {
     it("preAlloc suggests prealloc", () => {
         assert.throws(() => createRegistry({ preAlloc: "lazy" }), (e) =>
             e instanceof TypeError && /did you mean "prealloc"/.test(e.message));
+    });
+    it("setled suggests settled (the 1.11.0 key is in the suggestion set)", () => {
+        assert.throws(() => createRegistry({ setled: true }), (e) =>
+            e instanceof TypeError && /did you mean "settled"/.test(e.message));
     });
     it("a far-off key gets no suggestion but still throws", () => {
         assert.throws(() => createRegistry({ zzzqqq: 1 }), (e) =>
@@ -176,6 +190,28 @@ describe("flushStrategy remains a first-class option (native validation preserve
     });
     it("a bad flushStrategy value still throws (engine-native guard, unchanged)", () => {
         assert.throws(() => createRegistry({ flushStrategy: "nope" }));
+    });
+});
+
+describe("settled is a first-class option (1.11.0 capability key)", () => {
+    it("both booleans build and pass the unknown-key gate", () => {
+        for (const v of [true, false]) {
+            const r = createRegistry({ settled: v });
+            assert.equal(typeof r.signal, "function");
+            r.destroy();
+        }
+    });
+    it("a truthy non-boolean throws by name, never silently binding the plain drain", () => {
+        assert.throws(() => createRegistry({ settled: "yes" }), (e) =>
+            e instanceof TypeError && /^createRegistry: "settled" must be true or false/.test(e.message));
+    });
+    it("only settled:true enables the capability -- settled:false stays inert", () => {
+        const on = createRegistry({ settled: true });
+        assert.equal(typeof on.onSettled(() => {}), "function");
+        on.destroy();
+        const off = createRegistry({ settled: false });
+        assert.throws(() => off.onSettled(() => {}), /settled: true/);
+        off.destroy();
     });
 });
 

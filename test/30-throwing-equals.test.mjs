@@ -10,12 +10,12 @@
 // and boxSet into TWO build variants (eager vs sab/manual, selected once at
 // creation), so each callable/box site appears twice physically -- the eager
 // build is the default this file drives; the mirror line is noted in parens:
-//   (a) signal set pre-check      :1439  eq(node.value, value)          (mirror :1460)
-//   (b) batch revert check        :1446  eq(node.preBatchValue, value)  (mirror :1467)
-//   (c) computed re-eval          :1309  eq(node.value, newValue)
-// 1.10.0 ALSO ships signalBox, whose boxSet (Signal.js :1566-1605) mirrors the
-// callable set path with its OWN two eq() calls (:1571 pre-check, :1578 revert;
-// sab/manual mirror :1591 / :1598) -- so a raw grep shows eq() calls across both
+//   (a) signal set pre-check      :1512  eq(node.value, value)          (mirror :1533)
+//   (b) batch revert check        :1519  eq(node.preBatchValue, value)  (mirror :1540)
+//   (c) computed re-eval          :1382  eq(node.value, newValue)
+// 1.11.0 ALSO ships signalBox, whose boxSet (Signal.js :1639-1678) mirrors the
+// callable set path with its OWN two eq() calls (:1644 pre-check, :1651 revert;
+// sab/manual mirror :1664 / :1671) -- so a raw grep shows eq() calls across both
 // build variants, but they collapse to the same three logical sites; the
 // signalBox pair is byte-identical in logic to (a)/(b). Its two boxSet sites are
 // pinned DIRECTLY below in describe "(box)": a throwing pre-check propagates
@@ -24,8 +24,8 @@
 // divergence from 1.4.4 was observed on either path -- every assertion here holds
 // identically.
 //
-// Site (b) is DOCUMENTED, not asserted-as-atomic: the throw at :1446 happens
-// AFTER node.value was written at :1445 but BEFORE the version bump/revert. We
+// Site (b) is DOCUMENTED, not asserted-as-atomic: the throw at :1519 happens
+// AFTER node.value was written at :1518 but BEFORE the version bump/revert. We
 // pin exactly what the engine does -- value written, version left bumped,
 // downstream fires -- so a future move to a truly atomic revert trips this pin
 // rather than silently claiming a rollback the engine never provided.
