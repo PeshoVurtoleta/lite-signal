@@ -1,4 +1,4 @@
-// Zero-GC probe on the Andrii-Volynets weak-group shapes, via lite-devtools 1.6.2.
+// Zero-GC probe on the Andrii-Volynets weak-group shapes, via lite-devtools 1.8.0.
 //
 // WHY THIS EXISTS. The reactive benchmark (bench/AndriiVolynetsReactiveBench.log)
 // ranks lite-signal #4 overall but weak on the CREATION and UPDATE groups. The

@@ -1,4 +1,4 @@
-// Real lite-devtools 1.6.2 boot against the 1.11.0 engine.
+// Real lite-devtools 1.8.0 boot against the 1.11.0 engine.
 //
 // Setup note (test-rig quirk, NOT an engine bug). Because this repo's
 // package.json declares name="@zakkster/lite-signal", the resolver maps any
@@ -18,16 +18,28 @@
 // If anything regresses to two instances, the precondition guard below fails
 // fast with an actionable message instead of three cryptic handle errors.
 //
-// GROUND TRUTH (probed live, devtools 1.6.2 x engine 1.11.0-preview, 2026-09-06;
-// fingerprint IDENTICAL to the 1.8.0-beta / 1.9.0-alpha / 1.10.0-preview
-// pairings -- 1.6.2 has no 1.9, 1.10 or 1.11 cap key):
-// 22 function exports + VERSION const "1.6.2"; capabilities() = exactly 13 keys
-// { floor:"1.1.5", owners:T, mutationHook:T, burst:T, boxes:T, roots:T,
-//   ownerCapture:T, scopes:T, flushControl:T, explicitDispose:T, statsKeys:14,
-//   poolPopulation:T, cleanupReturn:T }; burstProfile() returns a LIVE handle
-// { stop, passes, perPass, queued, ran, redundant, shortCircuited }; the 1.6.x
-// devtools Symbol.dispose stamps hold (off[Symbol.dispose] === off for track,
-// h[Symbol.dispose] === h.stop for the object handles).
+// GROUND TRUTH (probed live, devtools 1.8.0 x engine 1.11.0, 2026-09-06):
+// 25 function exports + VERSION const "1.8.0" (1.6.2's 22 + whyDirty + explain +
+// watchSettled); capabilities() = exactly 16 keys { floor:"1.1.5", owners:T,
+// mutationHook:T, burst:T, boxes:T, roots:T, ownerCapture:T, scopes:T,
+// flushControl:T, explicitDispose:T, statsKeys:14, poolPopulation:T,
+// cleanupReturn:T, names:T, whyDirty:T, settled:T }. `settled` reads TRUE here:
+// devtools' throwaway-registry probe builds createRegistry({settled:true}) and
+// verifies a default registry's onSettled throws -- both real on this engine.
+// The SAME 16-key set with settled:F is the 1.10.0 pairing; the VALUE, not the
+// key set, is the per-engine discriminator. watchSettled() hands back a LIVE
+// { count, stop } on a consumer-built settled registry (one cb({settles, ts})
+// per top-level, non-empty, clean drain; a batch of N writes is ONE settle) and
+// the documented fail-closed null on a non-settled registry. Its stop() DEFERS
+// the engine detach when called from inside its own callback -- devtools' guard
+// against the (since-fixed) engine fire-loop sharp edge -- so a self-stopping
+// consumer never costs a sibling handle a notification; pinned here as the
+// composed cross-package contract. Named-node flow: inspect().name is ABSENT
+// (not "") on unnamed handles; serialize() emits payload v:2 and round-trips
+// name; toDot/toTree label precedence is labelResolver > engine name > kind#id.
+// whyDirty()/explain() pass through non-perturbingly; explain() hops carry a
+// reasons[] array (probed shape). burstProfile() live-handle and the 1.6.x
+// Symbol.dispose stamps are unchanged.
 
 import {describe, it, before} from "node:test";
 import assert from "node:assert/strict";
@@ -83,15 +95,16 @@ before(async () => {
     );
 });
 
-describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
-    it("imports resolve: all 22 documented functions + the VERSION const", () => {
-        // 19 baseline + burstProfile/watchAllocations (1.3.x) + pendingEffects.
+describe("lite-devtools 1.8.0 boots against the 1.11.0 engine", () => {
+    it("imports resolve: all 25 documented functions + the VERSION const", () => {
+        // 19 baseline + burstProfile/watchAllocations (1.3.x) + pendingEffects
+        // (1.6.2) + whyDirty/explain (1.7.0) + watchSettled (1.8.0).
         const expected = [
             "capabilities", "inspect", "subscribers", "dependencies", "track",
             "monitor", "leakWatch", "report", "graph", "toDot", "toTree", "diff",
             "trace", "ownerTree", "findPath", "watchGraph", "profile",
             "serialize", "deserialize", "burstProfile", "watchAllocations",
-            "pendingEffects",
+            "pendingEffects", "whyDirty", "explain", "watchSettled",
         ];
         for (const name of expected) {
             assert.equal(typeof DT[name], "function", `devtools.${name} must be a function`);
@@ -101,24 +114,20 @@ describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
             `devtools exports exactly ${expected.length} functions (got ${fns.length}: a new/removed ` +
             "export means this pairing pin is stale -- update the expected list deliberately)");
         // Three-place version sync: the devDep bump must travel with this test.
-        assert.equal(DT.VERSION, "1.6.2", "devtools VERSION const pins the tested pairing");
+        assert.equal(DT.VERSION, "1.8.0", "devtools VERSION const pins the tested pairing");
     });
 
     // capabilities() is devtools' runtime probe of the engine it is bound to.
     // Asserting the FULL vector (values AND key set) turns it into a precise
     // fingerprint of the 1.11.0 surface: the 1.5 triad (boxes / roots /
-    // ownerCapture), the 1.6 pair (scopes / burst), the 1.7 flushControl, AND
-    // the 1.8 cleanupReturn must ALL be present -- 1.8.0 remains the newest
-    // engine devtools 1.6.2 has a capability flag for; the 1.9.0 feature
-    // (Symbol.dispose on lifecycle objects), the 1.10.0 feature (named nodes
-    // + whyDirty) and the 1.11.0 feature (the onSettled capability) have NO cap
-    // key in 1.6.2, so the EXACT 13-key set below is itself the
-    // 1.9/1.10/1.11-era pin: a 14th key appearing means devtools grew a
-    // 1.9/1.10/1.11-aware flag -- re-pin deliberately, never let it drift in
-    // silently. If a flag ever reads false here, a feature was dropped (or the
-    // devtools floor probe broke) -- caught across the two-package boundary,
-    // not from the engine's own introspection.
-    it("capabilities() fingerprints EXACTLY the 1.11.0 surface (1.5 through 1.8 all on; no 1.9/1.10/1.11 key exists in devtools 1.6.2)", () => {
+    // ownerCapture), the 1.6 pair (scopes / burst), the 1.7 flushControl, the
+    // 1.8 cleanupReturn, the 1.10.0 pair (names / whyDirty), AND the
+    // 1.11.0-feature flag `settled` must ALL read true -- the first engine on
+    // which devtools' full capability vector lights up. On the 1.10.0 pairing
+    // the SAME 16-key set carries settled:false; the VALUE is the per-engine
+    // discriminator. A 17th key appearing (or one vanishing) means the devtools
+    // pairing moved -- re-pin deliberately, never let it drift in silently.
+    it("capabilities() fingerprints EXACTLY the 1.11.0 surface (16 keys, ALL flags on -- the first full-vector engine)", () => {
         const caps = DT.capabilities();
         assert.equal(typeof caps, "object");
         assert.ok(caps !== null);
@@ -127,27 +136,45 @@ describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
         // must be a deliberate re-pin, not a silent drift.
         assert.deepEqual(Object.keys(caps).sort(), [
             "boxes", "burst", "cleanupReturn", "explicitDispose", "floor",
-            "flushControl", "mutationHook", "ownerCapture", "owners",
-            "poolPopulation", "roots", "scopes", "statsKeys",
+            "flushControl", "mutationHook", "names", "ownerCapture", "owners",
+            "poolPopulation", "roots", "scopes", "settled", "statsKeys",
+            "whyDirty",
         ], "capabilities() key set drifted -- re-pin deliberately");
 
         assert.equal(caps.floor, "1.1.5", "devtools baseline floor");
 
-        // Present in 1.10.0.
-        assert.equal(caps.owners, true, "1.10.0 has the owner tree");
-        assert.equal(caps.mutationHook, true, "1.10.0 has onGraphMutation");
-        assert.equal(caps.boxes, true, "1.10.0 has signalBox / computedBox");
-        assert.equal(caps.roots, true, "1.10.0 has createRoot");
-        assert.equal(caps.ownerCapture, true, "1.10.0 has getOwner / runWithOwner");
-        assert.equal(caps.explicitDispose, true, "1.10.0 has explicit dispose");
-        assert.equal(caps.poolPopulation, true, "1.10.0 stats expose pool population");
+        // Present in 1.11.0.
+        assert.equal(caps.owners, true, "1.11.0 has the owner tree");
+        assert.equal(caps.mutationHook, true, "1.11.0 has onGraphMutation");
+        assert.equal(caps.boxes, true, "1.11.0 has signalBox / computedBox");
+        assert.equal(caps.roots, true, "1.11.0 has createRoot");
+        assert.equal(caps.ownerCapture, true, "1.11.0 has getOwner / runWithOwner");
+        assert.equal(caps.explicitDispose, true, "1.11.0 has explicit dispose");
+        assert.equal(caps.poolPopulation, true, "1.11.0 stats expose pool population");
         assert.equal(caps.scopes, true, "createScope ships in 1.6.0 -- scopes must read true");
         assert.equal(caps.burst, true, "the op 5/6/7 burst payload ships in 1.6.0 -- burst must read true");
-        assert.equal(caps.statsKeys, 14, "1.10.0 stats() has exactly 14 keys (13 + flushPasses)");
+        assert.equal(caps.statsKeys, 14, "1.11.0 stats() has exactly 14 keys (13 + flushPasses)");
         assert.equal(caps.flushControl, true,
             "flushStrategy + r.flush() ship in 1.7.0 -- flushControl must read true");
         assert.equal(caps.cleanupReturn, true,
             "effect cleanup return ships in 1.8.0 -- cleanupReturn must read true");
+        // The 1.10.0 feature pair, capability-flagged by devtools 1.7.0.
+        assert.equal(caps.names, true,
+            "named nodes ship in 1.10.0 -- devtools' describe().name behaviour probe must read true");
+        assert.equal(caps.whyDirty, true,
+            "whyDirty() ships in 1.10.0 -- devtools' typeof probe must read true");
+        // The per-engine discriminator: TRUE here, FALSE on the 1.10.0 pairing.
+        assert.equal(caps.settled, true,
+            "onSettled ships in 1.11.0 -- devtools' throwaway {settled:true} probe must read true");
+        // ...and the engine-side basis of that probe, pinned across the boundary:
+        const scratch = SIG.createRegistry({ maxNodes: 16, maxLinks: 32, settled: true });
+        assert.equal(typeof scratch.onSettled, "function",
+            "a settled registry exposes a working onSettled -- half of devtools' behaviour probe");
+        scratch.destroy();
+        const plain = SIG.createRegistry({ maxNodes: 16, maxLinks: 32 });
+        assert.throws(() => plain.onSettled(() => {}), /settled/,
+            "a default registry's onSettled throws -- the other half of the probe (capability, not just a method)");
+        plain.destroy();
     });
 
     it("inspect() reports a live handle as non-stale, with sensible neighbourhood counts", () => {
@@ -159,6 +186,114 @@ describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
         assert.equal(info.value, 2);
         assert.ok(info.sourceCount >= 1, "computed should report at least one source");
         SIG.dispose(c); SIG.dispose(a);
+    });
+
+    it("named-node flow: inspect() carries the engine name; unnamed handles have NO name key (absent, never empty)", () => {
+        // devtools 1.7.0: snapshots source `name` from describe(handle).name
+        // when capabilities().names -- and the key is ABSENT below floor or on
+        // an unnamed node, never "" (its Law 3).
+        const s = SIG.signal(1, { name: "hp" });
+        const named = SIG.computed(() => s() + 1, { name: "total" });
+        const unnamed = SIG.computed(() => named() * 2);
+        unnamed();
+
+        assert.equal(DT.inspect(named).name, "total", "inspect() must surface the engine name");
+        assert.equal(DT.inspect(s).name, "hp", "signals carry their name too");
+        const info = DT.inspect(unnamed);
+        assert.ok(!("name" in info),
+            "an unnamed node must have NO name key on its descriptor -- absent, never ''");
+
+        SIG.dispose(unnamed); SIG.dispose(named); SIG.dispose(s);
+    });
+
+    it("serialize() schema v2 round-trips the engine name through deserialize()", () => {
+        const s = SIG.signal(1, { name: "hp" });
+        const named = SIG.computed(() => s() + 1, { name: "total" });
+        named();
+
+        const g = DT.graph([named]);
+        const json = DT.serialize(g);
+        assert.equal(typeof json, "string", "serialize() returns a JSON string");
+        const parsed = JSON.parse(json);
+        assert.equal(parsed.v, 2, "devtools 1.7.0 bumped the serialize payload v1 -> v2 (the 'v' field) for name");
+        assert.ok(json.includes('"total"') && json.includes('"hp"'),
+            "the v2 payload must carry the engine names");
+        const back = DT.deserialize(json);
+        assert.ok(back !== null && typeof back === "object", "deserialize() restores a graph object");
+
+        SIG.dispose(named); SIG.dispose(s);
+    });
+
+    it("toDot()/toTree() label precedence: labelResolver > engine name > kind#id", () => {
+        const s = SIG.signal(1, { name: "hp" });
+        const named = SIG.computed(() => s() + 1, { name: "total" });
+        const unnamed = SIG.computed(() => named() * 2);
+        unnamed();
+        const g = DT.graph([unnamed]);
+
+        // Engine name is the default label...
+        const dot = DT.toDot(g);
+        assert.ok(dot.includes("total"), "toDot must label a named node by its engine name");
+        // ...the unnamed node falls back to kind#id (1.7.0 changed this from raw value)...
+        assert.match(dot, /computed#\d+/, "toDot must label an unnamed node kind#id, not its raw value");
+        // ...and a labelResolver string return beats a PRESENT engine name.
+        const dotR = DT.toDot(g, { labelResolver: () => "RESOLVED_WINS" });
+        assert.ok(dotR.includes("RESOLVED_WINS"), "a labelResolver string must win over the engine name");
+
+        // toTree renders `kind#id = label` with the same name > kind#id fallback
+        // (down-direction walks SUBSCRIBERS: named -> unnamed here).
+        const tree = DT.toTree(named);
+        assert.ok(tree.includes("= total"), "toTree must label the named root by its engine name");
+        assert.match(tree, /computed#(\d+) = computed#\1/,
+            "toTree must label an unnamed node kind#id = kind#id (the fallback, applied to itself)");
+
+        SIG.dispose(unnamed); SIG.dispose(named); SIG.dispose(s);
+    });
+
+    it("whyDirty() passes the engine diagnostic through non-perturbingly", () => {
+        const s = SIG.signal(1, { name: "hp" });
+        const mid = SIG.computed(() => s() + 1, { name: "total" });
+        const top = SIG.computed(() => mid() * 2);
+        top();               // clean
+        s.set(5);            // top now dirty via mid
+
+        const viaDT = DT.whyDirty(top);
+        const viaSIG = SIG.whyDirty(top);
+        assert.ok(Array.isArray(viaDT) && viaDT.length >= 1,
+            "a dirty computed must yield at least one dirty-dep descriptor through devtools");
+        assert.deepEqual(viaDT.map((d) => d.id), viaSIG.map((d) => d.id),
+            "devtools' passthrough must report the same node ids as the engine's own whyDirty");
+        assert.equal(viaDT[0].name, "total", "descriptors carry the engine name of the moved dep");
+        assert.ok(viaDT[0].rootCause !== undefined,
+            "a computed dep's descriptor traces its rootCause toward the root signal write");
+        // Non-perturbing: the diagnostic never pulls -- top is STILL dirty, so a
+        // second read yields the same fresh answer.
+        assert.deepEqual(DT.whyDirty(top).map((d) => d.id), viaDT.map((d) => d.id),
+            "whyDirty is read-only: it must not have pulled the computed clean");
+
+        SIG.dispose(top); SIG.dispose(mid); SIG.dispose(s);
+    });
+
+    it("explain() composes findPath with whyDirty; null when no path exists", () => {
+        const s = SIG.signal(1, { name: "hp" });
+        const mid = SIG.computed(() => s() + 1, { name: "total" });
+        const top = SIG.computed(() => mid() * 2);
+        top();
+        s.set(9);            // dirty the chain
+
+        const ex = DT.explain(s, top);
+        assert.ok(Array.isArray(ex) && ex.length >= 2, "explain must return the hop array along the path");
+        assert.equal(ex[0].id, DT.inspect(s).id, "the first hop is the from-node");
+        for (const hop of ex) {
+            assert.ok(Array.isArray(hop.reasons), "every hop carries a reasons[] array (probed 1.7.0 shape)");
+        }
+        assert.ok(ex.some((hop) => hop.reasons.length > 0),
+            "a dirtied path must attribute at least one hop to a moved dependency");
+
+        const lone = SIG.signal(0);
+        assert.equal(DT.explain(lone, top), null, "no path -> the documented null, never a partial answer");
+
+        SIG.dispose(lone); SIG.dispose(top); SIG.dispose(mid); SIG.dispose(s);
     });
 
     it("graph() walks a real reactive DAG and returns nodes", () => {
@@ -211,19 +346,19 @@ describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
         assert.ok(Array.isArray(tree.owned), "descriptor carries an owned[] child array");
     });
 
-    it("burstProfile() is LIVE on 1.10.0: stop() summarizes a batched burst exactly", () => {
+    it("burstProfile() is LIVE on 1.11.0: stop() summarizes a batched burst exactly", () => {
         // On 1.5.0 this degraded to null. 1.6.0+ emits the op 6/7 flush payload,
         // so capabilities().burst is true and burstProfile() must hand back the
-        // real handle. PROBED CONTRACT (1.6.2 x 1.6.0-rc): the counters
-        // materialize in stop()'s returned summary { passes, perPass[], queued,
-        // ran } -- they are NOT live reads on the handle -- and the accounting
-        // is deterministic: effect creation contributes no flush pass, and a
-        // 3-write batch coalesces to exactly one pass running exactly one
-        // effect. Deeper coalescing torture is gated in
+        // real handle. PROBED CONTRACT (1.6.2 x 1.6.0-rc, unchanged in 1.8.0):
+        // the counters materialize in stop()'s returned summary { passes,
+        // perPass[], queued, ran } -- they are NOT live reads on the handle --
+        // and the accounting is deterministic: effect creation contributes no
+        // flush pass, and a 3-write batch coalesces to exactly one pass running
+        // exactly one effect. Deeper coalescing torture is gated in
         // bench/torture/burst-profile-torture.mjs; this pins the boot contract.
-        assert.equal(DT.capabilities().burst, true, "precondition: 1.10.0 carries the burst payload");
+        assert.equal(DT.capabilities().burst, true, "precondition: 1.11.0 carries the burst payload");
         const bp = DT.burstProfile();
-        assert.ok(bp !== null && typeof bp === "object", "burstProfile() must return a live handle on 1.10.0");
+        assert.ok(bp !== null && typeof bp === "object", "burstProfile() must return a live handle on 1.11.0");
         assert.equal(typeof bp.stop, "function");
         for (const k of ["passes", "perPass", "queued", "ran", "redundant", "shortCircuited"]) {
             assert.ok(k in bp, `burst handle carries documented field '${k}'`);
@@ -246,7 +381,7 @@ describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
     it("Symbol.dispose (using) stamps: track's off is self-stamped, handles mirror stop",
        {skip: typeof Symbol.dispose !== "symbol" ? "Symbol.dispose absent on this Node" : false},
        () => {
-        // devtools 1.6.x stamps Symbol.dispose across its stopper handles:
+        // devtools 1.6.x+ stamps Symbol.dispose across its stopper handles:
         // track() returns a bare function self-stamped (off[Symbol.dispose] ===
         // off); object handles mirror their idempotent stop. Dispose-then-stop
         // and stop-then-dispose are both no-ops.
@@ -286,7 +421,7 @@ describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
         watch.stop();   // CRITICAL: clears the sampler handle
     });
 
-    it("track() registers a lifecycle listener against a 1.10.0-built handle", () => {
+    it("track() registers a lifecycle listener against a 1.11.0-built handle", () => {
         const s = SIG.signal(0);
         const events = [];
         const untrack = DT.track(s, (e) => events.push(e));
@@ -295,6 +430,91 @@ describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
         SIG.dispose(e);
         untrack();
         SIG.dispose(s);
+    });
+
+    it("watchSettled() is LIVE on a consumer-built settled registry: exact coalesced accounting, non-perturbing attach", () => {
+        // devtools 1.8.0's settle observer: one cb({settles, ts}) per top-level,
+        // non-empty, clean drain; a batch of N writes is ONE settle; an empty
+        // flush is none. The attach adds NO reactive observer (stats() holds).
+        const r = SIG.createRegistry({ maxNodes: 64, maxLinks: 256, settled: true });
+        const s = r.signal(0);
+        r.effect(() => { s(); });
+
+        const nodesBefore = r.stats().activeNodes;
+        const payloads = [];
+        const h = DT.watchSettled(r, (p) => payloads.push(p));
+        assert.ok(h !== null && typeof h === "object", "a settled registry must yield a LIVE handle");
+        assert.equal(typeof h.stop, "function");
+        assert.equal(typeof h.count, "function");
+        assert.equal(r.stats().activeNodes, nodesBefore,
+            "non-perturbing contract: attaching watchSettled adds no reactive node");
+        if (typeof Symbol.dispose === "symbol") {
+            assert.equal(h[Symbol.dispose], h.stop, "the eighth stopper mirrors stop onto Symbol.dispose");
+        }
+
+        r.batch(() => { s.set(1); s.set(2); s.set(3); });   // ONE settle
+        assert.equal(payloads.length, 1, "a 3-write batch coalesces to exactly ONE settle callback");
+        assert.equal(payloads[0].settles, 1, "the payload carries the monotonic settle count");
+        assert.equal(typeof payloads[0].ts, "number", "the payload carries a devtools-synthesized timestamp");
+        r.flush();                                          // empty: no work queued
+        assert.equal(payloads.length, 1, "an empty flush must not settle");
+        s.set(9);                                           // ONE more
+        assert.equal(payloads.length, 2, "each further clean drain settles once");
+        assert.equal(h.count(), 2, "count() reports settles-since-attach");
+
+        h.stop();
+        s.set(10);
+        assert.equal(h.count(), 2, "stop() freezes the count -- the listener is detached");
+        h.stop();   // idempotent -- must not throw
+        r.destroy();
+    });
+
+    it("watchSettled() fail-closes to null on a non-settled registry; a throwing consumer cb is swallowed", () => {
+        // The documented null, never a live-but-dead handle.
+        const plain = SIG.createRegistry({ maxNodes: 16, maxLinks: 32 });
+        assert.equal(DT.watchSettled(plain, () => {}), null,
+            "a default (non-settled) registry must yield the documented null");
+        plain.destroy();
+
+        // A throwing user callback is caught by devtools (cold/debug path):
+        // the count still advances and the listener stays attached.
+        const r = SIG.createRegistry({ maxNodes: 64, maxLinks: 256, settled: true });
+        const s = r.signal(0);
+        r.effect(() => { s(); });
+        const h = DT.watchSettled(r, () => { throw new Error("consumer boom"); });
+        s.set(1);
+        s.set(2);
+        assert.equal(h.count(), 2,
+            "a throwing consumer callback must corrupt neither the count nor the listener");
+        h.stop();
+        r.destroy();
+    });
+
+    it("mid-fire stop() interplay: a self-stopping handle never costs a sibling handle its settle", () => {
+        // The composed cross-package contract. devtools' stop() DEFERS the
+        // engine detach when called from inside its own callback (its guard
+        // against the engine's fire-loop mutation edge), and this engine's
+        // fire loop additionally null-outs instead of splicing (the
+        // 1.11.0-alpha.0 fix) -- belt and suspenders across the boundary. A
+        // consumer stopping its own observer from inside a settle callback
+        // must never silence the OTHER observer for that same drain.
+        const r = SIG.createRegistry({ maxNodes: 64, maxLinks: 256, settled: true });
+        const s = r.signal(0);
+        r.effect(() => { s(); });
+
+        const seen = [];
+        let h1 = null;
+        h1 = DT.watchSettled(r, () => { seen.push("first"); h1.stop(); });
+        const h2 = DT.watchSettled(r, (p) => seen.push("second:" + p.settles));
+
+        s.set(1);
+        assert.deepEqual(seen, ["first", "second:1"],
+            "the drain that watched the first handle stop itself must STILL deliver to the second");
+        s.set(2);
+        assert.deepEqual(seen, ["first", "second:1", "second:2"],
+            "from the next drain on, only the surviving handle fires");
+        h2.stop();
+        r.destroy();
     });
 
     it("ghost contract: the ENTIRE read-side surface adds ZERO nodes to the graph", () => {
@@ -308,7 +528,8 @@ describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
         // link or add an observer. This is devtools' headline contract ("adds
         // zero nodes and zero observers to the graph it inspects") pinned across
         // the whole surface, not just the four helpers the old sweep covered.
-        // pendingEffects joins the sweep at 1.6.2 (queue read-out is read-only).
+        // pendingEffects joined the sweep at 1.6.2; whyDirty + explain join at
+        // 1.8.0 (both read-only composits over the same walk machinery).
         const gBefore = DT.graph([c]);
         for (let i = 0; i < 25; i++) {
             DT.inspect(c);
@@ -323,6 +544,8 @@ describe("lite-devtools 1.6.2 boots against the 1.11.0 engine", () => {
             DT.serialize(gBefore);
             DT.diff(gBefore, gBefore);
             DT.pendingEffects();
+            DT.whyDirty(c);
+            DT.explain(a, c);
         }
         const after = SIG.stats();
 

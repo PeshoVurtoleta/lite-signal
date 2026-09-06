@@ -90,7 +90,7 @@
   },
   "sideEffects": false,
   "devDependencies": {
-    "@zakkster/lite-devtools": "^1.6.2",
+    "@zakkster/lite-devtools": "^1.8.0",
     "@zakkster/lite-gc-profiler": "^1.16.0",
     "@zakkster/lite-profiler": "^1.1.0",
     "@zakkster/lite-profiler-signal": "^1.2.0",
