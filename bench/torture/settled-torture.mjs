@@ -26,17 +26,18 @@
  *     the write that triggered the drain never sees it, and sibling callbacks
  *     still fire.
  *   - callbacks fire in subscription order.
- *   - KNOWN SHARP EDGE (observed, deliberately NOT asserted either way):
- *     fireSettled iterates the live callbacks array while unsubscribe splices
- *     it, so a callback that unsubscribes ITSELF mid-fire shifts its next
- *     sibling into the visited slot -- that sibling silently misses THAT drain
- *     (delivery observed: [A(self-off), C] with B skipped; next drain [B, C]
- *     is clean). A mid-fire SUBSCRIBE lands in the growing array and is
- *     delivered in the SAME drain. Both are flagged upstream as candidate
- *     cold-path fixes (snapshot-free compaction); this file gates only the
- *     uncontested invariants around them: no crash, no corruption, exact
- *     recovery from the next drain on. If the engine adopts a fix, ADD the
- *     delivery assertions here deliberately.
+ *   - MID-FIRE MUTATION (the former flagged sharp edge -- FIXED in the
+ *     1.11.0-alpha.0 engine, asserted exactly here): unsubscribe during a
+ *     fire NULLS the departing slot (the old splice walked an unvisited
+ *     sibling into the visited index and silently skipped it); fireSettled
+ *     skips nulls and compacts in place after the OUTERMOST fire (a settled
+ *     callback that writes nests a full second fire, so compaction is
+ *     depth-guarded). Delivery law: a self- or already-fired-sibling
+ *     unsubscribe never costs any OTHER callback its notification;
+ *     unsubscribing a LATER sibling silences exactly the target, immediately;
+ *     a mid-fire SUBSCRIBE is delivered in the SAME drain (live roster read --
+ *     devtools 1.8.0's probed ground truth); destroy() clears the roster, so
+ *     delivery cuts off at the destroyer.
  *
  * Falsifiability self-test (SETTLED_BREAK, never set by the runner):
  *   SETTLED_BREAK=phantom -- the counting harness invents one extra settle
@@ -237,7 +238,7 @@ function mkCounter(r) {
     r.destroy();
 }
 
-/* -- 5. unsubscribe contract (incl. the mid-fire sharp edge, crash-only) ----- */
+/* -- 5. unsubscribe contract + exact mid-fire mutation semantics ------------- */
 {
     const r = reg();
     const s = r.signal(0);
@@ -254,19 +255,19 @@ function mkCounter(r) {
     r.destroy();
 }
 {
-    // Self-unsubscribe DURING a fire: gate no-crash + exact recovery ONLY (the
-    // same-drain sibling delivery is the flagged sharp edge -- see header).
+    // Self-unsubscribe DURING a fire: the drain that watches a callback leave
+    // must still deliver every sibling (the former sharp edge, now exact law).
     const r = reg();
     const s = r.signal(0);
     r.effect(() => { s(); });
     const seen = [];
     let offA = null;
-    offA = r.onSettled(() => { seen.push("A"); offA(); });
+    offA = r.onSettled(() => { seen.push("A"); offA(); offA(); }); // double-off mid-fire: idempotent
     r.onSettled(() => seen.push("B"));
     r.onSettled(() => seen.push("C"));
     s.set(1);
-    R.ok("unsub-mid-fire", seen[0] === "A", "the self-unsubscribing callback itself fired");
-    R.ok("unsub-mid-fire", !seen.includes("A", 1), "A fired exactly once in the drain it left");
+    R.eq("unsub-mid-fire", seen.join(","), "A,B,C",
+        "self-unsubscribe mid-fire must not cost any sibling THAT drain's notification");
     seen.length = 0;
     s.set(2);
     R.eq("unsub-mid-fire", seen.join(","), "B,C",
@@ -277,8 +278,47 @@ function mkCounter(r) {
     r.destroy();
 }
 {
-    // Subscribe DURING a fire: gate no-crash + all-subsequent-drains delivery
-    // (same-drain delivery observed but deliberately un-asserted -- see header).
+    // Unsubscribing an ALREADY-FIRED sibling mid-fire: the old splice walked
+    // the next unvisited callback into the just-visited index and skipped it;
+    // the null-out keeps original indices, so delivery stays complete.
+    const r = reg();
+    const s = r.signal(0);
+    r.effect(() => { s(); });
+    const seen = [];
+    let offA = null;
+    offA = r.onSettled(() => seen.push("A"));
+    r.onSettled(() => { seen.push("B"); offA(); });
+    r.onSettled(() => seen.push("C"));
+    s.set(1);
+    R.eq("unsub-mid-fire", seen.join(","), "A,B,C",
+        "removing an earlier (already-fired) sibling mid-fire must not skip the next one");
+    seen.length = 0;
+    s.set(2);
+    R.eq("unsub-mid-fire", seen.join(","), "B,C", "the removed callback is gone from the next drain on");
+    r.destroy();
+}
+{
+    // Unsubscribing a LATER sibling mid-fire: immediate effect -- exactly the
+    // target misses the current drain, nobody else.
+    const r = reg();
+    const s = r.signal(0);
+    r.effect(() => { s(); });
+    const seen = [];
+    let offC = null;
+    r.onSettled(() => { seen.push("A"); offC(); });
+    r.onSettled(() => seen.push("B"));
+    offC = r.onSettled(() => seen.push("C"));
+    s.set(1);
+    R.eq("unsub-mid-fire", seen.join(","), "A,B",
+        "removing a later sibling mid-fire silences exactly the target, immediately");
+    seen.length = 0;
+    s.set(2);
+    R.eq("unsub-mid-fire", seen.join(","), "A,B", "and the roster stays stable");
+    r.destroy();
+}
+{
+    // Subscribe DURING a fire: delivered in the SAME drain (live roster read --
+    // the ground truth devtools 1.8.0 probed and documented), and every one after.
     const r = reg();
     const s = r.signal(0);
     r.effect(() => { s(); });
@@ -286,12 +326,26 @@ function mkCounter(r) {
     let subscribed = false;
     r.onSettled(() => { if (!subscribed) { subscribed = true; r.onSettled(() => late++); } });
     s.set(1);
-    const afterFirst = late;
-    R.ok("sub-mid-fire", afterFirst === 0 || afterFirst === 1,
-        "mid-fire subscribe must not corrupt the fire loop (0 or 1 same-drain fires only)");
+    R.eq("sub-mid-fire", late, 1, "a mid-fire subscribe is delivered in the SAME drain");
     s.set(2);
     s.set(3);
-    R.eq("sub-mid-fire", late - afterFirst, 2, "the mid-fire subscriber fires in every SUBSEQUENT drain");
+    R.eq("sub-mid-fire", late, 3, "and in every subsequent drain");
+    r.destroy();
+}
+{
+    // A settled callback that WRITES starts a fresh top-level drain and a full
+    // NESTED fire (inner completes before the outer resumes). The fix's
+    // depth-guarded compaction must leave this nesting law untouched.
+    const r = reg();
+    const s = r.signal(0);
+    r.effect(() => { s(); });
+    const seen = [];
+    let wrote = false;
+    r.onSettled(() => { seen.push("W"); if (!wrote) { wrote = true; s.set(99); } });
+    r.onSettled(() => seen.push("X"));
+    s.set(1);
+    R.eq("nested-fire", seen.join(","), "W,W,X,X",
+        "a write inside a settled callback nests a complete second fire, then the outer resumes");
     r.destroy();
 }
 
@@ -309,7 +363,22 @@ function mkCounter(r) {
     R.ok("destroy", !threw, "flush() on a destroyed registry stays a quiet no-op");
     R.eq("destroy", c.n, 1, "no settle can fire after destroy (nothing can drain)");
     r.destroy(); // double-destroy stays safe
-    R.note("destroy retains settledCallbacks (bounded, freed with the registry) -- flagged upstream vs nodeNames' explicit clear");
+    R.note("destroy clears settledCallbacks (1.11.0-alpha.0, nodeNames-consistent)");
+}
+{
+    // destroy() DURING a fire: teardown clears the settled roster, so delivery
+    // cuts off at the destroyer -- no sibling observes a dead registry.
+    const r = reg();
+    const s = r.signal(0);
+    r.effect(() => { s(); });
+    const seen = [];
+    r.onSettled(() => { seen.push("A"); r.destroy(); });
+    r.onSettled(() => seen.push("B"));
+    let threw = false;
+    try { s.set(1); } catch (_e) { threw = true; }
+    R.ok("destroy", !threw, "destroy inside a settled callback must not throw out of the drain");
+    R.eq("destroy", seen.join(","), "A", "delivery cuts off at destroy: no sibling fires on a dead registry");
+    r.destroy(); // double-destroy stays safe
 }
 
 /* -- 7. exact-count soaks: steady writes + batch storm ----------------------- */
@@ -357,7 +426,8 @@ function mkCounter(r) {
 
 process.exit(R.finish(
     "onSettled exact: per-strategy drain accounting, fan/batch/cascade coalescing, clean-quiescence negatives, observer isolation, mid-fire safety, destroy, soaks",
-    // Reviewer-tightened floor: exactly the shipped assert count, so a harness
-    // path that silently drops ANY assert trips the floor (was 30).
-    { minAsserts: 39 }
+    // Floor pinned to exactly the shipped assert count, so a harness path that
+    // silently drops ANY assert trips it (30 -> 39 reviewer nit -> 45 with the
+    // 1.11.0-alpha.0 exact mid-fire delivery law).
+    { minAsserts: 45 }
 ));

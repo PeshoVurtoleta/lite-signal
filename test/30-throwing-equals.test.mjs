@@ -10,12 +10,12 @@
 // and boxSet into TWO build variants (eager vs sab/manual, selected once at
 // creation), so each callable/box site appears twice physically -- the eager
 // build is the default this file drives; the mirror line is noted in parens:
-//   (a) signal set pre-check      :1512  eq(node.value, value)          (mirror :1533)
-//   (b) batch revert check        :1519  eq(node.preBatchValue, value)  (mirror :1540)
-//   (c) computed re-eval          :1382  eq(node.value, newValue)
-// 1.11.0 ALSO ships signalBox, whose boxSet (Signal.js :1639-1678) mirrors the
-// callable set path with its OWN two eq() calls (:1644 pre-check, :1651 revert;
-// sab/manual mirror :1664 / :1671) -- so a raw grep shows eq() calls across both
+//   (a) signal set pre-check      :1540  eq(node.value, value)          (mirror :1561)
+//   (b) batch revert check        :1547  eq(node.preBatchValue, value)  (mirror :1568)
+//   (c) computed re-eval          :1410  eq(node.value, newValue)
+// 1.11.0 ALSO ships signalBox, whose boxSet (Signal.js :1667-1706) mirrors the
+// callable set path with its OWN two eq() calls (:1672 pre-check, :1679 revert;
+// sab/manual mirror :1692 / :1699) -- so a raw grep shows eq() calls across both
 // build variants, but they collapse to the same three logical sites; the
 // signalBox pair is byte-identical in logic to (a)/(b). Its two boxSet sites are
 // pinned DIRECTLY below in describe "(box)": a throwing pre-check propagates
@@ -24,8 +24,8 @@
 // divergence from 1.4.4 was observed on either path -- every assertion here holds
 // identically.
 //
-// Site (b) is DOCUMENTED, not asserted-as-atomic: the throw at :1519 happens
-// AFTER node.value was written at :1518 but BEFORE the version bump/revert. We
+// Site (b) is DOCUMENTED, not asserted-as-atomic: the throw at :1547 happens
+// AFTER node.value was written at :1546 but BEFORE the version bump/revert. We
 // pin exactly what the engine does -- value written, version left bumped,
 // downstream fires -- so a future move to a truly atomic revert trips this pin
 // rather than silently claiming a rollback the engine never provided.
@@ -63,9 +63,9 @@ describe("throwing equals (a): signal set pre-check", () => {
 
 describe("throwing equals (b): batch revert check", () => {
     // Set X then set back to the original value inside one batch. The revert
-    // check at :1446 compares preBatchValue against the value on the SECOND set.
+    // check at :1547 compares preBatchValue against the value on the SECOND set.
     // We craft equals to throw ONLY on that specific comparison (both operands
-    // are the sentinel), so the pre-check at :1439 never throws.
+    // are the sentinel), so the pre-check at :1540 never throws.
     const POISON = { tag: "poison" };
     const X = { tag: "x" };
     const makeEquals = () => (a, b) => {
@@ -84,16 +84,16 @@ describe("throwing equals (b): batch revert check", () => {
         let threw = null;
         try {
             r.batch(() => {
-                s.set(X);        // :1279 compares (POISON, X) -> no throw
-                s.set(POISON);   // :1279 compares (POISON, POISON) -> throws
+                s.set(X);        // :1547 compares (POISON, X) -> no throw
+                s.set(POISON);   // :1547 compares (POISON, POISON) -> throws
             });
         } catch (e) { threw = e; }
 
         // The throw reaches the batch caller.
         assert.ok(threw instanceof Error && threw.message === "eq-revert-boom",
             "the revert-check throw must propagate out of the batch");
-        // node.value was written at :1278 before the throw -- it holds the net value.
-        assert.equal(s.peek(), POISON, "PINNED: node.value is the value written at :1278 (the net value)");
+        // node.value was written at :1546 before the throw -- it holds the net value.
+        assert.equal(s.peek(), POISON, "PINNED: node.value is the value written at :1546 (the net value)");
         // The version was left BUMPED (revert never completed), so the effect
         // marked by the first set re-runs -- unlike a clean set-X-then-back which
         // the revert would suppress (see the contrast test below).
@@ -141,8 +141,8 @@ describe("throwing equals (b): batch revert check", () => {
 
 describe("throwing equals (c): computed re-eval", () => {
     // On FIRST eval evalVersion === 0 short-circuits equals, so the throw only
-    // occurs on RE-eval. When it throws it is caught at :1149, cached as
-    // FLAG_HAS_ERROR (:1151), re-thrown on every read until a dep change
+    // occurs on RE-eval. When it throws it is caught at :1415, cached as
+    // FLAG_HAS_ERROR (:1418), re-thrown on every read until a dep change
     // re-evaluates successfully and clears the flag.
     const POISON = 999;
 
@@ -187,10 +187,10 @@ describe("throwing equals (c): computed re-eval", () => {
 });
 
 describe("throwing equals (box): signalBox mirrors the callable set sites", () => {
-    // signalBox's boxSet (Signal.js :1398-1437) invokes equals at two sites that
-    // mirror the callable set path exactly: the pre-check at :1403 (before the
+    // signalBox's boxSet (Signal.js :1667-1706) invokes equals at two sites that
+    // mirror the callable set path exactly: the pre-check at :1672 (before the
     // value is written -- a throw leaves the box unmutated) and the batch-revert
-    // check at :1410 (after node.value is written at :1409 -- a throw strands the
+    // check at :1679 (after node.value is written at :1678 -- a throw strands the
     // version bump so downstream fires). Confirmed on 1.9.0: boxSet behaves
     // IDENTICALLY to read.set; no divergence.
 
@@ -223,15 +223,15 @@ describe("throwing equals (box): signalBox mirrors the callable set sites", () =
         let threw = null;
         try {
             r.batch(() => {
-                b.set(X);        // :1410 compares (POISON, X) -> no throw
-                b.set(POISON);   // :1410 compares (POISON, POISON) -> throws
+                b.set(X);        // :1679 compares (POISON, X) -> no throw
+                b.set(POISON);   // :1679 compares (POISON, POISON) -> throws
             });
         } catch (e) { threw = e; }
 
         assert.ok(threw instanceof Error && threw.message === "box-revert-boom",
             "the box revert-check throw must propagate out of the batch");
-        // node.value was written at :1409 before the throw -- it holds the net value.
-        assert.equal(b.peek(), POISON, "PINNED: box value is the value written at :1409 (the net value)");
+        // node.value was written at :1678 before the throw -- it holds the net value.
+        assert.equal(b.peek(), POISON, "PINNED: box value is the value written at :1678 (the net value)");
         assert.equal(runs, 2, "PINNED: downstream fires -- the throw stranded the version bump");
         assert.equal(seen[seen.length - 1], POISON, "the downstream read observed the net value");
         stop();

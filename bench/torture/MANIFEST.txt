@@ -300,13 +300,14 @@ Residual engine diff vs 1.10.0 = the 8 authored onSettled hunks + those two
 lines; no hot body touched (flushEffectsPlain's body is byte-identical to
 1.10.0's flushEffects -- only the binding became a build-time-selected const,
 the 1.7.0 flushStrategy discipline). settled-torture is the 28th scenario
-(NATIVE here, 39 asserts; SETTLED_BREAK=phantom|lost verified exit 1); the
+(NATIVE here, 45 asserts; SETTLED_BREAK=phantom|lost verified exit 1); the
 zerogc steady-settled lane activates first-time (full witness battery green
-with a live subscriber over the 1M-op window). KNOWN SHARP EDGE (observed,
-un-asserted, flagged upstream): a callback that unsubscribes ITSELF mid-fire
-makes its next sibling miss THAT drain (indexOf+splice in the live fire
-loop); mid-fire subscribes deliver same-drain; destroy() retains
-settledCallbacks. The capability changes no observed contract elsewhere:
+with a live subscriber over the 1M-op window). SHARP EDGE FIXED
+(1.11.0-alpha.0, user-authorized, red-first proven): unsubscribe during a
+fire nulls the slot and fireSettled compacts after the outermost fire
+(depth-guarded, allocation-free), so a mid-fire unsubscribe never costs a
+SIBLING its notification (the old splice silently skipped one); mid-fire
+subscribes deliver same-drain; destroy() clears settledCallbacks. The capability changes no observed contract elsewhere:
 creation anatomy re-measured IDENTICAL for the SEVENTH engine running (mint
 --verify all pins PASS: signal 264, computed 208, effect 160, boxes 56 B/op
 all-space -- CAP_SETTLED is read once at createRegistry, off the mint path)

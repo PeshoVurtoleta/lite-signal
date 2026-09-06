@@ -2,7 +2,7 @@
  * bench/torture/deep-chain-torture.mjs -- pullComputed recursion, fail-closed.
  *
  * `pullComputed` is call-stack recursive: pulling a computed walks its deps and
- * recurses into every computed source (1.11.0 Signal.js :1331, recursing at :1352).
+ * recurses into every computed source (1.11.0 Signal.js :1359, recursing at :1380).
  * A chain of N computeds
  * therefore reads at call-stack depth N, and beyond the host's stack budget
  * (~10k on a default V8) reading the tail throws a RangeError rather than

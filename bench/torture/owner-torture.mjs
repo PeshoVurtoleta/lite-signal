@@ -12,14 +12,14 @@
  *      disposed and its pool slot recycled by an unrelated node, the handle's gen
  *      no longer matches -- and runWithOwner must degrade to ROOTED execution
  *      rather than adopting the continuation into the recycled slot's NEW resident
- *      (1.11.0 Signal.js:2026 sets currentOwner=null when liveNode returns undefined).
+ *      (1.11.0 Signal.js:2054 sets currentOwner=null when liveNode returns undefined).
  *
  *   2. ADOPTION vs ROOTING, observably distinguished. A live-owner adoption means
  *      the adopted effect STOPS when the owner is disposed; a rooted effect KEEPS
  *      running. This file drives both and asserts the observable difference.
  *
  *   3. DEP ISOLATION. runWithOwner nulls the tracking observer AND disables
- *      isTrackingDeps for fn's direct body (1.11.0 Signal.js:2027-2028), so reads inside
+ *      isTrackingDeps for fn's direct body (1.11.0 Signal.js:2055-2056), so reads inside
  *      fn cannot form accidental dependency edges into the surrounding observer.
  *
  *   4. runWithOwner(undefined) runs rooted; nested runWithOwner composes; two

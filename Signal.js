@@ -1161,6 +1161,16 @@ export function createRegistry(config) {
     // nothing -- zero cost BY CONSTRUCTION, decided before the first closure is built.
     // Only a registry built with { settled: true } binds the settled variant.
     const settledCallbacks = CAP_SETTLED ? [] : null;
+    // 1.11.0-alpha.0: unsubscribing DURING a fire nulls the slot instead of
+    // splicing -- a splice walks an unvisited sibling into the just-visited
+    // index and silently skips it (a lost notification). fireSettled skips
+    // nulls and compacts in place after the OUTERMOST fire only: a settled
+    // callback that writes starts a fresh top-level drain and a nested fire,
+    // so compaction is depth-guarded. Slot writes and integer sweeps only --
+    // the fire loop stays allocation-free (the zerogc steady-settled lane
+    // gates that).
+    let settledFireDepth = 0;
+    let settledHoles = false;
     function onSettled(fn) {
         if (!CAP_SETTLED) throw new Error("onSettled requires createRegistry({ settled: true })");
         settledCallbacks.push(fn);
@@ -1169,14 +1179,32 @@ export function createRegistry(config) {
             if (!live) return;
             live = false;
             const i = settledCallbacks.indexOf(fn);
-            if (i !== -1) settledCallbacks.splice(i, 1);
+            if (i === -1) return;
+            if (settledFireDepth > 0) {
+                settledCallbacks[i] = null;
+                settledHoles = true;
+            } else {
+                settledCallbacks.splice(i, 1);
+            }
         };
     }
     function fireSettled() {
         const cbs = settledCallbacks;
+        settledFireDepth++;
         for (let i = 0; i < cbs.length; i++) {
+            const fn = cbs[i];
+            if (fn === null) continue;   // unsubscribed during this fire
             // A notification callback must never break the drain it observes.
-            try { cbs[i](); } catch (_e) { /* swallow: settled is an observer, not a control path */ }
+            try { fn(); } catch (_e) { /* swallow: settled is an observer, not a control path */ }
+        }
+        settledFireDepth--;
+        if (settledFireDepth === 0 && settledHoles) {
+            settledHoles = false;
+            let w = 0;
+            for (let i = 0; i < cbs.length; i++) {
+                if (cbs[i] !== null) { cbs[w++] = cbs[i]; }
+            }
+            cbs.length = w;
         }
     }
     // The settle tail fires ONCE per top-level, non-empty, clean drain: re-entrant
@@ -2164,6 +2192,10 @@ export function createRegistry(config) {
      */
     function destroy() {
         nodeNames.clear();   // 1.10.0: drop the cold name table with the registry
+        // 1.11.0-alpha.0: drop the settled roster too -- delivery must cut off
+        // at destroy (a sibling must never observe a registry that no longer
+        // exists), and the teardown is nodeNames-consistent.
+        if (settledCallbacks !== null) settledCallbacks.length = 0;
         const nodeCount = nodePool.length;
         for (let i = 0; i < nodeCount; i++) {
             const n = nodePool[i];

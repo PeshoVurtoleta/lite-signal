@@ -4,6 +4,27 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.11.0-alpha.0] -- 2026-09-06
+
+### Fixed
+- **The flagged settled sharp edge (user-authorized engine fix).** Unsubscribing
+  during a settle fire now NULLS the departing slot instead of splicing;
+  `fireSettled` skips nulls and compacts in place after the OUTERMOST fire only
+  (depth-guarded -- a settled callback that writes starts a fresh top-level drain
+  and a nested fire). The delivery law is exact and asserted (red-first proven:
+  the new assertions fail on the unfixed engine, then pass): a self- or
+  already-fired-sibling unsubscribe never costs any OTHER callback its
+  notification (the old splice walked an unvisited sibling into the visited index
+  and silently skipped it -- a real lost notification); unsubscribing a LATER
+  sibling silences exactly the target, immediately; a mid-fire subscribe still
+  delivers in the SAME drain (the ground truth lite-devtools 1.8.0 probed and
+  documented). Slot writes and integer sweeps only -- the fire loop stays
+  allocation-free (the zerogc `steady-settled` lane still reports 0 retained /
+  0 scavenges). `settled-torture` grows to 45 asserts (minAsserts pinned).
+- **`destroy()` clears `settledCallbacks`** (nodeNames-consistent teardown), and
+  delivery cuts off at a mid-fire destroy: no sibling ever observes a registry
+  that no longer exists.
+
 ## [1.11.0-preview] -- 2026-09-06
 
 **Feature of the cut: `onSettled`, rebuilt as a creation-time capability.** The
