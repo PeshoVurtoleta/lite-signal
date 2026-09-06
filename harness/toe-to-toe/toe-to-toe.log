@@ -1,0 +1,59 @@
+npm error Missing script: "harness/toe-to-toe/toe-to-toe.mjsl"
+npm error
+npm error To see a list of scripts, run:
+npm error   npm run
+npm error A complete log of this run can be found in: /Users/zakkster/.npm/_logs/2026-07-13T00_08_59_575Z-debug-0.log
+node:internal/modules/cjs/loader:1522
+  throw err;
+  ^
+
+Error: Cannot find module '/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.7.0-preview/harness/toe-to-toe/harness/toe-to-toe/toe-to-toe.mjsl'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1519:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1073:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1097:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1124:12)
+    at Module._load (node:internal/modules/cjs/loader:1296:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v26.3.1
+node:internal/modules/cjs/loader:1522
+  throw err;
+  ^
+
+Error: Cannot find module '/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.7.0-preview/harness/toe-to-toe/harness/toe-to-toe/toe-to-toe.mjss'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1519:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1073:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1097:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1124:12)
+    at Module._load (node:internal/modules/cjs/loader:1296:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v26.3.1
+node:internal/modules/cjs/loader:1522
+  throw err;
+  ^
+
+Error: Cannot find module '/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal1.7.0-preview/harness/toe-to-toe/harness/toe-to-toe/toe-to-toe.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1519:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1073:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1097:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1124:12)
+    at Module._load (node:internal/modules/cjs/loader:1296:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v26.3.1

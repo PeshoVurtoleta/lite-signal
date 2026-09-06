@@ -1,0 +1,256 @@
+{
+  "generatedAt": "2026-07-01T05:21:50.590Z",
+  "floor": "1.3.0",
+  "rolling": "1.5.0-alpha.1",
+  "note": "diagnostic over committed baselines; may be cross-host; not the gate",
+  "workloads": {
+    "reactive-graph-mix": {
+      "1.3.0": {
+        "vsFloor": {
+          "frame.avg": 0,
+          "frame.p99": 0,
+          "phase.write.p99": 0
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:17:29.261Z"
+        }
+      },
+      "1.4.0-beta.1": {
+        "vsFloor": {
+          "frame.avg": -0.03796990627187772,
+          "frame.p99": -0.09888787172735758,
+          "phase.write.p99": -0.04122132206315372
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:21:25.695Z"
+        }
+      },
+      "1.5.0-alpha.1": {
+        "vsFloor": {
+          "frame.avg": -0.013067397518751505,
+          "frame.p99": -0.10939427995187447,
+          "phase.write.p99": -0.01843843777272206
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:17:54.499Z"
+        }
+      },
+      "1.6.0-preview.2": {
+        "vsFloor": {
+          "frame.avg": -0.019747316586398986,
+          "frame.p99": -0.06407016889892418,
+          "phase.write.p99": -0.0192038584206345
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:18:20.159Z"
+        }
+      }
+    },
+    "deep-chain": {
+      "1.3.0": {
+        "vsFloor": {
+          "frame.avg": 0,
+          "frame.p99": 0,
+          "phase.write.p99": 0
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:17:31.431Z"
+        }
+      },
+      "1.4.0-beta.1": {
+        "vsFloor": {
+          "frame.avg": -0.002902439267602552,
+          "frame.p99": 0.01817385587098089,
+          "phase.write.p99": -0.026647120878747564
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:21:27.850Z"
+        }
+      },
+      "1.5.0-alpha.1": {
+        "vsFloor": {
+          "frame.avg": -0.0060057088852084875,
+          "frame.p99": 0.1135943981390708,
+          "phase.write.p99": 0.020720112445910883
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:17:56.650Z"
+        }
+      },
+      "1.6.0-preview.2": {
+        "vsFloor": {
+          "frame.avg": -0.020467184082174288,
+          "frame.p99": -0.04143796185028705,
+          "phase.write.p99": -0.02785523498926559
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:18:22.259Z"
+        }
+      }
+    },
+    "broadcast-fanout": {
+      "1.3.0": {
+        "vsFloor": {
+          "frame.avg": 0,
+          "frame.p99": 0,
+          "phase.write.p99": 0
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:17:33.747Z"
+        }
+      },
+      "1.4.0-beta.1": {
+        "vsFloor": {
+          "frame.avg": 0.020349384167722237,
+          "frame.p99": 0.04311665840181012,
+          "phase.write.p99": 0.021220128987611057
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:21:30.243Z"
+        }
+      },
+      "1.5.0-alpha.1": {
+        "vsFloor": {
+          "frame.avg": 0.010563979785414557,
+          "frame.p99": 0.13018524206862006,
+          "phase.write.p99": 0.12504459929782236
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:17:58.981Z"
+        }
+      },
+      "1.6.0-preview.2": {
+        "vsFloor": {
+          "frame.avg": 0.019001362740213253,
+          "frame.p99": 0.031279546003346606,
+          "phase.write.p99": 0.0020197533149405875
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:18:24.496Z"
+        }
+      }
+    },
+    "dynamic-dep-churn": {
+      "1.3.0": {
+        "vsFloor": {
+          "frame.avg": 0,
+          "frame.p99": 0,
+          "phase.write.p99": 0
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:17:35.876Z"
+        }
+      },
+      "1.4.0-beta.1": {
+        "vsFloor": {
+          "frame.avg": -0.0033246520357569113,
+          "frame.p99": -0.019919284952643234,
+          "phase.write.p99": -0.05279166658177562
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:21:32.482Z"
+        }
+      },
+      "1.5.0-alpha.1": {
+        "vsFloor": {
+          "frame.avg": -0.010419611985785426,
+          "frame.p99": 0.03757123970708771,
+          "phase.write.p99": 0.03430254761425599
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:18:01.168Z"
+        }
+      },
+      "1.6.0-preview.2": {
+        "vsFloor": {
+          "frame.avg": 0.00185480413814265,
+          "frame.p99": -0.05369241496598893,
+          "phase.write.p99": -0.08392102461455503
+        },
+        "env": {
+          "node": "v22.22.2",
+          "arch": "x64",
+          "platform": "linux 6.18.5",
+          "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+          "cores": 1,
+          "date": "2026-07-01T05:18:26.695Z"
+        }
+      }
+    }
+  }
+}

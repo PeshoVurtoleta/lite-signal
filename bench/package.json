@@ -1,0 +1,25 @@
+{
+  "name": "lite-signal-bench",
+  "version": "3.0.0",
+  "type": "module",
+  "scripts": {
+    "bench": "node --expose-gc benchmark.mjs",
+    "mirror": "node --expose-gc mirror.mjs",
+    "mirror-verify": "node --expose-gc mirror.mjs --self-verify",
+    "sweep": "node --expose-gc sweep.mjs",
+    "report": "node report.mjs",
+    "vs-andrii": "node vs-andrii.mjs",
+    "selftest": "node --expose-gc lib/_selftest.mjs",
+    "graph-fuzzer": "node --expose-gc torture/graph-fuzzer.mjs",
+    "dispose-recycle": "node --expose-gc dispose-recycle.mjs",
+    "scheduler-bench": "node --expose-gc torture/scheduler-bench.mjs",
+    "torture-soak": "node --expose-gc torture/torture-soak.mjs",
+    "bench-reactive-legacy": "node --expose-gc benchmarkReactive.mjs"
+  },
+  "dependencies": {
+    "@preact/signals-core": "^1.14.2",
+    "alien-signals": "^3.2.1",
+    "random": "^5.4.1",
+    "solid-js": "^1.9.13"
+  }
+}
