@@ -226,6 +226,40 @@ function buildRetrack() {
     return { statsOf: () => r.stats(), hot: () => sel.set(flip ^= 1) };
 }
 
+/**
+ * Settled-ON steady lane (1.11.0+). The whole point of the creation-time
+ * capability is that the notification tail adds ZERO allocation to the drain:
+ * fireSettled iterates a pre-existing array and calls pre-existing closures.
+ * This lane proves it under the full witness battery -- a settled registry
+ * with a LIVE subscriber sustains steady writes with zero retained bytes,
+ * zero pool growth and a quiet nursery. The in-loop count check is fail-closed
+ * non-vacuity: every write must actually deliver a settle, or the lane crashes
+ * rather than greenly measuring an idle callback. Subscribe/unsubscribe are
+ * documented COLD (push / indexOf+splice) and deliberately stay OUT of the hot
+ * loop. Self-drives its own value (see buildRetrack's argless-hot() warning).
+ * Self-skips below 1.11.0 (no settled capability).
+ */
+function buildSettled() {
+    let r;
+    try { r = createRegistry({ ...CFG, settled: true }); } catch (_e) { return null; }
+    if (typeof r.onSettled !== "function") { r.destroy(); return null; }
+    const s = r.signal(0);
+    let sink = 0;
+    r.effect(() => { sink = s(); });
+    let settles = 0;
+    let expected = 0;
+    r.onSettled(() => { settles++; });
+    let v = 0;
+    return {
+        statsOf: () => r.stats(),
+        hot: () => {
+            s.set(++v);
+            expected++;
+            if (settles !== expected) throw new Error(`steady-settled lost a settle: expected ${expected}, got ${settles}`);
+        },
+    };
+}
+
 /** create+dispose churn on the callable form. NO signalBox -- see churnBox. */
 function buildChurnPlain() {
     const r = createRegistry(CFG);
@@ -393,8 +427,9 @@ function gateAllocAndGc(name, st, maxBytesPerCall) {
 
 /** Steady scenarios: no node was acquired, the pool never grew, and the whole
  *  scavenge window forced zero collections of either generation. */
-async function gateSteady(name, build) {
+async function gateSteady(name, build, skipNote) {
     const st = build();
+    if (st === null) { R.note(`${name} -- SKIP: ${skipNote}`); return; }
     const { s0, s1 } = gateAllocAndGc(name, st, RULES.maxBytesPerCall);
     R.eq(name, s1.poolGrowths - s0.poolGrowths, 0, "the pool grew during steady-state writes");
     R.eq(name, s1.totalAllocations - s0.totalAllocations, 0, "a node was acquired during steady-state writes");
@@ -415,6 +450,11 @@ async function gateSteady(name, build) {
             : `nursery grew ${(gcw.nurseryDeltaBytes / 1048576).toFixed(1)} MB over the un-forced window ` +
               `(cap ${(NURSERY_DELTA_CAP / 1048576).toFixed(0)} MB) -- per-write transient allocation ` +
               `absorbed by adaptive nursery growth instead of scavenges`);
+    // A GATED steady lane (skipNote given) prints a positive verdict on its
+    // first activation, for the same legibility reason as churn-box's line.
+    if (skipNote !== undefined) {
+        R.note(`${name} -- ok: steady witness battery green (retained 0, poolGrowths 0, quiet ${SCAVENGE_OPS.toLocaleString()}-op window)`);
+    }
 }
 
 /** Churn scenarios: the pool never grew and every acquired node was recycled. */
@@ -437,6 +477,10 @@ await gateSteady("steady-deep", buildDeep);
 await gateSteady("steady-wide", buildWide);
 await gateSteady("steady-batch", buildBatch);
 await gateSteady("steady-retrack", buildRetrack);
+// 1.11.0: the settled notification tail must be allocation-free with a live
+// subscriber -- first-time activation here, so the skip note keeps the lane
+// legible on pre-1.11.0 engines (same rationale as churn-box's verdict line).
+await gateSteady("steady-settled", buildSettled, "settled capability requires 1.11.0+");
 
 /* -- bounded-pool churn: the slow-graveyard witness -------------------------
  * steady-retrack's gates catch an AGGRESSIVE graveyard (the pool drains inside

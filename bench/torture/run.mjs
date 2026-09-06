@@ -73,6 +73,7 @@ const SCENARIOS = [
     { name: "flush-torture", group: "semantic", file: "flush-torture.mjs", floor: "1.7.0", about: "flushStrategy eager/sab/manual + subscribe (1.7.0+)" },
     { name: "cleanup-return-torture", group: "semantic", file: "cleanup-return-torture.mjs", floor: "1.8.0", about: "effect cleanup return + compose order (1.8.0+)" },
     { name: "dispose-torture", group: "semantic", file: "dispose-torture.mjs", floor: "1.9.0", about: "Symbol.dispose / using on lifecycle objects (1.9.0+)" },
+    { name: "settled-torture", group: "semantic", file: "settled-torture.mjs", floor: "1.11.0", about: "onSettled creation-time capability: exact drain accounting x flushStrategy, observer isolation, mid-fire safety (1.11.0+); SETTLED_BREAK self-test" },
     { name: "zerogc-torture", group: "semantic", file: "zerogc-torture.mjs", floor: "1.4.0", about: "zero-GC hot path via measureAllocs/measureOps + stats counters; ZEROGC_BREAK self-test" },
     { name: "op-accounting", group: "semantic", file: "op-accounting.mjs", floor: "1.4.0", about: "structural work via onGraphMutation opcode lane" },
     { name: "burst-profile-torture", group: "semantic", file: "burst-profile-torture.mjs", floor: "1.6.0", about: "op-6/7 flush lane: burst coalescing == 1.0x, pass accounting, flushPasses agreement (1.6.0+)" },
