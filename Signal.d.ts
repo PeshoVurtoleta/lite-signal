@@ -195,6 +195,14 @@ export interface NodeDescriptor {
     value: unknown;
 }
 
+/**
+ * Opaque, gen-stamped lifecycle-owner handle returned by {@link getOwner} (1.7.0).
+ * Structurally a {@link NodeDescriptor} -- the same ABA-guarded handle `describe`
+ * returns -- so it is also re-walkable through `forEachOwned` / `ownerOf` / `nodeId`.
+ * Pass it back to {@link runWithOwner}; a stale one degrades to rooted execution.
+ */
+export type OwnerHandle = NodeDescriptor;
+
 /** Transition callbacks for {@link Registry.observeObservers}. */
 export interface ObserveObserversHooks {
     /** Fired on the 0->1 observer transition (after registration). */
@@ -280,6 +288,27 @@ export interface RegistryConfig {
     onCapacityExceeded?: "throw" | "grow";
     /** Max effect-queue drain passes before a flush-cycle `Error` (message prefixed `"CycleError:"`) is thrown. Default: 100. */
     maxFlushPasses?: number;
+    /**
+     * When effects auto-deliver (1.7.0). Resolved ONCE at registry init into two
+     * closure-captured `const` booleans, so the chosen body is a JIT constant --
+     * `"eager"` emits code byte-identical to 1.6.0. Default: `"eager"`.
+     *
+     *  - `"eager"`: a `.set` outside `batch()` auto-flushes; `batch()` exit
+     *    auto-flushes. The 1.0-1.6 behaviour; no existing user sees a change.
+     *  - `"sab"` (**stable-after-batch**): a `.set` outside `batch()` writes the
+     *    value and marks downstream, but does NOT flush -- effects stay queued
+     *    (deduped via `FLAG_SCHEDULED`) until `batch()` exit or an explicit
+     *    {@link Registry.flush}. Matches Reflex-style delivery semantics.
+     *  - `"manual"`: neither a `.set` nor a `batch()` exit auto-flushes. Only
+     *    {@link Registry.flush} drains the queue -- for frame-aligned settle
+     *    points in hard-real-time loops.
+     *
+     * In every mode the WRITE is eager and `computed` pull stays correct: only
+     * effect *delivery* is deferred, never the value.
+     *
+     * @throws Error if the value is not one of the three tokens.
+     */
+    flushStrategy?: "eager" | "sab" | "manual";
 }
 
 /** Isolated reactive graph. Created by {@link createRegistry}. */
@@ -326,7 +355,33 @@ export interface Registry {
      */
     dispose(api: Disposable): void;
     batch<T>(fn: () => T): T;
+    /**
+     * Drain the effect queue now (1.7.0). Available in every
+     * {@link RegistryConfig.flushStrategy}: a no-op in `"eager"` (which already
+     * auto-flushes), the escape hatch for an idle-write backlog in `"sab"`, and
+     * the ONLY settle point in `"manual"`. Re-entrant calls are no-ops (the
+     * `isFlushing` guard); an empty queue exits immediately.
+     */
+    flush(): void;
     untrack<T>(fn: () => T): T;
+    /**
+     * Capture the currently-active lifecycle owner as an opaque, gen-stamped
+     * handle -- `undefined` outside any effect/computed body (1.7.0; carried
+     * forward from 1.5.0-beta.2). Companion to {@link Registry.runWithOwner}.
+     * Safe to hold across an `await`: the handle carries the pool slot's `gen`,
+     * so a dispose-and-recycle of that slot is detected on restore (ABA guard).
+     */
+    getOwner(): OwnerHandle | undefined;
+    /**
+     * Run `fn` with `ownerHandle` reinstated as the current lifecycle owner
+     * (1.7.0): effects/computeds created directly in `fn` are adopted by it and
+     * cascade-dispose when it re-runs. Tracking is nulled for `fn`'s direct body
+     * (same pairing as {@link Registry.createRoot}), so no cross-async dependency
+     * edge can form. A stale, `null`, `undefined`, or non-tracker handle degrades
+     * to **rooted execution** rather than adopting into a recycled slot's new
+     * resident. Returns whatever `fn` returns.
+     */
+    runWithOwner<T>(ownerHandle: OwnerHandle | null | undefined, fn: () => T): T;
     /** True iff a read RIGHT NOW would record a dependency on this registry.
      *  False inside `untrack`, `subscribe` callbacks, `onCleanup` bodies, and
      *  outside any observer. Use for lazy-allocation wrappers like lite-store. */
@@ -403,7 +458,13 @@ export function createScope<T>(fn: (dispose: () => void) => T): T;
 /** Universal disposal -- see {@link Registry.dispose}. */
 export function dispose(api: Disposable): void;
 export function batch<T>(fn: () => T): T;
+/** Drain the default registry's effect queue now (1.7.0). See {@link Registry.flush}. */
+export function flush(): void;
 export function untrack<T>(fn: () => T): T;
+/** Capture the default registry's current lifecycle owner (1.7.0). See {@link Registry.getOwner}. */
+export function getOwner(): OwnerHandle | undefined;
+/** Run `fn` with `ownerHandle` reinstated on the default registry (1.7.0). See {@link Registry.runWithOwner}. */
+export function runWithOwner<T>(ownerHandle: OwnerHandle | null | undefined, fn: () => T): T;
 /** Top-level binding of {@link Registry.isTracking} against the default registry. */
 export function isTracking(): boolean;
 /** Top-level binding of {@link Registry.hasObservers}. */
