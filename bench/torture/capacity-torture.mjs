@@ -202,8 +202,8 @@ const isCapacityError = (e) =>
 /* -- 9. grow mode still has a ceiling: the 16x link limit ------------------- */
 {
     // "grow" is not unbounded. Link growth is capped at maxLinks * 16 (confirmed
-    // against 1.9.0 Signal.js:436 `const maxLinkLimit = currentLinkCapacity * 16;`
-    // and :609 `if (linkPool.length >= maxLinkLimit) throw new CapacityError("links", maxLinkLimit);`).
+    // against 1.10.0 Signal.js:464 `const maxLinkLimit = currentLinkCapacity * 16;`
+    // and :637 `if (linkPool.length >= maxLinkLimit) throw new CapacityError("links", maxLinkLimit);`).
     // At the ceiling grow becomes a fail-CLOSED throw exactly like "throw" mode: a
     // CapacityError on the link pool, and the read edge re-throws rather than
     // leaking a partial sum. This pins that growth terminates AT the ceiling -- the

@@ -13,8 +13,8 @@
  *     an abnormal (non-error) unwind clears it in `finally` -- so the next flush
  *     starts from a clean slate and retains nothing.
  *
- * (Confirmed against 1.9.0 Signal.js: :1066 buffer append (flushErrorBuffer),
- * :1074-1075 finally clear on abnormal exit, :1079-1089 single re-throw / AggregateError
+ * (Confirmed against 1.10.0 Signal.js: :1094 buffer append (flushErrorBuffer),
+ * :1102-1103 finally clear on abnormal exit, :1107-1117 single re-throw / AggregateError
  * aggregation. The per-effect buffering, exact-order aggregation and buffer drain
  * are byte-identical to 1.4.4 -- no behavioral divergence observed on 1.9.0.)
  *

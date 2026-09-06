@@ -1,4 +1,4 @@
-// Real lite-devtools 1.6.2 boot against the 1.9.0 engine.
+// Real lite-devtools 1.6.2 boot against the 1.10.0 engine.
 //
 // Setup note (test-rig quirk, NOT an engine bug). Because this repo's
 // package.json declares name="@zakkster/lite-signal", the resolver maps any
@@ -18,8 +18,9 @@
 // If anything regresses to two instances, the precondition guard below fails
 // fast with an actionable message instead of three cryptic handle errors.
 //
-// GROUND TRUTH (probed live, devtools 1.6.2 x engine 1.9.0-alpha, 2026-09-06;
-// fingerprint IDENTICAL to the 1.8.0-beta pairing -- 1.6.2 has no 1.9 cap key):
+// GROUND TRUTH (probed live, devtools 1.6.2 x engine 1.10.0-preview, 2026-09-06;
+// fingerprint IDENTICAL to the 1.8.0-beta and 1.9.0-alpha pairings -- 1.6.2 has
+// no 1.9 or 1.10 cap key):
 // 22 function exports + VERSION const "1.6.2"; capabilities() = exactly 13 keys
 // { floor:"1.1.5", owners:T, mutationHook:T, burst:T, boxes:T, roots:T,
 //   ownerCapture:T, scopes:T, flushControl:T, explicitDispose:T, statsKeys:14,
@@ -82,7 +83,7 @@ before(async () => {
     );
 });
 
-describe("lite-devtools 1.6.2 boots against the 1.9.0 engine", () => {
+describe("lite-devtools 1.6.2 boots against the 1.10.0 engine", () => {
     it("imports resolve: all 22 documented functions + the VERSION const", () => {
         // 19 baseline + burstProfile/watchAllocations (1.3.x) + pendingEffects.
         const expected = [
@@ -105,17 +106,18 @@ describe("lite-devtools 1.6.2 boots against the 1.9.0 engine", () => {
 
     // capabilities() is devtools' runtime probe of the engine it is bound to.
     // Asserting the FULL vector (values AND key set) turns it into a precise
-    // fingerprint of the 1.9.0 surface: the 1.5 triad (boxes / roots /
+    // fingerprint of the 1.10.0 surface: the 1.5 triad (boxes / roots /
     // ownerCapture), the 1.6 pair (scopes / burst), the 1.7 flushControl, AND
     // the 1.8 cleanupReturn must ALL be present -- 1.8.0 remains the newest
     // engine devtools 1.6.2 has a capability flag for; the 1.9.0 feature
-    // (Symbol.dispose on lifecycle objects) has NO cap key in 1.6.2, so the
-    // EXACT 13-key set below is itself the 1.9-era pin: a 14th key appearing
-    // means devtools grew a 1.9-aware flag -- re-pin deliberately, never let
-    // it drift in silently. If a flag ever reads false here, a feature was
-    // dropped (or the devtools floor probe broke) -- caught across the
-    // two-package boundary, not from the engine's own introspection.
-    it("capabilities() fingerprints EXACTLY the 1.9.0 surface (1.5 through 1.8 all on; no 1.9 key exists in devtools 1.6.2)", () => {
+    // (Symbol.dispose on lifecycle objects) and the 1.10.0 feature (named nodes
+    // + whyDirty) have NO cap key in 1.6.2, so the EXACT 13-key set below is
+    // itself the 1.9/1.10-era pin: a 14th key appearing means devtools grew a
+    // 1.9/1.10-aware flag -- re-pin deliberately, never let it drift in
+    // silently. If a flag ever reads false here, a feature was dropped (or the
+    // devtools floor probe broke) -- caught across the two-package boundary,
+    // not from the engine's own introspection.
+    it("capabilities() fingerprints EXACTLY the 1.10.0 surface (1.5 through 1.8 all on; no 1.9/1.10 key exists in devtools 1.6.2)", () => {
         const caps = DT.capabilities();
         assert.equal(typeof caps, "object");
         assert.ok(caps !== null);
@@ -130,17 +132,17 @@ describe("lite-devtools 1.6.2 boots against the 1.9.0 engine", () => {
 
         assert.equal(caps.floor, "1.1.5", "devtools baseline floor");
 
-        // Present in 1.9.0.
-        assert.equal(caps.owners, true, "1.9.0 has the owner tree");
-        assert.equal(caps.mutationHook, true, "1.9.0 has onGraphMutation");
-        assert.equal(caps.boxes, true, "1.9.0 has signalBox / computedBox");
-        assert.equal(caps.roots, true, "1.9.0 has createRoot");
-        assert.equal(caps.ownerCapture, true, "1.9.0 has getOwner / runWithOwner");
-        assert.equal(caps.explicitDispose, true, "1.9.0 has explicit dispose");
-        assert.equal(caps.poolPopulation, true, "1.9.0 stats expose pool population");
+        // Present in 1.10.0.
+        assert.equal(caps.owners, true, "1.10.0 has the owner tree");
+        assert.equal(caps.mutationHook, true, "1.10.0 has onGraphMutation");
+        assert.equal(caps.boxes, true, "1.10.0 has signalBox / computedBox");
+        assert.equal(caps.roots, true, "1.10.0 has createRoot");
+        assert.equal(caps.ownerCapture, true, "1.10.0 has getOwner / runWithOwner");
+        assert.equal(caps.explicitDispose, true, "1.10.0 has explicit dispose");
+        assert.equal(caps.poolPopulation, true, "1.10.0 stats expose pool population");
         assert.equal(caps.scopes, true, "createScope ships in 1.6.0 -- scopes must read true");
         assert.equal(caps.burst, true, "the op 5/6/7 burst payload ships in 1.6.0 -- burst must read true");
-        assert.equal(caps.statsKeys, 14, "1.9.0 stats() has exactly 14 keys (13 + flushPasses)");
+        assert.equal(caps.statsKeys, 14, "1.10.0 stats() has exactly 14 keys (13 + flushPasses)");
         assert.equal(caps.flushControl, true,
             "flushStrategy + r.flush() ship in 1.7.0 -- flushControl must read true");
         assert.equal(caps.cleanupReturn, true,
@@ -208,7 +210,7 @@ describe("lite-devtools 1.6.2 boots against the 1.9.0 engine", () => {
         assert.ok(Array.isArray(tree.owned), "descriptor carries an owned[] child array");
     });
 
-    it("burstProfile() is LIVE on 1.9.0: stop() summarizes a batched burst exactly", () => {
+    it("burstProfile() is LIVE on 1.10.0: stop() summarizes a batched burst exactly", () => {
         // On 1.5.0 this degraded to null. 1.6.0+ emits the op 6/7 flush payload,
         // so capabilities().burst is true and burstProfile() must hand back the
         // real handle. PROBED CONTRACT (1.6.2 x 1.6.0-rc): the counters
@@ -218,9 +220,9 @@ describe("lite-devtools 1.6.2 boots against the 1.9.0 engine", () => {
         // 3-write batch coalesces to exactly one pass running exactly one
         // effect. Deeper coalescing torture is gated in
         // bench/torture/burst-profile-torture.mjs; this pins the boot contract.
-        assert.equal(DT.capabilities().burst, true, "precondition: 1.9.0 carries the burst payload");
+        assert.equal(DT.capabilities().burst, true, "precondition: 1.10.0 carries the burst payload");
         const bp = DT.burstProfile();
-        assert.ok(bp !== null && typeof bp === "object", "burstProfile() must return a live handle on 1.9.0");
+        assert.ok(bp !== null && typeof bp === "object", "burstProfile() must return a live handle on 1.10.0");
         assert.equal(typeof bp.stop, "function");
         for (const k of ["passes", "perPass", "queued", "ran", "redundant", "shortCircuited"]) {
             assert.ok(k in bp, `burst handle carries documented field '${k}'`);
@@ -283,7 +285,7 @@ describe("lite-devtools 1.6.2 boots against the 1.9.0 engine", () => {
         watch.stop();   // CRITICAL: clears the sampler handle
     });
 
-    it("track() registers a lifecycle listener against a 1.9.0-built handle", () => {
+    it("track() registers a lifecycle listener against a 1.10.0-built handle", () => {
         const s = SIG.signal(0);
         const events = [];
         const untrack = DT.track(s, (e) => events.push(e));

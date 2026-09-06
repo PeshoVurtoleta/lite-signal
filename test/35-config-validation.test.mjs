@@ -1,4 +1,4 @@
-// createRegistry input validation (1.4.5 backport into 1.9.0-preview.6).
+// createRegistry input validation (1.4.5 backport, carried onto 1.10.0-preview).
 //
 // The full config matrix from BRIEF_SIGNAL.md. Every malformed row must throw a
 // TypeError prefixed `createRegistry: "<name>"` -- naming the bad OPTION (or the
