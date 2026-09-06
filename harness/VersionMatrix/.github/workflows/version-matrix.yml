@@ -1,0 +1,27 @@
+# PR-time performance gate for lite-signal.
+#
+# HONESTY CAVEAT: GitHub-hosted runners share CPU and are noisier than a controlled
+# host. This job captures floor + rolling + PR-head candidate IN THE SAME JOB so all
+# comparisons are same-host (never diff a PR-head capture against a committed baseline
+# from another host -- that is cross-host noise). Even so, calibrate tolerances to the
+# runner's self-noise (run `bash matrix.sh calibrate` on this runner class and read the
+# numbers) OR treat this job as advisory and keep the authoritative tight gate on a
+# controlled host via prepublishOnly. frame.avg is the trustworthy metric on noisy
+# hardware; p99 needs wider tolerances or median-of-N with larger N.
+name: version-matrix
+on:
+  pull_request:
+    paths: ['Signal.js', 'harness/version-matrix/**']
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: version-matrix gate (PR-head vs floor + rolling, same-host)
+        working-directory: harness/version-matrix
+        env:
+          REPS: "5"
+        run: bash matrix.sh gate-self "pr-${{ github.event.number }}" "$GITHUB_WORKSPACE/Signal.js"

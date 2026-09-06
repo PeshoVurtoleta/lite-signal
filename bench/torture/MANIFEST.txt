@@ -1,0 +1,59 @@
+lite-signal torture suite -- CONSOLIDATED complete set (22 scenarios)
+=====================================================================
+
+19 semantic (deterministic, fast, CI) + 3 soak. Full superset through 1.9,
+verified to gate cleanly and run green on every published version 1.4.0 -> 1.9.0.
+Result of a per-version gap review (1.5 -> 1.9) plus a consolidated coverage
+audit that closed the last untested exports. See COVERAGE-MATRIX.md for the full
+scenario -> feature -> mutation-evidence map.
+
+    npm run torture ; npm run torture:semantic ; npm run torture:soak
+    node bench/torture/run.mjs --list
+
+SEMANTIC
+  oracle-fuzzer            values vs an independent reference evaluator
+  glitch-hunter            glitch freedom + exact wakeup accounting
+  work-accounting          minimum body-execution counts (wrappers)
+  op-accounting            structural work via onGraphMutation op 1-5
+  introspect-torture       describe/forEach*/hasObservers/ownerOf + ABA guard
+  lifecycle-torture        createRoot detachment + destroy registry reset
+  concurrent-storm         reentrancy, nesting, flush ordering, CycleError
+  scheduler-storm          deferred execution, ABA thunks, coalescing
+  box-torture              signalBox / computedBox interop + surface   (1.5.0+)
+  scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0+)
+  owner-torture            getOwner/runWithOwner capture-restore + ABA (1.6.0+)
+  async-torture            watch / when / whenAsync contracts + fuzz
+  capacity-torture         the fail-closed pool boundary
+  error-torture            throwing effect bodies: per-effect buffering + drain
+  deep-chain-torture       pullComputed recursion fail-closed (RangeError)
+  flush-torture            flushStrategy + value-never-defers + subscribe (1.7.0+)
+  cleanup-return-torture   effect return cleanup + cursor-geometry pins (1.8.0+)
+  dispose-torture          Symbol.dispose / using on lifecycle objects (1.9.0+)
+  zerogc-torture           zero-GC hot path via measureAllocs/measureOps + counters
+
+SOAK: graph-fuzzer, scheduler-bench, torture-soak
+
+FULL-SURFACE COVERAGE
+  All 32 exports of 1.9.0 are exercised by at least one scenario. The
+  consolidated audit found createRoot (never called) and destroy (only reached
+  indirectly via Symbol.dispose) at zero coverage; lifecycle-torture closes both.
+
+FEATURE GATES (every scenario feature-detects + skips cleanly below its floor)
+  box                    -> 1.5.0
+  scope / owner          -> 1.6.0   (owner-capture idiom needs createScope)
+  flush                  -> 1.7.0
+  cleanup-return         -> 1.8.0
+  dispose                -> 1.9.0
+  op-accounting, introspect, lifecycle, and all others -> 1.4.0
+  (destroy half of lifecycle runs from 1.4.0; createRoot half from 1.5.0)
+
+VERIFIED: full semantic group runs green on 1.4.0 / 1.5.0 / 1.6.0 / 1.7.0 /
+1.8.0 / 1.9.0 with only feature-appropriate SKIPs.
+
+TWO UN-INSTRUMENTED-COST FINDINGS (see COVERAGE-MATRIX.md + the two review dirs)
+  - 1.5.0 clean short-circuit saves dep-COMPARISONS: no opcode emits them, so
+    op-accounting cannot catch a short-circuit regression. Recommend a compare
+    lane (op 11/12). OPEN.
+  - 1.13.0 mark lane (op 9/10) measures the N-sweeps-per-burst mark cost the
+    hypothesis predicted: batched burst 122x-177x mark-edges:recompute, all
+    sweeps redundant, reclaimable via a per-batch mark epoch. CLOSED in candidate.
