@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-devtools -- reactive-graph inspection for @zakkster/lite-signal. v1.6.2
+ * @zakkster/lite-devtools -- reactive-graph inspection for @zakkster/lite-signal. v1.8.0
  * -----------------------------------------------------------------------------
  * Built entirely on lite-signal's public introspection surface (no private symbols,
  * no patched objects). Requires lite-signal >= 1.1.5: the source eagerly imports
@@ -48,6 +48,45 @@
  *        capabilities().poolPopulation is true (fields ABSENT below floor -- null is
  *        not zero). The eager default path takes ZERO behaviour change: the engine
  *        hot body, hubAdd/hubDispatch, and the eager .set path are untouched.
+ * 1.7.0: Engine-native named nodes + whyDirty/explain (S5, lite-signal >= 1.10-preview).
+ *        capabilities() gains two probe-derived keys: `names` (describe() carries a
+ *        `name`; a BEHAVIOUR probe run in a THROWAWAY createRegistry via its OWN
+ *        reg.describe, since module-level describe() no-ops on a foreign-registry
+ *        node) and `whyDirty` (typeof whyDirty === "function"). Both fail closed to
+ *        false below the floor. inspect() and every graph-node descriptor carry an
+ *        OPTIONAL `name` sourced from describe().name -- ABSENT (never "") on an
+ *        unnamed node or a below-floor engine (Law 3). serialize() bumps schema v1
+ *        -> v2 to round-trip `name`; deserialize() stays backward-compatible (a v1
+ *        payload with no name deserializes unchanged). toDot/toTree relabel OFF the
+ *        snapshot: the render fallback becomes `name ?? kind#id` (was the raw value)
+ *        with the labelResolver override STILL winning -- precedence is
+ *        resolver > engine name > kind#id; the kind#id identity prefix stays so the
+ *        id survives a name replacing it. Two new cold-path exports, both
+ *        non-perturbing (peek-shaped, ZERO observers added): whyDirty(handle) is a
+ *        thin delegate to the engine (null when capabilities().whyDirty is false),
+ *        and explain(from,to,opts?) composes findPath INTERSECT whyDirty keyed by
+ *        numeric node id (whyDirty returns fresh descriptors each call), carrying
+ *        each on-path dep's rootCause -- null when the whyDirty capability is missing
+ *        OR findPath finds no path. coldCounters is DEFERRED: the 1.10-preview
+ *        stats() key set is byte-identical to 1.9, so the cold-counter substrate is
+ *        absent and its monitor()/watchAllocations() pack is not shipped this cut.
+ * 1.8.0: Engine-native settle observation (S6a, lite-signal >= 1.11-preview). The
+ *        engine ships `onSettled` -- a creation-time drain-complete callback armed by
+ *        `createRegistry({settled:true})`; a default registry's `onSettled` throws.
+ *        capabilities() gains a 16th probe-derived key `settled` (a BEHAVIOUR probe in
+ *        TWO throwaway registries: a settled one must expose `onSettled` as a function
+ *        AND a default one's `onSettled` must throw -- else the option is ignored and
+ *        the capability fails closed to false, Law 3). One new cold-path export --
+ *        watchSettled(registry, cb) -- attaches ONE onSettled listener to a
+ *        CONSUMER-built settled registry (devtools never creates it), synthesizes a
+ *        {settles, ts} payload (the engine callback carries no args), coalesces once
+ *        per top-level clean drain, and returns {count, stop} | null (documented null
+ *        below floor / for a non-settled registry -- mirrors pendingEffects). stop() is
+ *        an idempotent EXTERNAL detach that NEVER runs from inside the fire loop (the
+ *        engine self-unsubscribe sharp edge). Non-perturbing: an onSettled listener sits
+ *        outside the dep graph, so stats() is byte-identical before/after (T0 holds).
+ *        coldCounters + settle-aware trace stay deferred (1.11 stats() is still 14 keys;
+ *        traceAsync is undefined). VERSION three-place synced.
  * 1.6.2: Test-oracle + doc-correctness patch -- no source or behaviour change. The
  *        T8 five-engine matrix (LITE_DEVTOOLS_T8_MATRIX=1) was armed for the first
  *        time, falsifying four hand-derived oracle floors: ownerCapture /
@@ -79,7 +118,7 @@ import {
 import * as SIG from "../../Signal.js";
 
 /** Package version. Three-place synced with package.json and llms.txt. */
-export const VERSION = "1.6.2";
+export const VERSION = "1.8.0";
 
 // Optional engine APIs, feature-detected so this module keeps loading on the
 // 1.1.5 floor. Named imports above are the hard floor (ESM link error below it);
@@ -173,6 +212,69 @@ const HAS_CLEANUP_RETURN = (() => {
     }
 })();
 
+// names (>=1.10-preview): describe(handle) carries a `name` key on a named node.
+// A BEHAVIOUR probe, not typeof-probeable -- and it must NOT use module-level
+// describe(): that no-ops (returns null) on a node created in a foreign throwaway
+// createRegistry(). So the scratch NAMED node is described through the throwaway
+// registry's OWN reg.describe(), which resolves its own node. Fails closed to false
+// if createRegistry / reg.signal / reg.describe is absent or the probe throws, or
+// the resolved descriptor does not carry the name back (a below-floor engine drops
+// the {name} option and returns {id,kind,value}). Disposes the scratch registry.
+const HAS_NAMES = (() => {
+    try {
+        if (typeof SIG.createRegistry !== "function") return false;
+        const r = SIG.createRegistry();
+        if (typeof r.signal !== "function" || typeof r.describe !== "function") {
+            if (typeof r.destroy === "function") r.destroy();
+            return false;
+        }
+        const s = r.signal(0, {name: "__cap"});
+        const d = r.describe(s);
+        const ok = d != null && d.name === "__cap";
+        if (typeof r.destroy === "function") r.destroy();
+        return ok === true;
+    } catch (_) {
+        return false;
+    }
+})();
+
+// whyDirty (>=1.10-preview): the engine exports whyDirty(). A plain typeof probe.
+const HAS_WHY_DIRTY = probeFn(() => typeof SIG.whyDirty === "function");
+
+// settled (>=1.11-preview): createRegistry({settled:true}) arms a creation-time
+// drain-complete callback, onSettled(fn). NOT typeof-probeable on a method alone --
+// the capability is REAL only if the option actually changes behaviour, so this is a
+// two-registry BEHAVIOUR probe run once at load in THROWAWAY registries (the default
+// registry is never touched -- T0/T6 would see any perturbation). It fails closed to
+// false (Law 3) unless ALL hold: createRegistry is a function; a settled registry
+// exposes `onSettled` as a function; AND a SEPARATE default registry's `onSettled`
+// THROWS when called (proving the {settled:true} option is honoured -- if the default
+// does not throw, the option is silently ignored and the capability is fiction). Both
+// scratch registries are destroyed. Any absence/unexpected-throw -> false.
+const HAS_SETTLED = (() => {
+    try {
+        if (typeof SIG.createRegistry !== "function") return false;
+        const r = SIG.createRegistry({settled: true});
+        const armed = r != null && typeof r.onSettled === "function";
+        if (typeof r.destroy === "function") r.destroy();
+        if (!armed) return false;
+        // A default registry's onSettled must THROW -- else the option was ignored.
+        const r2 = SIG.createRegistry();
+        let threw = false;
+        if (r2 != null && typeof r2.onSettled === "function") {
+            try {
+                r2.onSettled(() => {});
+            } catch (_) {
+                threw = true;
+            }
+        }
+        if (typeof r2.destroy === "function") r2.destroy();
+        return threw === true;
+    } catch (_) {
+        return false;
+    }
+})();
+
 /** Engine capability snapshot -- lets a consumer (lite-studio) pick push vs poll,
  *  show/hide the ownership view, and gate box/scope/flush features without
  *  try/catch probing. Four legacy keys (floor/owners/mutationHook/burst) keep
@@ -193,6 +295,9 @@ export function capabilities() {
         statsKeys: STATS_KEYS,
         poolPopulation: HAS_POOL_POP,
         cleanupReturn: HAS_CLEANUP_RETURN,
+        names: HAS_NAMES,
+        whyDirty: HAS_WHY_DIRTY,
+        settled: HAS_SETTLED,
     };
 }
 
@@ -321,7 +426,7 @@ export function inspect(handle) {
     const looksLikeHandle = handle != null && (typeof handle === "function" || typeof handle.peek === "function" || typeof handle.id === "number");
     const stale = d === undefined && looksLikeHandle;
 
-    return {
+    const snap = {
         id: d ? d.id : undefined,
         kind: d ? d.kind : undefined,
         stale,
@@ -329,9 +434,15 @@ export function inspect(handle) {
         value: peekSafe(handle),
         observerCount: observers.length,
         sourceCount: sources.length,
-        observers,                       // [{ id, kind, value }]
-        sources,                         // [{ id, kind, value }]
+        observers,                       // [{ id, kind, value, name? }]
+        sources,                         // [{ id, kind, value, name? }]
     };
+    // 1.7: engine-native name (lite-signal >= 1.10-preview describe().name). PRESENT
+    // only for a named node on a names-capable engine; ABSENT otherwise -- never ""
+    // (Law 3). The observer/source descriptors above already carry name natively (the
+    // engine stamps it on every describe/forEach result), so only the top node needs it.
+    if (HAS_NAMES && d && d.name !== undefined) snap.name = d.name;
+    return snap;
 }
 
 /**
@@ -633,7 +744,14 @@ export function toDot(g, {name = "reactive", maxLabel = 24, labelResolver} = {})
     const lines = [`digraph ${name} {`, "  rankdir=LR;", '  node [fontname="monospace"];'];
 
     for (const n of g.nodes) {
-        const val = labelResolver ? resolveLabel(labelResolver, n.id, n.value) : n.value;
+        // 1.7: the default label is the engine `name` (>=1.10-preview snapshot),
+        // falling back to `kind#id` -- NOT the raw value (behaviour change; the value
+        // lives in inspect()). PRECEDENCE: a labelResolver string still WINS over the
+        // name (render-time override is absolute). The `kind#id` identity stays as the
+        // label's first line, so the node id survives a name replacing it in the
+        // second line (and it is the DOT node's own `n<id>` identifier besides).
+        const fallback = n.name !== undefined ? n.name : `${n.kind}#${n.id}`;
+        const val = labelResolver ? resolveLabel(labelResolver, n.id, fallback) : fallback;
         lines.push(`  n${n.id} [label="${n.kind}#${n.id}\\n${esc(val)}", shape=${shape(n.kind)}];`);
     }
     for (const e of g.edges) lines.push(e.kind === "owner" ? `  n${e.from} -> n${e.to} [style=dashed, color=gray, arrowhead=odot];` : `  n${e.from} -> n${e.to};`);
@@ -668,7 +786,12 @@ export function toTree(root, {direction = "down", maxDepth = Infinity, labelReso
         const d = describe(h);
         if (!d) return;
         const pad = "  ".repeat(depth);
-        const label = labelResolver ? resolveLabel(labelResolver, d.id, String(d.value)) : String(d.value);
+        // 1.7: default label = engine `name` (>=1.10-preview) else `kind#id`, NOT the
+        // raw value (behaviour change; value is in inspect()). PRECEDENCE unchanged:
+        // a labelResolver string still wins. The `kind#id = ` prefix keeps the id in
+        // the tree line as the tooltip carrier, surviving a name replacing kind#id.
+        const fallback = d.name !== undefined ? d.name : `${d.kind}#${d.id}`;
+        const label = labelResolver ? resolveLabel(labelResolver, d.id, fallback) : fallback;
         const tag = `${d.kind}#${d.id} = ${label.slice(0, 24)}`;
         if (seen.has(d.id)) {
             out.push(pad + "(seen) " + tag);
@@ -841,6 +964,73 @@ export function findPath(from, to, {direction = "down", maxNodes = 100000} = {})
     return null;
 }
 
+// --- Dirty-reason introspection (1.7, lite-signal >= 1.10-preview whyDirty) -----
+
+/**
+ * Why is `handle` dirty right now -- a thin, non-perturbing delegate to the engine's
+ * whyDirty(). Peek-shaped: reads dirty state, adds NO observer (T0 holds over it).
+ * The engine returns an ARRAY of the dep descriptors that moved past the computed's
+ * evalVersion (each may carry a `rootCause`); `[]` for a clean computed and for
+ * non-computeds. Meaningful only mid-flush (a dirty-but-unpulled computed) -- on an
+ * eager registry a write auto-flushes, so read it inside a `batch()` or on a
+ * manual/sab registry BEFORE flush.
+ *
+ * @param {object} handle  A signal / computed / effect handle or re-walkable descriptor.
+ * @returns {Array<object>|null}  The engine's dirty-reason payload, or `null` when
+ *          `capabilities().whyDirty` is false (engine below the 1.10 floor).
+ */
+export function whyDirty(handle) {
+    if (!HAS_WHY_DIRTY) return null;
+    try {
+        return SIG.whyDirty(handle);
+    } catch (_) {
+        // Cold/debug path: a malformed handle must never throw out of an inspector.
+        return null;
+    }
+}
+
+/**
+ * Explain a propagation: the composition findPath(from,to) INTERSECT whyDirty along
+ * the path -- "a write to `from` re-ran `to`, through which computeds, and why each
+ * recomputed rather than short-circuited." Cold-path; allocates freely; adds NO
+ * observer (T0 holds).
+ *
+ * For each node on the shortest path it attaches `reasons`: the node's whyDirty deps
+ * whose id is ALSO on the path. The intersection is keyed by NUMERIC node id, never
+ * by descriptor object identity -- whyDirty returns FRESH descriptor objects each
+ * call, so an object-identity intersection would always be empty. Each reason carries
+ * the engine's `rootCause` (and `name`, when present) untouched.
+ *
+ * @param {object} from  Handle / descriptor at the path start.
+ * @param {object} to    Handle / descriptor at the path end.
+ * @param {{direction?:"down"|"up", maxNodes?:number}} [opts]  Forwarded to findPath.
+ * @returns {Array<{id:number, kind:string, value:unknown, name?:string,
+ *           reasons:Array<object>}>|null}
+ *          The annotated path INCLUSIVE of both ends, or `null` when
+ *          `capabilities().whyDirty` is false OR findPath finds no path (a documented
+ *          null -- never an empty-but-plausible answer).
+ */
+export function explain(from, to, opts) {
+    if (!HAS_WHY_DIRTY) return null;
+    const path = findPath(from, to, opts);
+    if (path === null) return null;
+    const pathIds = new Set();
+    for (const d of path) pathIds.add(d.id);
+    return path.map((d) => {
+        const node = {id: d.id, kind: d.kind, value: d.value};
+        if (d.name !== undefined) node.name = d.name;
+        let reasons = [];
+        try {
+            const wd = SIG.whyDirty(d);
+            // Keep only the dirty deps that lie on the path (intersection by id).
+            if (Array.isArray(wd)) reasons = wd.filter((r) => pathIds.has(r.id));
+        } catch (_) { /* cold path -- a malformed node yields no reasons */
+        }
+        node.reasons = reasons;
+        return node;
+    });
+}
+
 // --- Push-based graph watching (1.1, lite-signal >= 1.2.1 hook) ----------------
 
 /**
@@ -950,10 +1140,19 @@ export function serialize(g) {
         if (t === "bigint") return String(v) + "n";
         return "[" + t + "]";
     };
+    // 1.7: schema v1 -> v2 to round-trip the engine-native `name` (>=1.10-preview).
+    // A node's `name` is carried only when present (ABSENT on unnamed nodes and
+    // below-floor engines -- never "", Law 3). deserialize() ignores the version and
+    // returns whatever nodes it finds, so a v1 payload (no name) still round-trips
+    // unchanged -- the bump is additive and backward-compatible.
     return JSON.stringify({
-        v: 1,
+        v: 2,
         ts: Date.now(),
-        nodes: g.nodes.map((n) => ({id: n.id, kind: n.kind, value: safe(n.value)})),
+        nodes: g.nodes.map((n) => {
+            const o = {id: n.id, kind: n.kind, value: safe(n.value)};
+            if (n.name !== undefined) o.name = n.name;
+            return o;
+        }),
         edges: g.edges,
     });
 }
@@ -1209,6 +1408,100 @@ export function watchAllocations(cb, {sampleMs = 250, recomputes = true} = {}) {
             return cancel();
         }
     };
+    if (SYMBOL_DISPOSE !== null) h[SYMBOL_DISPOSE] = h.stop;   // S4: `using` -> stop
+    return h;
+}
+
+// --- Settle observer (1.8; lite-signal >= 1.11-preview onSettled) ---------------
+
+/**
+ * Non-perturbing settle observer for a CONSUMER-built settled registry. The engine
+ * arms a creation-time drain-complete callback via `createRegistry({settled:true})`;
+ * `registry.onSettled(fn)` fires `fn` once per top-level, non-empty, clean drain (a
+ * batch of N writes or one write fanning to many effects each count as ONE settle; an
+ * empty flush fires zero). devtools does NOT create the settled registry -- it observes
+ * the one the caller built, mirroring how pendingEffects() gauges a foreign registry.
+ *
+ * The engine callback receives NO arguments (a bare ping), so devtools synthesizes the
+ * payload: a monotonic `settles` count and a `ts` (performance.now() if available, else
+ * Date.now()), BOTH captured BEFORE the user cb runs. A throwing user cb is caught (cold
+ * debug path -- an inspector never throws out of itself) and does NOT corrupt the count
+ * or leak the listener.
+ *
+ * ENGINE SHARP EDGE (avoided): a settled callback that unsubscribes ITSELF mid-fire
+ * makes its next sibling miss that drain (the engine indexOf+splices in the live fire
+ * loop). So devtools' listener NEVER detaches from inside its own fire: stop() called
+ * during a fire defers the detach to the `finally` of that fire. stop() is otherwise an
+ * immediate, idempotent EXTERNAL detach.
+ *
+ * Fails closed to `null` (never a live-but-dead handle): when `capabilities().settled`
+ * is false, or the passed `registry`/`onSettled` is absent, or attaching `onSettled`
+ * throws (a non-settled/default registry -- documented null, mirrors pendingEffects).
+ *
+ * Cold-path; allocates freely; adds NO observer to the reactive graph (an onSettled
+ * listener sits outside the dep graph -- stats() is byte-identical before/after, T0).
+ *
+ * @param {object} registry  A createRegistry({settled:true}) handle (consumer-built).
+ * @param {(e:{settles:number, ts:number}) => void} [cb]  Fired once per clean drain.
+ * @returns {{count:()=>number, stop:()=>void}|null}
+ *          count(): settles observed since attach. stop(): idempotent external detach.
+ */
+export function watchSettled(registry, cb) {
+    if (!HAS_SETTLED) return null;
+    if (registry == null || typeof registry.onSettled !== "function") return null;
+
+    let settles = 0;
+    let ts = 0;
+    let stopped = false;
+    let firing = false;
+    let pendingStop = false;
+    let off = null;
+
+    const doOff = () => {
+        if (off) {
+            const f = off;
+            off = null;
+            try {
+                f();
+            } catch (_) { /* cold path: detach never propagates */ }
+        }
+    };
+
+    const listener = () => {
+        firing = true;
+        settles++;
+        ts = (typeof performance !== "undefined") ? performance.now() : Date.now();
+        try {
+            if (cb) cb({settles, ts});
+        } catch (_) {
+            // Cold path: never throw out of an inspector; count already incremented.
+        } finally {
+            firing = false;
+            if (pendingStop) {
+                pendingStop = false;
+                doOff();
+            }
+        }
+    };
+
+    try {
+        off = registry.onSettled(listener);
+    } catch (_) {
+        return null;   // non-settled / default registry -- documented fail-closed null
+    }
+
+    const count = () => settles;
+    const stop = () => {
+        if (stopped) return;         // idempotent -- routes Symbol.dispose too
+        stopped = true;
+        if (firing) {                // engine sharp edge: never self-detach mid-fire
+            pendingStop = true;
+            return;
+        }
+        doOff();
+    };
+
+    const h = {count, stop};
     if (SYMBOL_DISPOSE !== null) h[SYMBOL_DISPOSE] = h.stop;   // S4: `using` -> stop
     return h;
 }
