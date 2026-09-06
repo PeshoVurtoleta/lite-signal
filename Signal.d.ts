@@ -361,6 +361,21 @@ export interface RegistryConfig {
      * @throws Error if the value is not one of the three tokens.
      */
     flushStrategy?: "eager" | "sab" | "manual";
+
+    /** 1.11.0: build the {@link Registry.onSettled} drain-complete tail into
+     * this registry. Decided ONCE here -- `flushEffects` is a build-time-selected
+     * const (the same discipline as {@link RegistryConfig.flushStrategy}), so a
+     * registry built without the capability binds the verbatim plain drain and
+     * pays nothing: there is no per-flush check. On such a registry
+     * `onSettled` throws, pointing at this option.
+     *
+     * Validated as a strict boolean: a truthy non-boolean (e.g. `"yes"`) throws
+     * `createRegistry: "settled" must be true or false` at construction rather
+     * than silently binding the plain drain.
+     *
+     * @default false
+     */
+    settled?: boolean;
 }
 
 /** Method surface of {@link Registry}; see that type for the full contract. */
@@ -440,6 +455,18 @@ interface RegistryMembers {
      *  computed carry a {@link NodeDescriptor.rootCause}. Empty for a clean
      *  computed and for non-computed (or stale/non-) handles. */
     whyDirty(handle: ReactiveHandle): NodeDescriptor[];
+    /** 1.11.0: register a drain-complete callback; requires the registry to be
+     *  built with {@link RegistryConfig.settled} `: true` (throws otherwise,
+     *  pointing at the option). Fires once per **top-level, non-empty, clean**
+     *  drain -- not per effect, not on re-entrant or empty flushes, not on a
+     *  drain that threw -- so a settle always means the graph actually
+     *  quiesced; a `batch()` of many writes or one write fanning out to many
+     *  effects (cascades included) is exactly one settle. Callbacks fire in
+     *  subscription order; a throwing callback is swallowed (observer, not
+     *  control path) and siblings still fire. Returns an idempotent
+     *  unsubscribe. Delivery is allocation-free; subscribing and unsubscribing
+     *  are cold-path. */
+    onSettled(fn: () => void): () => void;
     /** True iff a read RIGHT NOW would record a dependency on this registry.
      *  False inside `untrack`, `subscribe` callbacks, `onCleanup` bodies, and
      *  outside any observer. Use for lazy-allocation wrappers like lite-store. */
@@ -551,6 +578,11 @@ export function nodeId(handle: ReactiveHandle): number | undefined;
 export function describe(handle: ReactiveHandle): NodeDescriptor | undefined;
 /** Top-level binding of {@link Registry.whyDirty} (1.10.0). */
 export function whyDirty(handle: ReactiveHandle): NodeDescriptor[];
+/** Top-level binding of {@link Registry.onSettled} (1.11.0). NOTE: the module's
+ *  default registry is built without `settled`, so this throws unless the
+ *  default registry was created with the capability -- practical use is the
+ *  registry method on a `createRegistry({ settled: true })` instance. */
+export function onSettled(fn: () => void): () => void;
 /** Top-level binding of {@link Registry.onGraphMutation} (1.2.1+). */
 export function onGraphMutation(fn: GraphMutationListener | null): GraphMutationUnsubscribe;
 export function onCleanup(fn: () => void): void;
