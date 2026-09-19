@@ -862,16 +862,31 @@ npm test
 
 If these fail, something allocates in the hot path and we want to find it before publish.
 
-Beyond the in-suite checks, two dedicated lanes gate the same claim harder:
+Beyond the in-suite checks, dedicated lanes gate the same claim harder:
 `npm run test:zgc` (+ `test:zgc:report`) runs the `test/zgc/` scenario gate under
 a 4 MB semi-space (steady-state propagation must force ZERO scavenges over 1.6M
 updates; churn must never grow the pool), and `npm run test:hardening` (+
 `test:harness`) runs the `test/ProfilerTests` and `harness/ProfilerTools`
-sub-packages -- the profiler-toolchain pairing suites.
+sub-packages -- the profiler-toolchain pairing suites. As of 1.9.0-alpha.1,
+`npm run test:gate` adds a second, library-owned zero-GC judge:
+**`test/37-perf-gate.test.mjs`**, built on **`@zakkster/lite-perf-gate`**
+(devDependency only). Its `zgcSuite` watches five signals (scavenges / engine
+`stats()` counters / retainedKB / oldGen / arrayBuffersKB) at two scales with
+positive+negative+large detector controls, over seven claimed-zero steady-state
+scenarios (`set-propagate`, `computed-cache-hit`, `computed-recompute-stable`,
+`effect-rerun-stable`, `peek`, `batch-flush`, `box-set-propagate`) plus two
+permanent `mustFail` controls (a per-op `{x,y,z,w}` allocator and the documented
+`signal()`+dispose 264 B/op churn). Thresholds are lite-perf-gate DEFAULTS
+(maxScavenges 2, maxRetainedKB 64, maxOldGen 0, maxArrayBuffersKB 64) -- a
+claimed-zero path that cannot meet defaults is a finding, not a config knob. It
+runs REAL only under both `--expose-gc` and `--max-semi-space-size=4` (the script
+sets both); plain `npm test` / `test:gc` emit one loud named skip. All three
+lanes are chained by `test:all`.
 
 ```bash
 npm run test:gc
 npm run test:zgc && npm run test:zgc:report
+npm run test:gate              # lite-perf-gate judge; both flags set by the script
 ```
 
 ### Tier 3 -- Performance (comparative benchmark)

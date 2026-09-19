@@ -53,7 +53,8 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
 
 ## Version notes
 
-- **1.9.0-alpha** (current): the **verification-infrastructure parity cut** on the
+- **1.9.0-alpha.1** (current): verification + docs increment -- no engine change past the banner comment (`Signal.js` byte-identical, banner line only). Ports the standing **perf-gate lane** from the canonical 1.5.2 line: `test/37-perf-gate.test.mjs` + `npm run test:gate` (`node --expose-gc --max-semi-space-size=4`), chained into `test:all` after `test:zgc`. Wires **`@zakkster/lite-perf-gate`** (devDependency only) as a second, library-owned zero-GC judge beside the bespoke `test:zgc` harness: `zgcSuite` watches five signals (scavenges / engine `stats()` counters / retainedKB / oldGen / arrayBuffersKB) at two scales with positive+negative+large detector controls, over seven claimed-zero steady-state scenarios (set-propagate, computed-cache-hit, computed-recompute-stable, effect-rerun-stable, peek, batch-flush, box-set-propagate) plus two permanent `mustFail` controls (per-op `{x,y,z,w}` allocator; the documented `signal()`+dispose 264 B/op churn). Thresholds are lite-perf-gate DEFAULTS, untouched. Green and REAL on this engine (10/10); the in-glob file emits one loud named skip unless both flags are set, so plain `npm test` is undisturbed. See CHANGELOG `[1.9.0-alpha.1]`.
+- **1.9.0-alpha**: the **verification-infrastructure parity cut** on the
   rebuilt 1.9 line -- the engine is byte-identical to preview.6 past the banner
   (still the 1.8.0 base + the five existence-guarded `Symbol.dispose` stamp
   sites). Forward-ports the full 1.8.0-beta audit infrastructure: the torture
