@@ -1045,6 +1045,16 @@ npm run test:zgc:report        # human-readable standalone report (re-execs with
 
 Both flags are required (`--expose-gc` for the explicit `gc()` calls in the meter, `--max-semi-space-size=4` for per-iteration sensitivity); the scripts set both so a caller cannot invoke the gate under-powered. Verified against 1.6.0-alpha: all seven scenarios pass, positive control forces scavenges well above the threshold, the churn scenario recycles 1.6M node allocations through the free list with 0 pool growths. The mutation-hook gate opcodes added in 1.6 do not perturb the zero-GC contract because they are hook-gated (`if (mutationHook !== null)`) -- with no profiler attached the gate is a no-op and the pool churn is unchanged.
 
+### `test/33-perf-gate.test.mjs` -- standing perf-gate lane (1.6.0-rc.2, ported from 1.5.2)
+
+Where `test/zgc/` is the suite's own zero-GC harness, this lane wires **`@zakkster/lite-perf-gate`** (devDependency only) as a second, independent judge -- a standing, self-validating verdict built from library-owned detector controls rather than bespoke assertions. Its `zgcSuite` watches **five signals** (scavenges, engine `stats()` counters, retainedKB, oldGen, arrayBuffersKB) at two scales (N and k*N), runs positive+negative+large detector controls on every run, and carries permanent `mustFail` negative controls. Seven claimed-zero steady-state scenarios, each anchored to the `llms.txt` claim it enforces: `set-propagate` (1 signal -> 8 computeds -> 1 effect, sync flush), `computed-cache-hit`, `computed-recompute-stable`, `effect-rerun-stable`, `peek`, `batch-flush` (3 sets/batch), `box-set-propagate`. Each scenario's `statsOf` reads its own isolated registry ledger; `counters` pins `totalAllocations` / `totalDisposals` / `poolGrowths` at 0-delta. Two `mustFail` controls MUST trip the gate: a per-op `{x,y,z,w}` allocator and the documented `signal()`+dispose churn (264 B/op). Thresholds are lite-perf-gate DEFAULTS, untouched (maxScavenges 2, maxRetainedKB 64, maxOldGen 0, maxArrayBuffersKB 64) -- a claimed-zero path that cannot meet defaults is a finding, not a config knob.
+
+```bash
+npm run test:gate              # node --expose-gc --max-semi-space-size=4 --test test/33-perf-gate.test.mjs
+```
+
+The lane runs REAL only when BOTH `--expose-gc` and `--max-semi-space-size=4` are present (the same young-gen sensitivity the `test:zgc` lane needs); the `test:gate` script sets both. Under plain `npm test` / `test:gc` the in-glob file emits one loud named skip -- never a silent pass, never a false red. Verified on this engine (node v26.x): green and REAL at 10/10 -- all seven claimed-zero paths pass under defaults, both `mustFail` controls trip.
+
 ### `harness/burst-dag.mjs` and `harness/pull-stress.mjs` -- 1.6 profiling harnesses
 
 Two standalone profiling harnesses that consume the new op 6/7 mutation-hook counters to characterise **shape**-specific engine behaviour that the throughput benches can only aggregate over. `pull-stress.mjs` imports `../Signal.js` and is dual-mode (standalone runner or mountable zero-GC scenario); `burst-dag.mjs` takes the engine path as an argument (`node --expose-gc harness/burst-dag.mjs <Signal.js>`) so the same contrast runs against any build. Wired as `npm run profile:burst` and `npm run profile:pull`.
@@ -1068,9 +1078,10 @@ These harnesses land in 1.6 alongside the mutation-hook opcodes they consume; th
 
 ### Notes
 
-- The hardening suite and the profiler integration do **not** run on `npm test` from the root. They opt in through the `test:hardening` / `test:harness` scripts (and `test:all`, which chains everything including `test:zgc`).
+- The hardening suite and the profiler integration do **not** run on `npm test` from the root. They opt in through the `test:hardening` / `test:harness` scripts (and `test:all`, which chains everything including `test:zgc` and `test:gate`).
 - The **VersionMatrix gate**, by contrast, IS wired into `prepublishOnly` -- a regression on the four reference workloads blocks `npm publish`. Diagnostic runs (`node diff.mjs`) are opt-in from the harness directory.
 - The **zero-GC gate** is wired into `test:zgc` and chained by `test:all` / `verify`; on 1.6 it also validates that the two new hook-gated opcodes have not perturbed the steady-state contract.
+- The **perf-gate lane** (`test:gate`, `@zakkster/lite-perf-gate`) is the second, library-owned zero-GC judge; it is chained by `test:all` after `test:zgc` and runs REAL only under `--expose-gc --max-semi-space-size=4` (one loud named skip otherwise).
 - The **profiling harnesses** (`burst-dag.mjs`, `pull-stress.mjs`) are characterisation tools, not assertion gates; run them via `profile:burst` / `profile:pull` when investigating a specific shape's cost model.
 - All harness subdirectories have their own `package.json` with local scripts where appropriate, so you can also `cd` in and run `npm test` directly -- the root scripts are just shortcuts.
 - The `npm --prefix <dir> test` form used in the root scripts is the cross-platform replacement for `cd && npm test` -- works identically on Linux, macOS, and Windows.

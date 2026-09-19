@@ -54,7 +54,23 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
 
 ## Version notes
 
-- **1.6.0-rc.1** (current): verification + docs increment -- no engine change past
+- **1.6.0-rc.2** (current): verification + docs increment -- no engine change past
+  the banner comment (`Signal.js` byte-identical, banner line only). Ports the
+  standing **perf-gate lane** from the canonical 1.5.2 line:
+  `test/33-perf-gate.test.mjs` + `npm run test:gate`
+  (`node --expose-gc --max-semi-space-size=4`), chained into `test:all` after
+  `test:zgc`. Wires **`@zakkster/lite-perf-gate`** (devDependency only) as a
+  second, library-owned zero-GC judge beside the bespoke `test:zgc` harness:
+  `zgcSuite` watches five signals (scavenges / engine `stats()` counters /
+  retainedKB / oldGen / arrayBuffersKB) at two scales with positive+negative+large
+  detector controls, over seven claimed-zero steady-state scenarios (set-propagate,
+  computed-cache-hit, computed-recompute-stable, effect-rerun-stable, peek,
+  batch-flush, box-set-propagate) plus two permanent `mustFail` controls (per-op
+  `{x,y,z,w}` allocator; the documented `signal()`+dispose 264 B/op churn).
+  Thresholds are lite-perf-gate DEFAULTS, untouched. Green and REAL on this engine
+  (10/10); the in-glob file emits one loud named skip unless both flags are set,
+  so plain `npm test` is undisturbed. See CHANGELOG `[1.6.0-rc.2]`.
+- **1.6.0-rc.1**: verification + docs increment -- no engine change past
   the banner comment. Ports the mint-cycle allocation anatomy probe from the
   canonical 1.5.1 line (`node harness/run.mjs mint [--verify]`) and re-measures it
   on this engine: **identical to 1.5.x** -- callable mint+dispose 264 B/op
