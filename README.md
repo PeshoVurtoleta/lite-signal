@@ -916,6 +916,15 @@ If these fail, something allocates in the hot path and we want to find it before
 npm run test:gc
 ```
 
+Two standing zero-GC gates back this tier. `npm run test:zgc` runs the suite's own lite-gc-profiler harness (`test/zgc/*`). `npm run test:gate` (added 1.7.0-beta.1) runs **`test/33-perf-gate.test.mjs`**, a second, library-owned judge built on **`@zakkster/lite-perf-gate`** (devDependency only): its `zgcSuite` watches five signals (scavenges / engine `stats()` counters / retainedKB / oldGen / arrayBuffersKB) at two scales with positive+negative+large detector controls, over seven claimed-zero steady-state scenarios (`set-propagate`, `computed-cache-hit`, `computed-recompute-stable`, `effect-rerun-stable`, `peek`, `batch-flush`, `box-set-propagate`) plus two permanent `mustFail` controls (a per-op `{x,y,z,w}` allocator and the documented `signal()`+dispose 264 B/op churn). Thresholds are lite-perf-gate DEFAULTS (maxScavenges 2, maxRetainedKB 64, maxOldGen 0, maxArrayBuffersKB 64) -- a claimed-zero path that cannot meet defaults is a finding, not a config knob. Both lanes are chained by `test:all`.
+
+```bash
+npm run test:zgc               # lite-gc-profiler harness (requires --expose-gc --max-semi-space-size=4)
+npm run test:gate              # lite-perf-gate judge; same two flags, else one loud named skip
+```
+
+`test:gate` runs REAL only under both `--expose-gc` and `--max-semi-space-size=4` (young-gen sensitivity); the script sets both. Under plain `npm test` / `test:gc` the in-glob file emits one loud named skip -- never a silent pass, never a false red.
+
 ### Tier 3 -- Performance (comparative benchmark)
 
 `npm run bench` runs the **microscope** -- lite's recommended eager config on six first-party shapes; the aggregate output is [`bench/r.txt`](./bench/r.txt) (four engines: lite, alien, preact, solid). Cross-framework standing comes from the **mirror** (`node --expose-gc bench/mirror.mjs --self-verify` then `bench/sweep.mjs`), which runs Andrii's canonical adapter verbatim so rows diff 1:1 against his log; the aggregate output is [`bench/rb.txt`](./bench/rb.txt) (lite vs alien, all 47 shapes). Every output carries a machine-generated `#STAMP` (engine + harness sha256, the live registry config, host, node), so a header can never disagree with the code that ran. The pre-v3 five-framework reactivity suite was **removed after 1.5.1** (bench protocol v3). Full methodology: [`bench/README.md`](./bench/README.md).

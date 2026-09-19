@@ -4,6 +4,38 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.7.0-beta.1] -- 2026-09-20
+
+Verification + docs increment over `1.7.0-beta`; **no engine change past the
+version banner comment** (`Signal.js` byte-identical, banner line only). Migration
+7 of the campaign: ports the standing perf-gate lane from the canonical 1.5.2
+line onto this engine.
+
+### Added -- perf-gate lane (`@zakkster/lite-perf-gate`, devDependency only)
+
+- `test/33-perf-gate.test.mjs` + `npm run test:gate`
+  (`node --expose-gc --max-semi-space-size=4 --test test/33-perf-gate.test.mjs`),
+  chained into `test:all` after `test:zgc`. Where the existing `test:zgc` lane
+  (lite-gc-profiler) is the suite's bespoke zero-GC harness, this lane wires
+  `@zakkster/lite-perf-gate`'s `zgcSuite` as a standing, self-validating verdict:
+  five signals (scavenges / engine counters / retainedKB / oldGen /
+  arrayBuffersKB), two scales (N and k*N), positive+negative+large detector
+  controls on every run, and permanent `mustFail` negative controls.
+- Seven claimed-zero steady-state scenarios, each anchored to its `llms.txt`
+  claim: `set-propagate` (1 signal -> 8 computeds -> 1 effect, sync flush),
+  `computed-cache-hit`, `computed-recompute-stable`, `effect-rerun-stable`,
+  `peek`, `batch-flush` (3 sets/batch), `box-set-propagate`. `statsOf` reads each
+  scenario's isolated registry ledger; `counters` pins
+  `totalAllocations`/`totalDisposals`/`poolGrowths` at 0-delta.
+- Two `mustFail` controls that MUST trip the gate: a per-op `{x,y,z,w}` object
+  allocator, and the documented `signal()`+dispose churn (264 B/op). lite-perf-gate
+  DEFAULT thresholds, untouched (maxScavenges 2, maxRetainedKB 64, maxOldGen 0,
+  maxArrayBuffersKB 64).
+- **Result on this engine (node v26.x): green and REAL, 10/10** -- all seven
+  claimed-zero paths pass under defaults, both `mustFail` controls trip. Plain
+  `npm test` is undisturbed (the in-glob file emits one loud named skip unless
+  BOTH `--expose-gc` and `--max-semi-space-size=4` are present).
+
 ## [1.7.0-beta] -- 2026-09-06
 
 Verification + infra increment; promotes the line to the `beta` dist-tag. **No
