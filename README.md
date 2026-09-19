@@ -559,7 +559,7 @@ Default sizing for a Twitch-extension-style budget:
 | Heavy dashboard (variable scale)    | 2048     | 16384    | `"eager"` | `"grow"`  |
 | Per-viewer sandbox / short-lived    | 512      | 2048     | `"lazy"`  | `"throw"` |
 
-`stats()` reports 11 keys: eight live gauges -- `signals`, `computeds`, `effects`, `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`, `linkPoolCapacity` (the capacity keys are ledgers under `"lazy"`) -- plus three cumulative lifecycle counters added in **1.4.0**: `totalAllocations`, `totalDisposals`, and `poolGrowths` (monotonic over the registry's life, reset only by `destroy()`). Sample them over time to chart allocation rate, pool-reuse ratio, and graph churn; in a quiescent registry `totalAllocations - totalDisposals === activeNodes`. Drop it on screen for live observability.
+`stats()` reports 13 keys: ten live gauges -- `signals`, `computeds`, `effects`, `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`, `linkPoolCapacity` (the capacity keys are ledgers under `"lazy"`), plus `nodePoolPopulation` / `linkPoolPopulation` (**1.5.0**: the true constructed-object counts, distinct from the capacity ledgers) -- plus three cumulative lifecycle counters added in **1.4.0**: `totalAllocations`, `totalDisposals`, and `poolGrowths` (monotonic over the registry's life, reset only by `destroy()`). Sample them over time to chart allocation rate, pool-reuse ratio, and graph churn; in a quiescent registry `totalAllocations - totalDisposals === activeNodes`. Drop it on screen for live observability.
 
 </details>
 
@@ -767,7 +767,7 @@ Four tiers, all reproducible.
 
 - **`01-core.test.mjs`** -- signal/computed/effect basics, equality semantics, NaN/+/-0, subscribe/peek/update, untrack, batch, cleanup ordering, first-run error recovery, nested object reference-identity gotchas.
 - **`02-topology.test.mjs`** -- diamond glitch-freedom, 256-deep and 1024-deep computed chains, wide fan-out (1000 effects from one signal), dynamic dependency switching, conditional fan-out, nested effects, cycle detection (`CycleError`).
-- **`03-pool.test.mjs`** -- `CapacityError` under both `"throw"` and `"grow"` policies, the 16× link ceiling, stable pool reuse across thousands of create/dispose cycles, registry isolation, (1.3.0) the lazy-prealloc paths: on-demand construction reaching the same steady state as eager, a never-allocated lazy registry surviving `destroy()`, and `"grow"` extending both pool ledgers past their initial capacity, and (1.4.0) the `stats()` lifecycle counters: the 11-key shape, `totalAllocations` / `totalDisposals` tracking the `activeNodes` live invariant, `poolGrowths` firing on growth and staying 0 on a correctly-sized eager pool, and `destroy()` resetting all three.
+- **`03-pool.test.mjs`** -- `CapacityError` under both `"throw"` and `"grow"` policies, the 16× link ceiling, stable pool reuse across thousands of create/dispose cycles, registry isolation, (1.3.0) the lazy-prealloc paths: on-demand construction reaching the same steady state as eager, a never-allocated lazy registry surviving `destroy()`, and `"grow"` extending both pool ledgers past their initial capacity, and (1.4.0) the `stats()` lifecycle counters: the 13-key shape (1.5.0 adds `nodePoolPopulation` / `linkPoolPopulation`), `totalAllocations` / `totalDisposals` tracking the `activeNodes` live invariant, `poolGrowths` firing on growth and staying 0 on a correctly-sized eager pool, and `destroy()` resetting all three.
 - **`05-scheduler.test.mjs`** -- scheduler-deferred effects, dispose-during-schedule races, microtask integration, 32-bit version wrap (simulated), `setDefaultRegistry`, `onCleanup` inside computeds.
 - **`06-nested-objects.test.mjs`** -- array mutation patterns (push/splice/spread), deep nested paths, Map/Set/Date inside signals, custom structural equality, computed memoisation cutoffs over object slices, signal-of-signals composition, high-frequency object updates, batched immutable updates.
 - **`07-dispose.test.mjs`** -- unified `dispose(api)` across signals, computeds and effect handles, idempotency, cross-registry isolation (per-registry Symbol prevents pool corruption), foreign-value safety, top-level helper routing, 500-cycle balanced churn leaving pool and stats stable.
@@ -811,6 +811,47 @@ If these fail, something allocates in the hot path and we want to find it before
 
 ```bash
 npm run test:gc
+```
+
+### Tier 2b -- Perf gate (self-validating zero-GC judge)
+
+`npm run test:gate` runs `test/32-perf-gate.test.mjs` through
+[`@zakkster/lite-perf-gate`](https://www.npmjs.com/package/@zakkster/lite-perf-gate)
+(a **dev-only** dependency; runtime `dependencies` stay empty). Where Tier 2
+observes retained heap with hand-written bounds, this lane is the standing
+**verdict**: it measures each hot path at two scales (N and k*N) and judges
+**five signals** every run --
+
+1. **scavenges** -- transient young-gen allocation (the reliable detector);
+2. **engine counters** -- `stats().totalAllocations` / `totalDisposals` /
+   `poolGrowths`, all budgeted to **0** via a per-scenario `statsOf`;
+3. **retained heap** delta;
+4. **old-gen** GC activity;
+5. **external / arrayBuffers** delta.
+
+Seven claimed-zero steady-state paths are gated, each warmed inside `setup()`
+so the window sees only steady state, and each anchored to its Performance-
+characteristics claim (see the [Allocation profile](#allocation-profile) and
+`llms.txt`): `set-propagate` (1 signal -> 8 computeds -> 1 effect, synchronous flush),
+`computed-cache-hit`, `computed-recompute-stable`, `effect-rerun-stable`,
+`peek`, `batch-flush` (3 sets/batch), and `box-set-propagate` (the 1.5.0
+`signalBox`/`computedBox` surface, which shares the read/write hot path). The
+gate is self-validating: positive, negative, and large detector controls run on
+every invocation, and two permanent **mustFail** controls -- a per-op object
+allocator and the documented 264 B/op `signal()`+`dispose` churn -- MUST trip
+the gate, so a lane that has gone blind fails loudly instead of passing.
+
+The file guards on **both** `--expose-gc` and `--max-semi-space-size=4`; without
+them it emits one loud named skip. This lane adds **exactly one loud named skip
+over 1.5.1 (pass count unchanged)** -- `node:test`'s absolute leaf tally is
+node-version-sensitive, so on node v26.8.2 plain `npm test` reports **513 pass /
+2 skip** (the second skip is the architecturally-N/A SSR case). The 16MB
+`npm run test:gc` lane never false-reds on the control floor. Thresholds are
+lite-perf-gate defaults, untouched -- a claimed-zero path that cannot meet them
+is a finding, not a config knob.
+
+```bash
+npm run test:gate
 ```
 
 ### Tier 3 -- Performance (comparative benchmark)

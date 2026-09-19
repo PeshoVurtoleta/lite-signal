@@ -53,7 +53,31 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
 
 ## Version notes
 
-- **1.5.1** (current): docs + verification patch -- engine byte-identical to 1.5.0
+- **1.5.2** (current): dev-only perf-gate lane -- engine byte-identical to 1.5.1
+  past the version banner; no API or behavior change, no engine logic moved.
+  Adds `@zakkster/lite-perf-gate` (`^1.4.2`, devDependency only; runtime deps stay
+  empty) as the standing zero-GC judge, wired in `test/32-perf-gate.test.mjs` via
+  `zgcSuite()` over seven claimed-zero steady-state paths (`set-propagate`,
+  `computed-cache-hit`, `computed-recompute-stable`, `effect-rerun-stable`,
+  `peek`, `batch-flush`, `box-set-propagate`), each warmed inside `setup()` and
+  anchored to its Performance-characteristics claim. Five signals judge every
+  run (scavenges / engine counters `totalAllocations`+`totalDisposals`+
+  `poolGrowths` all budgeted to 0 via per-scenario `statsOf` / retained heap /
+  old-gen / arrayBuffers) at two scales (N and k*N), with positive+negative+large
+  detector controls on every invocation and two permanent mustFail controls (a
+  per-op object allocator and the documented 264 B/op `signal()`+`dispose`
+  churn). New script `test:gate` (`node --expose-gc --max-semi-space-size=4
+  --test test/32-perf-gate.test.mjs`) runs it for real and is appended to
+  `test:all`; the file guards on `--expose-gc` AND `--max-semi-space-size=4`,
+  emitting ONE loud named skip otherwise, so plain `npm test` stays green: this
+  lane adds **exactly one loud named skip over 1.5.1, pass count unchanged** (the
+  SSR N/A is the other skip). `node:test`'s absolute leaf tally is
+  node-version-sensitive; on node v26.8.2 `npm test` reports **513 pass / 2 skip**
+  and `test:gc` **521 pass / 2 skip**. The 16MB `test:gc` lane never false-reds on
+  the control floor. Thresholds are
+  lite-perf-gate defaults, untouched. devDeps: perf-gate ^1.4.2, devtools ^1.3.1,
+  gc-profiler ^1.16.0. See CHANGELOG `[1.5.2]`.
+- **1.5.1**: docs + verification patch -- engine byte-identical to 1.5.0
   past the version banner; no API or behavior change. Adds the mint-cycle allocation
   anatomy probe (`node harness/run.mjs mint [--verify]`) and ships the corrected
   creation economics it measured (callable mint+dispose 264 B/op all-space,
@@ -183,8 +207,10 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   allocation-light primitives -- `signalBox(initial, opts?)` returning
   `{ get, set, peek, update, subscribe }` and `computedBox(fn, opts?)` returning
   `{ get, peek, subscribe }` -- land alongside the callable `signal` / `computed`,
-  plus **`createRoot(fn)`** as the ownership escape hatch. **The callable API, hot
-  paths, and `stats()` shape (11 keys) are unchanged from 1.4.0**; this is an
+  plus **`createRoot(fn)`** as the ownership escape hatch. **The callable API and
+  hot paths are unchanged from 1.4.0**; `stats()` grows to **13 keys** -- adds
+  `nodePoolPopulation` / `linkPoolPopulation` (the true constructed-object counts,
+  distinct from the `*Capacity` ledgers). This is an
   additive surface, not a second engine. Boxes wrap the same `ReactiveNode` and
   interoperate freely with callables in one graph (verified both directions);
   ownership, batching, glitch-freedom, and introspection apply uniformly, and box
@@ -280,7 +306,7 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   (1 - poolGrowths*initialCap/totalAllocations), and churn without the engine
   computing rates -- the series lite-devtools 1.2 / lite-studio 1.2 plot. **Tests:**
   429 total, 419 pass, 0 fail, 10 skip (6 new counter tests in `test/03-pool.test.mjs`
-  cover the 11-key shape, the live invariant, poolGrowths firing on growth vs staying
+  cover the 13-key shape (1.5.0: +nodePoolPopulation/+linkPoolPopulation), the live invariant, poolGrowths firing on growth vs staying
   0 on a sized eager pool, and destroy() reset). **Coverage:** `Signal.js` 100%
   statements / 98.26% branches / 100% functions / 100% lines; `Watch.js` 100%.
   Drop-in over 1.3.0.
@@ -576,7 +602,7 @@ interface RegistryConfig {
   onCapacityExceeded?: "throw" | "grow";  // default "throw"; "grow" = chunked refill, ledger doubles, 16x link ceiling
 }
 
-interface RegistryStats {            // 11 keys as of 1.4.0
+interface RegistryStats {            // 13 keys as of 1.5.0
   signals: number;
   computeds: number;
   effects: number;
@@ -584,6 +610,8 @@ interface RegistryStats {            // 11 keys as of 1.4.0
   pooledLinks: number;
   linkPoolCapacity: number;          // ledger; doubles under "grow"
   nodePoolCapacity: number;          // ledger; doubles under "grow"
+  nodePoolPopulation: number;        // 1.5.0: TRUE constructed node count (nodePool.length); 0 under lazy prealloc
+  linkPoolPopulation: number;        // 1.5.0: TRUE constructed link count (linkPool.length); 0 under lazy prealloc
   activeNodes: number;               // live gauge
   totalAllocations: number;          // 1.4.0: cumulative node acquires; reset by destroy()
   totalDisposals: number;            // 1.4.0: cumulative node disposals; totalAllocations - totalDisposals === activeNodes

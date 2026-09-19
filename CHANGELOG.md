@@ -4,6 +4,49 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.5.2] -- 2026-09-19
+
+Dev-only session: a standing, self-validating zero-GC judge. `Signal.js` is
+byte-identical to 1.5.1 except the version banner comment; no API change, no
+behavior change, no engine logic moved. `Watch.js`, `bench/`, `harness/`, and
+`conformance/` are untouched.
+
+### Added -- perf-gate lane (dev-only, engine-frozen)
+
+`@zakkster/lite-perf-gate` (`^1.4.2`, devDependency only -- runtime `dependencies`
+stay empty) joins as the standing verdict on lite-signal's headline zero-GC
+claim. New file `test/32-perf-gate.test.mjs` wires `zgcSuite()` over seven
+claimed-zero steady-state paths, each anchored to its `llms.txt` "Performance
+characteristics" claim and warmed inside `setup()` so the measurement window
+sees only steady state: `set-propagate` (1 signal -> 8 computeds -> 1 effect,
+synchronous flush), `computed-cache-hit`, `computed-recompute-stable`,
+`effect-rerun-stable`, `peek`, `batch-flush` (3 sets/batch), and
+`box-set-propagate` (the 1.5.0 `signalBox`/`computedBox` surface). Five signals
+judge every run -- scavenges, engine counters (`totalAllocations` /
+`totalDisposals` / `poolGrowths`, all budgeted to 0 via per-scenario
+`statsOf`), retained heap, old-gen, and external/arrayBuffers -- at two scales
+(N and k*N), with positive/negative/large detector controls validated on every
+invocation. Two permanent negative controls keep the gate honest: a per-op
+object allocator and a per-op `signal()`+`dispose` churn (the documented
+264 B/op creation path); both MUST trip the gate.
+
+New script `test:gate` (`node --expose-gc --max-semi-space-size=4 --test
+test/32-perf-gate.test.mjs`) runs the gate for real; it is appended to
+`test:all`. The gate file guards on `--expose-gc` AND `--max-semi-space-size=4`
+and otherwise emits ONE loud named skip, so plain `npm test` stays green: this
+lane adds exactly one loud named skip over 1.5.1 (pass count unchanged; the
+other skip is the architecturally-N/A SSR case). `node:test`'s absolute leaf
+tally is node-version-sensitive -- on node v26.8.2 `npm test` reports 513 pass /
+2 skip. The 16MB `test:gc` lane never produces a false red. Thresholds are lite-perf-gate
+defaults, untouched.
+
+### Docs
+
+`llms.txt` gains the perf-gate version note and the fixed 13-key `RegistryStats`
+interface block (`nodePoolPopulation` / `linkPoolPopulation` were described in
+prose since 1.5.0 but missing from the interface listing). README Testing
+strategy gains the gate lane.
+
 ## [1.5.1] -- 2026-09-05
 
 Docs + verification patch. `Signal.js` is byte-identical to 1.5.0 except the
