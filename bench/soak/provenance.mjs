@@ -7,7 +7,11 @@
  * host invalidates timing), every config key with its source, every constant (gatesBlock), and the timer floor.
  *
  * Unknown is null, never a fabricated value: gitSha null + gitError when git fails; gitDirty null when the
- * status probe fails (never false). gitDirty counts tracked changes AND untracked, non-ignored files. git runs in THIS repository with a timeout and piped stderr (L10, L18).
+ * status probe fails (never false). gitDirty counts tracked changes AND untracked, non-ignored files. git runs in THIS
+ * repository with a timeout and piped stderr (L10, L18): its child env drops the five repo-LOCATING vars in GIT_SCRUB_ENV
+ * (QA F6), so an inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR / GIT_OBJECT_DIRECTORY cannot make
+ * the header stamp another tree's SHA or dirty state. No config key or env var names another tree: only the code-only
+ * gitInfo(root) seam (tests) does.
  * SOAK_REQUIRE_PROVENANCE=1 exits 2 before any record when the SHA, the dirty flag, the parity result or
  * the controls file is unknown.
  *
@@ -25,7 +29,7 @@ import { checkParity } from './parity.mjs';
 import { SEED_FORMULA, WORLD_SEED_FORMULA, remapCollision } from './seeds.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const GIT_OPTS = { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 };
+const IS_WIN = process.platform === 'win32';
 export const HEADER_KINDS = Object.freeze(['burn-in', 'wrap', 'replay']);
 
 /** The extras a caller must supply (lanes, scenarios, engine are owned by later modules). */
@@ -33,9 +37,33 @@ export const REQUIRED_EXTRAS = Object.freeze(['kind', 'engine', 'laneRoster', 'l
 
 export const GIT_STATUS_ARGS = Object.freeze(['-c', 'core.excludesFile=', 'status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none']);
 
-export function gitInfo() {
+/**
+ * The repo-LOCATING git env vars gitInfo removes from its child env (QA F6, PLAN-F5-F6 option b). Exactly these:
+ * GIT_CONFIG_* and every other var stay inherited, because GIT_STATUS_ARGS already pins every config knob that
+ * can hide a file (and test/41's hostile-config rows prove it against inherited config).
+ * KNOWN GAP: config that relocates the tree (core.worktree in the repository's own config, and similar) is not
+ * scrubbed; it lives in the repository the SHA describes, not in the caller's env.
+ */
+export const GIT_SCRUB_ENV = Object.freeze(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY']);
+
+/** process.env minus GIT_SCRUB_ENV, built at CALL time (a caller may set process.env after this module loads). */
+function gitEnv() {
+    const env = {};
+    for (const k of Object.keys(process.env)) {
+        // Windows env names are case-insensitive (git reads Git_Dir as GIT_DIR there); POSIX names are exact.
+        if (GIT_SCRUB_ENV.indexOf(IS_WIN ? k.toUpperCase() : k) === -1) env[k] = process.env[k];
+    }
+    return env;
+}
+
+/**
+ * { sha, dirty, error } of the repository at `root`. The `root` parameter is a code-only seam for tests (a
+ * throwaway repository); buildHeader always calls gitInfo() with no argument, so a run describes THIS tree.
+ */
+export function gitInfo(root = ROOT) {
+    const opts = { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, env: gitEnv() };
     try {
-        const sha = execFileSync('git', ['rev-parse', 'HEAD'], GIT_OPTS).trim();
+        const sha = execFileSync('git', ['rev-parse', 'HEAD'], opts).trim();
         let dirty = null;
         try {
             // Untracked files COUNT: an uncommitted model.mjs or parity.json changes what the soak runs, so a
@@ -50,7 +78,7 @@ export function gitInfo() {
             //   --ignore-submodules=none   beats diff.ignoreSubmodules / submodule.*.ignore
             // Output FORMAT knobs (status.relativePaths, status.submoduleSummary, color) do not matter: only
             // emptiness is read, and --porcelain is format-stable. A failing probe still leaves dirty null.
-            dirty = execFileSync('git', GIT_STATUS_ARGS, GIT_OPTS).trim().length > 0;
+            dirty = execFileSync('git', GIT_STATUS_ARGS, opts).trim().length > 0;
         } catch (e) { /* dirty stays null: unknown */ }
         return { sha, dirty, error: null };
     } catch (e) {

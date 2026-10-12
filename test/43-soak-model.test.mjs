@@ -656,30 +656,96 @@ test('7b F4 the teardown residue check is counted in checks.O5 (one per world, o
     assert.equal(empty.checks.O5, 1, 'a world with no ops still performs the teardown O5');
 });
 
-// todo F6: the scrub breaks the GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE test seam of test/40 (qa provenance
-// untracked) and test/41 (T-cfg GIT_DIR=/nonexistent, required provenance, gitDirty); it lands with those seams.
-test('7b F6 gitInfo ignores GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE: it reports THIS repository', { todo: 'F6' }, async (t) => {
-    const { gitInfo } = await import('../bench/soak/provenance.mjs');
-    const clean = {};
-    for (const k of Object.keys(process.env)) if (k.indexOf('GIT_') !== 0) clean[k] = process.env[k];
-    const want = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8', env: clean });
-    if (want.status !== 0) { t.skip('no git repository at ROOT: nothing to relocate'); return; }
-    const other = qfs.mkdtempSync(join(qos.tmpdir(), 'soak-qa-otherrepo-'));
+// F6 (PLAN-F5-F6 task 10, option b): gitInfo scrubs the five repo-LOCATING vars from its child env at CALL time.
+// W = a clean throwaway repository, Y = a second one, DIRTY, with a different SHA. One row per scrubbed key points
+// that ONE key at Y's matching location; gitInfo(W) must not move. The rows iterate a list of their own, never
+// GIT_SCRUB_ENV, so dropping a key from the scrub turns exactly that row red.
+// mutants: drop one key from GIT_SCRUB_ENV (5 rows, one each); the HEAD provenance.mjs (no scrub, no root seam)
+test('7b F6 gitInfo ignores GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR / GIT_OBJECT_DIRECTORY: it reports the tree it was asked for', async (t) => {
+    const { gitInfo, GIT_SCRUB_ENV } = await import('../bench/soak/provenance.mjs');
+    const KEYS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY'];
+    const tmp = qfs.mkdtempSync(join(qos.tmpdir(), 'soak-qa-f6-'));
+    // every git this test spawns: no inherited GIT_* var, no global or system config, a fixed identity
+    const genv = {};
+    for (const k of Object.keys(process.env)) if (k.indexOf('GIT_') !== 0) genv[k] = process.env[k];
+    Object.assign(genv, { GIT_CONFIG_GLOBAL: join(tmp, 'no-global-gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
+        GIT_AUTHOR_NAME: 'soak-qa', GIT_AUTHOR_EMAIL: 'soak-qa@invalid', GIT_COMMITTER_NAME: 'soak-qa', GIT_COMMITTER_EMAIL: 'soak-qa@invalid' });
+    const git = (cwd, args) => {
+        const r = spawnSync('git', args, { cwd, env: genv, encoding: 'utf8' });
+        assert.equal(r.status, 0, 'git ' + args.join(' ') + ': ' + r.stderr);
+        return r.stdout.trim();
+    };
+    const repo = (name, body) => {
+        const dir = join(tmp, name);
+        qfs.mkdirSync(dir);
+        git(dir, ['init', '-q', '--initial-branch=soakqa']);
+        qfs.writeFileSync(join(dir, 'a.mjs'), body);
+        git(dir, ['update-index', '--add', 'a.mjs']);
+        const commit = git(dir, ['commit-tree', '--no-gpg-sign', '-m', name, git(dir, ['write-tree'])]);
+        git(dir, ['update-ref', 'refs/heads/soakqa', commit]);
+        return { dir, sha: commit };
+    };
+    // the env gitInfo inherits for this test: process.env minus GIT_*, no global or system config
     const saved = {};
-    const KEYS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'];
+    const own = Object.keys(process.env).filter((k) => k.indexOf('GIT_') === 0).concat(['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'], KEYS);
+    for (const k of own) saved[k] = process.env[k];
+    const restore = () => { for (const k of own) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } };
     try {
-        const init = spawnSync('git', ['init', '-q', other], { encoding: 'utf8', env: clean });
-        assert.equal(init.status, 0, 'git init: ' + init.stderr);
-        for (const k of KEYS) saved[k] = process.env[k];
-        process.env.GIT_DIR = join(other, '.git');
-        process.env.GIT_WORK_TREE = other;
-        process.env.GIT_INDEX_FILE = join(other, '.git', 'index');
-        const g = gitInfo();
-        assert.equal(g.sha, want.stdout.trim(), 'gitInfo described another tree: ' + JSON.stringify(g));
-        assert.equal(g.error, null);
+        for (const k of own) delete process.env[k];
+        process.env.GIT_CONFIG_GLOBAL = genv.GIT_CONFIG_GLOBAL;
+        process.env.GIT_CONFIG_NOSYSTEM = '1';
+        const W = repo('W', 'export const w = 1;\n');
+        const Y = repo('Y', 'export const y = 2;\n');
+        qfs.writeFileSync(join(Y.dir, 'a.mjs'), 'export const y = 3;\n');   // Y: tracked change + untracked file
+        qfs.writeFileSync(join(Y.dir, 'b.mjs'), 'export const b = 1;\n');
+        assert.notEqual(W.sha, Y.sha);
+        assert.notEqual(git(Y.dir, ['status', '--porcelain']), '', 'control: Y is dirty');
+        const AT = { GIT_DIR: join(Y.dir, '.git'), GIT_WORK_TREE: Y.dir, GIT_INDEX_FILE: join(Y.dir, '.git', 'index'),
+            GIT_COMMON_DIR: join(Y.dir, '.git'), GIT_OBJECT_DIRECTORY: join(Y.dir, '.git', 'objects') };
+
+        await t.test('GIT_SCRUB_ENV is frozen and is exactly the five repo-locating keys', () => {
+            assert.equal(Object.isFrozen(GIT_SCRUB_ENV), true);
+            assert.deepEqual(GIT_SCRUB_ENV.slice(), KEYS);
+        });
+        const base = gitInfo(W.dir);
+        await t.test('base: gitInfo(W) is W, clean', () => {
+            assert.deepEqual(base, { sha: W.sha, dirty: false, error: null });
+            assert.deepEqual(gitInfo(Y.dir), { sha: Y.sha, dirty: true, error: null }, 'control: the seam reads Y as Y');
+        });
+        for (const k of KEYS) {
+            await t.test(k + ' pointed at Y: gitInfo(W) does not move', () => {
+                process.env[k] = AT[k];
+                try {
+                    assert.deepEqual(gitInfo(W.dir), base, k + '=' + AT[k] + ' made gitInfo(W) describe another tree');
+                    assert.equal(process.env[k], AT[k], 'the scrub must not mutate the caller\'s env');
+                } finally { delete process.env[k]; }
+            });
+        }
+        // The way an inherited var really arrives: ALREADY in the env when provenance.mjs loads (a module-load
+        // snapshot of process.env would pass the rows above and fail open here).
+        const PROV = new URL('../bench/soak/provenance.mjs', import.meta.url).href;
+        for (const k of KEYS) {
+            await t.test(k + ' pointed at Y before provenance.mjs loads (child process): gitInfo(W) does not move', () => {
+                const r = spawnSync(process.execPath, ['--input-type=module', '-e',
+                    'const { gitInfo } = await import(' + JSON.stringify(PROV) + '); process.stdout.write(JSON.stringify(gitInfo(' + JSON.stringify(W.dir) + ')));'],
+                { cwd: ROOT, env: { ...genv, [k]: AT[k] }, encoding: 'utf8' });
+                assert.equal(r.status, 0, r.stderr);
+                assert.deepEqual(JSON.parse(r.stdout), base, k + '=' + AT[k] + ' inherited at load made gitInfo(W) describe another tree');
+            });
+        }
+        await t.test('default root: with every key pointed at Y, gitInfo() reports THIS repository', (st) => {
+            const want = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8', env: genv });
+            if (want.status !== 0) { st.skip('no git repository at ROOT: nothing to relocate'); return; }
+            for (const k of KEYS) process.env[k] = AT[k];
+            try {
+                const g = gitInfo();
+                assert.equal(g.sha, want.stdout.trim(), 'gitInfo described another tree: ' + JSON.stringify(g));
+                assert.equal(g.error, null);
+            } finally { for (const k of KEYS) delete process.env[k]; }
+        });
     } finally {
-        for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
-        qfs.rmSync(other, { recursive: true, force: true });
+        restore();
+        qfs.rmSync(tmp, { recursive: true, force: true });
     }
 });
 

@@ -266,9 +266,39 @@ test('T-cfg missing --expose-gc exits 2 (lite-pick exited 1: L22)', () => {
     assertConfigExit(run({}, { gc: false }), ['--expose-gc is required']);
 });
 
-test('T-cfg SOAK_REQUIRE_PROVENANCE=1 with GIT_DIR=/nonexistent', () => {
-    assertConfigExit(run({ SOAK_REQUIRE_PROVENANCE: '1' }, { extraEnv: { GIT_DIR: '/nonexistent' } }),
-        ['SOAK_REQUIRE_PROVENANCE=1 but no git SHA']);
+// F6: gitInfo scrubs the repo-LOCATING GIT_* vars (GIT_SCRUB_ENV), so a provenance test reaches another tree only
+// through a real throwaway repository. Every git spawned here runs with no inherited GIT_* var, no global or system
+// config and a fixed identity; commits go through plumbing (no hooks, no signing, no user config).
+function gitEnv() {
+    const env = {};
+    for (const k of Object.keys(process.env)) if (k.indexOf('GIT_') !== 0 && k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
+    return Object.assign(env, { GIT_CONFIG_GLOBAL: join(TMP, 'no-global-gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
+        GIT_AUTHOR_NAME: 'soak-cfg', GIT_AUTHOR_EMAIL: 'soak-cfg@invalid', GIT_COMMITTER_NAME: 'soak-cfg', GIT_COMMITTER_EMAIL: 'soak-cfg@invalid' });
+}
+function git(cwd, args) {
+    const r = spawnSync('git', args, { cwd, env: gitEnv(), encoding: 'utf8' });
+    assert.equal(r.status, 0, 'git ' + args.join(' ') + ': ' + r.stderr);
+    return r.stdout.trim();
+}
+/** One plumbing commit of every non-ignored file under `dir` (an initialised repository) on HEAD. Returns the SHA. */
+function gitCommitAll(dir) {
+    git(dir, ['add', '-A']);
+    const sha = git(dir, ['commit-tree', '--no-gpg-sign', '-m', 'soak cfg test', git(dir, ['write-tree'])]);
+    git(dir, ['update-ref', 'HEAD', sha]);
+    return sha;
+}
+
+test('T-cfg SOAK_REQUIRE_PROVENANCE=1 in a repository with zero commits: no git SHA (control: one commit -> exit 3)', () => {
+    // GIT_DIR=/nonexistent no longer reaches gitInfo (F6). A provenanceCopy that is its OWN repository, with no
+    // commit, has no HEAD to resolve.
+    const C = provenanceCopy();
+    git(C.dir, ['init', '-q']);
+    const env = { SOAK_REQUIRE_PROVENANCE: '1', SOAK_LANES: 'GRAPH' };
+    assertConfigExit(run(env, { base: C.base }), ['SOAK_REQUIRE_PROVENANCE=1 but no git SHA']);
+    const sha = gitCommitAll(C.dir);
+    const ok = run(env, { base: C.base });
+    assert.equal(ok.status, 3, 'control, one commit: ' + ok.stderr);
+    assert.equal(JSON.parse(readFileSync(ok.out, 'utf8').split('\n')[0]).gitSha, sha, 'control: the header stamps the copy\'s own commit');
 });
 
 /* -- in-process matrix: boundaries, upper bounds, booleans (parseConfig is pure and throws) ------------- */
@@ -397,9 +427,19 @@ test('required provenance admits no unknown: dirty state, parity or controls unk
     const okRun = run(env, { base: C.base });
     assert.equal(okRun.status, 3, 'intact copy: ' + okRun.stderr);
 
-    const idx = join(TMP, 'index-is-a-dir');
-    mkdirSync(idx, { recursive: true });
-    assertConfigExit(run(env, { base: C.base, extraEnv: { GIT_INDEX_FILE: idx } }), ['git dirty state is unknown']);
+    // Dirty state unknown: a COMMITTED nested copy (its own repository) whose index is a DIRECTORY, so git status
+    // fails while rev-parse HEAD still works (F6: an inherited GIT_INDEX_FILE no longer reaches gitInfo).
+    const N = provenanceCopy();
+    git(N.dir, ['init', '-q']);
+    const nSha = gitCommitAll(N.dir);
+    const nOk = run(env, { base: N.base });
+    assert.equal(nOk.status, 3, 'control, nested copy with its index intact: ' + nOk.stderr);
+    const nHead = JSON.parse(readFileSync(nOk.out, 'utf8').split('\n')[0]);
+    assert.deepEqual([nHead.gitSha, nHead.gitDirty, nHead.gitError], [nSha, false, null], 'control: the header describes the nested copy');
+    const index = join(N.dir, '.git', 'index');
+    rmSync(index);
+    mkdirSync(index);
+    assertConfigExit(run(env, { base: N.base }), ['git dirty state is unknown']);
 
     const pins = readFileSync(join(C.soak, 'parity.json'), 'utf8');
     writeFileSync(join(C.soak, 'parity.json'), '{"files": [1]}');
@@ -447,48 +487,42 @@ test('T-cfg argv end to end: --bogus and --smoke with SOAK_SMOKE=0 exit 2; --smo
 /* -- gitDirty counts untracked, non-ignored files ---------------------------------------------------- */
 
 test('gitDirty: clean -> false; repo-ignored -> false; one untracked .mjs -> true, whatever user/env config says', () => {
-    // Scratch work tree = `git archive HEAD` (from the TOP LEVEL: in a subdirectory, git archive packs only
-    // that subdirectory), paired with this repository's object store and a SCRATCH index (GIT_DIR /
-    // GIT_WORK_TREE / GIT_INDEX_FILE). Nothing is written to the real index or history. Global and system
-    // config are neutralised for the CONTROL rows; the hostile rows then inject config that hides files.
-    const gitDir = spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
-    assert.ok(gitDir.length > 0, 'a git repository');
+    // W = a throwaway repository committed via plumbing (F6: gitInfo scrubs GIT_DIR / GIT_WORK_TREE /
+    // GIT_INDEX_FILE, so the probe reaches W only through the code-only gitInfo(root) seam). Its tracked
+    // .gitignore carries /bench/soak/out/, like this repository's. Global and system config are neutralised for
+    // the CONTROL rows; the hostile rows then inject config (inherited by gitInfo: GIT_CONFIG_* are not
+    // scrubbed) that hides files.
     const W = join(TMP, 'gitwork');
-    mkdirSync(W);
-    const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
-    const arch = spawnSync('git', ['archive', 'HEAD'], { cwd: top, maxBuffer: 1 << 28 });
-    assert.equal(arch.status, 0, String(arch.stderr));
-    const tar = spawnSync('tar', ['-x', '-C', W], { input: arch.stdout });
-    assert.equal(tar.status, 0, String(tar.stderr));
-    const genv = {};
-    for (const k of Object.keys(process.env)) if (k.indexOf('GIT_') !== 0 && k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') genv[k] = process.env[k];
-    Object.assign(genv, {
-        GIT_DIR: gitDir, GIT_WORK_TREE: W, GIT_INDEX_FILE: join(TMP, 'gitwork.index'),
-        GIT_CONFIG_GLOBAL: join(TMP, 'no-global-gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
-    });
-    const rt = spawnSync('git', ['read-tree', 'HEAD'], { cwd: W, env: genv, encoding: 'utf8' });
-    assert.equal(rt.status, 0, rt.stderr);
+    mkdirSync(join(W, 'bench', 'soak'), { recursive: true });
+    const genv = gitEnv();
+    git(W, ['init', '-q']);
+    writeFileSync(join(W, '.gitignore'), '/bench/soak/out/\n');
+    writeFileSync(join(W, 'bench', 'soak', 'a.mjs'), 'export const a = 1;\n');
+    const sha = gitCommitAll(W);
     const probe = (extra = {}) => {
         const r = spawnSync(process.execPath, ['--input-type=module', '-e',
-            'const { gitInfo } = await import(' + JSON.stringify(SOAK_URL + 'provenance.mjs') + '); process.stdout.write(JSON.stringify(gitInfo()));'],
+            'const { gitInfo } = await import(' + JSON.stringify(SOAK_URL + 'provenance.mjs') + '); process.stdout.write(JSON.stringify(gitInfo(' + JSON.stringify(W) + ')));'],
         { cwd: ROOT, env: { ...genv, ...extra }, encoding: 'utf8' });
         assert.equal(r.status, 0, r.stderr);
         return JSON.parse(r.stdout);
     };
     const plainStatus = (extra = {}) => spawnSync('git', ['status', '--porcelain'], { cwd: W, env: { ...genv, ...extra }, encoding: 'utf8' }).stdout.trim();
 
-    const clean = probe();
-    assert.equal(typeof clean.sha, 'string');
-    assert.equal(clean.dirty, false, 'control: the archived HEAD tree is clean');
-    // A REPOSITORY ignore rule (a self-ignoring out/.gitignore, standing in for /bench/soak/out/ in the
-    // tracked .gitignore, which HEAD predates) keeps the provenanceCopy location clean.
+    assert.deepEqual(probe(), { sha, dirty: false, error: null }, 'control: the committed throwaway tree is clean');
+    // A REPOSITORY ignore rule (/bench/soak/out/ in W's tracked .gitignore) keeps the provenanceCopy location clean.
     mkdirSync(join(W, 'bench', 'soak', 'out', 'cfgtest-x'), { recursive: true });
-    writeFileSync(join(W, 'bench', 'soak', 'out', '.gitignore'), '*\n');
     writeFileSync(join(W, 'bench', 'soak', 'out', 'cfgtest-x', 'model.mjs'), 'export const x = 1;\n');
     assert.equal(probe().dirty, false, 'a repo-ignored path (bench/soak/out/) stays clean');
-    // The probe file must be a path HEAD never tracks (bench/soak/model.mjs became tracked in fc1f826).
     writeFileSync(join(W, 'bench', 'soak', 'cfgtest-untracked.mjs'), 'export const x = 1;\n');
+    assert.equal(plainStatus(), '?? bench/soak/cfgtest-untracked.mjs', 'control: plain git status sees the file');
     assert.equal(probe().dirty, true, 'one untracked, non-ignored .mjs makes the tree dirty');
+
+    // Positive control: env config (GIT_CONFIG_*) still REACHES gitInfo (amendment 14: only the repo-locating vars
+    // are scrubbed). A malformed GIT_CONFIG_COUNT makes every git fail; a probe that scrubbed it would return a SHA
+    // and leave the hostile rows below passing vacuously.
+    const reach = probe({ GIT_CONFIG_COUNT: '1' });
+    assert.equal(reach.sha, null, 'GIT_CONFIG_COUNT must reach gitInfo: ' + JSON.stringify(reach));
+    assert.match(String(reach.error), /GIT_CONFIG_KEY_0/);
 
     // Hostile config rows. Each one really hides the file from a plain `git status --porcelain` (asserted),
     // and the probe must still read dirty.

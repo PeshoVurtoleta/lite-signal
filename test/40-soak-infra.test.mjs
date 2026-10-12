@@ -486,28 +486,34 @@ test('qa parity: a symlink to the CLI FILE (not the directory) still runs the ch
 
 // mutants: GIT_STATUS_ARGS with --untracked-files=no; the probe reading `git diff --quiet` (tracked only)
 test('qa provenance: untracked files inside a new nested directory, or with a space or newline in the name, read dirty', () => {
-    const gitDir = spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
-    assert.ok(gitDir.length > 0, 'a git repository');
-    const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
+    // W = a throwaway repository committed via plumbing (F6: gitInfo scrubs GIT_DIR / GIT_WORK_TREE /
+    // GIT_INDEX_FILE, so the probe reaches W only through the code-only gitInfo(root) seam). Every git spawned
+    // here and the probe run with no inherited GIT_* var and no global or system config.
     const W = join(TMP, 'qa-gitwork');
-    mkdirSync(W);
-    const arch = spawnSync('git', ['archive', 'HEAD'], { cwd: top, maxBuffer: 1 << 28 });
-    assert.equal(arch.status, 0, String(arch.stderr));
-    assert.equal(spawnSync('tar', ['-x', '-C', W], { input: arch.stdout }).status, 0);
+    mkdirSync(join(W, 'bench', 'soak'), { recursive: true });
     const genv = {};
     for (const k of Object.keys(process.env)) if (k.indexOf('GIT_') !== 0 && k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') genv[k] = process.env[k];
-    Object.assign(genv, { GIT_DIR: gitDir, GIT_WORK_TREE: W, GIT_INDEX_FILE: join(TMP, 'qa-gitwork.index'),
-        GIT_CONFIG_GLOBAL: join(TMP, 'qa-no-global'), GIT_CONFIG_NOSYSTEM: '1' });
-    assert.equal(spawnSync('git', ['read-tree', 'HEAD'], { cwd: W, env: genv }).status, 0);
+    Object.assign(genv, { GIT_CONFIG_GLOBAL: join(TMP, 'qa-no-global'), GIT_CONFIG_NOSYSTEM: '1',
+        GIT_AUTHOR_NAME: 'soak-qa', GIT_AUTHOR_EMAIL: 'soak-qa@invalid', GIT_COMMITTER_NAME: 'soak-qa', GIT_COMMITTER_EMAIL: 'soak-qa@invalid' });
+    const git = (args) => {
+        const r = spawnSync('git', args, { cwd: W, env: genv, encoding: 'utf8' });
+        assert.equal(r.status, 0, 'git ' + args.join(' ') + ': ' + r.stderr);
+        return r.stdout.trim();
+    };
+    git(['init', '-q']);
+    writeFileSync(join(W, 'bench', 'soak', 'a.mjs'), 'export const a = 1;\n');
+    git(['update-index', '--add', join('bench', 'soak', 'a.mjs')]);
+    const sha = git(['commit-tree', '--no-gpg-sign', '-m', 'qa', git(['write-tree'])]);
+    git(['update-ref', 'HEAD', sha]);
     const PROV_URL = pathToFileURL(join(SOAK, 'provenance.mjs')).href;
     const probe = () => {
         const r = spawnSync(process.execPath, ['--input-type=module', '-e',
-            'const { gitInfo } = await import(' + JSON.stringify(PROV_URL) + '); process.stdout.write(JSON.stringify(gitInfo()));'],
+            'const { gitInfo } = await import(' + JSON.stringify(PROV_URL) + '); process.stdout.write(JSON.stringify(gitInfo(' + JSON.stringify(W) + ')));'],
         { cwd: ROOT, env: genv, encoding: 'utf8' });
         assert.equal(r.status, 0, r.stderr);
         return JSON.parse(r.stdout);
     };
-    assert.equal(probe().dirty, false, 'control: the archived HEAD tree is clean');
+    assert.deepEqual(probe(), { sha, dirty: false, error: null }, 'control: the committed throwaway tree is clean');
     mkdirSync(join(W, 'bench', 'soak', 'qa-empty-dir'), { recursive: true });
     assert.equal(probe().dirty, false, 'an empty untracked directory is not content (git tracks files)');
     const cases = [join('bench', 'soak', 'qa-new', 'deeper', 'x.mjs'), join('bench', 'soak', 'qa name.mjs'), join('bench', 'soak', 'qa\nnl.mjs')];
