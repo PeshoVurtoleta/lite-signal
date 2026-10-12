@@ -9,13 +9,15 @@ mechanism** clearing **every** gate.*
 Numbering note: #1–#12 are the original post-1.5 §0b set; #14 is the shelved per-edge-versioning
 spike; #15–#17 were added on the rebuilt engine line; #18–#20 were diagnosed in the
 benchmark-rebuild thread. **#13 is still unassigned** (no entry exists under that number). #21–#26 came out of the
-allocator-literature sweep and the push-pull / iterative-pull exploration.
+allocator-literature sweep and the push-pull / iterative-pull exploration. #27-#28 are the SoA
+research track (LiteSignalExperimental fork, section G). #29-#31 came out of the 2026-09
+weak-point analysis of Andrii's harness (section H). #32-#33 came out of the 2026-10 1.6.0 audit program (section I).
 
 ---
 
 ## The laws that fell out (read this first)
 
-Every entry below collapses into six rules. The rules are the payoff; the entries are the
+Every entry below collapses into seven rules. The rules are the payoff; the entries are the
 proof.
 
 1. **Bytes in a hot body cost even when the branch never runs.** V8's inline / code-size
@@ -31,7 +33,12 @@ proof.
    tunable. *(#2, #9, #11, #16)*
 4. **Hot-read data layout is zero-sum.** Moving fields to win creation or GC-marking shifts
    the field offsets the propagation path reads hot and blows its inline caches. The win and
-   the loss are the same change. *(#10, #12)*
+   the loss are the same change. Two corollaries from 2026-09: a layout trade has a **size
+   axis** -- per-hop cost wins on cache-resident graphs, density wins past a crossover (~1e4
+   nodes on M4 / node 26), so a layout is judged across a size sweep, never at one size
+   *(#27)*; and **the allocation site is part of the layout** -- where V8 places the pool
+   objects (young-then-promoted vs pretenured) moves propagation as much as field order
+   does *(#29)*. *(#10, #12, #27, #29)*
 5. **Measure on the hardware and V8 you ship against.** A "win" on an old Xeon / old Node can
    be 0% on current silicon where V8 already inlines the thing you're removing. *(#19)*
 6. **Native-allocator techniques compensate for what C lacks; a pooled, single-type,
@@ -40,6 +47,16 @@ proof.
    innovation is a workaround for a constraint that does not exist here. Before porting
    any allocator idea, name the C limitation it exists to route around, then check whether
    this engine has that limitation. Usually it does not. *(#21, #22, #23, #24)*
+7. **Creation cost is survival, not allocation.** The pool is a GC root: every undisposed
+   node -- and the compute closure it holds -- stays alive after the caller drops its
+   handle, so a create-and-drop workload makes the scavenger copy what a GC-owned engine
+   simply frees. At equal bytes the mint path is not the problem (per-mint allocation on an
+   eager pool equals alien's; the callable handle costs 13.6 ns vs `bind`'s 8.3 ns); the
+   45-55% GC share under the lazy adapter is the explicit-lifetime contract plus a 224-byte
+   node (Node ships without pointer compression). The one lever that removed the copying
+   moved the cost into propagation. (The contrast holds against alien's lazy computeds. Solid 2's unowned
+   non-lazy memos are retained by their sources when never read -- @solidjs/signals 2.0.0-rc.14,
+   `core/core.ts` and `core/graph.ts`, INFERRED from source.) *(#29, D)*
 
 Gate consequence: **no single green gate — and no candidate's self-reported scorecard —
 authorises a ship.** Gate order is conformance (per-test diff) → internal suite →
@@ -68,6 +85,7 @@ bench. Re-measure every claim.
 |---|---|---|---|
 | **2** | `FLAG_STALE` cross-sweep bailout | breaks lazy-pull (#213 inner-write bug) | fundamental semantic incompatibility — not fixable |
 | **9** | Iterative pull via eager dep pre-walk (explicit `resolveStack`, post-order DFS over recorded `headDep`) | FAILED conformance: 4 regressions (#188/#189/#193/#153) | eager pre-walk resolves deps the new run won't read → breaks dynamic/conditional-dep laziness. The pre-walk is the optimisation and the pre-walk is what's broken → not tunable |
+| **11** | (title not recorded) -- an epoch-guard / burst-coalescing tweak | killed: the burst is single-pass, one recompute per node (section D) | content lost in consolidation; cited by Law 3 and section D. The current exploration roadmap (post-1.12, v2.3) calls #2/#11 "epoch-guard tweaks" |
 | **16** | Inner-write fixed point | closed ZERO upstream tests; rejected | one flag test + refire branch per effect run + ceremony stores — contract purity bought with hot bytes in `executeEffect`. Absorption remains the contract; the analysis (two-tier batch rule, #235, `currentObserver` identity) is archived for the day the trade changes |
 
 ### Family (c) — hot-read data-layout changes (win creation/GC-marking, deopt propagation)
@@ -76,6 +94,8 @@ bench. Re-measure every claim.
 |---|---|---|---|
 | **10** | `ReactiveNode` scheduler-field relocation (move `scheduler`/`schedulerThunk` to a registry Map, "size-class boundary" win) | creation −6 to −12% (real) **but** propagation regressed: KAIROS +13–18%, MUX +36–49%, DEEP +12–17% | removing 2 fields shifted the hot-read offsets (`version`/`evalVersion`/`markEpoch`) → blew the propagation ICs. Win and loss are the *same* change. (Candidate's own VERDICT claimed 0.97–1.03× hot-path; measurement showed 1.13–1.49×.) Corollary: relocating any hot field is rejected by extension |
 | **12** | Edge-arena SoA rewrite (`ReactiveLink` objects → `Int32Array` columns by edge id) | CORRECTNESS CLEAN (difftest 0/30k, suite 412/413, zero-GC held) **but** propagation regressed: KAIROS +11–18%, MUX +65–78%, DEEP +3–13% | edge traversal via typed-array index = 2 bounds-checked array loads per hop where the object graph did 1 inlined pointer deref. V8 optimises monomorphic object-property access far better than indexed typed-array traversal on the hot path. Best-engineered rejection of the campaign — correct and zero-GC-preserving, but the layout trade is backwards for a propagation-dominated engine |
+| **27** | Link-pool hybrid SoA, "R3" (5 threading fields -> `Int32Array` columns, source/target kept as packed ref-columns) | suite + torture clean; full GC 1.5-1.95× faster; resident 1e5-node graph -30% per set; **but** independently re-measured: MUX +30%, BROADCAST (1->1000 effects) +30%, fanout64 +10%, creation churn +39%; memory -21-26% (not -33%), -8% just past a column doubling | #12's per-hop typed-array load minus the bounce. Crossover at ~1e4 nodes: density wins above it, per-hop cost below. Not eligible as the default engine; see section G |
+| **29** | Literal-site pool construction -> V8 allocation-site pretenuring of nodes + links | creation -50-62% under Andrii's lazy adapter (GC inside the window -> 0), suite / GC lane / perf gate / torture all green; **but** propagation +14-71% on six shapes (MUX +71%), bimodal per process, and still +3-14% with the whole pool pretenured | both effects vanish under `--no-allocation-site-pretenuring`: the same placement decision is the creation win and the propagation loss. The allocation site is part of the layout. See section H |
 
 ### Family (d) — native-allocator ports (they solve constraints this engine does not have)
 
@@ -93,8 +113,8 @@ because the *pattern* is the finding — see Law 6.
 
 | # | optimisation | result | mechanism |
 |---|---|---|---|
-| **23** | Free-list randomisation as a bug-finding mode (mimalloc's observation that the allocation fast path never *inspects* the free list, so reuse order is free) | **KEPT as a test-only dimension, but DOWNGRADED.** The mechanism is real and free: the pool has exactly two pop sites, both bare head-takes, so three reuse orders were implemented with **zero change to either pop site** and hot-body parity stayed green. Its bug-finding premise failed | tested against a real historical bug — the parked-cursor disposal defect (#20) — by reverting the fix and running value-checked torture that knew nothing about it. **Every order caught it, including plain LIFO**, because that defect corrupts *structurally* (it splices through a dangling pointer) and crashes regardless of who owns the slot. The missing ingredient was workload **shape**, not reuse order. Deeper reason: randomisation exists in C because a pointer to a freed block is indistinguishable from a pointer to that block re-allocated; here every handle carries a generation bumped on disposal and `id` is a fresh identity per allocation, so a stale handle reads `undefined` under *every* order. **The ABA guard is identity-based, not address-based.** Kept only for state-space widening; the actionable lesson is that shape coverage beats allocation-order randomisation |
-| **25** | `ppRevalidate` — eager dependency refresh at an absorber's run end (when a mark lands on a node that is mid-run, pull its whole dep chain once the run finishes, to clear the stale marks the inner write left upstream) | REJECTED — fixed the hazard it targeted but **diverged from lazy-pull on the inner-write-through-computed conformance pin and broke value-dependent cycle detection** | eagerly refreshing dependencies changes equality-cutoff outcomes: the twin re-fired where lazy's stale cache correctly absorbed. Family (b) again, at a new site — *any* pre-resolve of recorded dependencies resolves edges the semantics say to leave alone. Superseded by flag-only **weakening**: the absorber re-tags its dep chain WEAK at run end and touches nothing else — no pull, no recompute, no cache refresh — so caches stay stale-but-marked exactly as lazy leaves them and the next sweep strengthens the weak marks and re-descends. Negative control confirms the weakening is load-bearing: neuter it and exactly the hazard tests fail |
+| **23** | Free-list randomisation as a bug-finding mode (mimalloc's observation that the allocation fast path never *inspects* the free list, so reuse order is free) | **KEPT as a test-only dimension, but DOWNGRADED.** The mechanism is real and free: the pool has exactly two pop sites, both bare head-takes, so three reuse orders were implemented with **zero change to either pop site** and hot-body parity stayed green. Its bug-finding premise failed | tested against a real historical bug — the parked-cursor disposal defect (#20) — by reverting the fix and running value-checked torture that knew nothing about it. **Every order caught it, including plain LIFO**, because that defect corrupts *structurally* (it splices through a dangling pointer) and crashes regardless of who owns the slot. The missing ingredient was workload **shape**, not reuse order. Deeper reason: randomisation exists in C because a pointer to a freed block is indistinguishable from a pointer to that block re-allocated; here every handle carries a generation bumped on disposal and `id` is a fresh identity per allocation, so a stale handle reads `undefined` under *every* order. **The ABA guard is identity-based, not address-based.** Kept only for state-space widening; the actionable lesson is that shape coverage beats allocation-order randomisation. Note (2026-10-12): the pop sites are untouched, but the PUSH sites are not -- LiteSignal+/1.13.0 disposeNode carries two `if (FREE_ADV)` branches in the DEFAULT body (one in the subscriber-link loop, one at the node push). The hot-body parity set did not include disposeNode, so "selected, not branched" was not met on the disposal path. The FIFO mode also loses slots after a drain-and-refill (stale tail, INFERRED from reading). Do not carry the mode forward |
+| **25** | `ppRevalidate` — eager dependency refresh at an absorber's run end (when a mark lands on a node that is mid-run, pull its whole dep chain once the run finishes, to clear the stale marks the inner write left upstream) | REJECTED — fixed the hazard it targeted but **diverged from lazy-pull on the inner-write-through-computed conformance pin and broke value-dependent cycle detection** | eagerly refreshing dependencies changes equality-cutoff outcomes: the twin re-fired where lazy's stale cache correctly absorbed. Family (b) again, at a new site — *any* pre-resolve of recorded dependencies resolves edges the semantics say to leave alone. Superseded by flag-only **weakening**: the absorber re-tags its dep chain WEAK at run end and touches nothing else — no pull, no recompute, no cache refresh — so caches stay stale-but-marked exactly as lazy leaves them and the next sweep strengthens the weak marks and re-descends. Negative control confirms the weakening is load-bearing: neuter it and exactly the hazard tests fail. Provenance (2026-10-12): the harness artifacts behind this entry (pp.difftest, hotbody-parity, oracle-torture) are not on disk anywhere in the suite. The numbers stand as recorded; they cannot be re-run from the repo. |
 | **15** | Computed self-dirty / upstream #179 closure | rejected (stands) | hot-path cost for a construct the suite deliberately excludes; **absorption is the contract**, kept honest by the absorption pin (`test/33-...`) |
 | **17** | `onSettled` as a dynamic always-checked drain hook | **+27–31% on batched updates**, ~7ns/flush → forced a reset of the engine line to the prior release | not instruction count — bytes pushing `flushEffects` past V8's inline budget; **the branch didn't even have to be taken.** *This is the entry that produced Law 1.* Implementation permanently rejected; the feature returned in a later release as `createRegistry({settled:true})` — same capability, selected once at build time, default byte-identical |
 | **19** | Equals short-circuit (replace indirect `node.equals(a,b)` with direct `OBJECT_IS`) | 14/14 semantics, but **0% on target hardware** — rejected | looked like a 20% win on an old Xeon/Node 22 (upd1to1 = 5.12ms); on M4/Node 26 the same shape is 1.70ms = 4.25ns/set, where V8 already inlines the monomorphic call. *This is the entry that produced Law 5.* |
@@ -117,10 +137,17 @@ path), cascaded across every later line. Forced two gate changes (see §E).
 
 `disposeNode` frees a node's outgoing link out from under a **parked re-tracking cursor**
 when an effect disposes its own not-yet-retracked dep mid-run → `severTail` walks the freed
-link → `TypeError: Cannot set properties of null (setting 'headSub')`. Present
-**present from 1.4.0 until it was found**. **Fixed** with a one-line cold-path repair (advance the cursor past the
+link → `TypeError: Cannot set properties of null (setting 'headSub')`. Present **from 1.4.0 until it was found**. **Fixed** with a one-line cold-path repair (advance the cursor past the
 doomed link); the repair also made the `-1` sentinel band-aid in `freeLink` dead code, which
 was excised. 30/30 coverage, 50k-cycle stress zero-leak, churn 1.00×.
+
+**Amended 2026-10 (1.6.0 A1, F15).** The one-line repair covers only the LIVE cursor. A frame
+suspended under a nested frame kept its cursor in a JS local, so a disposal inside any nested
+frame (a child effect's first run, a nested recompute, untrack + computed) still freed a link a
+suspended frame pointed at (1.6.0 audit program, 2026-10). A1 (1.6.0 working tree, unreleased) moves saved cursors onto a
+registry `cursorStack` and repairs every frame (`repairCursor` / `dropCursors`), and pins the
+slot of a node disposed while RUNNING until depth 0. A line that carries only the
+one-line repair (published 1.5.x, 1.6.0-rc..1.11.0, LiteSignal+/1.13.0) still has F15.
 
 ---
 
@@ -135,6 +162,15 @@ Reflex-study cycle, measured, and **shelved with its numbers** — it lives in
 failed a gate; this one was parked as a design direction that didn't earn its place *yet*,
 with the data kept so it can be revived if a workload ever makes per-edge granularity pay.
 (That line instead shipped inner-write fixed point + onSettled + link-churn counters.)
+
+Provenance (2026-10-12): `engines/shelved`, which this entry cites, is not on disk anywhere
+in the suite. The result stands as recorded; it cannot be re-run from the repo.
+
+Reflex's `edge.version` is a membership / tracking stamp, not a value version (Reflex monorepo
+volynetstyle/Reflex at commit f4a98ce, 2026-10-09: packages/reflex-runtime/docs/RULES.md R3 and
+INVARIANTS.md, packages/reflex-runtime/src/protocol/read.producer.ts). The 1.13 REFLEX-LESSONS claim that Volynets' paper 01
+formalises #14 conflates the two; 1.13's `track:"reorder"` is find-with-reorder retracking,
+not per-edge versioning.
 
 ### #26 — resume-cursor iterative pull *(built, gated, scoped)*
 
@@ -165,6 +201,10 @@ clean-cone predicate, so pairing it with the push-pull twin (which marks with a 
 instead) would consult a counter nothing updates; that combination **throws** rather than
 silently serving stale values. Folding it into the push-pull resolver is the open follow-up.
 
+Provenance (2026-10-12): the harness artifacts this entry cites (the iterative-pull ceiling
+probe and its 40k-schedule differential fuzz) are not on disk anywhere in the suite. The
+numbers stand as recorded; they cannot be re-run from the repo.
+
 This refines #9 rather than overturning it: the *eager pre-walk* remains rejected. What
 changed is the finding that a laziness-preserving iterative form exists at all.
 
@@ -174,7 +214,7 @@ changed is the finding that a laziness-preserving iterative form exists at all.
 
 | question | verdict | evidence |
 |---|---|---|
-| **Creation cost** | CLOSED — structural, externally confirmed | the callable handle's `read` (+ `set`) closure is irreducible; Andrii ran his own 100k-creation breakdown and reached the same conclusion; reshaping the handle regressed the read/update path (same family as #1/#8/#10/#12). `signalBox`/`computedBox` (his suggestion) is the answer and earned the 4th-place creation rows. Keep the callable contract; treat the residual gap as structural |
+| **Creation cost** | CLOSED -- structural, externally confirmed | the callable handle's `read` (+ `set`) closure is irreducible; Andrii ran his own 100k-creation breakdown and reached the same conclusion; reshaping the handle regressed the read/update path (same family as #1/#8/#10/#12). `signalBox`/`computedBox` (his suggestion) is the answer and earned the 4th-place creation rows. Keep the callable contract; treat the residual gap as structural. **2026-09 attribution corrects the *reason*, not the verdict** (section H): the closures are not the dominant cost. Under Andrii's lazy adapter 45-55% of creation time is scavenger survival-copying, because the pool is a GC root (undisposed nodes and their compute closures outlive the dropped handle) and each fresh `ReactiveNode` is 224 B on Node. At equal bytes (eager pool) lite's per-mint allocation equals alien's, and the callable handle costs 13.6 ns vs `bind` 8.3 ns. Give alien the same retention (anchor every handle) and its cc0to1 triples (1.54 -> 4.53 ms). The one lever that removed the copying (#29) moved the cost into propagation |
 | **Burst / flush** | CLOSED — locality, harness-confirmed | `burst-dag.mjs` + the op-5/6/7 counters show the burst is **single-pass, one recompute per node** — nothing to coalesce (killed #11). The ~2–4× gap is traversal locality at scale, and the two levers that could touch locality (#10, #12) both deopt propagation. No flush fix exists |
 | **Iterative pull** | REJECTED as an eager pre-walk (#9); **REOPENED and built** as a resume-cursor transcription (#26) | the eager pre-walk is still incompatible with lazy conditional deps and stays closed. A resume-cursor form that preserves the dep-walk break *is* laziness-preserving, and moves the steady-state deep re-pull ceiling from ~6,900 to beyond 1M. The original ceiling estimate was also optimistic: the measured steady-state ceiling is ~6,900, and the first-evaluation ceiling ~2,500–4,000. Real targets still rarely reach either, so this remains a robustness result, not a throughput one |
 
@@ -210,6 +250,324 @@ its outputs or it is measuring dead-code elimination.**
 - **Gate order, unchanged and absolute:** conformance → internal suite → independently-measured
   raw bench (creation AND propagation) → real-hardware bench. No single green gate authorises a
   ship; re-measure every self-reported claim.
+- **VersionMatrix gains `mux` + `effect-fanout` (from #27, 2026-09):** the five original
+  workloads had no long dep-list walk (the MUX shape that exposed #10 and #12) and no
+  effect-dense flush. The resident `broadcast-fanout` is a KAIROS shape that runs ONE effect
+  per write. The #27 fork passed the matrix while costing +30% on both missing shapes.
+- **A missing baseline fails closed (2026-09):** `gate.mjs` used to pass a floor/rolling axis
+  vacuously when its capture was absent, so a newly added workload gated nothing. It is now
+  `NO EVIDENCE` (exit 3, recapture).
+- **Memory is `heapUsed + arrayBuffers` (from #27, 2026-09):** `heapUsed` cannot see typed-array
+  backing stores. The torture retention witnesses (`torture-soak`, `graph-fuzzer`,
+  `scheduler-bench`, via `helpers.residentBytes()`), the zero-GC tests (04, 09) and the
+  microscope's heap column now sum both. The perf-gate lane already judged `arrayBuffersKB`.
+- **Layout claims go through `harness/layout-ab.mjs` (from #27 + #29, 2026-09):** cold child per
+  cell, A/B order alternated, eight shapes plus a 1e3-1e5 resident-graph size sweep with the crossover stated,
+  plus a resident-memory lane across power-of-two boundaries. Timing two engines in one process
+  (the fork's `soaWitness` ns/op) is not evidence. Run: `node harness/run.mjs layout <candidate>`.
+- **Counters are int32-safe (2026-10):** every int32 counter stays within [-2^30, 2^30-1]
+  (ceiling 0x3FFFFFFF) or lives in a Float64Array.
+- **A creation win must also clear propagation (from #29):** creation rows and propagation rows
+  can move in opposite directions from ONE mechanism. A creation-only scorecard is a
+  self-reported claim.
+
+---
+
+## G. SoA 2.0.0 research track (LiteSignalExperimental fork)
+
+### #27 -- link-pool Structure-of-Arrays, Tier 1 (built, measured, R3 fallback shipped in-fork)
+
+The frozen AoS link pool (`ReactiveLink` objects, 7 pointer fields) was converted to columns to
+shed traced pointers and densify the resident graph (the mark-time / retained-pointer thesis, see
+`scratchpad/RESEARCH.md`). Two layouts were built and measured against the immutable AoS foil
+(`harness/foil/Signal-aos-1.5.2.js`) on the new `harness/soaWitness.mjs`, node v26.8.2 / M4 Pro.
+
+- **Full 7->0 (source/target as Int32Array node SLOTS, + a dense `node.slot`).** Sheds ALL 7 link
+  pointers. Traced pointers at 1e5 nodes / 4e5 links: 4,600,207 -> 1,400,112. **But it FAILED the
+  throughput half of the conjunction:** the hot pull-walk now pays a `nodePool[slot]` bounce where
+  AoS did a single `link.source` deref. VersionMatrix 3/5 -- **deep-chain +9-12%, creation-churn
+  +10-12%** vs the rolling 1.5.0 baseline (confirmed on two runs). This is **Family (c) exactly**:
+  a data-layout change that wins GC-marking and deopts propagation. Semantics were perfect
+  (local 515/513/0/2, semantic torture 18/4/0, reactive-suite parity with the foil, 0 B/op, jit
+  monomorphic x4) -- the conversion was correct, the *layout* lost the conjunction.
+- **R3 fallback, 5/7 (source/target as PACKED `Array<ReactiveNode>` ref-columns, `node.slot`
+  dropped; the 5 threading fields stay Int32Array + NIL=-1).** Removes the hot-walk bounce
+  (`linkSource[l]` is the node directly). **Recovers throughput: VersionMatrix 5/5** (deep-chain
+  1.32->1.23ms, creation-churn 0.0267->0.024ms, both back in band). Still sheds 5/7 link pointers:
+  traced pointers 4,600,207 -> **2,200,130 (2.09x fewer, 2.4M shed)**, heap 87->58 MB (33% denser),
+  markMs ratio ~1.8x, ns/op in band. Ref-columns nulled on free/dispose/destroy (no retention),
+  packed (jit monomorphic x4, no HOLEY). **PASSES the conjunction -- this is the shipped-in-fork
+  layout.**
+
+**Rule (amends Family (c)):** to trace ZERO pointers per link, source/target must be integer slots,
+which forces a pool bounce on every propagation read -- a structural ~10% hot-walk cost. The
+defensible SoA link win is the **ref-column hybrid (5/7 shed)**: it densifies the graph and halves
+traced pointers while holding propagation at parity. "7->0" is a mark-time mirage that the pull-walk
+pays for. The node-scalar / value-slot sessions are the remaining, separate Tier-1/Tier-2 questions.
+Nothing shipped to the 1.5.x / 1.6.0-rc lines; the fork stays at 1.5.2, engine banner unchanged.
+
+#### #27 amendment -- independent re-measure (2026-09-24): the conjunction does NOT hold on small graphs
+
+Re-measured per the gate rule ("re-measure every self-reported claim"). Setup: R3 fork `Signal.js`
+vs `LiteSignal/Signal.js` 1.5.2 AoS, **one engine per cold process**, order alternated per rep,
+10 reps, median, eager registry (`maxNodes 1<<18, maxLinks 1<<20`), anti-DCE `Float64Array` sink,
+node v26.8.2 / M4 Pro. Every row that moved has **non-overlapping min..max ranges**.
+
+**Memory: the headline was measured with a metric that cannot see the columns.** `soaWitness`
+reports `process.memoryUsage().heapUsed`; the five `Int32Array` columns (20 B/slot) are
+ArrayBuffer backing stores and live outside it. `heapUsed + arrayBuffers`, graph delta over an
+empty-process baseline, soaWitness graph shape:
+
+| config | nodes | AoS total | SoA total (heap + AB) | delta |
+|---|---:|---:|---:|---|
+| eager, exact capacity (the soaWitness config) | 1e5 | 80.2 MB | 51.4 + 7.6 = 59.0 MB | **-26%** (not -33%) |
+| lazy mirror config (`131072 / 1048576`, grow) | 1e5 | 80.3 MB | 53.3 + 10.0 = 63.3 MB | **-21%** |
+| lazy, just below a column doubling | 130,000 | 103.3 MB | 67.2 + 10.0 = 77.2 MB | -25% |
+| lazy, just past a column doubling | 132,000 | 104.8 MB | 76.6 + 20.0 = 96.6 MB | **-8%** |
+| lazy, just below / past the previous doubling | 65,000 / 66,000 | 52.3 / 53.1 MB | 38.6 / 48.0 MB | -26% / **-10%** |
+
+The columns grow by power-of-two realloc while AoS grew in 1024-link chunks, so the density win is
+a sawtooth between ~8% and ~26% depending on where the link count sits. The "4.60M -> 2.20M traced
+pointers" figure is a **static model** (soaWitness constants 17/7 vs 13/2 times pool population),
+not a heap measurement: correct in direction, modelled in magnitude.
+
+**GC: the real, robust win.** Forced full `gc()`, median of 9: 13.9 -> 7.1 ms (1.95x) eager exact;
+12.1 -> 8.2 ms lazy; 16.7 -> 8.9 ms at 132k (past the doubling, still 1.9x: ArrayBuffers are not
+traced). This half of the conjunction stands.
+
+**Throughput: "unchanged" does not survive.** SoA / AoS, median ns/op:
+
+| shape | SoA / AoS | note |
+|---|---:|---|
+| creation churn (signal + computed + effect, mint + dispose per op) | **1.39** | 177 -> 246 ns |
+| MUX (256 inputs -> 1 sum computed -> 1 effect) | **1.30** | 1113 -> 1447 ns |
+| BROADCAST (1 -> 1000 effects) | **1.30** | 14.0 -> 18.2 us |
+| fanout64 (bar 1b) | **1.10** | 734 -> 809 ns |
+| KAIROS, DEEP (256), diamond x100, dynamic DAG (retrack every op) | 0.98 - 1.02 | parity |
+| resident 1e5 nodes / 4e5 links (soaWitness shape) | **0.70** | 8.10 -> 5.66 ms per set |
+
+**Size crossover** (soaWitness shape, same protocol, 6 reps): 1e3 nodes **1.07**, 3e3 **1.08**,
+1e4 **1.02**, 3e4 **0.93**, 1e5 **0.70**. The layout flips at roughly **1e4 nodes / 4e4 links**
+on this host: below it the per-hop instruction cost dominates, above it cache density does.
+
+**Diagnosis -- structural, not tunable.** Three cumulative variants of the fork, same protocol:
+(v1) drop the new free-list bounds check in `allocLinkSlot`; (v2) also drop the three fail-closed
+`linkSource[x] === null` throws; (v3) also make the seven columns `const` (fixed capacity, no
+`let` rebinding). Recovered: MUX 1.33 -> 1.30, BROADCAST 1.29 -> 1.23, fanout64 1.10 -> 1.05,
+churn 1.33 -> 1.21. The guards and the `let` reloads are 2-12 points; the residual 1.21-1.30 is
+the typed-array index hop itself. **This is #12's mechanism minus the bounce**: R3 removed the
+`nodePool[slot]` load, which is why DEEP/KAIROS recovered, but every next-pointer hop is still an
+indexed typed-array load instead of an inlined field load, and effect-dense flushes, long dep
+lists, and create/dispose pay it per hop.
+
+**Growth pause.** One effect linking 1.1M signals under the lazy mirror config, worst single
+read: SoA stalls deterministically at each column doubling (1.2 ms @131k, 2.4 @262k, 4.5 @524k,
+**12.7 ms @1,048,576**); AoS's worst single stall is 7.7 ms (GC, not growth). Total build time
+favours SoA (61 vs 78 ms). The realloc re-introduces the O(n) growth-pause class that P0/P1
+chunked growth removed; right-sized eager pools never hit it.
+
+**Why the fork's gates missed it.** VersionMatrix has no MUX workload -- the exact shape that
+exposed #10 (+36-49%) and #12 (+65-78%). fanout64 (bar 1b) is not cited for #27. `soaWitness`
+times ns/op for BOTH engines in ONE process, which the cold-process rule forbids. The
+`scratchpad/RESEARCH.md` it cites (conjunction definition, section 11 noise floor) does not exist
+on disk.
+
+**Verdict under the gate order.** Conformance and the internal suite pass; the
+independently-measured raw bench (creation AND propagation) **fails on four small-graph shapes**.
+By the absolute gate order that makes R3 ineligible as the DEFAULT engine. It remains a measured,
+real win for large resident graphs (>= ~3e4 nodes: -30% per set at 1e5, ~2x faster full GC) --
+the #14 posture (shelved with its numbers) or a build-time twin selected once at
+`createRegistry` (the #17 `settled:true` precedent) are the eligible forms. `snapshot`/`restore`
+does not depend on the columns (one walk re-expressed over `link.source`/`link.nextDep`) and is
+decoupled from this verdict. Owner's call.
+
+**Rule (amends Law 4 -- the size axis).** A layout change is not a single trade; it is a trade
+with a crossover. Per-hop instruction cost wins while the graph is cache-resident; density wins
+once it is not. Report every layout candidate across a size sweep with the crossover stated;
+a single-size measurement (either side) is a cherry-pick.
+
+---
+
+### #28 -- node-half built + REVERTED; the SoA line is a 1.6.0 MINOR, not a 2.0.0
+
+The node pointer-field conversion (owner-tree + `nextFree` -> Int32Array slot-columns + a re-introduced
+`node.slot`) was built and measured. `nextFree` as a column regressed creation-churn a STABLE +8%
+(rolling) -- because `nextFree` is touched on EVERY alloc/free, it is NOT a cold field (the #27 rule).
+Reverting `nextFree` to an object free-list recovered the bulk; the 4 owner-tree columns (genuinely
+cold) still left creation-churn straddling the +5% rolling line (3 PASS / 1 FAIL / 1 unstable-refuse
+over 5 runs). The marginal traced-pointer gain (2.09x -> 2.56x fewer) was not worth borderline gates
+plus a `node.slot` read on every dispose -> REVERTED to the clean link-SoA (2.09x, VersionMatrix 5/5
+stable). **Rule: only fields touched purely on cold paths (create/dispose/cascade) belong in columns;
+`nextFree` and any per-op field do not.**
+
+**Version verdict.** link-SoA is an internal representation change with an identical public API and no
+breaking change -> by semver it is a MINOR, not a major. A serialization SPIKE
+(`scratchpad/serialize-spike/`, 17/17 assertions) proved a pure-int-column graph can be snapshotted and
+zero-copy Worker-transferred (ArrayBuffer neutered on transfer), but compute closures cannot travel
+(rehydrate by stable id), and -- the decisive point -- the compelling half (in-process snapshot /
+undo / time-travel) rides the CURRENT ref-column engine by mapping refs->slots AT SNAPSHOT TIME with
+ZERO steady-state throughput tax. Pure-int columns buy only niche cross-worker transfer at a universal
+~10% deep-chain cost, so they do not justify a major or a universal tax. **Decision: ship link-SoA as
+1.6.0 (denser graph) + a `snapshot`/`restore` in-process time-travel FEATURE on the ref-column engine;
+no 2.0.0. The value spike (Tier 2) and `(slot,gen)` handle identity (Tier 3) are moot / dropped.**
+
+---
+
+## H. 2026-09 weak-point analysis (Andrii's harness, 1.5.2) -- what is structural, what moved
+
+Source: Andrii's `js-reactivity-benchmark` (mitata runner, his adapters, lazy AND eager lite
+adapters), node v26.8.2 / M4 Pro, plus same-host cold-process probes. Ratios are lite / alien
+medians. alien is a reference point, not a target.
+
+**Provenance correction (2026-09-24).** The earlier `bench-lite-signal-20260922T035612Z.log`
+did NOT measure 1.5.2: the `node_modules/@zakkster/lite-signal/Signal.js` it ran was a
+hand-copied Sep 20 build of the Experimental SoA fork (it carries `linkNextDep` / `REHYDRATE`
+/ `FLAG_BOX` under a "v1.5.2" banner), and `dist/index.js` had it bundled in. Andrii's deps
+were reinstalled from his lockfile (`npm ci`, lite-signal 1.4.0) and `dist/` rebuilt. The map
+below is from clean runs with the engine file named per row. **Rule: a harness whose engine is
+swapped by hand records the engine's sha256 next to its log, or the log is not evidence.**
+
+### The weak-point map
+
+Clean run: 1.5.2 (`LiteSignal/Signal.js`, sha256 `f8dd50f8...`) bundled into his harness,
+8 interleaved rounds per lite adapter, alien 5 rounds in the same session.
+
+| class | rows (lite lazy / eager vs alien) | verdict |
+|---|---|---|
+| creation | createDataSignals 21x / 12x; cc0to1 19x / 9.4x; cc1to1 13x / 12x; cc1to2..1to8 22-30x / 16-21x; cc2to1, 4to1 4.4-6.6x; cc1to1000 396x (alien 0.03 ms) | structural -- Law 7 for the ANCHORED gap. On the public unanchored rows the dominant term is dead-code elimination of the lazy engines' creation loops (100k computeds in 0.04-0.42 ms, bimodal run to run; 1.6.0 audit program bench campaign, 2026-10-12; section E rule). Quote public creation ratios with that split. His creation rows keep no handle: alien's computeds are garbage (or DCE'd) at birth, lite's pool retains every one. The eager adapter alone cuts 28-50% on the 1-source rows (no `ReactiveNode` constructed in the window) |
+| unobserved set (the "update" rows never read their computed) | 1to1 2.1x / 2.2x; 2to1 1.6x / 1.1x; 4to1 3.3x / 2.3x; 1to2 0.96x / 1.03x; 1to4 3.5x / 2.3x | ~2-5 ns per `set()` of markDownstream + flushEffects framing on a signal with no subscribers; ms-scale rows, noisy. The only levers are the #6 / #7 guard family (rejected). 1to1000 mints 1000 computeds inside the timed body (a creation row); 1000to1 is sub-0.1 ms |
+| propagation | app-shaped dynamic rows 1.39-1.56x lazy / 1.12-1.33x eager; layered burst 2.26x / 2.28x (the worst row); layered warm 1.47-1.90x; diamond mesh 1.49x / 1.65x; pure push 1.71x / 1.48x; deep (5x500) 1.62x / 1.36x; manyEffectsFromOneSource 1.49x / 1.55x. Lite LEADS manySourcesIntoOneComputedEffect (0.74-0.78x) and pure pull lazy (0.70x), and ties wide dense eager (0.94x) | per-unit CPU (costmodel: structural work identical) plus locality (D). The one new lever with a clean mechanism is #30. **Creation leaks into these rows:** lite's eager adapter beats its lazy adapter on every app row (0.80-0.85) because his dynamic rows default `measureBuild = (warmupIterations === 0)` -- every app-shaped row (dashboard, editor, kanban, entity, simple / dynamic component, large web app, wide dense, deep, pure push / pull) BUILDS its graph inside the timed window, so the lazy adapter pays `ReactiveNode` / `ReactiveLink` construction and survival copying there (Law 7). Only the large-graph rows (layered, diamond mesh) warm up outside the window. Not chunk locality -- see #31 |
+| harness artifact | "Assertion failed" lines on simple component / dynamic component / large web app | alien fails the IDENTICAL assertions (40 / 40 / 20 lines over 10 rounds of the Sep 22 log): stale expectations in `config.ts`, not an engine defect |
+
+### Creation attribution -- why the gap is survival (Law 7)
+
+Measured on the anchored creation rows (all handles kept in a ring), cold process each:
+
+- **Where the time goes.** Under the lazy adapter 45-55% of creation time is scavenger work
+  (cc0to1: 6.3 of 14.8 ms). On a pre-grown eager pool, steady `computed()` minting is still
+  56% GC by CPU profile; `createNode` is ~5% and the `computed()` body ~13%.
+- **It is not the bytes.** With the young generation made large enough that no GC fires in
+  the window, per-mint allocation on an eager pool is 336-337 B/op -- equal to alien + its
+  adapter (333-352). The lazy adapter adds exactly one `ReactiveNode` per mint: +224 B
+  (25 fields x 8 B; Node ships without pointer compression).
+- **It is not the closures.** In isolation the callable computed handle (closure + context +
+  4 own props) costs 13.6 ns and the signal handle (2 closures + 6 props) 13.5 ns, vs 8.3 ns
+  for alien's `bind` pattern. Own props cost <= 4 ns. `setPrototypeOf` to shed them costs
+  55 ns (#1 re-confirmed on node 26).
+- **It is retention.** The pool is a GC root, so undisposed nodes and their compute closures
+  survive the dropped handle and get copied. Give alien the same retention (anchor every
+  handle) and its cc0to1 triples, 1.54 -> 4.53 ms; the lite-eager gap narrows from 5.4x to
+  2.7x.
+
+### #29 -- literal-site pool construction / allocation-site pretenuring *(REJECTED)*
+
+Built pool nodes and links from a module-level object literal (`makeNode()` / `makeLink()`)
+with the IDENTICAL field order instead of `new ReactiveNode()` / `new ReactiveLink()`. A
+literal site carries an AllocationSite, so V8 can pretenure it (allocate straight into old
+space once it sees high survival); a class `new` carries none. No hot body touched, no offset
+moved.
+
+- **Creation: a real, large win.** Andrii-adapter rows, cold process: createDataSignals
+  10.7 -> 5.4 ms, cc0to1 14.8 -> 5.6 ms, cc1to1 12.7 -> 6.1 ms; GC inside the window -> 0.
+  Suite 513/2/0, GC lane 521/2/0, perf gate 10/10 (both mustFail controls trip), torture
+  21 / 5 floor-skips / 0. Every semantic gate green.
+- **Propagation: fails gate 3.** Cold 9-shape matrix, 10 reps: MUX +71%, KAIROS +23%,
+  DIAMOND +19%, BROADCAST +17%, DEEP +16%, fanout64 +14% (five separated), and bimodal per
+  process (one MUX process ran at baseline, the others +80%) depending on when the
+  pretenuring decision fired during construction.
+- **Mechanism, proven both ways.** Under `--no-allocation-site-pretenuring` BOTH effects
+  vanish (creation back to 12.6 / 11.2 ms, propagation back to baseline). Forcing the
+  decision before the registry exists (whole pool pretenured, no young/old split) shrinks
+  the loss to +3-14% (MUX +7-14%, DEEP +8-10%, KAIROS +3-4%) but does not remove it.
+- **Rule.** The allocation site is part of the layout (Law 4). A creation win that moves
+  where the pool lives must clear propagation, and a win that depends on when a V8
+  heuristic fires is not a property of the engine.
+- Spike kept for reproduction: `futureVersions/Signal-1.5.2-pretenure-REJECTED-29.js`
+  (git-ignored). Reproduce the mechanism with and without `--no-allocation-site-pretenuring`.
+
+### #30 -- "observer-fold": fold `isTrackingDeps` into `currentObserver !== null` *(LANDED in the working tree, unreleased -- every gate passed)*
+
+Naming: early drafts called this "K1". LiteSignal+/1.13.0 already uses K1 for its difftest
+criterion, so the ledger name is **observer-fold**.
+
+`isTrackingDeps` is redundant state. Tracking happens iff `isTrackingDeps && currentObserver
+!== null`, and every site that clears the flag either also nulls the observer (fireConnect,
+runCleanup, runWithOwner, createRoot, destroy, self-dispose) or keeps the observer only to
+suppress tracking (`untrack`, `subscribe`'s untracked callback). Deleting the flag:
+
+- **Read fast paths** (signal / computed / boxGet / boxComputedGet): `isTrackingDeps &&
+  currentObserver !== null` -> `currentObserver !== null`. One context load and one branch
+  less per tracked read, and FEWER bytes in four hot bodies (Law 1 in the helpful direction).
+- **executeEffect / pullComputed:** two context stores less per run (save + restore of the
+  flag); `isTracking()` becomes `currentObserver !== null`.
+- **`untrack` / subscribe callbacks** null the observer instead, and restore it only if its
+  `gen` survived the window: `currentObserver = (po !== null && po.gen === pg) ? po : null`.
+  That reproduces exactly what disposeNode's `currentObserver === node` guard does today when
+  an observer disposes itself inside an untracked region (the only non-tracking use of
+  `currentObserver` in the engine, audited line by line).
+
+Not re-litigation: #4 / #6 / #7 ADDED guards to hot bodies; #30 DELETES state and bytes.
+
+Evidence (measured candidate kept at `futureVersions/Signal-1.5.2-K1-candidate-30.js` + `K1-candidate-30.diff`,
+git-ignored; the landed `Signal.js` is byte-identical to it in executable code, comments aside):
+
+- gate 2, internal: suite 513 / 2 / 0, GC lane 521 / 2 / 0, perf gate 10 / 10, torture 21 / 5 floor-skips / 0.
+  Andrii's vitest adapter suite: 14 / 14 lite tests on both adapters.
+- gate 3, independent raw bench (cold 9-shape matrix, 10 reps, observer-fold / 1.5.2 medians): fanout64
+  **0.90** (separated), MUX 0.93, resident 1e5 graph 0.95, DEEP 0.97, DIAMOND 0.97, KAIROS
+  0.98, BROADCAST 0.98, dynamic DAG 0.98, creation churn 1.02 (overlap). No shape separated slower.
+- Andrii's harness (his adapters, his mitata runner, clean-reinstalled deps with the engine
+  file set per build; 8 interleaved rounds x 2 engines x {lazy, eager} adapters, 45 rows per
+  block, all 32 blocks complete). Geomean observer-fold / 1.5.2 over rows >= 0.2 ms: propagation
+  **0.971** lazy / **0.962** eager (23 rows each), update 0.989 / 0.974, creation 0.992 /
+  0.996 (neutral, as the mechanism predicts). Separated faster:
+  manySourcesIntoOneComputedEffect(+WithDirect) on both adapters, manyEffectsFromOneSource
+  (lazy). Layered burst flush 732 -> 594 ms lazy (0.81), 736 -> 629 ms eager (0.86).
+  **One flag:** `avoidablePropagation` separated SLOWER on the lazy adapter (0.39 -> 0.42
+  ms, 1.08) while the same shape is 0.97 on eager. Sub-half-millisecond row; recorded as
+  open, not waved off. The VersionMatrix and real-hardware gates must re-check it.
+- Context for the flag: the same row moved 0.40 -> 0.36 ms (separated FASTER) under #31, a
+  change that does not touch its path at all. The row flips sign on unrelated changes.
+- gate 1, external conformance (johnsoncodehk suite, lite column, `node harness/run.mjs conformance`):
+  196 cases, **0 per-test differences** vs 1.5.2 (177 / 1 / 0 both; the 1 is #179, the #15
+  absorption contract; 18 behavioral values identical). The runner's negative control (a
+  sabotaged `untrack`) produces 4 diffs and exits 1.
+- pipeline: planner -> coder -> reviewer REJECTED (non-ASCII in ledger lines + a null->0
+  print in the new torture) -> coder fixed -> reviewer APPROVED -> qa PASS. QA's
+  `test/34-observer-fold.test.mjs` (24 cases: isTracking truth table, untrack depth 0..64,
+  throwing untrack, self-dispose inside untrack incl. slot recycling, subscribe self-dispose,
+  createRoot / runWithOwner inside untrack, nested subscribe ownership, 1e4-cycle churn)
+  measured: npm test 539 / 3 / 0, test:gc 547 / 2 / 0, perf gate 10 / 10, torture 21 / 5 / 0,
+  `test/torture.mjs` 0 B/op maxMajor 0, 1e4 cycles back to baseline with a resident delta of
+  38.11 KB (<= 64 KB).
+- STILL OPEN: the VersionMatrix gate on the 7 workloads (needs a same-host capture), the
+  release target (the 1.5.x line kept Signal.js byte-identical across patches -- a 1.5.3
+  patch vs folding into the 1.6.0-rc line is the owner's decision), and the forward-port to
+  1.6.0-rc.2 .. 1.11.0 (38 identical sites each) and LiteSignal+/1.13.0 (47: +9 in its
+  push-pull / iterative twins). Expected size of the win stays modest (2-10%): a
+  correctness-neutral byte deletion, not a paradigm move.
+
+### #31 -- larger lazy refill chunks *(NULL -- no effect, not shipped)*
+
+Hypothesis: the eager adapter's 15-20% lead on app rows was lazy-chunk locality (pool
+objects built 256 nodes / 1024 links at a time, interleaved with user allocations). Probe:
+chunks 256 -> 2048 nodes, 1024 -> 8192 links, cold code only. Andrii's harness, lazy
+adapter, 6 interleaved rounds: propagation geomean **1.008**, every app row 0.98-1.01,
+creation 1.003. No effect. The real cause was the harness timing the graph build
+(`measureBuild`, see the map above) -- construction cost, not placement. It would also have
+cost lazy's small-footprint promise (a throw-policy default registry would populate up to
+2048 nodes / 8192 links on its first miss). Closed.
+
+---
+
+## I. 1.6.0 audit program (2026-10) -- cursor-safety designs refused
+
+Four designs for keeping a suspended frame's re-tracking cursor safe (the #20 follow-up, F15) were refused: forward-pointer pinning (#32, built), H1 (built and measured), H2 (bounded by a control, not built) and H3 (unsound by reading) (#33). Provenance: 1.6.0 audit program, A1 rounds 2-4, 2026-10-11.
+
+| # | optimisation | result | mechanism |
+|---|---|---|---|
+| **32** | Forward-pointer link pinning for cursor safety (A1 round 2) | REJECTED -- every link freed under a COMPUTING target is withheld until depth 0, so 5000 temporaries in one run, or an effect owning 1000 computeds with maxLinks 1500, throw CapacityError where the pre-A1 tree passes | capacity is consumed by correctness bookkeeping; the cursor stack holds one slot per frame instead |
+| **33** | Cursor-safety alternatives H1-H3 (A1 round 3-4) | H1 savedCursor on the node REJECTED: bimodal, fanout64 up to x1.84, mux x3.7, +8 B/node. H2 Int32 index stack: bounded at x1.076 or worse by the stack-load-only control, not built. H3 derived cursor: unsound (untracked pulls, a node disposed during its own pull, and pre-walk pulls have no read position) | every variant tried with one per-frame memory write ran diamond >= x1.055 (unsafe local-save control x1.003); PRELIMINARY, noisy host (load 3.7-5). H5 (frameNode-narrowed pinning) is unbuilt and open |
 
 ---
 
