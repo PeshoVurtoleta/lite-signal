@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "task": "PLAN-F5-F6 TASK 8 (burst 7d FB1): OB (batch-early-run) census, plus the TASK 0 red-on-old evidence",
+  "provenance": {
+    "captured": "2026-10-12, Apple M4 Pro, Node v26.8.2, loadavg 2.19 2.34 2.13 (correctness counts only, no timing)",
+    "seed": "0xc0ffee",
+    "cycle": 0,
+    "worlds": 1000,
+    "tree": "HEAD 9c2aa7e + FB1 working-tree edits (exec, oracles, gates, lanes/batch, adapters/contract)",
+    "commands": [
+      "node --expose-gc bench/soak/_dev-run.mjs <kernel> <BATCH|ERROR> 1000  (official failingWorlds, checks performed incl. OB, FAIL lines)",
+      "node --expose-gc <scratch>/census.mjs bench/soak <kernel> <BATCH|ERROR> 1000  (scratch copy of the _dev-run world loop: seedFor(0xc0ffee, laneIndex, 0), worldSeed, isLargeWorld, generateWorld, runWorld; adds per-world checks.OB min and OB fail seeds)"
+    ]
+  },
+  "decision": "NO registry change: OB fires in 0 of 6000 worlds on every kernel (headpatched, tree a1r4 == HEAD Signal.js, 1.5.2). DIV-F5 shapes, the L-REV-152 BREACH set and divergences.json stay as they are.",
+  "noRegression": "every _dev-run FAIL line, failingWorlds count, scenario count and non-OB check total is byte-identical between the old exec (git archive HEAD) and the FB1 exec, for all 6 kernel x lane runs; only checks.OB is new",
+  "note": "minPerWorld counts failing worlds too (a world stops at its first failing op, so tree / 1.5.2 BATCH worlds that fail F5 early can carry 0 OB checks); minPerPassingWorld is the floor of a world that ran to its end",
+  "runs": {
+    "headpatched": {
+      "kernel": "bench/soak/controls/headpatched/Signal.js",
+      "BATCH": {
+        "worlds": 1000,
+        "kernelSha256": "fa2871f0",
+        "failingWorlds": 0,
+        "obFailWorlds": 0,
+        "obOnlyWorlds": 0,
+        "obFirstSeeds": [],
+        "obCoFails": {},
+        "checksOB": {
+          "total": 254520,
+          "minPerWorld": 217,
+          "minPerPassingWorld": 217,
+          "zeroWorlds": 0,
+          "zeroPassingWorlds": 0
+        }
+      },
+      "ERROR": {
+        "worlds": 1000,
+        "kernelSha256": "fa2871f0",
+        "failingWorlds": 764,
+        "obFailWorlds": 0,
+        "obOnlyWorlds": 0,
+        "obFirstSeeds": [],
+        "obCoFails": {},
+        "checksOB": {
+          "total": 46512,
+          "minPerWorld": 1,
+          "minPerPassingWorld": 57,
+          "zeroWorlds": 0,
+          "zeroPassingWorlds": 0
+        }
+      }
+    },
+    "tree": {
+      "kernel": "audit/2026-10-07/verification/kernels/a1r4/Signal.js",
+      "BATCH": {
+        "worlds": 1000,
+        "kernelSha256": "bfd063e5",
+        "failingWorlds": 1000,
+        "obFailWorlds": 0,
+        "obOnlyWorlds": 0,
+        "obFirstSeeds": [],
+        "obCoFails": {},
+        "checksOB": {
+          "total": 4932,
+          "minPerWorld": 0,
+          "minPerPassingWorld": null,
+          "zeroWorlds": 23,
+          "zeroPassingWorlds": 0
+        }
+      },
+      "ERROR": {
+        "worlds": 1000,
+        "kernelSha256": "bfd063e5",
+        "failingWorlds": 999,
+        "obFailWorlds": 0,
+        "obOnlyWorlds": 0,
+        "obFirstSeeds": [],
+        "obCoFails": {},
+        "checksOB": {
+          "total": 7449,
+          "minPerWorld": 0,
+          "minPerPassingWorld": 73,
+          "zeroWorlds": 196,
+          "zeroPassingWorlds": 0
+        }
+      }
+    },
+    "rev152": {
+      "kernel": "node_modules/lite-signal-1.5.2/Signal.js",
+      "BATCH": {
+        "worlds": 1000,
+        "kernelSha256": "f8dd50f8",
+        "failingWorlds": 1000,
+        "obFailWorlds": 0,
+        "obOnlyWorlds": 0,
+        "obFirstSeeds": [],
+        "obCoFails": {},
+        "checksOB": {
+          "total": 4932,
+          "minPerWorld": 0,
+          "minPerPassingWorld": null,
+          "zeroWorlds": 23,
+          "zeroPassingWorlds": 0
+        }
+      },
+      "ERROR": {
+        "worlds": 1000,
+        "kernelSha256": "f8dd50f8",
+        "failingWorlds": 999,
+        "obFailWorlds": 0,
+        "obOnlyWorlds": 0,
+        "obFirstSeeds": [],
+        "obCoFails": {},
+        "checksOB": {
+          "total": 7449,
+          "minPerWorld": 0,
+          "minPerPassingWorld": 73,
+          "zeroWorlds": 196,
+          "zeroPassingWorlds": 0
+        }
+      }
+    }
+  },
+  "task0": {
+    "claim": "the lying adapter (batch = fn => fn(); every other WORLD_METHODS method delegated to the lite world; the world object is never spread) is NOT caught by the old exec",
+    "oldExec": {
+      "tree": "git archive HEAD 9c2aa7e (exec.mjs sha256 cd4d21ae)",
+      "kernel": "bench/soak/controls/headpatched (fa2871f0)",
+      "lane": "BATCH",
+      "worlds": 64,
+      "lyingFailureNull": 64,
+      "liteFailureNull": 64
+    },
+    "newExec": {
+      "lyingFailureNull": 0,
+      "lyingOBFailWorlds": 64,
+      "lyingSigs": {
+        "OB:batch-early-run": 64
+      },
+      "liteFailureNull": 64,
+      "liteChecksOB": {
+        "total": 16178,
+        "minPerWorld": 229
+      }
+    },
+    "parityBaseline": "parity: OK (21 files match bench/soak/parity.json), exit 0",
+    "beforeSha256": {
+      "bench/soak/exec.mjs": "cd4d21ae2e28efbf926ebf905af469b7f4fcbf7b592fab0c6978a6cec63306c8",
+      "bench/soak/oracles.mjs": "8823cc50be449a252cab02dae6967a37b52887e2cd821c1adebc9e56f7ba683b",
+      "bench/soak/gates.mjs": "04a14905dcefc6867d301169ebbc049f12e2bc71a7bb8922e30df9fa4cd10fa7",
+      "bench/soak/lanes/batch.mjs": "eff24309242b524156fa86673f0c2c829e811008ed806d2512732cb7213dd7bd",
+      "bench/soak/adapters/contract.mjs": "a882dd1b091dde7b795f34651b976d0da52674bfe156ce2fa3e35048ee5e47f9",
+      "test/43-soak-model.test.mjs": "dbfbcaaa57a7e7b32b3a8e8e4c2d4294d114365027f65fbd62d85b0688933bea"
+    }
+  }
+}

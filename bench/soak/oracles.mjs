@@ -14,6 +14,8 @@
  *   O5   checkCounts / checkTeardown   per-kind counts, activeNodes, activeLinks in [E, E + 0] (G4)
  *   O6   checkEscape     the escape set of one guarded call equals the predicted set (tokens, CycleError)
  *   O7a  checkFire       a lifecycle callback fires only for a live registration on a live target
+ *   OB   checkBatchRun   an effect that already ran re-runs while a batch is open (exec decides when; the
+ *                        first run of an effect created inside a batch is synchronous by design, p2)
  *
  * COLD module.
  */
@@ -21,7 +23,7 @@
 import { Model } from './model.mjs';
 import { SoakThrow, sameValue, showValue } from './kinds.mjs';
 
-export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a']);
+export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'OB']);
 
 /** The sig vocabulary (SPEC-B section 6; escape-<origin> / escape-<Ctor> are open families). */
 export const SIGS = Object.freeze({
@@ -32,6 +34,7 @@ export const SIGS = Object.freeze({
     O5: ['node-count', 'kind-count', 'link-count', 'teardown-residue'],
     O6: ['escape-*', 'expected-escape-missing', 'equals-mutated', 'escape-empty'],
     O7a: ['dead-registration-fire'],
+    OB: ['batch-early-run'],
 });
 
 const DETAIL_MAX = 240;
@@ -173,6 +176,11 @@ export function checkEscape(pred, got, cycle) {
     }
     if (cycle && !cycleSeen) out.push({ oracle: 'O6', sig: 'expected-escape-missing', detail: 'predicted CycleError did not happen' });
     return out;
+}
+
+/** OB: effect i (it had already run) re-ran while `depth` batches were open. Always a failure. */
+export function checkBatchRun(i, depth) {
+    return { oracle: 'OB', sig: 'batch-early-run', detail: cut('effect#' + i + ' re-ran inside an open batch (depth ' + depth + ')') };
 }
 
 /** O7a: lifecycle registration r just fired. */

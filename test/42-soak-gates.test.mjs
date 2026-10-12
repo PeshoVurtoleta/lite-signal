@@ -249,7 +249,8 @@ test('oracleFamily: O1c/O1e -> O1, O7a -> O7, every S1 oracle maps, an unknown o
     assert.equal(G.oracleFamily('O1c'), 'O1');
     assert.equal(G.oracleFamily('O1e'), 'O1');
     assert.equal(G.oracleFamily('O7a'), 'O7');
-    for (const o of ORACLES) assert.match(G.oracleFamily(o), /^O[0-9]$/, o);
+    for (const o of ORACLES) assert.match(G.oracleFamily(o), /^O(?:[0-9]|B)$/, o);
+    assert.equal(G.oracleFamily('OB'), 'OB');
     for (const o of CHECK_NAMES) G.oracleFamily(o);
     assert.throws(() => G.oracleFamily('O9'), TypeError);
     assert.throws(() => G.oracleFamily(undefined), TypeError);

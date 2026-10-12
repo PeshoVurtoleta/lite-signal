@@ -50,8 +50,9 @@ function bad(msg) { throw new GateInputError(msg); }
 
 /* ---- oracle families ------------------------------------------------------------------------------ */
 
-// O1c/O1e are one family (O1), O7a is the S1 slice of O7. BREACH dedupe and failureCounts use the family.
-const FAMILY = Object.freeze({ O1c: 'O1', O1e: 'O1', O2: 'O2', O4: 'O4', O5: 'O5', O6: 'O6', O7a: 'O7' });
+// O1c/O1e are one family (O1), O7a is the S1 slice of O7, OB (batch-early-run, F5) is its own family.
+// BREACH dedupe and failureCounts use the family.
+const FAMILY = Object.freeze({ O1c: 'O1', O1e: 'O1', O2: 'O2', O4: 'O4', O5: 'O5', O6: 'O6', O7a: 'O7', OB: 'OB' });
 
 /** The reporting family of an oracle id. An unknown id throws (fail closed: never a silent bucket). */
 export function oracleFamily(oracle) {
@@ -296,6 +297,7 @@ export const GATES = Object.freeze([
             { input: { failingWorlds: 1, failureCounts: { 'O1:computed-mismatch': 1 } }, expect: F, why: 'one failing world' },
             { input: { failingWorlds: 0, failureCounts: { 'O6:escape-computed': 2 } }, expect: F, why: 'a failure count with no failing world is still red' },
             { input: { failureCounts: {} }, expect: F, why: 'a missing failingWorlds is not zero' },
+            { input: { failingWorlds: 1, failureCounts: { 'OB:batch-early-run': 1 } }, expect: F, why: 'an effect re-ran inside an open batch (OB, F5)' },
         ]),
     }),
     Object.freeze({

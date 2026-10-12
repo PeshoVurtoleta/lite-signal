@@ -367,7 +367,7 @@ const { createHash: qHash } = await import('node:crypto');
 const vm = await import('node:vm');
 const { MAX_DEPTH } = await import('../bench/soak/gen.mjs');
 const qScript = (ops, lane) => ({ genVersion: 1, lane: lane || 'GRAPH', seed: 1, large: false, covOff: null, flushPasses: null, ops });
-const ZERO_CHECKS = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0 };
+const ZERO_CHECKS = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, OB: 0 };
 const ZERO_SKIPS = { O1c: 0, O1e: 0, O2: 0, O4: 0 };
 
 // mutants (kinds.mjs normalizeEscape): `e.errors.length > 0` -> `> 1` (a one-leaf AggregateError stays
@@ -726,4 +726,143 @@ test('7b F3 behaviour: every large GRAPH world builds ONE linked chain of exactl
         const n = chainOf(generateWorld(d, s)).len;
         assert.ok(n === 0 || (n >= 16 && n <= 24), 'normal seed ' + s + ' chain length ' + n);
     }
+});
+
+/* ==== F5 (burst 7d, PLAN-F5-F6 TASK 7): the HARD oracle OB, sig batch-early-run ============================== */
+/*
+ * An effect that ALREADY ran must not re-run while a batch is open (exec batchDepth > 0); the first run of an
+ * effect created inside a batch is synchronous by design (p2). OB is PERFORMED once per outermost batch whose
+ * close-flush re-ran >= 1 effect. The lying adapter delegates every WORLD_METHODS method to the lite world and
+ * overrides only batch (fn => fn()); it never spreads the world object. Revert-check (old exec, burst 7d task 0):
+ * the lying adapter passes 64/64 BATCH worlds there (failure null), so these tests are red on the old exec.
+ * Mutants (scratch copies): the OB check moved out of the `runs > 0` branch (F5 A2 red); OB dropped from
+ * lanes/batch hardOracles, CHECK_NAMES, ORACLE_CAPS or the oracle gate's mustFail (F5 wiring red).
+ */
+
+const { WORLD_METHODS: f5Methods, ORACLE_CAPS: f5OracleCaps, applicability: f5Applicability } = await import('../bench/soak/adapters/contract.mjs');
+const { CHECK_NAMES: f5CheckNames, SKIP_NAMES: f5SkipNames } = await import('../bench/soak/exec.mjs');
+const { GATES: f5Gates, oracleFamily: f5Family } = await import('../bench/soak/gates.mjs');
+const { seedFor: f5SeedFor, worldSeed: f5WorldSeed } = await import('../bench/soak/seeds.mjs');
+const { isLargeWorld: f5IsLarge } = await import('../bench/soak/lanes/index.mjs');
+
+/** A delegating adapter: every world method forwards to the lite world; `over(w)` replaces some of them. */
+function f5Adapter(over) {
+    return {
+        name: liteAdapter.name, caps: liteAdapter.caps,
+        version: () => liteAdapter.version(), files: () => liteAdapter.files(),
+        open(o) {
+            const w = liteAdapter.open(o);
+            const out = {};
+            for (const m of f5Methods) out[m] = (...a) => w[m](...a);
+            const patch = over(w);
+            for (const m of Object.keys(patch)) out[m] = patch[m];
+            return out;
+        },
+    };
+}
+const f5Lying = f5Adapter(() => ({ batch: (fn) => fn() }));
+const f5A1 = [{ o: 'sig', i: 0, v: 0 }, { o: 'eff', i: 1, spec: { k: 'sum', d: [0] } },
+    { o: 'batch', body: [{ o: 'set', i: 0, v: 1 }, { o: 'set', i: 0, v: 2 }] }];
+const f5A2 = [{ o: 'sig', i: 0, v: 0 },
+    { o: 'batch', body: [{ o: 'set', i: 0, v: 1 }, { o: 'eff', i: 1, spec: { k: 'sum', d: [0] } }, { o: 'set', i: 0, v: 2 }] }];
+
+test('F5 A1: one deferred re-run is one performed OB on lite; the lying adapter fails OB at the batch step', () => {
+    let bodies = 0;
+    const counting = f5Adapter((w) => ({ effect: (fn) => w.effect(() => { bodies++; return fn(); }) }));
+    const lite = runWorld(counting, qScript(f5A1, 'BATCH'));
+    assert.equal(lite.failure, null, JSON.stringify(lite.failure));
+    assert.equal(lite.checks.OB, 1);
+    assert.equal(bodies, 2, 'eff#1 ran at creation and once at the batch close');
+    const lying = runWorld(f5Lying, qScript(f5A1, 'BATCH'));
+    assert.notEqual(lying.failure, null, 'a batch that defers nothing must fail OB');
+    assert.equal(lying.failure.step, 2);
+    assert.deepEqual(lying.failure.fails.map((f) => ({ oracle: f.oracle, sig: f.sig })), [{ oracle: 'OB', sig: 'batch-early-run' }]);
+    assert.match(lying.failure.fails[0].detail, /^effect#1 re-ran inside an open batch \(depth 1\)$/);
+    assert.equal(lying.checks.OB, 0, 'nothing re-ran in a close-flush: no OB performed');
+});
+
+test('F5 A2: an effect created inside a batch runs its first body there (allowed); its deferred re-run counts OB', () => {
+    const r = runWorld(liteAdapter, qScript(f5A2, 'BATCH'));
+    assert.equal(r.failure, null, JSON.stringify(r.failure));
+    assert.equal(r.checks.OB, 1);
+    // a batch with nothing to defer is not evidence: no-op batch, writes nobody reads
+    const quiet = runWorld(liteAdapter, qScript([{ o: 'sig', i: 0, v: 0 }, { o: 'batch', body: [] }, { o: 'batch', body: [{ o: 'set', i: 0, v: 3 }] }], 'BATCH'));
+    assert.equal(quiet.failure, null, JSON.stringify(quiet.failure));
+    assert.equal(quiet.checks.OB, 0);
+});
+
+test('F5 A3: 64 BATCH worlds -- lite: 0 OB fails and >= 1 performed OB per world; lying: 64/64 fail OB', () => {
+    const d = laneByName('BATCH');
+    const cs = f5SeedFor(0xC0FFEE, d.index, 0);
+    let liteOk = 0, lyingOB = 0, minOB = Infinity;
+    for (let w = 0; w < 64; w++) {
+        const script = generateWorld(d, f5WorldSeed(cs, w), { large: f5IsLarge(d, w) });
+        const a = runWorld(liteAdapter, script);
+        if (a.failure === null) liteOk++;
+        if (a.checks.OB < minOB) minOB = a.checks.OB;
+        const b = runWorld(f5Lying, script);
+        if (b.failure !== null && b.failure.fails.some((f) => f.oracle === 'OB' && f.sig === 'batch-early-run')) lyingOB++;
+    }
+    assert.equal(liteOk, 64);
+    assert.ok(minOB >= 1, 'min performed OB per world ' + minOB);
+    assert.equal(lyingOB, 64);
+});
+
+test('F5 wiring: OB is a check name (not a skip name), an oracle with its sig, a BATCH hard oracle, needs cap batch, family OB', () => {
+    assert.ok(f5CheckNames.includes('OB'), 'CHECK_NAMES');
+    assert.ok(!f5SkipNames.includes('OB'), 'OB skips nothing: not a SKIP_NAMES oracle');
+    assert.ok(O.ORACLES.includes('OB'));
+    assert.deepEqual(O.SIGS.OB, ['batch-early-run']);
+    assert.deepEqual(O.checkBatchRun(3, 2), { oracle: 'OB', sig: 'batch-early-run', detail: 'effect#3 re-ran inside an open batch (depth 2)' });
+    assert.ok(laneByName('BATCH').hardOracles.includes('OB'), 'BATCH hardOracles (the check floor counts it)');
+    for (const lane of ['GRAPH', 'ERROR', 'NEST']) assert.ok(!laneByName(lane).hardOracles.includes('OB'), lane + ': OB runs, no floor');
+    assert.deepEqual(f5OracleCaps.OB, ['batch']);
+    assert.ok(f5Applicability(laneByName('BATCH'), Object.assign({}, liteAdapter.caps, { batch: 'no' })).oraclesNA.includes('OB'));
+    assert.ok(!f5Applicability(laneByName('BATCH'), liteAdapter.caps).oraclesNA.includes('OB'));
+    assert.equal(f5Family('OB'), 'OB');
+    const gate = f5Gates.find((g) => g.id === 'oracle');
+    const ob = gate.mustFail.filter((m) => Object.keys(m.input.failureCounts || {}).some((k) => k.indexOf('OB:') === 0));
+    assert.equal(ob.length, 1, 'the oracle gate carries an OB must-fail control (amendment 9)');
+    assert.equal(gate.check(ob[0].input).verdict, ob[0].expect);
+    assert.notEqual(gate.check(ob[0].input).verdict, gate.check(gate.pass[0]).verdict);
+});
+
+// mutant (exec.mjs runBody): `if (this.effReruns < COUNTER_CAP)` dropped -- the per-world re-run counter leaves
+// the 31-bit Smi range. Scratch copy of exec.mjs with an appended export, as in the qa counter-cap test.
+test('F5 effReruns saturates at 0x3FFFFFFF; a saturated counter never fakes a performed OB', async () => {
+    const SOAK_URL = qToUrl(SOAK).href + '/';
+    const src = qfs.readFileSync(join(SOAK, 'exec.mjs'), 'utf8')
+        .replace(/from '\.\.\//g, "from '" + SOAK_URL + '../').replace(/from '\.\//g, "from '" + SOAK_URL);
+    const dir = qfs.mkdtempSync(join(qos.tmpdir(), 'soak-f5-exec-'));
+    try {
+        const file = join(dir, 'exec-f5.mjs');
+        qfs.writeFileSync(file, src + '\nexport { Exec as __F5Exec };\n');
+        const { __F5Exec } = await import(qToUrl(file).href);
+        const CAP = 0x3FFFFFFF;
+        const script = qScript(f5A1.concat([{ o: 'set', i: 0, v: 5 }, { o: 'set', i: 0, v: 6 }]), 'BATCH');   // 3 re-runs
+        const x = new __F5Exec(liteAdapter, script, {});
+        x.effReruns = CAP - 1;   // the batch-close re-run is the crossing: a real witness, counted once
+        const r = x.run();
+        assert.equal(r.failure, null, JSON.stringify(r.failure));
+        assert.equal(x.effReruns, CAP, 'three re-runs from CAP - 1 stop at CAP');
+        assert.equal(r.checks.OB, 1);
+        const y = new __F5Exec(liteAdapter, script, {});
+        y.effReruns = CAP;
+        const s = y.run();
+        assert.equal(s.failure, null, JSON.stringify(s.failure));
+        assert.equal(y.effReruns, CAP);
+        assert.equal(s.checks.OB, 0, 'the batch close re-ran eff#1, but the saturated counter cannot witness it: fewer checks, never a fake one');
+    } finally {
+        qfs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+// mutant (exec.mjs runBatch): the `this.closeMark >= 0` guard dropped -- closeMark stays -1 when the engine never
+// invokes the batch callback, so `effReruns > closeMark` would count a performed OB with no batch close witnessed.
+test('F5 a batch whose callback never ran performs no OB (closeMark stays -1: no witness, no check)', () => {
+    const silent = f5Adapter(() => ({ batch: () => {} }));   // never calls fn: the body never runs, model untouched
+    const r = runWorld(silent, qScript(f5A1.concat([{ o: 'set', i: 0, v: 7 }, { o: 'batch', body: [{ o: 'set', i: 0, v: 9 }] }]), 'BATCH'));
+    assert.equal(r.failure, null, JSON.stringify(r.failure));
+    assert.equal(r.checks.OB, 0, 'no callback ran, so no close-flush was witnessed');
+    assert.equal(runWorld(liteAdapter, qScript(f5A1, 'BATCH')).checks.OB, 1, 'control: the same world on lite performs OB');
 });

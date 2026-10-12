@@ -109,7 +109,7 @@ function step(g) {
 export const BATCH = Object.freeze({
     name: 'BATCH',
     needsCaps: Object.freeze(['batch']),
-    hardOracles: Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6']),
+    hardOracles: Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'OB']),
     required: Object.freeze(['revert-after-mid-read', 'revert-no-read', 'nested-close', 'throw-in-batch', 'effect-created-mid-batch', 'multi-write-same-signal']),
     optional: Object.freeze([]),
     scenCaps: Object.freeze({

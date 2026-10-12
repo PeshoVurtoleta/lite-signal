@@ -18,6 +18,10 @@
  *   taint         model.kill() taints observers that read a disposed node; a run in progress during a
  *                 disposal is tainted until it ends (taint clears only for a run entirely after it)
  *   at rest       O1e + O4 every op, O5 every op, O1c when the op's chk bit is set and at world end
+ *   batch         OB inline: an effect that ALREADY ran must not re-run while a batch is open (batchDepth > 0;
+ *                 a first run inside a batch is allowed, p2). OB is PERFORMED once per outermost batch whose
+ *                 close-flush re-ran >= 1 effect (a witnessed deferral); a batch with nothing to defer is
+ *                 not evidence
  *
  * A world stops at the first op with any failure; every oracle that fired on that op is reported.
  * COLD module.
@@ -33,7 +37,7 @@ const NONE = Symbol('none');
 const END_CHECK_SALT = 0x5bd1e995;
 
 /** Oracles counted when PERFORMED (a skipped check is never counted as one). */
-export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a']);
+export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'OB']);
 /** Oracles that skip tainted nodes; each skip is counted per oracle (S1c gates a taint-skip ratio). */
 export const SKIP_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4']);
 const COUNTER_CAP = 0x3FFFFFFF;   // per-world counters stay Smi (S7: [2^30, 2^31) boxes on pointer-compressed V8)
@@ -67,9 +71,11 @@ class Exec {
         this.regActions = new Map();
         this.ran = new Set();
         this.D = new Detectors(this);
-        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0 };
+        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, OB: 0 };
         this.skipTainted = { O1c: 0, O1e: 0, O2: 0, O4: 0 };
         this.gateHits = { batchTokenEscaped: 0 };   // guards whose escape carried the throw-in-batch token
+        this.effReruns = 0;    // effect re-runs (runs > 0) in this world, capped at COUNTER_CAP (OB evidence)
+        this.closeMark = -1;   // effReruns when the outermost batch's callback returned; -1 = no batch closing
         this.stepFails = [];
         this.opsRun = 0;
         this.opsByClass = Object.create(null);
@@ -271,24 +277,34 @@ class Exec {
     /* ---- batch ----------------------------------------------------------------------------------- */
 
     runBatch(body, thr, g, k) {
-        this.W.batch(() => {
-            this.batchDepth++;
-            const depth = this.batchDepth;
-            this.D.onBatchEnter(depth);
-            let wrote = false;
-            try {
-                for (const s of body) if (this.applySub(s, g, k)) wrote = true;
-                if (thr) {
-                    const t = new SoakThrow('batch', k);
-                    g.batchTok = t.token;
-                    this.D.onBatchThrow(wrote);
-                    throw t;
+        const outer = this.batchDepth === 0;
+        try {
+            this.W.batch(() => {
+                this.batchDepth++;
+                const depth = this.batchDepth;
+                this.D.onBatchEnter(depth);
+                let wrote = false;
+                try {
+                    for (const s of body) if (this.applySub(s, g, k)) wrote = true;
+                    if (thr) {
+                        const t = new SoakThrow('batch', k);
+                        g.batchTok = t.token;
+                        this.D.onBatchThrow(wrote);
+                        throw t;
+                    }
+                } finally {
+                    this.batchDepth--;
+                    this.D.onBatchExit(depth, wrote);
+                    if (outer && depth === 1) this.closeMark = this.effReruns;   // the close-flush starts after this
                 }
-            } finally {
-                this.batchDepth--;
-                this.D.onBatchExit(depth, wrote);
+            });
+        } finally {
+            // OB performed: >= 1 effect re-ran in this batch's close-flush (a deferral the engine really made)
+            if (outer) {
+                if (this.closeMark >= 0 && this.effReruns > this.closeMark) this.did('OB');
+                this.closeMark = -1;
             }
-        });
+        }
     }
 
     applySub(s, g, k) {
@@ -416,7 +432,11 @@ class Exec {
             else if (this.topRead === -1) pre = 1;
             else if (this.topRead !== i) pre = 2;
         }
-        if (nd.t === 'e' && nd.runs > 0) M.killChildren(i);
+        if (nd.t === 'e' && nd.runs > 0) {
+            M.killChildren(i);
+            if (this.effReruns < COUNTER_CAP) this.effReruns++;
+            if (this.batchDepth > 0) this.failF(O.checkBatchRun(i, this.batchDepth));   // OB: a re-run inside an open batch
+        }
         let prev = null;
         if (nd.links !== null) {
             prev = [];
