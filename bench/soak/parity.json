@@ -1,0 +1,22 @@
+{
+  "files": {
+    "Signal.js": "bfd063e5773c550887535059bbf6934f8058d0f60337de0686b89e156a678b1a",
+    "Watch.js": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d",
+    "bench/soak/kinds.mjs": "47a9dbb92967773d3ad07dcc23d89615ea4625cba65287af4f8994bef5648cfb",
+    "bench/soak/model.mjs": "6269d8b3f6fa89a5c88027b2807755c2c4d498de6190313b1670e2e3b51e35a7",
+    "bench/soak/oracles.mjs": "8823cc50be449a252cab02dae6967a37b52887e2cd821c1adebc9e56f7ba683b",
+    "bench/soak/exec.mjs": "e9979e55c493fd8740d04e237abd4e46ea415df09ef6d355e32c5e430aae000f",
+    "bench/soak/gen.mjs": "2318d2632b3702000278e7e1e0bf2eb5792708240e6ea75b3aad5509825fdda2",
+    "bench/soak/scenarios.mjs": "a28f304c05e147b5e1e0848e41d83ad5862d116a645ae9d2f70e4762e1ca2bc7",
+    "bench/soak/lanes/index.mjs": "a89ad2bc76b4b7e8d5c80602346b8686f973a9688086b3af9fd1c42cbd4030a6",
+    "bench/soak/lanes/graph.mjs": "e53705d39a3b0fc3359f62cdc7f5679a86c90036cc18a67ce0256aeea584abe4",
+    "bench/soak/lanes/batch.mjs": "eff24309242b524156fa86673f0c2c829e811008ed806d2512732cb7213dd7bd",
+    "bench/soak/lanes/error.mjs": "8746bcec3971490be1fbbc88272f17692aa3358e57b00010ae958e85c18f44fa",
+    "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
+    "bench/soak/gates.mjs": "04a14905dcefc6867d301169ebbc049f12e2bc71a7bb8922e30df9fa4cd10fa7",
+    "bench/soak/boundary.mjs": "ab9e0c140ccbb01698678e28e3b988e377cb66af61c9e7a0cb2e3637b1e8c6de",
+    "bench/soak/divergences.mjs": "df99c3adf247aeb7b5b0290ef72aeed2221aee89cd360f0340cb27efebb938a2",
+    "bench/soak/divergences.json": "2a68cdf6f7a135a3cda3b74e540767033fe034907db06b36eda85cc9a4a53146",
+    "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8"
+  }
+}

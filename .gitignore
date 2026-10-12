@@ -16,3 +16,6 @@ node_modules/
 !/bench/tmp/
 !/test/devtools-probe/
 !/bench/bench-runs-reactive/
+/audit/
+/bench/soak/out/
+/.handoff/

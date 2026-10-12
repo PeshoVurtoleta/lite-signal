@@ -1,7 +1,9 @@
 /**
- * bench/torture/dispose-torture.mjs — Symbol.dispose on lifecycle objects (1.9.0).
+ * bench/torture/dispose-torture.mjs -- Symbol.dispose on lifecycle objects (1.10.0).
+ * (1.9.0 before the 2026-10-10 renumbering: 1.6.0 ships without the
+ * candidate-line features, which move up one minor.)
  *
- * 1.9.0 stamps Symbol.dispose at FIVE sites so lifecycle objects work with the
+ * 1.10.0 stamps Symbol.dispose at FIVE sites so lifecycle objects work with the
  * TC39 `using` declaration: the registry (-> destroy), an effect's stop handle
  * (-> stop), a createScope disposer (-> dispose), a createRoot disposer, and
  * both box prototypes (-> dispose). No new export — it is a set of stamped
@@ -50,7 +52,7 @@ if (typeof Symbol.dispose !== "symbol") {
 // each stamp site is tested individually below, and if the gate keyed off the same
 // site as an assertion, removing that stamp would make the file SKIP instead of
 // FAIL. The box prototype is the most stable stamp and its presence is a clean
-// proxy for "this is 1.9.0+". (An earlier draft gated on the registry stamp and
+// proxy for "this is 1.10.0+". (An earlier draft gated on the registry stamp and
 // was blind to a registry-stamp regression for exactly this reason.)
 {
     let stamped = false;
@@ -60,7 +62,7 @@ if (typeof Symbol.dispose !== "symbol") {
         stamped = typeof box[Symbol.dispose] === "function";
     } catch { stamped = false; }
     if (!stamped) {
-        console.log("lite-signal dispose torture — SKIP: Symbol.dispose stamping requires 1.9.0+");
+        console.log("lite-signal dispose torture -- SKIP: Symbol.dispose stamping requires 1.10.0+");
         process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
     }
 }

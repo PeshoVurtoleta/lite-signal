@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "about": "Revert-control kernels for the lite-signal soak (SPEC-B v2 section 1 controls.json, TASK 0a/0b). A control matches a loaded kernel only when BOTH sha256 pins match (kernel.mjs KERNEL_KNOWN_AS -> header.controls.name). A control whose bytes drifted is a MISS, never a skip. Every control is a directory holding Signal.js + Watch.js (Signal.js re-exports ./Watch.js; Watch.js imports ./Signal.js).",
+  "controls": [
+    {
+      "name": "rev152",
+      "dir": "node_modules/lite-signal-1.5.2",
+      "version": "1.5.2",
+      "sha256": {
+        "Signal.js": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+        "Watch.js": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d"
+      },
+      "role": "L-REV-152: the published 1.5.2. The soak MUST FAIL it.",
+      "recipe": "exact alias devDependency \"lite-signal-1.5.2\": \"npm:@zakkster/lite-signal@1.5.2\"; node_modules/lite-signal-1.5.2/package.json must read version 1.5.2. Byte-identical to git show ec36ab8:Signal.js / :Watch.js (the 1.5.2 release commit)."
+    },
+    {
+      "name": "headpatched",
+      "dir": "bench/soak/controls/headpatched",
+      "version": "1.5.2+audit-2026-10-07-patch",
+      "sha256": {
+        "Signal.js": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+        "Watch.js": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d"
+      },
+      "role": "L-REV-AUDIT (must FAIL NEST, and W5 from S2) and L-P-INTERIM (clean kernel for GRAPH, BATCH and ERROR only).",
+      "recipe": "git show ec36ab833287456d14be6a79bf1ec5b14e5ec192:Signal.js > Signal.js; patch -p1 < audit/2026-10-07/lite-signal-fixes.patch (sha256 23559dbe77df0703667c68e9ab70f133093bbcddaf00ab535b83316ede09be88); git show ec36ab833287456d14be6a79bf1ec5b14e5ec192:Watch.js > Watch.js. Frozen in-repo because /audit/ is git-ignored and CI cannot rebuild it.",
+      "fixture": "byte-frozen; never edited. ASCII-only as of 2026-10-10 (0 non-ASCII bytes in both files)."
+    }
+  ],
+  "notes": [
+    "The working tree is NOT a control: it moves with every Phase A fix and is pinned by parity.json. Its TASK 0 snapshot hash is in calibration/task0.json."
+  ]
+}

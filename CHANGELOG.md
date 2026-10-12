@@ -4,6 +4,78 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+One engine simplification (LEDGER #30, "observer-fold") plus dev-only gate work: the gate gaps
+closed after the link-SoA fork (LEDGER #27) passed the gates while costing +10-39% on four
+shapes, and a gate-1 conformance runner. `Signal.d.ts`
+and `Watch.js` are untouched; `Signal.js` changes only the tracking-flag fold described
+below (no API, no behavior change); nothing else in the published `files[]` changes except
+`README.md`.
+
+### Changed -- engine: `isTrackingDeps` folded into `currentObserver` (LEDGER #30)
+
+The separate `isTrackingDeps` boolean is gone. Tracking is now on iff
+`currentObserver !== null` -- the flag and the observer pointer were always set and cleared
+together, so the flag was pure redundancy in every hot read body. The read fast-paths
+(`signal`/`computed` closures, `boxGet`/`boxComputedGet`) drop one guard, and
+`executeEffect`/`pullComputed` drop two context stores per run. `untrack` and the
+`subscribe` callbacks (callable and box) now null the observer for their window and restore
+it gen-safely -- the observer is put back only if it survived the window
+(`po.gen === pg`), mirroring `disposeNode`'s self-dispose guard so a body that disposes its
+own observer inside `untrack` never re-seats a recycled slot. Equivalent to the measured
+`futureVersions/K1-candidate-30.diff` (0 per-test conformance diffs, cold-process bench
+2-10% faster). New standing witness `test/torture.mjs` (`npm run test:torture`) gates the
+two hot paths at 0 B/op with maxMajor 0, the create/dispose cycle back to baseline, and the
+effect-self-disposes-inside-untrack case; `@zakkster/lite-leak` joins as a devDependency
+(runtime `dependencies` stay empty). Boundary suite `test/34-observer-fold.test.mjs` (24
+cases: the `isTracking()` truth table, untrack depth 0..64, throwing untrack, self-dispose
+inside untrack including slot recycling, subscribe self-dispose, createRoot / runWithOwner
+inside untrack, nested-subscribe ownership, 1e4-cycle churn with a resident delta of 38 KB).
+Pipeline: planner -> coder -> reviewer (rejected once, on docs) -> qa, all green.
+
+### Added -- gate 1 runner `harness/conformance.mjs` (`node harness/run.mjs conformance [A] [B]`)
+
+Runs the lite column of the external johnsoncodehk reactive-framework-test-suite (178
+conformance + 18 behavioral cases, `REACTIVE_SUITE_PATH`) against one or two engines under the
+suite's own `vite-node`, and prints a PER-TEST diff (a candidate that fixes one case and
+breaks another keeps the same total). #179 is the documented absorption contract (LEDGER
+#15). Exit 0 / 1 (difference) / 2 (suite or engine missing -- fail closed). Ported from the
+LiteSignalExperimental fork's `harness/reactive-suite/run.mjs`, which counted pass/fail only.
+
+### Added -- two VersionMatrix workloads
+
+- `mux` (256 inputs -> one sum computed -> one effect): the long dep-list walk that exposed
+  #10 and #12, absent from the five original workloads.
+- `effect-fanout` (one source -> 512 effects): the effect-dense flush (bar 1b). The resident
+  `broadcast-fanout` is a KAIROS shape that runs ONE effect per write, so it could not see
+  an `executeEffect` / flush-loop regression.
+
+### Added -- `harness/layout-ab.mjs` (`node harness/run.mjs layout [A] <B>`)
+
+The instrument that caught #27, made permanent. One cold child process per cell, A/B order
+alternated per rep; eight shapes; a 1e3-1e5 size sweep of a resident graph that states the crossover; a
+resident-memory lane (`heapUsed + arrayBuffers`, forced full-GC time) including both sides
+of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gate.
+
+### Changed -- fail closed
+
+- `harness/VersionMatrix/gate.mjs`: a floor or rolling capture missing for any manifest
+  workload is now `NO EVIDENCE` (exit 3, recapture). It used to pass that axis vacuously,
+  so a newly added workload gated nothing.
+- Memory witnesses now count `heapUsed + arrayBuffers`, because `heapUsed` cannot see
+  typed-array backing stores: the torture retention witnesses (`torture-soak`,
+  `graph-fuzzer`, `scheduler-bench`, via the new `helpers.residentBytes()`), the zero-GC
+  tests `04` and `09`, and the microscope's heap column. The perf-gate lane already judged
+  `arrayBuffersKB`.
+
+### Docs
+
+`LEDGER.md` gains the laws' size-axis and allocation-site corollaries, Law 7 (creation cost
+is survival, not allocation), section G (#27 / #28 and the independent re-measure), section
+H (the 2026-09 weak-point analysis of Andrii's harness: #29 rejected, #30 candidate, #31
+null), and the new gate rules. README's VersionMatrix section lists all seven workloads.
+
 ## [1.5.2] -- 2026-09-19
 
 Dev-only session: a standing, self-validating zero-GC judge. `Signal.js` is

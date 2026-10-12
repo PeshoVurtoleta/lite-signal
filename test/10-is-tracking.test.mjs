@@ -1,10 +1,12 @@
 // isTracking(): observer-context predicate for lazy-allocation wrappers.
 //
 // Returns true iff a read RIGHT NOW would record a dependency on this
-// registry. Mirrors the engine's own read-trap check
-// (`isTrackingDeps && currentObserver !== null`) so callers stay in
-// lockstep with what the engine actually does — not just whether an
-// observer body is on the stack.
+// registry. Mirrors the engine's own read-trap check -- tracking is on
+// iff `currentObserver !== null` (LEDGER #30 folded the old separate
+// `isTrackingDeps` flag into the observer pointer; they were always set
+// and cleared together). untrack nulls the observer for its window, so
+// this predicate stays in lockstep with what the engine actually does --
+// not just whether an observer body is on the stack.
 //
 // Use case: wrappers like lite-store / lite-query / lite-form that want
 // to allocate reactive primitives lazily on property reads. Without this
@@ -47,9 +49,9 @@ describe("registry.isTracking() — true inside observer bodies", () => {
 
 describe("registry.isTracking() — false in untracked windows", () => {
     it("returns false inside untrack()", () => {
-        // The case that catches an observer-only misimplementation: untrack
-        // clears isTrackingDeps but leaves currentObserver set, so a
-        // currentObserver-only predicate would false-positive here.
+        // The case that pins the untrack contract: untrack NULLS
+        // currentObserver for its window (gen-safe restore afterwards), so
+        // the `currentObserver !== null` predicate reads false in here.
         let inside = true;
         const stop = r.effect(() => { r.untrack(() => { inside = r.isTracking(); }); });
         assert.equal(inside, false);
@@ -68,9 +70,9 @@ describe("registry.isTracking() — false in untracked windows", () => {
     });
 
     it("returns false inside an onCleanup body", () => {
-        // runCleanup clears BOTH currentObserver and isTrackingDeps; this
-        // test pins the runCleanup contract against a future refactor that
-        // drops the cleanup-time clearing.
+        // runCleanup nulls currentObserver (and currentOwner) for the
+        // cleanup body; this test pins the runCleanup contract against a
+        // future refactor that drops the cleanup-time nulling.
         let inside = true;
         const stop = r.effect(() => { r.onCleanup(() => { inside = r.isTracking(); }); });
         stop();

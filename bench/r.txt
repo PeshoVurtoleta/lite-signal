@@ -1,13 +1,13 @@
-zakkster@MacBook-Pro bench % node --expose-gc report.mjs
+zakkster@MacBook-Pro bench % node report.mjs
 ==============================================================================================
  @zakkster/lite-signal -- REACTIVITY MIRROR (cross-framework, Andrii's canonical adapter)
 ==============================================================================================
 
 Protocol : isolated-per-row   reps: 10
-Host     : Apple M4 Pro  darwin/arm64  node v26.3.1
-Engine   : sha256 1b7f332d6e55edcce9cfe3afa525e14db95521bc69ead0cf748d6d505f7e6d7f
+Host     : Apple M4 Pro  darwin/arm64  node v26.8.2
+Engine   : sha256 bfd063e5773c550887535059bbf6934f8058d0f60337de0686b89e156a678b1a
 Adapter  : {"maxNodes":131072,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"grow"}  (lazy prealloc, default eager flush -- his config verbatim)
-Generated: 2026-07-17T04:07:00.760Z
+Generated: 2026-10-11T23:57:38.579Z
 
 Every row was measured in its OWN cold process (isolated-per-row), engines run in
 round-robin across reps, and a sentinel re-measure gated host drift. The counters
@@ -18,53 +18,53 @@ round-robin across reps, and a sentinel re-measure gated host drift. The counter
 EXECUTION TIME (median across reps, ms; lower is better)
 ----------------------------------------------------------------------------------------------
 test                                                            lite     alien   lite vs alien
-64x6 - 4 sources - dynamic - read 12% (dashboard selecti      194.36    172.65   -12.6%  alien
-24x8 - 3 sources - dynamic - read 40% (editor derived st      276.83    248.27   -11.5%  alien
-120x7 - 5 sources - dynamic - read 18% (kanban board)         164.88    147.62   -11.7%  alien
-40x10 - 4 sources - dynamic - read 60% (entity detail pa      361.62    329.88   -9.6%  alien
-256->512x32 - fanIn 4 - layered-dag - 4 sources (layered       45.55     34.83   -30.8%  alien
-256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 3       44.73     33.96   -31.7%  alien
-256->512x32 - fanIn 8 - layered-dag - 8 sources - burst       601.03    354.94   -69.3%  alien
-256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm         4.62      3.90   -18.5%  alien
-32x8 - 4 sources - pull (pure pull)                             0.85      0.45   -90.0%  alien
-8x64 - 1 sources - pull (linear chain - 1 source - pull         0.93      0.69   -35.8%  alien
-64x4 - 8 sources - pull (wide tree - 8 sources - pull (b        0.91      0.40   -127.5%  alien
-32x8 - 4 sources - push (pure push)                            87.25     74.41   -17.3%  alien
-10x5 - 2 sources - read 20% (simple component)                134.33    114.93   -16.9%  alien
-10x10 - 6 sources - dynamic - read 20% (dynamic componen      114.44    110.23   -3.8%  alien
-1000x12 - 4 sources - dynamic (large web app)                 260.00    255.77   -1.7%  alien
-1000x5 - 25 sources (wide dense)                              314.92    357.82   +12.0%  lite
-5x500 - 3 sources (deep)                                       99.48     92.11   -8.0%  alien
-avoidablePropagation                                           94.03     64.91   -44.9%  alien
-broadPropagation                                              190.59    136.64   -39.5%  alien
-deepPropagation                                                71.84     44.17   -62.6%  alien
-diamond                                                       103.53     85.94   -20.5%  alien
-mux                                                           186.29    159.72   -16.6%  alien
-repeatedObservers                                              28.35     26.35   -7.6%  alien
-triangle                                                       43.81     32.58   -34.5%  alien
-unstable                                                       40.62     37.78   -7.5%  alien
-manyEffectsFromOneSource                                      118.33    105.88   -11.8%  alien
-manySourcesIntoOneComputedEffectWithDirect                     63.70     94.36   +32.5%  lite
-manySourcesIntoOneComputedEffect                               62.27     91.23   +31.7%  lite
-manySourcesIntoOneDirectEffect                                 32.26     29.61   -9.0%  alien
-molBench                                                      164.19    160.85   -2.1%  alien
-createDataSignals                                               9.11      2.32   -292.7%  alien
-createComputations0to1                                         13.56      2.16   -529.5%  alien
-createComputations1to1                                         14.07      5.97   -135.6%  alien
-createComputations2to1                                          2.79      2.46   -13.2%  alien
-createComputations4to1                                          1.64      2.02   +19.3%  lite
+64x6 - 4 sources - dynamic - read 12% (dashboard selecti      230.60    194.37   -18.6%  alien
+24x8 - 3 sources - dynamic - read 40% (editor derived st      290.54    244.49   -18.8%  alien
+120x7 - 5 sources - dynamic - read 18% (kanban board)         180.14    155.28   -16.0%  alien
+40x10 - 4 sources - dynamic - read 60% (entity detail pa      366.79    342.19   -7.2%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources (layered       67.86     32.75   -107.2%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 3       57.34     29.30   -95.7%  alien
+256->512x32 - fanIn 8 - layered-dag - 8 sources - burst       867.58    324.28   -167.5%  alien
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm         4.67      3.97   -17.5%  alien
+32x8 - 4 sources - pull (pure pull)                             0.81      0.43   -88.4%  alien
+8x64 - 1 sources - pull (linear chain - 1 source - pull         0.94      0.70   -32.6%  alien
+64x4 - 8 sources - pull (wide tree - 8 sources - pull (b        0.86      0.39   -121.8%  alien
+32x8 - 4 sources - push (pure push)                            88.27     73.46   -20.2%  alien
+10x5 - 2 sources - read 20% (simple component)                142.12    115.31   -23.3%  alien
+10x10 - 6 sources - dynamic - read 20% (dynamic componen      117.81    109.74   -7.4%  alien
+1000x12 - 4 sources - dynamic (large web app)                 255.06    244.27   -4.4%  alien
+1000x5 - 25 sources (wide dense)                              320.96    361.47   +11.2%  lite
+5x500 - 3 sources (deep)                                       98.00     90.35   -8.5%  alien
+avoidablePropagation                                           99.34     65.71   -51.2%  alien
+broadPropagation                                              195.50    136.81   -42.9%  alien
+deepPropagation                                                74.38     44.47   -67.3%  alien
+diamond                                                       110.03     85.66   -28.4%  alien
+mux                                                           184.98    160.06   -15.6%  alien
+repeatedObservers                                              27.60     26.20   -5.3%  alien
+triangle                                                       47.20     32.46   -45.4%  alien
+unstable                                                       42.72     37.94   -12.6%  alien
+manyEffectsFromOneSource                                      122.47    104.45   -17.3%  alien
+manySourcesIntoOneComputedEffectWithDirect                     63.05     94.34   +33.2%  lite
+manySourcesIntoOneComputedEffect                               61.47     91.17   +32.6%  lite
+manySourcesIntoOneDirectEffect                                 32.47     29.74   -9.2%  alien
+molBench                                                      167.10    162.28   -3.0%  alien
+createDataSignals                                               5.19      2.59   -100.0%  alien
+createComputations0to1                                         13.08      2.16   -507.0%  alien
+createComputations1to1                                         13.79      6.13   -124.9%  alien
+createComputations2to1                                          3.65      2.79   -30.8%  alien
+createComputations4to1                                          1.67      2.05   +18.5%  lite
 createComputations1000to1                                       0.02      0.02   +0.0%  alien
-createComputations1to2                                         14.78      4.62   -220.3%  alien
-createComputations1to4                                         12.06      3.00   -302.0%  alien
-createComputations1to8                                         14.00      3.83   -265.9%  alien
-createComputations1to1000                                      12.54      2.08   -503.1%  alien
-updateComputations1to1                                          3.58      1.88   -90.7%  alien
-updateComputations2to1                                          1.50      0.93   -61.3%  alien
-updateComputations4to1                                          1.58      0.45   -253.9%  alien
+createComputations1to2                                         13.50      4.72   -186.0%  alien
+createComputations1to4                                         11.77      3.10   -279.2%  alien
+createComputations1to8                                          9.09      2.51   -261.2%  alien
+createComputations1to1000                                      13.35      2.05   -551.0%  alien
+updateComputations1to1                                          3.39      1.83   -85.2%  alien
+updateComputations2to1                                          1.54      0.92   -67.8%  alien
+updateComputations4to1                                          1.56      0.44   -254.5%  alien
 updateComputations1000to1                                       0.04      0.01   -300.0%  alien
-updateComputations1to2                                          2.24      0.91   -145.6%  alien
-updateComputations1to4                                          1.50      0.45   -233.3%  alien
-updateComputations1to1000                                       0.11      0.02   -450.0%  alien
+updateComputations1to2                                          2.25      0.91   -146.7%  alien
+updateComputations1to4                                          1.48      0.46   -224.2%  alien
+updateComputations1to1000                                       0.11      0.02   -475.0%  alien
 ----------------------------------------------------------------------------------------------
 lite faster than alien on 4/47 shapes.
 
@@ -86,3 +86,5 @@ STANDING RULES (enforced by the harness, not by prose):
      feature, not a benchmark knob.
   5. Cross-protocol / cross-host comparisons cite (stamp, protocol) or are not made.
 
+Raw per-rep files (checked in for audit): bench/mirror-runs/<engine>-rep<N>.txt
+Re-derive this file (no re-benching): node bench/report.mjs

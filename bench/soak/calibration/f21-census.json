@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "status": "CAPTURED 2026-10-11, CLASSIFICATION UNRUN. The world runs below were captured before the 2026-10-11 19:30Z no-run constraint. Nothing here has been passed through divergences.mjs classify; the 'expect' fields are hand-derived from the captured records and the registry, and are verified by the DEFERRED runs (B2 report).",
+  "task": "SPEC-B S1cd TASK 0c (F21 census) plus the DIV-F22 attribution evidence (amendment 8)",
+  "provenance": {
+    "captured": "2026-10-11 03:48-03:54 local, Apple M4 Pro, Node v26.8.2, loadavg 7.03 5.28 4.71 (busy host; correctness counts only, no timing)",
+    "driver": "scratch copy of the _dev-run.mjs world loop (seedFor(base, laneIndex, 0), worldSeed(cycleSeed, w), isLargeWorld, generateWorld, runWorld) that prints every failing world's {step, op, fails, scen, worldScen, worldScenCounts}",
+    "seed": "0xc0ffee",
+    "kernels": {
+      "rev152": { "path": "audit/2026-10-07/verification/kernels/head (== node_modules/lite-signal-1.5.2)", "signalSha256": "f8dd50f8" },
+      "wt0": { "path": "audit/2026-10-07/verification/kernels/wt0", "signalSha256": "7f707ccd" },
+      "a1cand": { "path": "audit/2026-10-07/verification/kernels/a1cand", "signalSha256": "0153117b" },
+      "headpatched": { "path": "bench/soak/controls/headpatched", "signalSha256": "fa2871f0" }
+    }
+  },
+  "error4000": {
+    "worlds": 4000,
+    "byKernel": {
+      "rev152": { "failingWorlds": 3998, "sameAs": ["wt0", "a1cand"] },
+      "headpatched": { "failingWorlds": 3053 }
+    },
+    "histogram": [
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "set", "fails": ["O6:escape-computed", "O4:effect-dead"], "n": 2328, "expect": "DIV-F6" },
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "batch", "fails": ["O6:escape-computed", "O4:effect-dead"], "n": 1005, "expect": "DIV-F6" },
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "batch", "fails": ["O6:escape-computed", "O6:expected-escape-missing", "O4:effect-dead"], "n": 319, "expect": "DIV-F6+DIV-F22 tag F6+F22 (needs escape)" },
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "set", "fails": ["O6:escape-computed"], "n": 214, "expect": "DIV-F6" },
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "batch", "fails": ["O6:escape-computed"], "n": 74, "expect": "DIV-F6" },
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "batch", "fails": ["O6:escape-computed", "O6:expected-escape-missing"], "n": 30, "expect": "DIV-F6+DIV-F22 tag F6+F22 (needs escape)" },
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "batch", "fails": ["O6:expected-escape-missing"], "n": 12, "expect": "DIV-F22 tag F22 (effect-body escape; needs escape)" },
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "batch", "fails": ["O1c/O1e/O2 with revert-after-mid-read in the step"], "n": 9, "expect": "DIV-F5" },
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "seq", "fails": ["O6:escape-CycleError"], "n": 3, "expect": "DIV-F21" },
+      { "kernels": ["rev152", "wt0", "a1cand"], "op": "set|batch", "fails": ["O4:effect-dead alone", "O1c:computed-err-mismatch without revert-after-mid-read"], "n": 4, "expect": "null (unclassified)" },
+      { "kernels": ["headpatched"], "op": "batch", "fails": ["O6:expected-escape-missing"], "n": 3030, "expect": "DIV-F22 tag F22 (needs escape)" },
+      { "kernels": ["headpatched"], "op": "seq", "fails": ["O6:escape-CycleError"], "n": 23, "expect": "DIV-F21" }
+    ],
+    "unclassifiedRev152": {
+      "seeds": ["0x5a22a78c@32 set O4:effect-dead", "0x527db6d3@167 set O4:effect-dead", "0x2f6c0171@65 batch O1c:computed-err-mismatch", "0x92c29d17@40 set O1c:computed-err-mismatch"],
+      "evidence": "a1cand reproduces each at the same step; headpatched passes that step (it fails later on F22). Fixed by the audit patch, which carries both FIX-R (F5) and FIX-T (F6); no revert-after-mid-read in the failing step. F6 suspected (a killed effect / a stuck cached error), not proven, so the registry leaves them unmatched (fail closed)."
+    }
+  },
+  "f21": {
+    "mechanism": "VERIFICATION F21: an aborted flush (CycleError: flush passes exceeded) leaves stale queue entries; a later cycle-bomb's first effect recycles the slot and its first run throws.",
+    "signature": { "lane": "ERROR", "op": "seq", "fails": ["O6:escape-CycleError"], "detail": "engine error escaped: Error: CycleError: Infinite effect loop detected.", "stepScen": ["cycle-error-surfaces"] },
+    "priorSurface": "every captured F21 world has world count(cycle-error-surfaces) >= 2 with 1 from the failing step, so a CycleError surfaced in an EARLIER step (DIV-F21 priorScen)",
+    "worlds": {
+      "rev152": [
+        { "ws": "0x81d96bdd", "step": 191, "cycleErrorSurfaces": 4 },
+        { "ws": "0x7b17ec55", "step": 40, "cycleErrorSurfaces": 2 },
+        { "ws": "0x6e2789ec", "step": 38, "cycleErrorSurfaces": 2 }
+      ],
+      "wt0": "3 worlds, same histogram as rev152 (seeds not printed in the capture)",
+      "a1cand": "3 worlds, same histogram as rev152 (seeds not printed in the capture)",
+      "headpatched": [
+        { "ws": "0x81d96bdd", "step": 191, "cycleErrorSurfaces": 4 },
+        { "ws": "0x7b17ec55", "step": 40, "cycleErrorSurfaces": 2 },
+        { "ws": "0x8322a52e", "step": 180, "cycleErrorSurfaces": 3 },
+        { "ws": "0xe94e3983", "step": 131, "cycleErrorSurfaces": 2 },
+        { "ws": "0xc9471231", "step": 181, "cycleErrorSurfaces": 3 },
+        { "ws": "0x7d2e247f", "step": 33, "cycleErrorSurfaces": 2 },
+        { "ws": "0xb1f0d5b2", "step": 59, "cycleErrorSurfaces": 2 },
+        { "ws": "0x574df016", "step": 260, "cycleErrorSurfaces": 5 },
+        { "ws": "0xf0c373bf", "step": 336, "cycleErrorSurfaces": 5 },
+        { "ws": "0xb1d26783", "step": 106, "cycleErrorSurfaces": 4 },
+        { "ws": "0x64aec5c3", "step": 215, "cycleErrorSurfaces": 4 },
+        { "ws": "0x875a0dfb", "step": 141, "cycleErrorSurfaces": 3 },
+        { "ws": "0xa354fa62", "step": 206, "cycleErrorSurfaces": 7 },
+        { "ws": "0x6e2789ec", "step": 38, "cycleErrorSurfaces": 2 },
+        { "ws": "0x493ebbb0", "step": 354, "cycleErrorSurfaces": 5 },
+        { "ws": "0x25a03675", "step": 227, "cycleErrorSurfaces": 5 },
+        { "ws": "0x9b3065dd", "step": 225, "cycleErrorSurfaces": 2 },
+        { "ws": "0xc68d1e0d", "step": 91, "cycleErrorSurfaces": 2 },
+        { "ws": "0x8b6682a2", "step": 263, "cycleErrorSurfaces": 2 },
+        { "ws": "0x2f0e6494", "step": 32, "cycleErrorSurfaces": 2 },
+        { "ws": "0x3549868e", "step": 293, "cycleErrorSurfaces": 5 },
+        { "ws": "0xfd44c6c1", "step": 167, "cycleErrorSurfaces": 4 },
+        { "ws": "0x15303c38", "step": 228, "cycleErrorSurfaces": 3 }
+      ]
+    },
+    "otherSigs": "none: in 4 x 4000 ERROR worlds F21 surfaced only as this one signature. Worlds that die earlier (F6 on rev152/wt0/a1cand, F22 on headpatched) hide later F21 hits, so the per-kernel rates are lower bounds."
+  },
+  "f22": {
+    "error200": {
+      "rev152": { "F6only": 182, "F6+F22": 16, "F22": 1, "F21": 1, "sameAs": ["wt0", "a1cand"] },
+      "headpatched": { "F22": 143, "F21": 1 }
+    },
+    "correction": "The S1b round-3 table counted 17 F6+F22 worlds on rev152/wt0/a1cand. 16 carry an unpredicted O6 escape-computed in the same step (the F6 pre-walk token replaced the batch token). The 17th, 0x42832b67@36, has no escape-* fail: its escape was [computed:20] and it was PREDICTED (a naked effect body re-threw it), and the world fails identically at step 36 on headpatched, where F6 is fixed. It is F22 (effect-body escape), not F6+F22.",
+    "replays": [
+      { "kernel": "rev152", "ws": "0x42832b67", "step": 36, "escape": [{ "origin": "computed", "token": "computed:20" }], "fails": ["O6:expected-escape-missing batch:36"], "expect": "tag F22" },
+      { "kernel": "headpatched", "ws": "0x42832b67", "step": 36, "escape": [{ "origin": "computed", "token": "computed:20" }], "fails": ["O6:expected-escape-missing batch:36"], "expect": "tag F22" },
+      { "kernel": "headpatched", "ws": "0xc15f1e33", "step": 187, "escape": [{ "origin": "computed", "token": "computed:10" }], "fails": ["O6:expected-escape-missing batch:187"], "expect": "tag F22" }
+    ],
+    "originRule": "S1 has no 'effect'-origin SoakThrow: effect bodies only re-throw computed tokens. The F6+F22 / F22 split is therefore decided by WHERE the replacing token was thrown: unpredicted (named by an O6 escape-computed fail of the same step: the F6 pre-walk) or predicted (an effect-body escape)."
+  },
+  "otherLanes200": {
+    "GRAPH": { "rev152": 0, "wt0": 0, "a1cand": 0, "headpatched": 0 },
+    "BATCH": { "rev152": "200, all O1c/O2/O1e with revert-after-mid-read in worldScen: DIV-F5", "a1cand": "same as rev152", "headpatched": 0 },
+    "NEST": {
+      "rev152": "123 TypeError headSub (+ O5 link-count in 113), all with saved-cursor-hazard in the step: DIV-F15; 77 O7a 'onConnect fired ... target #N disposed': DIV-F7",
+      "wt0": "same as rev152",
+      "headpatched": "200 TypeError headSub class (181 with link-count), all saved-cursor-hazard: DIV-F15",
+      "a1cand": "200 O7a 'target #N disposed' (199 seq, 1 eff): DIV-F7"
+    }
+  }
+}

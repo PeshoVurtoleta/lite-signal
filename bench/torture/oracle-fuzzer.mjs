@@ -42,7 +42,7 @@
 
 import { performance } from "node:perf_hooks";
 import { createRegistry } from "../../Signal.js";
-import { mulberry32, shuffle, VALUE_POOL, toNum } from "./helpers/index.mjs";
+import { mulberry32, shuffle, VALUE_POOL, kindSum, kindIdentity, kindSelect } from "./helpers/index.mjs";
 
 const SEEDS = Number(process.env.ORACLE_SEEDS || 400);
 
@@ -127,18 +127,15 @@ function buildModel(rnd, { leaves, tiers, perTier }) {
 function reference(model, ref) {
     if (ref.kind === "leaf") return model.leaves[ref.index].value;
     const node = model.nodes[ref.index];
-    if (node.kind === "sum") {
-        let acc = 0;
-        for (let i = 0; i < node.deps.length; i++) acc = (acc + toNum(reference(model, node.deps[i]))) | 0;
-        return acc;
-    }
+    // The kind functions (helpers) are pure value code shared with the engine
+    // body; only this read path differs -- it recurses over plain data.
+    const read = (r) => reference(model, r);
+    if (node.kind === "sum") return kindSum(node.deps, read);
     // Passes its dependency's value through UNTOUCHED, so -0 stays -0 and NaN
     // stays NaN. This is the shape that makes an equality bug observable; a sum
     // would normalise the difference away.
-    if (node.kind === "identity") return reference(model, node.deps[0]);
-    const sel = toNum(reference(model, node.selector));
-    const chosen = node.deps[((sel % node.deps.length) + node.deps.length) % node.deps.length];
-    return reference(model, chosen);
+    if (node.kind === "identity") return kindIdentity(node.deps, read);
+    return kindSelect(node.selector, node.deps, read);
 }
 
 /* ── the engine build ─────────────────────────────────────────────────────── */
@@ -151,19 +148,11 @@ function buildLive(r, model) {
     for (let i = 0; i < model.nodes.length; i++) {
         const node = model.nodes[i];
         if (node.kind === "sum") {
-            comps[i] = r.computed(function () {
-                let acc = 0;
-                for (let d = 0; d < node.deps.length; d++) acc = (acc + toNum(read(node.deps[d]))) | 0;
-                return acc;
-            });
+            comps[i] = r.computed(function () { return kindSum(node.deps, read); });
         } else if (node.kind === "identity") {
-            comps[i] = r.computed(function () { return read(node.deps[0]); });
+            comps[i] = r.computed(function () { return kindIdentity(node.deps, read); });
         } else {
-            comps[i] = r.computed(function () {
-                const sel = toNum(read(node.selector));
-                const n = node.deps.length;
-                return read(node.deps[((sel % n) + n) % n]);
-            });
+            comps[i] = r.computed(function () { return kindSelect(node.selector, node.deps, read); });
         }
     }
     return { sigs, comps };

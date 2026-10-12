@@ -1,0 +1,36 @@
+{
+  "what": "S1c TASK 0b golden: sha256 of the op-script JSON of the first 1000 worlds of each S1 lane (cycle 0), cut from the S1b generator before any S1c edit. Op scripts are a pure function of (lane, worldSeed): the kernel is loaded by the dev driver but never consulted. test/42-soak-gates recomputes these in-process and must match.",
+  "cutAt": "2026-10-11",
+  "command": "node bench/soak/_dev-run.mjs --hash bench/soak/controls/headpatched <LANE> 1000",
+  "kernelLoaded": "headpatched fa2871f0 (frozen fixture; amendment 11)",
+  "base": "0xc0ffee",
+  "worlds": 1000,
+  "cycle": 0,
+  "algorithm": "sha256 over (scriptJson(generateWorld(desc, worldSeed(seedFor(base, desc.index, 0), w), { large: isLargeWorld(desc, w), covOff: null })) + '\\n') for w = 0..999",
+  "digests": {
+    "GRAPH": "efe77073907872a8ed59f3d848acbd419fcd51151670ff91635cb794b459e423",
+    "BATCH": "c61f6eb2e75f5fdd003d181e970884eca44a749b61a84ac1beb284215770765a",
+    "ERROR": "6455a39b856e1a9a93928eda327c0f33c8eb0d63177ba7c0447fce9996a1d857",
+    "NEST": "17386fc7e45792e2322fce4851d909628786c0386cf3a7ea0b22a3c2f22e913c"
+  },
+  "inputsSha256AtCut": {
+    "bench/soak/gen.mjs": "2318d2632b3702000278e7e1e0bf2eb5792708240e6ea75b3aad5509825fdda2",
+    "bench/soak/kinds.mjs": "47a9dbb92967773d3ad07dcc23d89615ea4625cba65287af4f8994bef5648cfb",
+    "bench/soak/model.mjs": "6269d8b3f6fa89a5c88027b2807755c2c4d498de6190313b1670e2e3b51e35a7",
+    "bench/soak/scenarios.mjs": "a28f304c05e147b5e1e0848e41d83ad5862d116a645ae9d2f70e4762e1ca2bc7",
+    "bench/soak/lanes/index.mjs": "a89ad2bc76b4b7e8d5c80602346b8686f973a9688086b3af9fd1c42cbd4030a6",
+    "bench/soak/lanes/graph.mjs": "e53705d39a3b0fc3359f62cdc7f5679a86c90036cc18a67ce0256aeea584abe4",
+    "bench/soak/lanes/batch.mjs": "eff24309242b524156fa86673f0c2c829e811008ed806d2512732cb7213dd7bd",
+    "bench/soak/lanes/error.mjs": "8746bcec3971490be1fbbc88272f17692aa3358e57b00010ae958e85c18f44fa",
+    "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
+    "bench/soak/seeds.mjs": "8cd93773408e50821ab81de4aa36b1ac29cff016389250bd3b4b9b9a81638008",
+    "bench/torture/helpers/index.mjs": "0f58faf5f553716bf5059cdfeae7fe887ea07fe3e853d8cba0e75106e54cb119"
+  },
+  "baselineTask0a": {
+    "soakParity": "exit 1: only the Signal.js pin is red (live Signal.js is mid-edit by the A1 coder, sha256 e95dada77852...; pinned 0153117bcc74...). Every other pin green.",
+    "gitDiffQuietSignalWatch": "exit 1: Signal.js modified in the working tree (A1), Watch.js unchanged",
+    "npmTest": "tests 657, pass 642, fail 1 (test/40 parity pin, the Signal.js pin above), skipped 5, todo 9",
+    "tortureTail": "GATE leak=size 0/0 findings=0 warnings=0 | gc major=0 minor=0 maxMs=0.00 | alloc=0 B/op | nest gc major=0 minor=0 alloc=0.000 B/op control=15.95 B/op retention=0/0 res=6.0KB | ok",
+    "host": "Apple M4, Node 26.8.2, loadavg 6.35 5.48 4.83, one other busy node process (pid 54646, 264% CPU): PRELIMINARY for any timing; no timing is gated here"
+  }
+}

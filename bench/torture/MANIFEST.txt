@@ -1,7 +1,8 @@
 lite-signal torture suite — complete set (26 scenarios)
 ========================================================
 
-22 semantic (deterministic, fast, CI) + 4 soak (one opt-in). Full superset through 1.9.
+22 semantic (deterministic, fast, CI) + 4 soak (one opt-in). Full superset through 1.10
+(candidate-line numbering after the 2026-10-10 re-pin: see FEATURE GATES).
 Every scenario feature-detects and skips cleanly below its feature; runs green
 from 1.4.x forward. Skips use exit 77 and the runner enforces version floors:
 a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
@@ -19,7 +20,7 @@ SEMANTIC (listed in run.mjs registration order)
   concurrent-storm         reentrancy, nesting, flush ordering
   scheduler-storm          deferred execution, ABA thunks, coalescing
   box-torture              signalBox / computedBox interop + surface   (1.5.0+)
-  scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0+)
+  scope-torture            createScope adoption + disposal-crash fuzz  (1.7.0+)
   retrack-dispose-torture  dispose-during-retracking cursor hazard + seeded
                            disposal fuzz w/ survivor value + pool oracle
                            (hoisted from scope-torture so it runs from 1.4)
@@ -49,9 +50,9 @@ SEMANTIC (listed in run.mjs registration order)
                            the gen guard, registry reusable; 20k-op hammer)
   deep-chain-torture       pullComputed recursion fail-closed (RangeError)
                            vs iterative push path
-  flush-torture            flushStrategy eager/sab/manual + subscribe  (1.7.0+)
-  cleanup-return-torture   effect return cleanup + compose order       (1.8.0+)
-  dispose-torture          Symbol.dispose / using on lifecycle objects (1.9.0+)
+  flush-torture            flushStrategy eager/sab/manual + subscribe  (1.8.0+)
+  cleanup-return-torture   effect return cleanup + compose order       (1.9.0+)
+  dispose-torture          Symbol.dispose / using on lifecycle objects (1.10.0+)
   zerogc-torture           zero-GC hot path via measureAllocs/measureOps +
                            stats counters + a DUAL transient witness over a
                            1M-op un-forced window: scavenge count AND nursery
@@ -91,7 +92,8 @@ SOAK: graph-fuzzer, scheduler-bench, torture-soak, wraparound-torture
   - MID-RUN HIGH-WATER: activeNodes/activeLinks sampled per tick, gated against
     the topology's theoretical maxima (mutant-verified vs a deferred-sever
     engine: fires on tick 1).
-  - POST-GC heapUsed: forced-GC heap high-water within a fixed slack of the
+  - POST-GC resident (heapUsed + arrayBuffers, 2026-09): forced-GC high-water
+    within a fixed slack of the
     post-build baseline -- retention the pool counters cannot see
     (mutant-verified vs a full link graveyard: +151 MB in 2s).
   - SENTINEL DELIVERY: dedicated effects record the values they OBSERVE (the
@@ -115,9 +117,11 @@ missing mark lane. Recommendation there: add a "compare lane" (op 11/12) so the
 short-circuit's benefit becomes a counted fact and its regression becomes
 catchable.
 
-FEATURE GATES: box/owner->1.5, scope->1.6, flush->1.7,
-cleanup-return->1.8, dispose->1.9. retrack-dispose, op-accounting, lifecycle,
-contract, interop, and all others: 1.4.0+. Floors are declared per scenario in
+FEATURE GATES: box/owner->1.5, scope->1.7, flush->1.8,
+cleanup-return->1.9, dispose->1.10. (Re-pinned +1 minor on 2026-10-10: 1.6.0
+ships without the candidate-line features, which move to 1.7.0+.)
+retrack-dispose, op-accounting, lifecycle, contract, interop, and all others:
+1.4.0+. Floors are declared per scenario in
 run.mjs and ENFORCED: at/above its floor a skip is a FAIL (--lenient downgrades).
 
 oracle-fuzzer (2026-08 audit): checking is now PROBABILISTIC (p=0.4 per op +

@@ -19,8 +19,12 @@ function forceGc() {
     }
 }
 
+// Resident KB = heapUsed + arrayBuffers (2026-09, LEDGER #27 amendment): an
+// off-heap typed-array allocation is still an allocation, and heapUsed alone
+// cannot see it. Name kept for diff economy.
 function heapKB() {
-    return process.memoryUsage().heapUsed / 1024;
+    const m = process.memoryUsage();
+    return (m.heapUsed + m.arrayBuffers) / 1024;
 }
 
 describe("zero-GC invariants", {skip: !hasGC ? "requires --expose-gc" : false}, () => {

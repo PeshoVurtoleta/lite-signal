@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "about": "TASK 0c golden for the oracle-fuzzer kind extraction (SPEC-B TASK 3 / v2 TASK 1). Command: ORACLE_SEEDS=400 node --expose-gc bench/torture/oracle-fuzzer.mjs, stdout+stderr merged, then an exit=<n> line; the wall-clock \"(N.NNs)\" suffix of the title line is stripped. Kernels run in a frozen scratch tree (Signal.js + Watch.js + bench/torture/{oracle-fuzzer.mjs,helpers/index.mjs}) so concurrent Signal.js edits cannot perturb it.",
+  "stripRegex": " \\([0-9]+\\.[0-9]+s\\)$",
+  "mutant": {
+    "anchor": "((node.markEpoch - node.evalVersion) | 0) <= 0) {",
+    "replacement": "((node.markEpoch - node.evalVersion) | 0) <= 1) {",
+    "function": "pullComputed clean short-circuit",
+    "base": "git show HEAD:Signal.js (f8dd50f8)",
+    "anchorCount": 1
+  },
+  "runs": {
+    "head-before": {
+      "kernelSha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+      "outputSha256": "f108c279022b57cf1af583877efbb3f327138733931c80777584a1778653690c"
+    },
+    "tree-before": {
+      "kernelSha256": "7f707ccdd5302d1ab18d4178d7e21219f5491524dca9e380f8576c1ac36f0275",
+      "outputSha256": "f108c279022b57cf1af583877efbb3f327138733931c80777584a1778653690c"
+    },
+    "mutant-before": {
+      "outputSha256": "108e0bf5ba974df347ccce1acd66e18668159922a5bc5463c780bd7c6fb28866"
+    },
+    "head-after": {
+      "outputSha256": "f108c279022b57cf1af583877efbb3f327138733931c80777584a1778653690c"
+    },
+    "tree-after": {
+      "outputSha256": "f108c279022b57cf1af583877efbb3f327138733931c80777584a1778653690c"
+    },
+    "mutant-after": {
+      "outputSha256": "108e0bf5ba974df347ccce1acd66e18668159922a5bc5463c780bd7c6fb28866"
+    }
+  },
+  "byteIdentical": true,
+  "mutantCaught": "400/400",
+  "clean": "lite-signal oracle fuzzer \u2014 400 seeds x 120 ops\n  PASS: every computed matched the reference on all 400 seeds (48,000 ops)\nexit=0\n",
+  "mutantOutput": "lite-signal oracle fuzzer \u2014 400 seeds x 120 ops\n  FAIL: 400/400 seeds disagreed with the reference\n  seed 1: T3N1 (sum) after op 1\n    engine=139  reference=141\n  replay log (all 2 ops \u2014 checks are probabilistic, so the\n  responsible op may be well before the failing check):\n    steer T3N6 via L1=2\n    batch{L4=8,L8=1,L6=null,L10=76}\nexit=1\n"
+}

@@ -1,14 +1,16 @@
 /**
- * bench/torture/scope-torture.mjs — ownership, adoption and disposal (1.6.0).
+ * bench/torture/scope-torture.mjs -- ownership, adoption and disposal (1.7.0).
+ * (1.6.0 before the 2026-10-10 renumbering: 1.6.0 ships without the
+ * candidate-line features, which move up one minor.)
  *
- * 1.6.0 adds `createScope` and hardens the disposal path. Both are lifetime
+ * 1.7.0 adds `createScope` and hardens the disposal path. Both are lifetime
  * machinery, and lifetime bugs are the class a value oracle cannot see: the
  * graph settles on correct values right up until a disposed node is read, a
  * survivor is reaped, or a re-tracking cursor walks a freed link and crashes.
  *
  * This file targets exactly those, in three registers:
  *
- *   1. The 1.6.0 crash repro, fuzzed. The changelog fix is for disposing a
+ *   1. The 1.7.0 crash repro, fuzzed. The changelog fix is for disposing a
  *      source from inside an observer that linked it on the PREVIOUS run but has
  *      not re-read it on the CURRENT one — the cursor is parked on a link that
  *      disposal frees, and `severTail` then walks from freed memory. The exact
@@ -30,7 +32,7 @@
  *      baseline. This uses a HARD-ceiling registry, because a growable pool
  *      turns a leak into an invisible bleed.
  *
- * Skips cleanly on engines without `createScope` (pre-1.6.0).
+ * Skips cleanly on engines without `createScope` (pre-1.7.0).
  *
  * Exit code: 0 iff disposal never crashed, adoption held, and the pool balanced.
  *
@@ -45,14 +47,14 @@ const { createRegistry, setDefaultRegistry } = Signal;
 const createScope = Signal.createScope;
 
 if (typeof createScope !== "function") {
-    console.log("lite-signal scope torture — SKIP: createScope requires 1.6.0+");
+    console.log("lite-signal scope torture -- SKIP: createScope requires 1.7.0+");
     process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
 }
 
 const SEEDS = Number(process.env.SCOPE_SEEDS || 300);
 const R = createReport(`lite-signal scope torture — ownership + disposal, ${SEEDS} seeds`);
 
-/* ── 1. The 1.6.0 disposal crash, exact repro ─────────────────────────────── */
+/* -- 1. The 1.7.0 disposal crash, exact repro --------------------------------- */
 {
     const r = soakRegistry(createRegistry);
     const gate = r.signal(true);

@@ -19,6 +19,10 @@
 //   creation                      per-framework-per-process createComputations matrix
 //   mint    [--verify]            mint+dispose cycle allocation anatomy (spawns
 //                                 its own flagged children; --verify applies pins)
+//   layout  [engineA] <engineB>   cold-child layout A/B: 8 shapes + size sweep +
+//                                 heap+ArrayBuffer memory (the #27 instrument)
+//   conformance [engineA] [engineB]  gate 1: external johnsoncodehk suite, lite
+//                                 column, per-test diff (REACTIVE_SUITE_PATH)
 //   all                           field + dispose + churn, in sequence
 //
 // NOTES
@@ -66,6 +70,15 @@ const COMMANDS = {
         script: "mint-anatomy.mjs",
         flags: [],                // parent spawns its own flagged children
     },
+    layout: {
+        script: "layout-ab.mjs",
+        flags: ["--expose-gc"],   // parent spawns its own --expose-gc children
+        engineArg: true,          // no engines given = self-test against ../Signal.js
+    },
+    conformance: {
+        script: "conformance.mjs",
+        flags: [],                // parent spawns the suite's vite-node per engine
+    },
 };
 
 const ORDER_ALL = ["field", "dispose", "churn"];
@@ -80,6 +93,8 @@ function usage() {
         "  owner   [engine]              async-gap owner-recycling hazard verdict\n" +
         "  creation                      per-framework createComputations matrix\n" +
         "  mint    [--verify]            mint+dispose cycle allocation anatomy\n" +
+        "  layout  [engineA] <engineB>   cold-child layout A/B: shapes, size sweep, memory\n" +
+        "  conformance [engineA] [engineB]  gate 1: external suite, per-test diff\n" +
         "  all                           field + dispose + churn\n"
     );
 }

@@ -54,6 +54,8 @@ const ENV_SKIP_EXIT = 78;
  * dropped export or a broken feature-detect — the exact regression a skip used
  * to convert into silent green. (--lenient downgrades this to a plain skip.)
  */
+// Candidate-line floors (scope, flush, cleanup-return, dispose) were re-pinned +1 minor on
+// 2026-10-10 (SPEC-B addendum D1): 1.6.0 ships without those features, which move to 1.7.0+.
 const SCENARIOS = [
     { name: "oracle-fuzzer", group: "semantic", file: "oracle-fuzzer.mjs", floor: "1.4.0", about: "values vs an independent reference evaluator" },
     { name: "glitch-hunter", group: "semantic", file: "glitch-hunter.mjs", floor: "1.4.0", about: "glitch freedom + exact wakeup accounting" },
@@ -61,7 +63,7 @@ const SCENARIOS = [
     { name: "concurrent-storm", group: "semantic", file: "concurrent-storm.mjs", floor: "1.4.0", about: "reentrancy, nesting, flush ordering" },
     { name: "scheduler-storm", group: "semantic", file: "scheduler-storm.mjs", floor: "1.4.0", about: "deferred execution, ABA thunks, coalescing" },
     { name: "box-torture", group: "semantic", file: "box-torture.mjs", floor: "1.5.0", about: "signalBox/computedBox interop + surface (1.5.0+)" },
-    { name: "scope-torture", group: "semantic", file: "scope-torture.mjs", floor: "1.6.0", about: "createScope adoption + disposal-crash fuzz (1.6.0+)" },
+    { name: "scope-torture", group: "semantic", file: "scope-torture.mjs", floor: "1.7.0", about: "createScope adoption + disposal-crash fuzz (1.7.0+)" },
     { name: "retrack-dispose-torture", group: "semantic", file: "retrack-dispose-torture.mjs", floor: "1.4.0", about: "dispose-during-retracking cursor hazard + seeded disposal fuzz" },
     { name: "owner-torture", group: "semantic", file: "owner-torture.mjs", floor: "1.5.0", about: "getOwner/runWithOwner capture-restore + ABA degradation" },
     { name: "async-torture", group: "semantic", file: "async-torture.mjs", floor: "1.4.0", about: "watch/when/whenAsync contracts + fuzz" },
@@ -70,9 +72,9 @@ const SCENARIOS = [
     { name: "contract-torture", group: "semantic", file: "contract-torture.mjs", floor: "1.4.0", about: "throw-inside-batch, write-inside-computed, equals contract under churn" },
     { name: "interop-torture", group: "semantic", file: "interop-torture.mjs", floor: "1.4.0", about: "multi-registry isolation + destroy() staleness degradation" },
     { name: "deep-chain-torture", group: "semantic", file: "deep-chain-torture.mjs", floor: "1.4.0", about: "pullComputed recursion fail-closed (RangeError) vs iterative push path" },
-    { name: "flush-torture", group: "semantic", file: "flush-torture.mjs", floor: "1.7.0", about: "flushStrategy eager/sab/manual + subscribe (1.7.0+)" },
-    { name: "cleanup-return-torture", group: "semantic", file: "cleanup-return-torture.mjs", floor: "1.8.0", about: "effect cleanup return + compose order (1.8.0+)" },
-    { name: "dispose-torture", group: "semantic", file: "dispose-torture.mjs", floor: "1.9.0", about: "Symbol.dispose / using on lifecycle objects (1.9.0+)" },
+    { name: "flush-torture", group: "semantic", file: "flush-torture.mjs", floor: "1.8.0", about: "flushStrategy eager/sab/manual + subscribe (1.8.0+)" },
+    { name: "cleanup-return-torture", group: "semantic", file: "cleanup-return-torture.mjs", floor: "1.9.0", about: "effect cleanup return + compose order (1.9.0+)" },
+    { name: "dispose-torture", group: "semantic", file: "dispose-torture.mjs", floor: "1.10.0", about: "Symbol.dispose / using on lifecycle objects (1.10.0+)" },
     { name: "zerogc-torture", group: "semantic", file: "zerogc-torture.mjs", floor: "1.4.0", about: "zero-GC hot path via measureAllocs/measureOps + stats counters; ZEROGC_BREAK self-test" },
     { name: "op-accounting", group: "semantic", file: "op-accounting.mjs", floor: "1.4.0", about: "structural work via onGraphMutation opcode lane" },
     { name: "introspect-torture", group: "semantic", file: "introspect-torture.mjs", floor: "1.4.0", about: "describe/forEach*/hasObservers/ownerOf + ABA gen-stamp guard" },

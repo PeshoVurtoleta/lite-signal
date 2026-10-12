@@ -48,7 +48,18 @@
     "gate": "node harness/VersionMatrix/pre-publish.mjs",
     "torture": "node bench/torture/run.mjs",
     "torture:semantic": "node bench/torture/run.mjs --group semantic",
-    "torture:soak": "node bench/torture/run.mjs --group soak"
+    "torture:soak": "node bench/torture/run.mjs --group soak",
+    "test:torture": "node --expose-gc test/torture.mjs",
+    "soak": "node --expose-gc bench/soak/main.mjs",
+    "soak:smoke": "node --expose-gc bench/soak/main.mjs --smoke",
+    "soak:replay": "node --expose-gc bench/soak/replay.mjs",
+    "soak:shrink": "node --expose-gc bench/soak/shrink.mjs",
+    "soak:report": "node bench/soak/SoakReport.mjs",
+    "soak:teeth": "node bench/soak/_mustfail.mjs",
+    "parity": "node bench/soak/parity.mjs",
+    "parity:update": "node bench/soak/parity.mjs --update",
+    "soak:parity": "node bench/soak/parity.mjs",
+    "soak:parity:update": "node bench/soak/parity.mjs --update"
   },
   "keywords": [
     "signal",
@@ -87,12 +98,14 @@
   "devDependencies": {
     "@zakkster/lite-devtools": "^1.3.1",
     "@zakkster/lite-gc-profiler": "^1.16.0",
+    "@zakkster/lite-leak": "^1.10.0",
     "@zakkster/lite-perf-gate": "^1.4.2",
     "@zakkster/lite-profiler": "^1.1.0",
     "@zakkster/lite-profiler-signal": "^1.2.0",
     "@zakkster/lite-signal": "^1.3.0 || >=1.4.0-beta.0 || >=1.6.0-preview.0",
     "c8": "^11.0.0",
-    "coveralls-next": "^6.0.2"
+    "coveralls-next": "^6.0.2",
+    "lite-signal-1.5.2": "npm:@zakkster/lite-signal@1.5.2"
   },
   "overrides": {
     "@zakkster/lite-time": {

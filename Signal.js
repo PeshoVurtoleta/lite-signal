@@ -55,6 +55,16 @@
  *   chosen owner) remains future work on the same split. untrack suppresses
  *   tracking without orphaning created nodes. createNode and onCleanup key off
  *   the OWNER; the read fast-path and allocateLink key off the OBSERVER.
+ *
+ *   TRACKING INVARIANT (LEDGER #30): tracking is on iff `currentObserver !== null`.
+ *   There is no separate `isTrackingDeps` flag -- it was folded into the observer
+ *   pointer (they were always set and cleared together). To suppress tracking,
+ *   untrack / subscribe callbacks / fireConnect|Disconnect / runCleanup NULL the
+ *   observer for the window and restore it after. The restore is gen-safe: if the
+ *   suppressed body disposed the very observer it ran under (self-dispose bumps
+ *   node.gen and disposeNode already nulls currentObserver), the observer is NOT
+ *   put back -- restore is `(po !== null && po.gen === pg) ? po : null`, mirroring
+ *   disposeNode's own self-dispose guard so a recycled slot is never re-entered.
  */
 
 const FLAG_COMPUTED = 1 << 0;
@@ -401,7 +411,27 @@ export function createRegistry(config) {
     let currentOwner = null;              // lifecycle context: who owns nodes created now
     let activeObserverCurrentDep = null;
     let batchDepth = 0;
-    let isTrackingDeps = false;
+    // A1 cursor stack (F15): the SAVED re-tracking cursors of suspended frames. executeEffect /
+    // pullComputed push the outer cursor on entry and pop it on exit, so disposeNode can repair a
+    // cursor no matter how deep the frame that holds it is suspended (repairCursor / dropCursors).
+    // A frame entered at depth d saves into slot d. At depth 0 there is no outer frame and the
+    // live cursor is always null, so a depth-0 frame skips both the store and the load and
+    // restores null (r3: the keyed store + load were the cost every top-level flush paid per
+    // effect, measured on fanout64). Slot 0 is never written; repairCursor / dropCursors only
+    // ever replace a slot that already holds the link, so it stays null.
+    // Holds links only; preallocated to 32 slots and grows only at a new maximum depth.
+    // cursorDepth is a Smi and balanced on every exit path: every push sits right before a
+    // `try` whose `finally` pops; the only user code inside that `finally` before the pop
+    // (the epilogue severTail) runs through severTailFrame, which pops and restores on a
+    // throw. destroy() leaves it alone -- the frames that called it unwind through it.
+    const cursorStack = [];
+    for (let i = 0; i < 32; i++) cursorStack.push(null);
+    let cursorDepth = 0;
+    // A1.8 (S2): slots of nodes disposed while RUNNING (FLAG_COMPUTING). A suspended frame
+    // may still hold such a node as its saved observer/owner; recycling the slot before
+    // every frame has unwound would re-seat a stranger. Released into the free list only
+    // at depth 0 (releasePinned).
+    let pinnedHead = null;
 
     // -- Node identity + observer-lifecycle introspection (ported from 1.1.5) --
     let nodeSeq = 1 | 0;
@@ -410,16 +440,17 @@ export function createRegistry(config) {
     function fireConnect(node) {
         const e = lifecycleMap.get(node);
         if (e === undefined || e.onConnect === undefined) return;
-        const po = currentObserver, pt = isTrackingDeps;
-        currentObserver = null; isTrackingDeps = false;
-        try { e.onConnect(); } finally { currentObserver = po; isTrackingDeps = pt; }
+        // A1.6: #30 gen-safe restore -- a callback that disposes the observer does not re-seat it.
+        const po = currentObserver, pg = po !== null ? po.gen : 0;
+        currentObserver = null;
+        try { e.onConnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }
     }
     function fireDisconnect(node) {
         const e = lifecycleMap.get(node);
         if (e === undefined || e.onDisconnect === undefined) return;
-        const po = currentObserver, pt = isTrackingDeps;
-        currentObserver = null; isTrackingDeps = false;
-        try { e.onDisconnect(); } finally { currentObserver = po; isTrackingDeps = pt; }
+        const po = currentObserver, pg = po !== null ? po.gen : 0;
+        currentObserver = null;
+        try { e.onDisconnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }
     }
     let isFlushing = false;
 
@@ -471,20 +502,15 @@ export function createRegistry(config) {
         // an outer observer torn down while suspended) has flags cleared to 0. Linking would splice
         // a dead, pool-bound node back into source's subscriber list -- a phantom edge. Cold path only.
         if (target.flags === 0) return null;
-        let expected = activeObserverCurrentDep;
 
-        if (expected !== null) {
-            let stale = expected;
-            let prev = stale.prevDep;
-            if (prev !== null) prev.nextDep = null; else target.headDep = null;
-            target.tailDep = prev;
-
-            while (stale !== null) {
-                let next = stale.nextDep;
-                freeLink(stale, target, stale.source);
-                stale = next;
-            }
-            activeObserverCurrentDep = null;
+        // SEVER-FIRST (A1.3): the walk is severTail's list-consistent one. A lifecycle
+        // callback inside it may dispose `target` or `source`, and may recycle the slot
+        // into a new resident (flags non-zero again), so re-check by GEN, not flags (cold:
+        // mismatch path only) before linking.
+        if (activeObserverCurrentDep !== null) {
+            const sg = source.gen, tg = target.gen;
+            severTail(target);
+            if (source.gen !== sg || target.gen !== tg) return null;
         }
 
         // O(1) same-pass dedup (ported from 1.1.3): replaces the O(N) prefix scan
@@ -547,7 +573,6 @@ export function createRegistry(config) {
         if (source.tailSub !== null) source.tailSub.nextSub = link;
         else source.headSub = link;
         source.tailSub = link;
-        if (_was0) fireConnect(source);
 
         let tail = target.tailDep;
         link.prevDep = tail;
@@ -555,6 +580,9 @@ export function createRegistry(config) {
         if (tail !== null) tail.nextDep = link;
         else target.headDep = link;
         target.tailDep = link;
+        // A1.5 (S1): onConnect runs only once the edge is in BOTH lists, so a callback that
+        // disposes `source` (or `target`) unlinks a whole edge. Op order stays connect, op 3.
+        if (_was0) fireConnect(source);
         if (mutationHook !== null) mutationHook(3, source.id, target.id);
     }
 
@@ -565,12 +593,18 @@ export function createRegistry(config) {
         // `link.source !== null ? ... : -1` guards existed only to survive a cursor
         // dangling at an already-freed link -- a state disposeNode's CURSOR REPAIR now
         // makes unreachable. Reading the params directly is equivalent and branch-free.
-        if (mutationHook !== null) mutationHook(4, source.id, target.id);
+        if (mutationHook !== null) {
+            mutationHook(4, source.id, target.id);
+            // C10: a hook that disposed `source` (or `target`) already freed this link via the
+            // source's sub-list walk; freeing it again would double-free it. Op order unchanged.
+            // Both ends are compared: a freed link recycled into a new edge from the same
+            // source slot would pass a source-only test.
+            if (link.source !== source || link.target !== target) return;
+        }
         const pSub = link.prevSub;
         const nSub = link.nextSub;
         if (pSub !== null) pSub.nextSub = nSub; else source.headSub = nSub;
         if (nSub !== null) nSub.prevSub = pSub; else source.tailSub = pSub;
-        if (lifecycleCount !== 0 && source.headSub === null) fireDisconnect(source);   // 1->0
 
         link.source = null;
         link.target = null;
@@ -582,6 +616,9 @@ export function createRegistry(config) {
         link.nextFree = freeLinkHead;
         freeLinkHead = link;
         activeLinks = (activeLinks - 1) | 0;
+        // 1->0 fires LAST (A1 r2): the link is already back in the pool, so a throwing
+        // onDisconnect cannot strand it half-freed (out of every list, never pooled).
+        if (lifecycleCount !== 0 && source.headSub === null) fireDisconnect(source);
     }
 
     /**
@@ -592,17 +629,73 @@ export function createRegistry(config) {
      * @private
      */
     function severTail(node) {
+        // List-consistent walk (A1.3, F13): every stale link is unlinked from the dep list
+        // BEFORE freeLink runs user code (op-4 hook, onDisconnect), and the walk pointer IS
+        // the live cursor, so a callback that disposes a later stale dep's source moves the
+        // walk via repairCursor instead of leaving it on a freed link. Order (head -> tail)
+        // of op 4 and the 1->0 callbacks is unchanged.
         let stale = activeObserverCurrentDep;
-        if (stale !== null) {
-            let prev = stale.prevDep;
-            if (prev !== null) prev.nextDep = null; else node.headDep = null;
-            node.tailDep = prev;
+        while (stale !== null) {
+            const p = stale.prevDep, n = stale.nextDep;
+            if (p !== null) p.nextDep = n; else node.headDep = n;
+            if (n !== null) n.prevDep = p; else node.tailDep = p;
+            activeObserverCurrentDep = n;
+            freeLink(stale, node, stale.source);
+            stale = activeObserverCurrentDep;
+        }
+    }
 
-            while (stale !== null) {
-                let next = stale.nextDep;
-                freeLink(stale, node, stale.source);
-                stale = next;
-            }
+    /**
+     * Frame-epilogue sever (A1 r2). The stale-tail walk runs user code (op-4 hook,
+     * onDisconnect). If that throws, the frame must still unwind: clear COMPUTING,
+     * restore observer/owner, pop the cursor, then rethrow. Without this a throwing
+     * epilogue callback left cursorDepth > 0 forever (pinned slots never released)
+     * and the context stranded. Links not yet severed stay in the dep list (still
+     * consistent): at worst one extra run, then the next re-track severs them.
+     * Cold: called only when a stale tail exists; the frame's caller checks for it.
+     * @private
+     */
+    function severTailFrame(node, po, pw) {
+        try {
+            severTail(node);
+        } catch (err) {
+            node.flags &= ~FLAG_COMPUTING;
+            currentObserver = po;
+            currentOwner = pw;
+            cursorDepth = (cursorDepth - 1) | 0;
+            activeObserverCurrentDep = cursorStack[cursorDepth];
+            throw err;
+        }
+    }
+
+    /**
+     * A1.2 cold helpers: keep every re-tracking cursor (the live one and the
+     * frames' saved ones on cursorStack) pointing at a live link of its own list.
+     * Identity compares only; no numeric arguments.
+     * @private
+     */
+    function repairCursor(sLink, nDep) {
+        if (activeObserverCurrentDep === sLink) { activeObserverCurrentDep = nDep; return; }
+        // At most one match: one frame per owner, one owner per link.
+        for (let i = (cursorDepth - 1) | 0; i >= 0; i--) {
+            if (cursorStack[i] === sLink) { cursorStack[i] = nDep; return; }
+        }
+    }
+    /**
+     * Drop every cursor into a dying running node's dep list. The live-cursor test is the
+     * functional part. The saved-slot loop is DEFENSE IN DEPTH (no probe can observe it):
+     * a dead frame's saved cursor only ever returns to that dead frame, which can no
+     * longer link (allocateLink's flags gate) or sever (the gen guard); and if its link is
+     * recycled into another frame's list, any legitimate holder sits in a higher slot, so
+     * repairCursor's top-down scan finds that one first. Nulling it keeps repairCursor's
+     * "at most one match" invariant literally true. @private
+     */
+    function dropCursors(node) {
+        const c = activeObserverCurrentDep;
+        if (c !== null && c.target === node) activeObserverCurrentDep = null;
+        for (let i = 0; i < cursorDepth; i++) {
+            const k = cursorStack[i];
+            if (k !== null && k.target === node) cursorStack[i] = null;
         }
     }
 
@@ -617,34 +710,26 @@ export function createRegistry(config) {
     function disposeNode(node) {
         if (mutationHook !== null) mutationHook(2, node.id, node.flags | 0);
         if (node.flags === 0) return;
+        const f = node.flags;
 
         // RACE WITH ACTIVE TRACKING: an effect/computed may call dispose on
-        // itself from inside its own body (#141). Once we tear the node down
-        // its dep-list, FLAG_COMPUTING, and cursor become stale immediately --
-        // any read() that runs in the REST of the body would otherwise try to
-        // hang a fresh link off a freed slot. Null the tracking state now so
-        // subsequent reads in this call stack become no-ops, and let
-        // executeEffect / pullComputed skip their finally-block bookkeeping
-        // via the gen-snapshot guard there.
+        // itself from inside its own body (#141), or from any frame nested
+        // inside its own (F15). Once we tear the node down its dep-list,
+        // FLAG_COMPUTING, and cursors become stale immediately -- any read()
+        // that runs in the REST of the body would otherwise try to hang a fresh
+        // link off a freed slot. Drop every cursor (live or saved) into its
+        // list, null the tracking state now so subsequent reads in this call
+        // stack become no-ops, and let executeEffect / pullComputed skip their
+        // finally-block bookkeeping via the gen-snapshot guard there. A cursor
+        // into this node's list exists only while it has a frame, and it is
+        // COMPUTING throughout that frame, so the flag gates the scan exactly.
+        if ((f & FLAG_COMPUTING) !== 0) dropCursors(node);
         if (currentObserver === node) {
             currentObserver = null;
-            activeObserverCurrentDep = null;
-            isTrackingDeps = false;
         }
         if (currentOwner === node) {
             currentOwner = null;
         }
-
-        // Live per-kind count: decrement here -- the single chokepoint every teardown
-        // path funnels through (owner cascade at the firstOwned loop, the effect
-        // disposer, and dispose(api)). Keyed off flags BEFORE they are cleared lower
-        // in this function; the guard above makes it double-dispose-safe. This is what
-        // keeps stats() honest: signals + computeds + effects === activeNodes holds
-        // under owner-cascade disposal, not just explicit dispose.
-        const f = node.flags;
-        if ((f & FLAG_SIGNAL) !== 0) statSignals--;
-        else if ((f & FLAG_COMPUTED) !== 0) statComputeds--;
-        else if ((f & FLAG_EFFECT) !== 0) statEffects--;
 
         // O(1) detach from parent to avoid modifying list during parent iteration
         if (node.owner !== null) {
@@ -656,15 +741,26 @@ export function createRegistry(config) {
             node.nextOwned = null;
         }
 
+        // RE-ENTRANCY (A1.7, S8): runCleanup and the dLink walk run user code (cleanups,
+        // op-4 hook, onDisconnect) that may dispose THIS node again. The inner call then
+        // completes the disposal (gen bump, free-list push); the outer call must stop, or
+        // it pushes the node onto the free list twice.
+        const g = node.gen;
         runCleanup(node);
+        if (node.gen !== g) return;
 
         // CROSS-EDGE L2->L1: extract this node's own edges from the graph.
-        let dLink = node.headDep;
-        while (dLink !== null) {
-            const next = dLink.nextDep;
+        // Pop from the front (A1.4, F8): each link leaves the dep list BEFORE freeLink
+        // runs user code, and the list is re-read after every callback, so a callback
+        // that disposes a later dep's source never leaves this walk on a freed link.
+        let dLink;
+        while ((dLink = node.headDep) !== null) {
+            const n = dLink.nextDep;
+            node.headDep = n;
+            if (n !== null) n.prevDep = null; else node.tailDep = null;
             freeLink(dLink, node, dLink.source);
-            dLink = next;
         }
+        if (node.gen !== g) return;
 
         let sLink = node.headSub;
         while (sLink !== null) {
@@ -676,16 +772,18 @@ export function createRegistry(config) {
             if (pDep !== null) pDep.nextDep = nDep; else target.headDep = nDep;
             if (nDep !== null) nDep.prevDep = pDep; else target.tailDep = pDep;
 
-            // CURSOR REPAIR (1.4.0): `target` may be an observer that is MID-RUN with
-            // its re-tracking cursor parked on this very link -- it linked `source` on
-            // the previous run, has not reached that read yet on this one, and now
-            // disposes `source` from its own body. Splicing the link out and handing it
-            // to the free list would leave activeObserverCurrentDep dangling at a freed
-            // slot: severTail would then read a nulled prevDep, wipe target.headDep
-            // (orphaning every surviving dep), and double-free the link -- freeLink
-            // null-derefs on `source.headSub`. Advance the cursor to the next surviving
-            // dep instead. Disposal path only; no steady-state cost.
-            if (activeObserverCurrentDep === sLink) activeObserverCurrentDep = nDep;
+            // CURSOR REPAIR (1.4.0; every frame since A1.2): `target` may be an observer
+            // that is MID-RUN with its re-tracking cursor parked on this very link -- it
+            // linked `source` on the previous run, has not reached that read yet on this
+            // one, and `source` is disposed from its body or from any frame nested inside
+            // it (F15: the cursor is then SAVED on cursorStack, not live). Splicing the
+            // link out and handing it to the free list would leave that cursor dangling
+            // at a freed slot: severTail would then read a nulled prevDep, wipe
+            // target.headDep (orphaning every surviving dep), and double-free the link --
+            // freeLink null-derefs on `source.headSub`. Advance the cursor to the next
+            // surviving dep instead. Only a COMPUTING target has a frame, so only it can
+            // hold a cursor. Disposal path only; no steady-state cost.
+            if ((target.flags & FLAG_COMPUTING) !== 0) repairCursor(sLink, nDep);
 
             sLink.source = null;
             sLink.target = null;
@@ -717,9 +815,23 @@ export function createRegistry(config) {
         node.nextMark = null;   // 1.3.0: defensive -- disposal during a sweep shouldn't happen, but ensures clean state
 
         node.gen = (node.gen + 1) | 0;
-        node.nextFree = freeNodeHead;
-        freeNodeHead = node;
+        if ((f & FLAG_COMPUTING) !== 0) {
+            node.nextFree = pinnedHead;   // A1.8: running -> pinned until depth 0
+            pinnedHead = node;
+        } else {
+            node.nextFree = freeNodeHead;
+            freeNodeHead = node;
+        }
         activeNodes = (activeNodes - 1) | 0;
+        // Live per-kind count: decrement here -- the single chokepoint every teardown
+        // path funnels through (owner cascade at the firstOwned loop, the effect
+        // disposer, and dispose(api)). Keyed off the flags captured at entry; the
+        // flags === 0 guard and the A1.7 gen checks make it run once per disposal,
+        // next to activeNodes, so signals + computeds + effects === activeNodes holds
+        // under owner-cascade and re-entrant disposal, inside cleanups too.
+        if ((f & FLAG_SIGNAL) !== 0) statSignals--;
+        else if ((f & FLAG_COMPUTED) !== 0) statComputeds--;
+        else if ((f & FLAG_EFFECT) !== 0) statEffects--;
         statTotalDisposals++;   // 1.4: every node returned to the pool
     }
 
@@ -733,31 +845,10 @@ export function createRegistry(config) {
      */
     function createNode(value, flags) {
         let node;
-        if (freeNodeHead === null) {
-            if (policy === "throw" && nodePool.length >= currentNodesCapacity) throw new CapacityError("nodes", currentNodesCapacity);
-            // Incremental growth (P0): chunked construction on a free-list miss;
-            // ledger doubles for stats() continuity. The effect queues are no
-            // longer length-extended here: `arr.length = n` converts a PACKED
-            // array to HOLEY permanently (a hidden flush-path tax); sequential
-            // `arr[len++] = x` appends keep them packed and auto-grow. (markStack
-            // is gone entirely as of 1.3.0's intrusive mark stack.)
-            let chunk = (policy === "throw") ? (currentNodesCapacity - nodePool.length) : 256;
-            if (chunk > 256) chunk = 256;
-            node = new ReactiveNode();
-            nodePool.push(node);
-            for (let i = 1; i < chunk; i++) {
-                const n = new ReactiveNode();
-                nodePool.push(n);
-                n.nextFree = freeNodeHead;
-                freeNodeHead = n;
-            }
-            if (nodePool.length > currentNodesCapacity) {
-                let doubled = currentNodesCapacity;
-                while (doubled < nodePool.length) doubled *= 2;
-                currentNodesCapacity = doubled;
-                statPoolGrowths++;   // 1.4: capacity ledger crossed
-            }
-        } else {
+        // Miss path out of line (A1 r2): keeps createNode under TurboFan's 460-byte
+        // inlining limit so signal() / computed() / effect() inline it, as in 1.5.2.
+        if (freeNodeHead === null) node = nodeMiss();
+        else {
             node = freeNodeHead;
             freeNodeHead = node.nextFree;
             node.nextFree = null;
@@ -805,7 +896,8 @@ export function createRegistry(config) {
         // the adoption path. nextOwned is written unconditionally on adoption
         // (it takes the prior firstOwned, which may be non-null), so it is a
         // real lifetime write, not a redundant clear.
-        if (currentOwner !== null && (flags & (FLAG_COMPUTED | FLAG_EFFECT)) !== 0) {
+        // A dead owner (disposed, slot pinned: A1.8) adopts nothing; the node is unowned (DV-A1-4).
+        if (currentOwner !== null && (flags & (FLAG_COMPUTED | FLAG_EFFECT)) !== 0 && currentOwner.flags !== 0) {
             node.owner = currentOwner;
             node.nextOwned = currentOwner.firstOwned;
             if (currentOwner.firstOwned !== null) {
@@ -816,6 +908,62 @@ export function createRegistry(config) {
 
         if (mutationHook !== null) mutationHook(1, node.id, node.flags | 0);
         return node;
+    }
+
+    /**
+     * Free-list miss (cold). A1.8: at depth 0 pinned slots are reusable again, so take
+     * one of those first; otherwise grow by a chunk (or throw under "throw").
+     * @private
+     */
+    function nodeMiss() {
+        let node;
+        if (pinnedHead !== null && cursorDepth === 0 && releasePinned()) {
+            node = freeNodeHead;
+            freeNodeHead = node.nextFree;
+            node.nextFree = null;
+            return node;
+        }
+        if (policy === "throw" && nodePool.length >= currentNodesCapacity) throw new CapacityError("nodes", currentNodesCapacity);
+        // Incremental growth (P0): chunked construction on a free-list miss;
+        // ledger doubles for stats() continuity. The effect queues are no
+        // longer length-extended here: `arr.length = n` converts a PACKED
+        // array to HOLEY permanently (a hidden flush-path tax); sequential
+        // `arr[len++] = x` appends keep them packed and auto-grow. (markStack
+        // is gone entirely as of 1.3.0's intrusive mark stack.)
+        let chunk = (policy === "throw") ? (currentNodesCapacity - nodePool.length) : 256;
+        if (chunk > 256) chunk = 256;
+        node = new ReactiveNode();
+        nodePool.push(node);
+        for (let i = 1; i < chunk; i++) {
+            const n = new ReactiveNode();
+            nodePool.push(n);
+            n.nextFree = freeNodeHead;
+            freeNodeHead = n;
+        }
+        if (nodePool.length > currentNodesCapacity) {
+            let doubled = currentNodesCapacity;
+            while (doubled < nodePool.length) doubled *= 2;
+            currentNodesCapacity = doubled;
+            statPoolGrowths++;   // 1.4: capacity ledger crossed
+        }
+        return node;
+    }
+
+    /**
+     * A1.8: splice every pinned slot into the free list. Callers guarantee
+     * cursorDepth === 0 (no frame left that could hold a pinned node). Cold.
+     * @private
+     */
+    function releasePinned() {
+        let n = pinnedHead;
+        pinnedHead = null;
+        while (n !== null) {
+            const nx = n.nextFree;
+            n.nextFree = freeNodeHead;
+            freeNodeHead = n;
+            n = nx;
+        }
+        return freeNodeHead !== null;
     }
 
     /**
@@ -832,36 +980,47 @@ export function createRegistry(config) {
         // disposal, mirroring the parent-knows-best assumption shared with
         // React / Solid (children may rely on parent state being live at their
         // cleanup time, but never the reverse).
-        let child = node.firstOwned;
-        while (child !== null) {
-            let next = child.nextOwned;
+        // A1 r2: a two-test dispatcher so it stays small enough to inline into
+        // executeEffect / pullComputed (and through them into flushEffects); the
+        // work lives in two cold helpers. Zero calls when there is nothing to do.
+        if (node.firstOwned !== null) disposeOwned(node);
+        if (node.cleanupFn !== undefined) runOwnCleanup(node);
+    }
+    /** Cascade-dispose the owned children (cold half of runCleanup). @private */
+    function disposeOwned(node) {
+        // Pop from the front (A1.10, S4): the owned list stays consistent at every user-code
+        // point and is re-read after each disposal, so a cleanup that disposes a later sibling
+        // (which unlinks itself from this list) cannot end the cascade early.
+        let child;
+        while ((child = node.firstOwned) !== null) {
+            const next = child.nextOwned;
+            node.firstOwned = next;
+            if (next !== null) next.prevOwned = null;
             // Detach immediately to optimise disposeNode processing
             child.owner = null;
             child.prevOwned = null;
             child.nextOwned = null;
             disposeNode(child);
-            child = next;
         }
-        node.firstOwned = null;
-
-        // Then this node's own cleanup.
+    }
+    /** Run this node's own cleanup(s) (cold half of runCleanup). @private */
+    function runOwnCleanup(node) {
         const cleanup = node.cleanupFn;
-        if (cleanup !== undefined) {
-            const prevObserver = currentObserver;
-            const prevOwner = currentOwner;
-            const prevTracking = isTrackingDeps;
-            currentObserver = null;
-            currentOwner = null;
-            isTrackingDeps = false;
-            try {
-                if (typeof cleanup === "function") cleanup();
-                else for (let i = 0; i < cleanup.length; i++) cleanup[i]();
-            } finally {
-                node.cleanupFn = undefined;
-                currentObserver = prevObserver;
-                currentOwner = prevOwner;
-                isTrackingDeps = prevTracking;
-            }
+        // Cleared BEFORE the call (A1.7): a cleanup that disposes its own node must not
+        // run itself again from the re-entrant disposeNode.
+        node.cleanupFn = undefined;
+        // S10: #30 gen-safe restore -- a cleanup that disposes the saved observer/owner
+        // (whose slot may already be recycled) must not re-seat it.
+        const po = currentObserver, pg = po !== null ? po.gen : 0;
+        const pw = currentOwner, pwg = pw !== null ? pw.gen : 0;
+        currentObserver = null;
+        currentOwner = null;
+        try {
+            if (typeof cleanup === "function") cleanup();
+            else for (let i = 0; i < cleanup.length; i++) cleanup[i]();
+        } finally {
+            currentObserver = (po !== null && po.gen === pg) ? po : null;
+            currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
         }
     }
 
@@ -955,6 +1114,7 @@ export function createRegistry(config) {
                     }
                 }
             }
+            if (pinnedHead !== null && cursorDepth === 0) releasePinned();
             normalExit = true;
         } finally {
             isFlushing = false;
@@ -978,6 +1138,23 @@ export function createRegistry(config) {
         }
     }
 
+    // A1 r2: the cycle throws live out of line. Their `new Error(...)` bytes counted
+    // against executeEffect's TurboFan inlining budget (max 460 bytecode bytes) on
+    // every run; the call that replaces them is smaller and never taken in practice.
+    // A1.9: pull a computed dep from executeEffect's pre-walk; true if that ran user code
+    // which freed or recycled the walk's link (both ends compared). Small, so it inlines;
+    // out of line only for executeEffect's inlining budget. pullComputed keeps the check
+    // inline: routing its own pre-walk through this helper measured slower (r2, mux).
+    function pullMoved(link, dep, node) {
+        pullComputed(dep);
+        return link.source !== dep || link.target !== node;
+    }
+    // Op 5 (recompute), out of line for the frames' inlining budget (small: TurboFan inlines
+    // it back, so the no-hook path is still one compare).
+    function fireRecompute(node) { if (mutationHook !== null) mutationHook(5, node.id, 0); }
+    function throwEffectCycle() { throw new Error("CycleError: Infinite effect loop detected."); }
+    function throwComputedCycle() { throw new Error("CycleError: Circular dependency detected."); }
+
     /**
      * Run an effect's compute body, re-tracking dependencies.
      * Short-circuits if no dependency has bumped its version since last eval.
@@ -987,7 +1164,12 @@ export function createRegistry(config) {
      * @private
      */
     function executeEffect(node) {
-        if ((node.flags & FLAG_COMPUTING) !== 0) throw new Error("CycleError: Infinite effect loop detected.");
+        if ((node.flags & FLAG_COMPUTING) !== 0) throwEffectCycle();
+        // SELF-DISPOSE / ABA DETECTION: snapshot the gen ONCE, before any user code (the
+        // pre-walk's pulls, runCleanup's cleanups, the body). disposeNode bumps gen, so if
+        // it advanced the node was disposed -- and, if that happened at depth 0, possibly
+        // recycled into a stranger (a pinned slot is released by the next depth-0 miss).
+        const savedGen = node.gen;
 
         if (node.evalVersion !== 0) {
             let link = node.headDep;
@@ -996,13 +1178,16 @@ export function createRegistry(config) {
 
             while (link !== null) {
                 const dep = link.source;
-                if ((dep.flags & FLAG_COMPUTED) !== 0) pullComputed(dep);
+                // A1.9 (S3): the pull ran user code that freed (maybe recycled) this link;
+                // its nextDep is gone, so stop walking and run the body (fail closed).
+                if ((dep.flags & FLAG_COMPUTED) !== 0 && pullMoved(link, dep, node)) { needsRun = true; break; }
                 if (((dep.version - evalVer) | 0) > 0) {
                     needsRun = true;
                     break;
                 }
                 link = link.nextDep;
             }
+            if (node.gen !== savedGen) return;   // A1.9: disposed (maybe recycled) during the pre-walk
 
             if (!needsRun) {
                 node.flags &= ~FLAG_QUEUED;
@@ -1013,37 +1198,39 @@ export function createRegistry(config) {
 
         node.flags = (node.flags & ~FLAG_QUEUED) | FLAG_COMPUTING;
         runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before re-run
-        if ((node.flags & FLAG_EFFECT) === 0) return;
+        if (node.gen !== savedGen) return;   // B1 (r3): a cleanup disposed it; never run a stranger
 
         const prevObserver = currentObserver;
         const prevOwner = currentOwner;
-        const prevActiveDep = activeObserverCurrentDep;
-        const prevTracking = isTrackingDeps;
 
+        // If gen advances during the body the node was disposed (and may already have been
+        // recycled into a different role). Skip the dep-list / flag / version mutations in
+        // that case -- they would either crash on the freed link list or corrupt the new
+        // resident.
         currentObserver = node;
         currentOwner = node;
+        // Cursor push (A1.1): nothing that can throw sits between it and `try`. The op-5 hook
+        // runs INSIDE `try` (S5), so a throwing hook unwinds the context like a body throw.
+        const d = cursorDepth;
+        if (d !== 0) cursorStack[d] = activeObserverCurrentDep;
+        cursorDepth = d + 1;   // Smi: depth is bounded by the JS stack, far below 2^30
         activeObserverCurrentDep = node.headDep;
-        isTrackingDeps = true;
-
-        // SELF-DISPOSE DETECTION: snapshot the gen. disposeNode bumps gen,
-        // so if it advanced during the body the node was disposed (and may
-        // already have been recycled into a different role). Skip the
-        // dep-list / flag / version mutations in that case -- they would
-        // either crash on the freed link list or corrupt the new resident.
-        const savedGen = node.gen;
-        if (mutationHook !== null) mutationHook(5, node.id, 0);
         try {
+            fireRecompute(node);
             node.computeFn();
         } finally {
             if (node.gen === savedGen) {
-                severTail(node);
-                node.flags &= ~FLAG_COMPUTING;
+                // S9: stamp BEFORE severTail. Its 1->0 callbacks may write a dep this run
+                // still reads; COMPUTING keeps markDownstream from queueing us, so a later
+                // stamp would absorb that write and the next pre-walk would miss it.
                 node.evalVersion = globalVersion;
+                if (activeObserverCurrentDep !== null) severTailFrame(node, prevObserver, prevOwner);
+                node.flags &= ~FLAG_COMPUTING;
             }
             currentObserver = prevObserver;
             currentOwner = prevOwner;
-            activeObserverCurrentDep = prevActiveDep;
-            isTrackingDeps = prevTracking;
+            cursorDepth = d;
+            activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
         }
     }
 
@@ -1076,47 +1263,56 @@ export function createRegistry(config) {
             return node.value;
         }
 
+        const savedGen = node.gen;   // once, before any user code (see executeEffect)
         let shouldRun = node.evalVersion === 0;
         if (!shouldRun) {
             let link = node.headDep;
             const evalVer = node.evalVersion | 0;
             while (link !== null) {
                 const dep = link.source;
-                if ((dep.flags & FLAG_COMPUTED) !== 0) pullComputed(dep);
+                if ((dep.flags & FLAG_COMPUTED) !== 0) {
+                    pullComputed(dep);
+                    if (link.source !== dep || link.target !== node) { shouldRun = true; break; }   // A1.9: link freed
+                }
                 if (((dep.version - evalVer) | 0) > 0) {
                     shouldRun = true;
                     break;
                 }
                 link = link.nextDep;
             }
+            if (node.gen !== savedGen) return undefined;   // A1.9: disposed during the pre-walk
         }
 
         if (shouldRun) {
-            if ((node.flags & FLAG_COMPUTING) !== 0) throw new Error("CycleError: Circular dependency detected.");
+            if ((node.flags & FLAG_COMPUTING) !== 0) throwComputedCycle();
             node.flags |= FLAG_COMPUTING;
             runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute
+            if (node.gen !== savedGen) return undefined;   // B1 (r3): disposed by a cleanup
 
             const prevObserver = currentObserver;
             const prevOwner = currentOwner;
-            const prevActiveDep = activeObserverCurrentDep;
-            const prevTracking = isTrackingDeps;
 
+            // Same self-dispose detection, cursor push and in-`try` op-5 hook as executeEffect.
+            // A throwing hook is cached as this computed's error (DV-S5).
             currentObserver = node;
             currentOwner = node;
+            const d = cursorDepth;
+            if (d !== 0) cursorStack[d] = activeObserverCurrentDep;
+            cursorDepth = d + 1;   // Smi: depth is bounded by the JS stack, far below 2^30
             activeObserverCurrentDep = node.headDep;
-            isTrackingDeps = true;
-
-            // Same self-dispose detection as executeEffect -- see comment there.
-            const savedGen = node.gen;
-            if (mutationHook !== null) mutationHook(5, node.id, 0);
             try {
+                fireRecompute(node);
                 const newValue = node.computeFn();
-                const eq = node.equals;
-                if (node.evalVersion === 0 || !eq || !eq(node.value, newValue)) {
-                    node.value = newValue;
-                    node.version = globalVersion;
+                // A1 r4: a body (or `equals`) that disposed `node` must not park its value on
+                // the pinned, then pooled, slot (retention until reuse). Cold: never inlined.
+                if (node.gen === savedGen) {
+                    const eq = node.equals;
+                    if ((node.evalVersion === 0 || !eq || !eq(node.value, newValue)) && node.gen === savedGen) {
+                        node.value = newValue;
+                        node.version = globalVersion;
+                    }
+                    node.flags &= ~FLAG_HAS_ERROR;
                 }
-                node.flags &= ~FLAG_HAS_ERROR;
             } catch (err) {
                 if (node.gen === savedGen) {
                     node.value = err;
@@ -1133,14 +1329,18 @@ export function createRegistry(config) {
                 }
             } finally {
                 if (node.gen === savedGen) {
-                    severTail(node);
+                    node.evalVersion = globalVersion;   // S9: before severTail (see executeEffect)
+                    if (activeObserverCurrentDep !== null) severTailFrame(node, prevObserver, prevOwner);
                     node.flags &= ~FLAG_COMPUTING;
                 }
                 currentObserver = prevObserver;
                 currentOwner = prevOwner;
-                activeObserverCurrentDep = prevActiveDep;
-                isTrackingDeps = prevTracking;
+                cursorDepth = d;
+                activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
             }
+            if (node.flags === 0) return undefined;   // disposed during body
+            if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;
+            return node.value;
         }
 
         if (node.flags === 0) return undefined;   // disposed during body
@@ -1162,12 +1362,12 @@ export function createRegistry(config) {
         const read = this;
         return effect(() => {
             const val = read();
-            const prevTracking = isTrackingDeps;
-            isTrackingDeps = false;
+            const po = currentObserver, pg = po !== null ? po.gen : 0;
+            currentObserver = null;
             try {
                 fn(val);
             } finally {
-                isTrackingDeps = prevTracking;
+                currentObserver = (po !== null && po.gen === pg) ? po : null;
             }
         });
     }
@@ -1213,7 +1413,7 @@ export function createRegistry(config) {
 
         const read = () => {
             if (node.gen !== birthGen) return undefined;
-            if (isTrackingDeps && currentObserver !== null) {
+            if (currentObserver !== null) {
                 let expected = activeObserverCurrentDep;
                 if (expected !== null && expected.source === node) {
                     activeObserverCurrentDep = expected.nextDep;
@@ -1277,7 +1477,7 @@ export function createRegistry(config) {
 
         const read = () => {
             if (node.gen !== birthGen) return undefined;
-            if (isTrackingDeps && currentObserver !== null) {
+            if (currentObserver !== null) {
                 let expected = activeObserverCurrentDep;
                 if (expected !== null && expected.source === node) {
                     activeObserverCurrentDep = expected.nextDep;
@@ -1322,7 +1522,7 @@ export function createRegistry(config) {
     function boxGet() {
         const node = this[NODE_PTR];
         if (node.gen !== this[NODE_GEN]) return undefined;   // stale: slot recycled (ABA guard)
-        if (isTrackingDeps && currentObserver !== null) {
+        if (currentObserver !== null) {
             const expected = activeObserverCurrentDep;
             if (expected !== null && expected.source === node) {
                 activeObserverCurrentDep = expected.nextDep;
@@ -1368,15 +1568,15 @@ export function createRegistry(config) {
         const box = this;
         return effect(() => {
             const val = box.get();
-            const prevTracking = isTrackingDeps;
-            isTrackingDeps = false;
-            try { fn(val); } finally { isTrackingDeps = prevTracking; }
+            const po = currentObserver, pg = po !== null ? po.gen : 0;
+            currentObserver = null;
+            try { fn(val); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }
         });
     }
     function boxComputedGet() {
         const node = this[NODE_PTR];
         if (node.gen !== this[NODE_GEN]) return undefined;
-        if (isTrackingDeps && currentObserver !== null) {
+        if (currentObserver !== null) {
             const expected = activeObserverCurrentDep;
             if (expected !== null && expected.source === node) {
                 activeObserverCurrentDep = expected.nextDep;
@@ -1592,16 +1792,16 @@ export function createRegistry(config) {
      * @returns {boolean}
      */
     function isTracking() {
-        return isTrackingDeps && currentObserver !== null;
+        return currentObserver !== null;
     }
 
     function untrack(fn) {
-        const prev = isTrackingDeps;
-        isTrackingDeps = false;
+        const po = currentObserver, pg = po !== null ? po.gen : 0;
+        currentObserver = null;
         try {
             return fn();
         } finally {
-            isTrackingDeps = prev;
+            currentObserver = (po !== null && po.gen === pg) ? po : null;
         }
     }
 
@@ -1628,33 +1828,29 @@ export function createRegistry(config) {
     }
     function runWithOwner(ownerHandle, fn) {
         const node = liveNode(ownerHandle);
-        const prevOwner = currentOwner;
-        const prevObserver = currentObserver;
-        const prevTracking = isTrackingDeps;
+        const pw = currentOwner, pwg = pw !== null ? pw.gen : 0;
+        const po = currentObserver, pg = po !== null ? po.gen : 0;
         currentOwner = (node !== undefined && (node.flags & (FLAG_COMPUTED | FLAG_EFFECT)) !== 0) ? node : null;
         currentObserver = null;
-        isTrackingDeps = false;
         try {
             return fn();
         } finally {
-            currentOwner = prevOwner;
-            currentObserver = prevObserver;
-            isTrackingDeps = prevTracking;
+            // S10: gen-safe restore (the #30 idiom) -- fn may dispose the saved owner/observer.
+            currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
+            currentObserver = (po !== null && po.gen === pg) ? po : null;
         }
     }
     function createRoot(fn) {
-        const prevOwner = currentOwner;
-        const prevObserver = currentObserver;
-        const prevTracking = isTrackingDeps;
+        const pw = currentOwner, pwg = pw !== null ? pw.gen : 0;
+        const po = currentObserver, pg = po !== null ? po.gen : 0;
         currentOwner = null;
         currentObserver = null;
-        isTrackingDeps = false;
         try {
             return fn();
         } finally {
-            currentOwner = prevOwner;
-            currentObserver = prevObserver;
-            isTrackingDeps = prevTracking;
+            // S10: gen-safe restore (the #30 idiom) -- fn may dispose the saved owner/observer.
+            currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
+            currentObserver = (po !== null && po.gen === pg) ? po : null;
         }
     }
 
@@ -1779,6 +1975,7 @@ export function createRegistry(config) {
             freeLinkHead = null;
         }
 
+        pinnedHead = null;   // A1.8: every slot, pinned ones included, is on the rebuilt free list
         activeNodes = 0;
         activeLinks = 0;
         activeQueueLen = 0;
@@ -1787,7 +1984,6 @@ export function createRegistry(config) {
         currentObserver = null;
         currentOwner = null;
         activeObserverCurrentDep = null;
-        isTrackingDeps = false;
         globalVersion = 1;
         batchEpoch = 1;
         statSignals = 0;

@@ -45,13 +45,27 @@ shape can't hide behind another:
 
 - `reactive-graph-mix` -- general sources -> layer1 -> layer2 + effects.
 - `deep-chain` -- long linear computed chain (lite-signal's DEEP CHAIN weak spot).
-- `broadcast-fanout` -- one source -> many leaves (the BROADCAST pattern).
+- `broadcast-fanout` -- one source -> 900 computeds -> ONE aggregating effect. Despite the
+  name this is a KAIROS shape: one effect runs per write, so it cannot see an
+  effect-dense regression (that is `effect-fanout`'s job).
 - `dynamic-dep-churn` -- branch-flipping bodies that retrack every cycle (DYNAMIC DAG).
 - `creation-churn` -- per-frame create -> write -> dispose triples (the CREATION lane,
   previously ungated); also carries the exact-counter lane: the engine's own
   `totalAllocations`/`poolGrowths` deltas per frame, gated at zero tolerance
   (`counter.allocs.max` / `counter.poolGrowths.max`) -- deterministic under the LCG,
   cross-rep identity enforced by aggregate.mjs (drift = evidence refusal).
+- `mux` -- 256 inputs -> one sum computed -> one effect. Every write re-validates a
+  256-long dep list and re-tracks 256 reads through the cursor: the per-hop lane. It
+  is the shape that exposed ledger #10 (+36-49%) and #12 (+65-78%), and it was absent
+  when the #27 link-SoA fork passed this matrix while costing +30% here (2026-09).
+- `effect-fanout` -- one source -> 512 effects (ledger bar 1b, the BROADCAST row).
+  Every write runs 512 effect bodies, so the markDownstream effect branch, the flush
+  loop and `executeEffect` framing are paid per effect -- the #18 regression class.
+
+**Missing baselines fail closed.** If the floor or rolling capture for any manifest
+workload is absent (for example, a workload added after the baseline was captured),
+`gate.mjs` reports `NO EVIDENCE` and exits 3 ("recapture"). It used to pass that axis
+vacuously, so a new workload gated nothing until someone recaptured by hand.
 
 Graphs are sized under lite-signal's default 1024-node pool cap; frame cost is scaled by
 `ITER` (more update cycles), not more nodes, and each workload runs in its own cold process.
@@ -92,7 +106,7 @@ is the candidate); this harness ships standalone.
 2. `bash matrix.sh gate 1.7.0` (published) or, at prepublish, `gate-self` against the tree.
 3. Commit the median `baselines/1.7.0/*.json`. Note in the CHANGELOG, citing the files.
 
-> 1.7.0's `flushStrategy` / SAB changes alter the profiling paths; a floor captured now is
+> 1.8.0's `flushStrategy` / SAB changes alter the profiling paths; a floor captured now is
 > what will gate 1.7.0. Re-calibrate self-noise once that engine is available.
 
 Copyright (c) Zahary Shinikchiev <shinikchiev@yahoo.com>  MIT License.

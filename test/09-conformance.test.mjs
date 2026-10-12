@@ -7,7 +7,9 @@ import {createRegistry} from "../Signal.js";
 
 const hasGC = typeof globalThis.gc === "function";
 function forceGc() { if (hasGC) { globalThis.gc(); globalThis.gc(); } }
-function heapKB() { return process.memoryUsage().heapUsed / 1024; }
+// heapUsed + arrayBuffers (2026-09, LEDGER #27 amendment): off-heap typed-array
+// backing stores are allocation too; heapUsed alone cannot see them.
+function heapKB() { const m = process.memoryUsage(); return (m.heapUsed + m.arrayBuffers) / 1024; }
 
 // ─── Capability probe: owner tree (auto-dispose of nested observers) ──────────
 // Present in v1.2.0+, absent in v1.1.x. Detected behaviorally so this one file

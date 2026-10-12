@@ -1,0 +1,605 @@
+{
+  "schema": 1,
+  "task": "SPEC-B v2 TASK 0 (a-g) evidence, chunk S1a",
+  "measuredAt": "2026-10-10T17:19:41.637Z",
+  "host": {
+    "cpu": "Apple M4 Pro",
+    "node": "v26.8.2",
+    "v8": "14.6.202.34-node.28",
+    "loadavgDuringThroughput": [
+      [
+        2.68,
+        2.66,
+        2.81
+      ],
+      [
+        3.04,
+        2.73,
+        2.84
+      ],
+      [
+        3.12,
+        2.76,
+        2.85
+      ],
+      [
+        3.41,
+        2.83,
+        2.87
+      ]
+    ],
+    "quiet": false,
+    "quietNote": "six other node processes were running (parallel pipelines); throughput is indicative, re-measure on a quiet host for TASK 9 calibration"
+  },
+  "a_hashes": {
+    "headGitSha": "ec36ab833287456d14be6a79bf1ec5b14e5ec192",
+    "git show HEAD:Signal.js": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+    "git show HEAD:Watch.js": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d",
+    "node_modules/@zakkster/lite-signal/Signal.js (1.5.2)": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+    "node_modules/@zakkster/lite-signal/Watch.js (1.5.2)": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d",
+    "node_modules/lite-signal-1.5.2/Signal.js (exact alias)": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+    "node_modules/lite-signal-1.5.2/Watch.js (exact alias)": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d",
+    "tree Signal.js (snapshot 2026-10-10, moving: Phase A edits it)": "7f707ccdd5302d1ab18d4178d7e21219f5491524dca9e380f8576c1ac36f0275",
+    "tree Watch.js": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d",
+    "headpatched Signal.js": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+    "headpatched Watch.js": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d",
+    "audit/2026-10-07/lite-signal-fixes.patch": "23559dbe77df0703667c68e9ab70f133093bbcddaf00ab535b83316ede09be88",
+    "expectedPrefixes": {
+      "head": "f8dd50f8",
+      "headpatched": "fa2871f0"
+    },
+    "prefixesMatch": true
+  },
+  "b_headpatched": {
+    "dir": "bench/soak/controls/headpatched",
+    "recipe": "see controls.json",
+    "nonAsciiBytes": 0
+  },
+  "c_golden": {
+    "file": "bench/soak/calibration/golden/oracle-fuzzer-400.json",
+    "byteIdenticalBeforeAfter": true,
+    "kernels": [
+      "head f8dd50f8",
+      "tree 7f707ccd",
+      "head + <=0 -> <=1 mutant"
+    ],
+    "mutantCaught": "400/400"
+  },
+  "d_probes": {
+    "p1-child-ownership": {
+      "script": "bench/soak/calibration/probes/p1-child-ownership.mjs",
+      "agreeHeadVsHeadpatched": true,
+      "rule": "nestedEffectsOwned=true: a parent re-run or stop disposes its child effects recursively",
+      "head": {
+        "kernelSha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+        "observed": {
+          "effectsAfterCreate": 2,
+          "effectsAfterRerun": 2,
+          "gen0RunsAfterRerun": 1,
+          "gen1Runs": 2,
+          "effectsAfterParentStop": 0,
+          "gen1RunsAfterParentStop": 2,
+          "owned": true
+        },
+        "rule": "nestedEffectsOwned=true: a parent re-run or stop disposes its child effects recursively"
+      },
+      "headpatched": {
+        "kernelSha256": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+        "observed": {
+          "effectsAfterCreate": 2,
+          "effectsAfterRerun": 2,
+          "gen0RunsAfterRerun": 1,
+          "gen1Runs": 2,
+          "effectsAfterParentStop": 0,
+          "gen1RunsAfterParentStop": 2,
+          "owned": true
+        },
+        "rule": "nestedEffectsOwned=true: a parent re-run or stop disposes its child effects recursively"
+      }
+    },
+    "p2-midbatch-effect": {
+      "script": "bench/soak/calibration/probes/p2-midbatch-effect.mjs",
+      "agreeHeadVsHeadpatched": true,
+      "rule": "an effect created mid-batch runs its first body synchronously at creation (sees the in-batch value), then re-runs at batch close iff a source it read changed after that first run",
+      "head": {
+        "kernelSha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+        "observed": {
+          "runsAtCreateReturn": 1,
+          "runsAtBatchBodyEnd": 1,
+          "runsAfterBatch": 2,
+          "seen": [
+            5,
+            6,
+            7
+          ],
+          "runsAfterLaterSet": 3
+        },
+        "rule": "an effect created mid-batch runs its first body synchronously at creation (sees the in-batch value), then re-runs at batch close iff a source it read changed after that first run"
+      },
+      "headpatched": {
+        "kernelSha256": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+        "observed": {
+          "runsAtCreateReturn": 1,
+          "runsAtBatchBodyEnd": 1,
+          "runsAfterBatch": 2,
+          "seen": [
+            5,
+            6,
+            7
+          ],
+          "runsAfterLaterSet": 3
+        },
+        "rule": "an effect created mid-batch runs its first body synchronously at creation (sees the in-batch value), then re-runs at batch close iff a source it read changed after that first run"
+      }
+    },
+    "p3-flush-error-shape": {
+      "script": "bench/soak/calibration/probes/p3-flush-error-shape.mjs",
+      "agreeHeadVsHeadpatched": true,
+      "rule": "effectErrors=aggregate: one throwing body -> Error(original); two -> AggregateError(errors=2); at creation -> Error; non-throwing effects in the same flush still run",
+      "head": {
+        "kernelSha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+        "observed": {
+          "one": {
+            "thrown": {
+              "ctor": "Error",
+              "message": "SoakThrow:0",
+              "aggregate": false,
+              "errors": null
+            },
+            "quietRunsAfterThrowingFlush": 3,
+            "recoveryThrown": null,
+            "quietRunsAfterRecovery": 3
+          },
+          "two": {
+            "thrown": {
+              "ctor": "AggregateError",
+              "message": "Effects threw during flush",
+              "aggregate": true,
+              "errors": [
+                "SoakThrow:0",
+                "SoakThrow:1"
+              ]
+            },
+            "quietRunsAfterThrowingFlush": 3,
+            "recoveryThrown": null,
+            "quietRunsAfterRecovery": 3
+          },
+          "create": {
+            "thrown": {
+              "ctor": "Error",
+              "message": "SoakThrow:create",
+              "aggregate": false,
+              "errors": null
+            },
+            "effectsAfter": 0
+          }
+        },
+        "rule": "effectErrors=aggregate: one throwing body -> Error(original); two -> AggregateError(errors=2); at creation -> Error; non-throwing effects in the same flush still run"
+      },
+      "headpatched": {
+        "kernelSha256": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+        "observed": {
+          "one": {
+            "thrown": {
+              "ctor": "Error",
+              "message": "SoakThrow:0",
+              "aggregate": false,
+              "errors": null
+            },
+            "quietRunsAfterThrowingFlush": 3,
+            "recoveryThrown": null,
+            "quietRunsAfterRecovery": 3
+          },
+          "two": {
+            "thrown": {
+              "ctor": "AggregateError",
+              "message": "Effects threw during flush",
+              "aggregate": true,
+              "errors": [
+                "SoakThrow:0",
+                "SoakThrow:1"
+              ]
+            },
+            "quietRunsAfterThrowingFlush": 3,
+            "recoveryThrown": null,
+            "quietRunsAfterRecovery": 3
+          },
+          "create": {
+            "thrown": {
+              "ctor": "Error",
+              "message": "SoakThrow:create",
+              "aggregate": false,
+              "errors": null
+            },
+            "effectsAfter": 0
+          }
+        },
+        "rule": "effectErrors=aggregate: one throwing body -> Error(original); two -> AggregateError(errors=2); at creation -> Error; non-throwing effects in the same flush still run"
+      }
+    },
+    "p4-unobserved-computed-links": {
+      "script": "bench/soak/calibration/probes/p4-unobserved-computed-links.mjs",
+      "agreeHeadVsHeadpatched": true,
+      "rule": "a top-level pull of an unobserved computed links its sources and KEEPS the links (modelEdges counts evaluated unobserved computeds)",
+      "head": {
+        "kernelSha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+        "observed": {
+          "linksBefore": 0,
+          "v1": 11,
+          "linksAfterPull": 2,
+          "sourceHasObservers": true,
+          "v2": 12,
+          "linksAfterSecondPull": 2,
+          "keeps": true
+        },
+        "rule": "a top-level pull of an unobserved computed links its sources and KEEPS the links (modelEdges counts evaluated unobserved computeds)"
+      },
+      "headpatched": {
+        "kernelSha256": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+        "observed": {
+          "linksBefore": 0,
+          "v1": 11,
+          "linksAfterPull": 2,
+          "sourceHasObservers": true,
+          "v2": 12,
+          "linksAfterSecondPull": 2,
+          "keeps": true
+        },
+        "rule": "a top-level pull of an unobserved computed links its sources and KEEPS the links (modelEdges counts evaluated unobserved computeds)"
+      }
+    },
+    "p5-disposed-read": {
+      "script": "bench/soak/calibration/probes/p5-disposed-read.mjs",
+      "agreeHeadVsHeadpatched": true,
+      "rule": "disposedRead=undefined: a disposed handle reads undefined (call and peek), set is a silent no-op, and a read makes no link",
+      "head": {
+        "kernelSha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+        "observed": {
+          "read": "undefined",
+          "peek": "undefined",
+          "setThrew": null,
+          "readAfterSet": "undefined",
+          "computedValue": "undefined",
+          "linksBefore": 0,
+          "linksAfter": 0,
+          "ok": true
+        },
+        "rule": "disposedRead=undefined: a disposed handle reads undefined (call and peek), set is a silent no-op, and a read makes no link"
+      },
+      "headpatched": {
+        "kernelSha256": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+        "observed": {
+          "read": "undefined",
+          "peek": "undefined",
+          "setThrew": null,
+          "readAfterSet": "undefined",
+          "computedValue": "undefined",
+          "linksBefore": 0,
+          "linksAfter": 0,
+          "ok": true
+        },
+        "rule": "disposedRead=undefined: a disposed handle reads undefined (call and peek), set is a silent no-op, and a read makes no link"
+      }
+    },
+    "p6-default-equality": {
+      "script": "bench/soak/calibration/probes/p6-default-equality.mjs",
+      "agreeHeadVsHeadpatched": true,
+      "rule": "equality=Object.is: set(NaN) over NaN is a no-op; set(-0) over 0 propagates",
+      "head": {
+        "kernelSha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+        "observed": {
+          "nanRuns": 1,
+          "negZeroRuns": 2,
+          "objectIs": true,
+          "strict": false
+        },
+        "rule": "equality=Object.is: set(NaN) over NaN is a no-op; set(-0) over 0 propagates"
+      },
+      "headpatched": {
+        "kernelSha256": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+        "observed": {
+          "nanRuns": 1,
+          "negZeroRuns": 2,
+          "objectIs": true,
+          "strict": false
+        },
+        "rule": "equality=Object.is: set(NaN) over NaN is a no-op; set(-0) over 0 propagates"
+      }
+    },
+    "p7-throw-midway-links": {
+      "script": "bench/soak/calibration/probes/p7-throw-midway-links.mjs",
+      "agreeHeadVsHeadpatched": true,
+      "rule": "a body that throws midway keeps ONLY the prefix it read before the throw (the old tail is severed); a write to a tail-only source does not re-run it",
+      "head": {
+        "kernelSha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+        "observed": {
+          "computed": {
+            "before": [
+              "f",
+              "a",
+              "b",
+              "d"
+            ],
+            "threw": true,
+            "afterThrow": [
+              "f",
+              "a"
+            ],
+            "linksAfterThrow": 2,
+            "recomputedOnTailWrite": false,
+            "rethrew": true
+          },
+          "effect": {
+            "linksBefore": 3,
+            "linksAfterThrow": 2,
+            "reranOnTailWrite": false
+          },
+          "prefix": true
+        },
+        "rule": "a body that throws midway keeps ONLY the prefix it read before the throw (the old tail is severed); a write to a tail-only source does not re-run it"
+      },
+      "headpatched": {
+        "kernelSha256": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+        "observed": {
+          "computed": {
+            "before": [
+              "f",
+              "a",
+              "b",
+              "d"
+            ],
+            "threw": true,
+            "afterThrow": [
+              "f",
+              "a"
+            ],
+            "linksAfterThrow": 2,
+            "recomputedOnTailWrite": false,
+            "rethrew": true
+          },
+          "effect": {
+            "linksBefore": 3,
+            "linksAfterThrow": 2,
+            "reranOnTailWrite": false
+          },
+          "prefix": true
+        },
+        "rule": "a body that throws midway keeps ONLY the prefix it read before the throw (the old tail is severed); a write to a tail-only source does not re-run it"
+      }
+    },
+    "p8-dispose-taint": {
+      "script": "bench/soak/calibration/probes/p8-dispose-taint.mjs",
+      "agreeHeadVsHeadpatched": true,
+      "rule": "taint rule: disposing a source re-runs nothing; dependents keep their cached value (TAINTED: the model must not compare them) until another source changes, then they read the disposed source as undefined",
+      "head": {
+        "kernelSha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81",
+        "observed": {
+          "before": {
+            "cRuns": 1,
+            "eRuns": 1,
+            "value": "5:1"
+          },
+          "afterDispose": {
+            "cRuns": 1,
+            "eRuns": 1,
+            "value": "5:1"
+          },
+          "afterOtherWrite": {
+            "cRuns": 2,
+            "eRuns": 2,
+            "value": "U:2"
+          },
+          "seen": [
+            "5:1",
+            "U:2"
+          ],
+          "taint": true
+        },
+        "rule": "taint rule: disposing a source re-runs nothing; dependents keep their cached value (TAINTED: the model must not compare them) until another source changes, then they read the disposed source as undefined"
+      },
+      "headpatched": {
+        "kernelSha256": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8",
+        "observed": {
+          "before": {
+            "cRuns": 1,
+            "eRuns": 1,
+            "value": "5:1"
+          },
+          "afterDispose": {
+            "cRuns": 1,
+            "eRuns": 1,
+            "value": "5:1"
+          },
+          "afterOtherWrite": {
+            "cRuns": 2,
+            "eRuns": 2,
+            "value": "U:2"
+          },
+          "seen": [
+            "5:1",
+            "U:2"
+          ],
+          "taint": true
+        },
+        "rule": "taint rule: disposing a source re-runs nothing; dependents keep their cached value (TAINTED: the model must not compare them) until another source changes, then they read the disposed source as undefined"
+      }
+    }
+  },
+  "e_w5_census": {
+    "rule": "closure lets in createRegistry bumped on a hot path; line numbers are HEAD (1.5.2) / tree (7f707ccd)",
+    "unbounded": [
+      {
+        "counter": "globalVersion",
+        "head": "1245 (signal set), 1350 (boxSet)",
+        "tree": "1244, 1349",
+        "bump": "(x + 1) | 0",
+        "smi": "wraps; stays Smi",
+        "drivingOp": "set() that changes a value (signal or box)",
+        "w": "W1 (F1)"
+      },
+      {
+        "counter": "batchEpoch",
+        "head": "1560",
+        "tree": "1559",
+        "bump": "(x + 1) | 0, 0 -> 1",
+        "smi": "wraps; stays Smi",
+        "drivingOp": "top-level batch() (also noop batches)",
+        "w": "W2 (F12)"
+      },
+      {
+        "counter": "nodeSeq",
+        "head": "786",
+        "tree": "794",
+        "bump": "(x + 1) | 0",
+        "smi": "wraps to NEGATIVE ids after 2^31 (F14; D4 window fix pending)",
+        "drivingOp": "every node allocation (signal/computed/effect create)",
+        "w": "W4"
+      },
+      {
+        "counter": "statTotalAllocations",
+        "head": "766",
+        "tree": "774",
+        "bump": "x++ (no | 0)",
+        "smi": "LEAVES Smi after 2^31: boxes 16 B per bump (F19)",
+        "drivingOp": "every node allocation; class: same-slot create+dispose",
+        "w": "W5 (F19, 0.04 -> 32.07 B/cycle per verification/stats-cliff.mjs)"
+      },
+      {
+        "counter": "statTotalDisposals",
+        "head": "723",
+        "tree": "731",
+        "bump": "x++ (no | 0)",
+        "smi": "LEAVES Smi after 2^31: boxes 16 B per bump (F19)",
+        "drivingOp": "every node disposal; class: same-slot create+dispose",
+        "w": "W5 (F19)"
+      },
+      {
+        "counter": "evalCount (headpatched only)",
+        "head": "absent",
+        "headpatched": "1115 (pullComputed recompute), 1193 (executeEffect)",
+        "bump": "x++ float64",
+        "smi": "LEAVES Smi after 2^31 body runs: 16 B per body run (F16)",
+        "drivingOp": "every computed recompute and effect body run",
+        "w": "W5 (F16)"
+      }
+    ],
+    "bounded": [
+      {
+        "counter": "activeNodes",
+        "head": "722/765",
+        "note": "(x +- 1) | 0; bounded by population"
+      },
+      {
+        "counter": "activeLinks",
+        "head": "539/584/698",
+        "note": "(x +- 1) | 0; bounded by population"
+      },
+      {
+        "counter": "statSignals / statComputeds / statEffects",
+        "head": "645-647, 1204/1423, 1274/1447, 1482",
+        "note": "x++/x--; bounded by population"
+      },
+      {
+        "counter": "statPoolGrowths",
+        "head": "532/758",
+        "note": "x++; bounded by log2(capacity ceiling); not hot"
+      },
+      {
+        "counter": "activeQueueLen",
+        "head": "907/942",
+        "note": "bounded by the queue; reset per flush"
+      },
+      {
+        "counter": "batchDepth",
+        "head": "1567/1571",
+        "note": "nesting depth; bounded"
+      },
+      {
+        "counter": "lifecycleCount",
+        "head": "1816/1826",
+        "note": "live registrations; bounded"
+      },
+      {
+        "counter": "flushErrorCount",
+        "head": "954/963/971/976",
+        "note": "errors per flush; reset per flush"
+      }
+    ],
+    "perNodeFields": "node.gen (head 719, 1751: (gen + 1) | 0, Smi wrap; W3/F11) is a ReactiveNode field, not a closure let; listed for W3"
+  },
+  "f_throughput": {
+    "command": "node audit/2026-10-07/model-lane.mjs <kernelDir>/Signal.js 10 1",
+    "head": {
+      "runs": [
+        {
+          "worlds": 43794,
+          "ops": 1431905
+        },
+        {
+          "worlds": 43002,
+          "ops": 1406463
+        }
+      ],
+      "opsPerSec": 141900,
+      "worldsPerSec": 4340,
+      "note": "99.98% of worlds FAIL early, so a world averages ~33 ops; not representative of full worlds"
+    },
+    "headpatched": {
+      "runs": [
+        {
+          "worlds": 4968,
+          "ops": 1986891
+        },
+        {
+          "worlds": 5097,
+          "ops": 2038491
+        },
+        {
+          "worlds": 5040,
+          "ops": 2015691
+        }
+      ],
+      "opsPerSec": 201400,
+      "worldsPerSec": 503,
+      "failingWorlds": 1,
+      "failure": "exception escaped set: Cannot set properties of null (setting 'headSub') at world seed 2776916833 (the F15 class; GRAPH/BATCH/ERROR cannot reach it, NEST must)"
+    },
+    "sizing": "prototype rate ~200k ops/s (400-step worlds). v2 defaults: 11 cycles x 100k ops x 4 lanes = 4.4M ops ~ 22 s at prototype speed; nightly 33 x 300k x 4 = 39.6M ops ~ 3.3 min. Budget 2-4x for the real soak (inline O2, O5 every op, frame stack): ~7-13 min nightly, well inside the 75 min job. TASK 9 recalibrates on a quiet host."
+  },
+  "g_leak_tracker": {
+    "probe": "leak-tracker-finalization",
+    "leakVersion": "1.10.0",
+    "observed": {
+      "N": 1000,
+      "KEEP": 10,
+      "sizeAfterTrack": 1000,
+      "sizeAfterDrain": 10,
+      "weakAlive": 10,
+      "finalizerCleanups": 990,
+      "onLeak": 990,
+      "drainTries": 2,
+      "drainMs": 32,
+      "sizeBeforeUntrack": 11,
+      "sizeAfterUntrack": 10,
+      "decrements": true
+    },
+    "rule": "tracker.size() DOES decrement on finalization without untrack(): size() counts live (uncollected) targets, so size()===0 after a drain is a valid retention witness; the WeakRef count agrees and is kept as the second witness"
+  },
+  "next_free_tests": {
+    "highestExisting": 34,
+    "free": [
+      33,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44
+    ],
+    "soak": "40-44 (40-soak-teeth, 41-soak-config, 42-soak-report, 43-soak-model, 44-soak-divergences); 35-39 left to Phase A regressions (v2 addendum 2)"
+  }
+}

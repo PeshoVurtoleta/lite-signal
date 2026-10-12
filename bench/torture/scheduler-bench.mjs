@@ -18,13 +18,14 @@
  * later-but-still-prior turn passes by design; a dropped thunk or a wedged
  * drain cannot (mutant-verified both ways). Run counts are exact
  * at teardown: one delivery per write plus the (deferred) creation run.
- * Mid-run node/link high-water and post-GC heapUsed witnesses ride along, as
+ * Mid-run node/link high-water and post-GC resident (heapUsed + arrayBuffers) witnesses ride along, as
  * in the other soaks.
  *
  * Usage: node --expose-gc bench/torture/scheduler-bench.mjs
  */
 import {performance} from "node:perf_hooks";
 import {createRegistry} from "../../Signal.js";
+import {residentBytes} from "./helpers/index.mjs";
 
 const N_SIGNALS = 1000;
 const N_EFFECTS = 1500;
@@ -127,12 +128,12 @@ function sampleWitnesses(now) {
     if (hwBreachTick < 0 && (st.activeNodes > NODES_CEILING || st.activeLinks > LINKS_CEILING)) hwBreachTick = tickCount;
     if (HAVE_GC && now >= nextHeapSample) {
         globalThis.gc();
-        const used = process.memoryUsage().heapUsed;
+        const used = residentBytes();
         if (used > heapHW) heapHW = used;
         nextHeapSample = now + HEAP_SAMPLE_EVERY_MS;
     }
 }
-if (HAVE_GC) { globalThis.gc(); heapBase = heapHW = process.memoryUsage().heapUsed; }
+if (HAVE_GC) { globalThis.gc(); heapBase = heapHW = residentBytes(); }
 
 const baseline = r.stats();
 let ops = 0;
@@ -273,7 +274,7 @@ function finish() {
         console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
         console.log("  mid-run high-water nodes/links:", nodesHW, "/", linksHW,
             "(ceilings", NODES_CEILING, "/", LINKS_CEILING + ")");
-        console.log("  post-GC heapUsed: base", (heapBase / 1048576).toFixed(1), "MB, high-water",
+        console.log("  post-GC resident (heap + ArrayBuffers): base", (heapBase / 1048576).toFixed(1), "MB, high-water",
             (heapHW / 1048576).toFixed(1), "MB", HAVE_GC ? "" : "(UNAVAILABLE)");
 
         // Final full oracle sweep -- every signal, not just the sampled window.
@@ -315,7 +316,7 @@ function finish() {
         console.error("  FAIL: heap witness unverifiable -- run with --expose-gc");
             exitCode = 1;
         } else if (heapHW - heapBase > HEAP_SLACK_MB * 1048576) {
-            console.error("  FAIL: post-GC heapUsed grew", ((heapHW - heapBase) / 1048576).toFixed(1),
+            console.error("  FAIL: post-GC resident (heap + ArrayBuffers) grew", ((heapHW - heapBase) / 1048576).toFixed(1),
                 "MB >", HEAP_SLACK_MB, "MB slack -- retention the pool counters cannot see");
             exitCode = 1;
         }

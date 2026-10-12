@@ -1,0 +1,272 @@
+/**
+ * @zakkster/lite-signal soak -- SCENARIO DETECTORS (SPEC-B v2 section 5.1: "each counter checks its
+ * trigger condition, not just that the op was issued"; S8 hollow chaos modes).
+ *
+ * exec.mjs calls these hooks at engine-observable events (a top-level write, a batch write, a body frame
+ * ending, a disposal with the frame stack as it is, an O1c pull, a guarded call's escape). Each counter
+ * increments only when its TRUE condition holds at that event. Counts are world-level (`counts`) and
+ * step-level (`step`, the scen[] tag of a failure).
+ *
+ * Frame vocabulary (exec.mjs runBody): a frame is one user body on the stack, with
+ *   prev   the live sources its previous run linked (the engine dep list at run start, spliced on disposal)
+ *   reads  the sources tracked so far in this run; ok = reads are still a prefix of prev (cursor intact)
+ *   inRead the node it is reading right now (-1 none); nested = a body ran inside that read (the engine
+ *          saved this frame's cursor: pullComputed / executeEffect prevActiveDep)
+ * A frame is SUSPENDED when it is not the innermost frame, or it is inside a read that ran a nested body.
+ *
+ * COLD module.
+ */
+
+export const SCENARIOS = Object.freeze([
+    // GRAPH
+    'diamond-write', 'dep-set-flip', 'deep-pull', 'second-invalidation', 'equality-cutoff', 'adversarial-equality', 'wide-mark',
+    // BATCH
+    'revert-after-mid-read', 'revert-no-read', 'nested-close', 'throw-in-batch', 'effect-created-mid-batch', 'multi-write-same-signal',
+    // ERROR
+    'throw-dep-effect-prewalk', 'throw-dep-computed-prewalk', 'recovery-after-throw', 'aggregate', 'throwing-equals', 'cycle-error-surfaces',
+    // NEST
+    'saved-cursor-hazard', 'live-cursor-hazard', 'child-first-run-dispose', 'nested-computed-dispose', 'untrack-dispose', 'outer-computed',
+    'early-exit-after-dispose', 'lifecycle-callback-dispose', 'lifecycle-dispose-recycle', 'dispose-outer-observer',
+]);
+
+const DEEP_PULL_MIN = 16;
+const WIDE_MARK_MIN = 64;
+
+function isAdversarialPair(a, b) {
+    if (Object.is(a, 0) && Object.is(b, -0)) return true;
+    if (Object.is(a, -0) && Object.is(b, 0)) return true;
+    if (Number.isNaN(a) && Number.isNaN(b) && typeof a === 'number' && typeof b === 'number') return true;
+    if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object' && a !== b && a.ref === 'X' && b.ref === 'X') return true;
+    return false;
+}
+
+export class Detectors {
+    constructor(x) {
+        this.x = x;                     // the exec world (frames, model, ran set)
+        this.counts = Object.create(null);
+        this.step = new Set();
+        this.setThisOp = [];            // signals whose value a top-level write changed this op
+        this.wsp = new Map();           // computed -> value-changing writes into its cone since its last run
+        this.batch = null;              // { pre: Map(s -> pre value), writes: Map, mid: Set(s), depth }
+        this.recycle = null;            // lifecycle-dispose-recycle tracker
+    }
+
+    count(name) {
+        this.counts[name] = (this.counts[name] || 0) + 1;
+        this.step.add(name);
+    }
+
+    beginStep() {
+        this.step.clear();
+        this.setThisOp.length = 0;
+    }
+
+    /* ---- graph helpers over OBSERVED links (what the engine was told) ---------------------------- */
+
+    /** node -> number of live observers whose last run linked it. */
+    subscriberCounts() {
+        const M = this.x.M;
+        const sub = new Map();
+        for (let k = 0; k < M.n.length; k++) {
+            const nd = M.n[k];
+            if (nd === undefined || !nd.live || nd.t === 's' || nd.links === null) continue;
+            for (const r of nd.links) sub.set(r, (sub.get(r) || 0) + 1);
+        }
+        return sub;
+    }
+
+    /** Signals reachable from node i over observed links (memo per call site). */
+    obsCone(i, memo) {
+        if (memo.has(i)) return memo.get(i);
+        const M = this.x.M;
+        const nd = M.n[i];
+        const out = new Set();
+        memo.set(i, out);
+        if (nd === undefined) return out;
+        if (nd.t === 's') { out.add(i); return out; }
+        if (nd.links !== null) for (const r of nd.links) for (const s of this.obsCone(r, memo)) out.add(s);
+        return out;
+    }
+
+    /* ---- GRAPH ------------------------------------------------------------------------------------- */
+
+    /** A top-level (or batch) write of signal s from `old` to `v`. changed: not equal under the engine's equality. */
+    onWrite(s, old, v, changed, topLevel) {
+        const sub = this.subscriberCounts();
+        if (isAdversarialPair(old, v) && (sub.get(s) || 0) > 0) this.count('adversarial-equality');
+        if (!changed) return;
+        if (topLevel) {
+            this.setThisOp.push(s);
+            if ((sub.get(s) || 0) >= WIDE_MARK_MIN) this.count('wide-mark');
+        }
+        // second-invalidation bookkeeping: unobserved (no subscriber), already-evaluated computeds in s's cone
+        const M = this.x.M;
+        const memo = new Map();
+        for (let k = 0; k < M.n.length; k++) {
+            const nd = M.n[k];
+            if (nd === undefined || !nd.live || nd.t !== 'c' || nd.links === null) continue;
+            if ((sub.get(k) || 0) > 0) continue;
+            if (this.obsCone(k, memo).has(s)) this.wsp.set(k, (this.wsp.get(k) || 0) + 1);
+        }
+    }
+
+    /** End of a top-level op: diamond-write = some body that ran reads >= 2 nodes whose cone holds a written s. */
+    endOp() {
+        if (this.setThisOp.length === 0) return;
+        const M = this.x.M;
+        const memo = new Map();
+        for (const i of this.x.ran) {
+            const nd = M.n[i];
+            if (nd === undefined || nd.links === null) continue;
+            for (const s of this.setThisOp) {
+                let paths = 0;
+                for (const r of nd.links) if (r === s || this.obsCone(r, memo).has(s)) paths++;
+                if (paths >= 2) { this.count('diamond-write'); return; }
+            }
+        }
+    }
+
+    /** O1c is about to pull computed i at rest. */
+    beforeCheckRead(i) {
+        if ((this.wsp.get(i) || 0) >= 2) this.count('second-invalidation');
+    }
+
+    /** O1c pulled computed i; `bodies` computed bodies ran during that one read. */
+    afterCheckRead(i, bodies) {
+        if (bodies >= DEEP_PULL_MIN) this.count('deep-pull');
+    }
+
+    /* ---- frames ------------------------------------------------------------------------------------ */
+
+    onFrameEnd(f, nd, prevOut, prevThrew, threw) {
+        const x = this.x;
+        if (nd.t === 'c') this.wsp.delete(nd.i);
+        if (f.prev !== null && f.prev.length > 0) {
+            let same = f.prev.length === f.reads.length;
+            for (let k = 0; same && k < f.reads.length; k++) if (f.reads[k] !== f.prev[k]) same = false;
+            if (!same) this.count('dep-set-flip');
+        }
+        if (nd.t === 'c' && !f.first && !threw && !prevThrew && Object.is(prevOut, nd.out) && (f.depth > 0 || x.topRead === -1)) {
+            this.count('equality-cutoff');
+        }
+        if (nd.t === 'c' && threw) {
+            if (f.pre === 1) this.count('throw-dep-effect-prewalk');
+            else if (f.pre === 2) this.count('throw-dep-computed-prewalk');
+        }
+        if (nd.t === 'c' && !threw && prevThrew && !f.first) this.count('recovery-after-throw');
+        if (f.hazard && f.reads.length === f.hazardAt) this.count('early-exit-after-dispose');
+    }
+
+    /** A tracked read of `ref` by frame f (before the engine read). */
+    onTrackedRead(f, ref) {
+        const rc = this.recycle;
+        if (rc !== null && rc.z === ref) {
+            const sub = this.subscriberCounts();
+            if ((sub.get(ref) || 0) === 0) this.count('lifecycle-dispose-recycle');
+            this.recycle = null;
+        }
+    }
+
+    onCreate(i, t) {
+        const rc = this.recycle;
+        if (rc === null) return;
+        if (rc.z === -1 && t === 's') rc.z = i;
+        else if (rc.z === -1) this.recycle = null;
+    }
+
+    /**
+     * Node i is about to be disposed by exec code (a top-level op, a body or a lifecycle callback). The
+     * frame stack is exactly the engine's at this instant.
+     */
+    onDispose(i) {
+        const x = this.x;
+        const M = x.M;
+        const frames = x.frames;
+        const nd = M.n[i];
+        // lifecycle-dispose-recycle: the target of a live registration dies; the next node allocated is watched.
+        for (let r = 0; r < M.regs.length; r++) {
+            const g = M.regs[r];
+            if (g !== undefined && g.live && g.target === i) { this.recycle = { z: -1 }; break; }
+        }
+        if (x.cbDepth > 0) this.count('lifecycle-callback-dispose');
+        const n = frames.length;
+        if (n === 0) return;
+        const top = frames[n - 1];
+        if (x.cbDepth === 0) {
+            if (top.t === 'e' && top.first && n >= 2) this.count('child-first-run-dispose');
+            if (top.t === 'c' && n >= 2) this.count('nested-computed-dispose');
+            if (top.t === 'c' && n >= 2 && frames[n - 2].inReadU) this.count('untrack-dispose');
+        }
+        for (let j = n - 1; j >= 0; j--) {
+            const F = frames[j];
+            const suspended = j < n - 1 || (F.inRead !== -1 && F.nested);
+            if (F.i === i && suspended && nd !== undefined && nd.t !== 's') this.count('dispose-outer-observer');
+            if (!F.ok || F.prev === null) continue;
+            const at = F.prev.indexOf(i, F.reads.length);
+            if (at === -1) continue;
+            if (suspended) {
+                this.count('saved-cursor-hazard');
+                if (F.t === 'c') this.count('outer-computed');
+                if (at === F.reads.length) { F.hazard = true; F.hazardAt = F.reads.length; }
+            } else {
+                this.count('live-cursor-hazard');
+            }
+        }
+    }
+
+    /* ---- BATCH -------------------------------------------------------------------------------------- */
+
+    onBatchEnter(depth) {
+        if (depth === 1) this.batch = { pre: new Map(), writes: new Map(), mid: new Set(), last: new Map() };
+    }
+
+    onBatchExit(depth, wroteInside) {
+        if (depth >= 2 && wroteInside) this.count('nested-close');
+        if (depth === 1) this.batch = null;
+    }
+
+    onBatchWrite(s, old, v) {
+        const b = this.batch;
+        if (b === null) return;
+        if (!b.pre.has(s)) b.pre.set(s, old);
+        const w = (b.writes.get(s) || 0) + 1;
+        b.writes.set(s, w);
+        const pre = b.pre.get(s);
+        if (w >= 2 && !Object.is(b.last.get(s), v)) this.count('multi-write-same-signal');
+        if (w >= 2 && Object.is(v, pre) && !Object.is(old, pre)) {
+            this.count(b.mid.has(s) ? 'revert-after-mid-read' : 'revert-no-read');
+            b.mid.delete(s);
+        }
+        b.last.set(s, v);
+    }
+
+    /** A mid-batch top-level read of computed c: mark every in-flight write whose signal c reads now. */
+    onMidRead(c) {
+        const b = this.batch;
+        if (b === null) return;
+        const M = this.x.M;
+        const cone = M.readCone(c, new Map());
+        for (const [s, pre] of b.pre) {
+            const nd = M.n[s];
+            if (nd !== undefined && nd.live && !Object.is(nd.v, pre) && cone.has(s)) b.mid.add(s);
+        }
+    }
+
+    onBatchThrow(wrote) {
+        if (wrote) this.count('throw-in-batch');
+    }
+
+    onEffectCreated(inBatch, ran) {
+        if (inBatch && ran) this.count('effect-created-mid-batch');
+    }
+
+    /* ---- ERROR -------------------------------------------------------------------------------------- */
+
+    /** One guarded call finished. g: its guard; got: the normalized escape leaves. */
+    onEscape(g, got) {
+        if (g.thrown.length >= 2) this.count('aggregate');
+        if (g.cycle) {
+            for (const leaf of got) if (typeof leaf.message === 'string' && leaf.message.indexOf('CycleError:') === 0) { this.count('cycle-error-surfaces'); break; }
+        }
+    }
+}

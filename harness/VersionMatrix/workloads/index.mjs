@@ -4,7 +4,9 @@ import * as deep from './deep-chain.mjs';
 import * as broadcast from './broadcast-fanout.mjs';
 import * as churn from './dynamic-dep-churn.mjs';
 import * as creation from './creation-churn.mjs';
+import * as mux from './mux.mjs';
+import * as effectFanout from './effect-fanout.mjs';
 
-export const WORKLOADS = { [mix.name]: mix, [deep.name]: deep, [broadcast.name]: broadcast, [churn.name]: churn, [creation.name]: creation };
+export const WORKLOADS = { [mix.name]: mix, [deep.name]: deep, [broadcast.name]: broadcast, [churn.name]: churn, [creation.name]: creation, [mux.name]: mux, [effectFanout.name]: effectFanout };
 export const NAMES = Object.keys(WORKLOADS);
 export function get(name) { const w = WORKLOADS[name]; if (!w) throw new Error('unknown workload: ' + name + ' (have: ' + NAMES.join(', ') + ')'); return w; }

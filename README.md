@@ -876,8 +876,8 @@ semantic scenarios** -- including `owner-torture`, `error-torture`,
 `deep-chain-torture`, `zerogc-torture` (its `churn-box` signalBox lane),
 `introspect-torture` and `lifecycle-torture`, which EXECUTE here for the first
 time via signalBox and the getOwner/runWithOwner/createRoot surface -- and
-reports a clean SKIP for the four later-version ones (`scope-torture` 1.6.0,
-`flush-torture` 1.7.0, `cleanup-return-torture` 1.8.0, `dispose-torture` 1.9.0).
+reports a clean SKIP for the four later-version ones (`scope-torture` 1.7.0,
+`flush-torture` 1.8.0, `cleanup-return-torture` 1.9.0, `dispose-torture` 1.10.0).
 Each soak carries an `Int32Array` value-correctness oracle: one allocation up
 front, a rotating sampled window per tick (zero per-tick allocation), a full
 sweep at teardown. Verified green: **22/22 passed**.
@@ -904,8 +904,8 @@ asserting nothing.
 #### `semantic` -- deterministic, fast, asserts on **meaning**
 
 Run these on every commit. They pin values, wakeups, work and ordering. The nine
-without a version tag run on the 1.5.0 engine; the four tagged `1.6.0+`/`1.7.0+`/
-`1.8.0+`/`1.9.0+` feature-detect and report a clean SKIP here, then activate on
+without a version tag run on the 1.5.0 engine; the four tagged `1.7.0+`/`1.8.0+`/
+`1.9.0+`/`1.10.0+` feature-detect and report a clean SKIP here, then activate on
 the engine version that introduces their feature.
 
 | scenario | pins |
@@ -919,10 +919,10 @@ the engine version that introduces their feature.
 | `async-torture` | `watch` / `when` / `whenAsync` contracts: the `Object.is` projection guard, correct `oldValue`, stop-from-callback, once-then-auto-dispose, plus a 300-seed differential storm against an independent shadow |
 | `capacity-torture` | the fail-closed pool boundary: exact node/link ceilings, `CapacityError` on both pools, re-throw-on-read after a mid-build overflow (no partial value escapes), and `grow` crossing the same boundary without throwing |
 | `op-accounting` | structural work counted from the engine's own `onGraphMutation` opcode lane (op 1-5) instead of wall-clock: op5 identity, equality cutoff, link/node balance across rewiring, laziness, and a 400-seed op5-vs-wrapper differential |
-| `scope-torture` (1.6.0+) | `createScope` adoption + the disposal-crash repro and its 300-seed fuzz; `runWithOwner` re-attachment into a scope; pool balance over 200 scope rounds |
-| `flush-torture` (1.7.0+) | `flushStrategy` eager/sab/manual convergence via a cross-strategy differential, per-strategy scheduling, and the `.subscribe()` contract under each |
-| `cleanup-return-torture` (1.8.0+) | an effect's returned cleanup: timing, compose order after imperative `onCleanup`, the self-dispose guard, and a 400-seed differential vs `onCleanup(fn)` as the last statement |
-| `dispose-torture` (1.9.0+) | `Symbol.dispose` / `using` on lifecycle objects: the five stamped sites, the callable-exclusion assertion, per-site equivalence, idempotence, prototype-stamping for boxes |
+| `scope-torture` (1.7.0+) | `createScope` adoption + the disposal-crash repro and its 300-seed fuzz; `runWithOwner` re-attachment into a scope; pool balance over 200 scope rounds |
+| `flush-torture` (1.8.0+) | `flushStrategy` eager/sab/manual convergence via a cross-strategy differential, per-strategy scheduling, and the `.subscribe()` contract under each |
+| `cleanup-return-torture` (1.9.0+) | an effect's returned cleanup: timing, compose order after imperative `onCleanup`, the self-dispose guard, and a 400-seed differential vs `onCleanup(fn)` as the last statement |
+| `dispose-torture` (1.10.0+) | `Symbol.dispose` / `using` on lifecycle objects: the five stamped sites, the callable-exclusion assertion, per-site equivalence, idempotence, prototype-stamping for boxes |
 
 Why this group exists: the resource soaks below pass green on an engine whose
 computeds return stale values. Flipping the clean short-circuit in `pullComputed`
@@ -1025,12 +1025,17 @@ A **same-host, cold-process regression gate** for the engine. Turns "did this re
 
 **Identical-code guard (new in 1.5.0-beta).** Each capture records the sha256 of the engine source (`baselines/<label>/engine.sha256`). If the candidate's hash matches a baseline's, that axis runs the *same bytes* -- any measured delta is host noise, not a regression -- so the gate **skips** it (shown as `SKIP`) rather than let variance flag a phantom. This is what saves you when you re-version without a code change: a `1.5.0-beta.0` that is byte-identical to a published `1.5.0-alpha.1` cannot regress against it, and the gate says so structurally instead of failing on a noisy median. A genuine code change produces a different hash and is gated normally.
 
-**Four workloads**, each mapping to a public bench claim so a change that regresses one shape can't hide behind another:
+**Seven workloads**, each mapping to a public bench claim so a change that regresses one shape can't hide behind another:
 
 - `reactive-graph-mix` -- general sources -> layer1 -> layer2 + effects (the KAIROS / mol pattern).
 - `deep-chain` -- long linear computed chain (the DEEP CHAIN weak spot).
-- `broadcast-fanout` -- one source -> many leaves (the BROADCAST pattern).
+- `broadcast-fanout` -- one source -> 900 computeds -> one aggregating effect (a KAIROS shape: one effect runs per write).
 - `dynamic-dep-churn` -- branch-flipping bodies that retrack every cycle (the DYNAMIC / SELECTIVE DAG wins).
+- `creation-churn` -- per-frame create -> write -> dispose triples, plus the exact-counter lane (`totalAllocations` / `poolGrowths` at zero tolerance).
+- `mux` -- 256 inputs -> one sum computed -> one effect: the long dep-list walk, where a per-hop cost change shows first.
+- `effect-fanout` -- one source -> 512 effects: the effect-dense flush (ledger bar 1b), which `broadcast-fanout` cannot see.
+
+`mux` and `effect-fanout` were added after an experimental link-layout fork passed the five older workloads while costing +30% on exactly these two shapes (see `LEDGER.md` #27). A floor or rolling capture missing for any workload is reported as `NO EVIDENCE` (exit 3, recapture), never passed vacuously.
 
 Graphs are sized under lite-signal's default 1024-node pool cap; frame cost is scaled by `ITER` (more update cycles), not more nodes.
 
@@ -1067,7 +1072,7 @@ The setup script pins specific package versions via tarball install so the harne
 ### Notes
 
 - The hardening suite and the profiler integration do **not** run on `npm test` from the root. They opt in through the `test:hardening` / `test:harness` scripts (and `test:all`, which chains everything).
-- The **VersionMatrix gate**, by contrast, IS wired into `prepublishOnly` -- a regression on the four reference workloads blocks `npm publish`. Diagnostic runs (`node diff.mjs`) are opt-in from the harness directory.
+- The **VersionMatrix gate**, by contrast, IS wired into `prepublishOnly` -- a regression on any of the seven reference workloads blocks `npm publish`. Diagnostic runs (`node diff.mjs`) are opt-in from the harness directory.
 - All three subdirectories have their own `package.json` with local scripts, so you can also `cd` in and run `npm test` directly -- the root scripts are just shortcuts.
 - The `npm --prefix <dir> test` form used in the root scripts is the cross-platform replacement for `cd && npm test` -- works identically on Linux, macOS, and Windows.
 

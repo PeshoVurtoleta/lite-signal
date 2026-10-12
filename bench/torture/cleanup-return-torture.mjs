@@ -1,7 +1,9 @@
 /**
- * bench/torture/cleanup-return-torture.mjs — effect cleanup return (1.8.0).
+ * bench/torture/cleanup-return-torture.mjs -- effect cleanup return (1.9.0).
+ * (1.8.0 before the 2026-10-10 renumbering: 1.6.0 ships without the
+ * candidate-line features, which move up one minor.)
  *
- * 1.8.0 adds ONE behavioural change: an effect body may `return` a cleanup
+ * 1.9.0 adds ONE behavioural change: an effect body may `return` a cleanup
  * function that runs before the next re-run and on dispose, composing with
  * imperative `onCleanup(fn)` in call order. No new export — the whole feature is
  * a `typeof` check on the effect body's return value inside `executeEffect`,
@@ -36,7 +38,7 @@
  * the two ways, driven by the same writes, must produce identical cleanup
  * sequences. Any divergence is a compose-order or timing regression.
  *
- * Skips on pre-1.8.0 (feature-detected by running a probe effect).
+ * Skips on pre-1.9.0 (feature-detected by running a probe effect).
  *
  * Exit code: 0 iff every cleanup-return contract held.
  *
@@ -62,7 +64,7 @@ const { createRegistry } = Signal;
         supported = cleaned;
     } catch { supported = false; }
     if (!supported) {
-        console.log("lite-signal cleanup-return torture — SKIP: effect cleanup return requires 1.8.0+");
+        console.log("lite-signal cleanup-return torture -- SKIP: effect cleanup return requires 1.9.0+");
         process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
     }
 }

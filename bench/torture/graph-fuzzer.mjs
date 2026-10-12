@@ -12,7 +12,7 @@
  *   - (2026-08 audit, Phase 2) mid-run activeNodes/activeLinks high-water
  *     stays under the topology's theoretical maxima -- the link-graveyard
  *     witness a post-teardown check is structurally blind to; post-GC
- *     heapUsed high-water stays within slack of the post-build baseline; and
+ *     resident (heapUsed + arrayBuffers) high-water stays within slack of the post-build baseline; and
  *     eight sync SENTINEL effects prove delivery (observed values, not
  *     peek() storage) with exact run counts
  *
@@ -27,6 +27,7 @@
  */
 import {performance} from "node:perf_hooks";
 import {createRegistry} from "../../Signal.js";
+import {residentBytes} from "./helpers/index.mjs";
 
 const N_BASE_SIGNALS = 500;
 const N_INTERMEDIATE = 500;
@@ -159,12 +160,12 @@ function sampleWitnesses(now) {
     if (hwBreachTick < 0 && (st.activeNodes > NODES_CEILING || st.activeLinks > LINKS_CEILING)) hwBreachTick = tickCount;
     if (HAVE_GC && now >= nextHeapSample) {
         globalThis.gc();
-        const used = process.memoryUsage().heapUsed;
+        const used = residentBytes();
         if (used > heapHW) heapHW = used;
         nextHeapSample = now + HEAP_SAMPLE_EVERY_MS;
     }
 }
-if (HAVE_GC) { globalThis.gc(); heapBase = heapHW = process.memoryUsage().heapUsed; }
+if (HAVE_GC) { globalThis.gc(); heapBase = heapHW = residentBytes(); }
 
 const baseline = r.stats();
 let ops = 0;
@@ -294,7 +295,7 @@ function finish() {
     console.log("  post-teardown activeNodes/activeLinks:", after.activeNodes, "/", after.activeLinks);
     console.log("  mid-run high-water nodes/links:", nodesHW, "/", linksHW,
         "(ceilings", NODES_CEILING, "/", LINKS_CEILING + ")");
-    console.log("  post-GC heapUsed: base", (heapBase / 1048576).toFixed(1), "MB, high-water",
+    console.log("  post-GC resident (heap + ArrayBuffers): base", (heapBase / 1048576).toFixed(1), "MB, high-water",
         (heapHW / 1048576).toFixed(1), "MB", HAVE_GC ? "" : "(UNAVAILABLE)");
 
     // Final full oracle sweep -- every leaf, not just the sampled window.
@@ -340,7 +341,7 @@ function finish() {
         console.error("  FAIL: heap witness unverifiable -- run with --expose-gc");
         exitCode = 1;
     } else if (heapHW - heapBase > HEAP_SLACK_MB * 1048576) {
-        console.error("  FAIL: post-GC heapUsed grew", ((heapHW - heapBase) / 1048576).toFixed(1),
+        console.error("  FAIL: post-GC resident (heap + ArrayBuffers) grew", ((heapHW - heapBase) / 1048576).toFixed(1),
             "MB >", HEAP_SLACK_MB, "MB slack -- retention the pool counters cannot see");
         exitCode = 1;
     }

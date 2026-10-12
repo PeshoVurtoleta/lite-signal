@@ -48,7 +48,16 @@ let noEvidence = 0;
 for (const w of workloads) {
     for (const [side, v] of [['candidate', candidate], ['floor', floor], ['rolling', rolling]]) {
         const s = load(v, w);
-        if (!s) continue;
+        // MISSING BASELINE = NO EVIDENCE (fail closed, 2026-09). A floor/rolling
+        // axis with no capture for a manifest workload used to pass vacuously
+        // (`fb ? checkRegression(...) : ok`), so a newly added workload gated
+        // nothing until someone recaptured by hand. An identical-code axis is
+        // still skipped by the guard above; a missing CANDIDATE stays a FAIL below.
+        if (!s) {
+            const identical = (side === 'floor' && floorIdentical) || (side === 'rolling' && rollingIdentical);
+            if (side !== 'candidate' && !identical) { console.error(`  ! NO EVIDENCE [${side} ${v} / ${w}]: no capture -- a missing baseline cannot pass`); noEvidence++; }
+            continue;
+        }
         const e = s.evidence || {};
         const bad = (e.spreadPct !== undefined && e.spreadPct > MAX_SPREAD) ? `spread ${e.spreadPct}% > ${MAX_SPREAD}%`
                   : (e.captureSpanMinutes !== undefined && e.captureSpanMinutes > MAX_SPAN) ? `capture span ${e.captureSpanMinutes}min > ${MAX_SPAN}min (mixed sessions)`
@@ -59,7 +68,7 @@ for (const w of workloads) {
     }
 }
 if (noEvidence) {
-    console.error(`\nGATE REFUSED (${noEvidence} unstable capture(s)) -- RECAPTURE, do not treat as regression`);
+    console.error(`\nGATE REFUSED (${noEvidence} unstable or missing capture(s)) -- RECAPTURE, do not treat as regression`);
     process.exit(3);
 }
 

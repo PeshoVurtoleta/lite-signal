@@ -67,7 +67,9 @@ function forceGC() {
     globalThis.gc();
     globalThis.gc();
 }
-function heapKB() { return process.memoryUsage().heapUsed / 1024; }
+// heapUsed + arrayBuffers (2026-09, LEDGER #27 amendment): off-heap typed-array
+// backing stores are allocation/retention too; heapUsed alone cannot see them.
+function heapKB() { const m = process.memoryUsage(); return (m.heapUsed + m.arrayBuffers) / 1024; }
 
 // --- Stats -------------------------------------------------------------------
 function statSummary(samples) {

@@ -1,7 +1,9 @@
 /**
- * bench/torture/flush-torture.mjs — flushStrategy + r.flush() + .subscribe() (1.7.0).
+ * bench/torture/flush-torture.mjs -- flushStrategy + r.flush() + .subscribe() (1.8.0).
+ * (1.7.0 before the 2026-10-10 renumbering: 1.6.0 ships without the
+ * candidate-line features, which move up one minor.)
  *
- * 1.7.0 adds two things that change WHEN work happens without changing WHAT the
+ * 1.8.0 adds two things that change WHEN work happens without changing WHAT the
  * final answer is — which is exactly the profile of a bug that a value oracle on
  * a single strategy will never see:
  *
@@ -47,7 +49,7 @@ const { createRegistry } = Signal;
         ok = typeof probe.flush === "function";
     } catch { ok = false; }
     if (!ok) {
-        console.log("lite-signal flush torture — SKIP: flushStrategy/flush() require 1.7.0+");
+        console.log("lite-signal flush torture -- SKIP: flushStrategy/flush() require 1.8.0+");
         process.exit(77); // SKIP_EXIT — the runner escalates this to FAIL at/above the floor
     }
 }

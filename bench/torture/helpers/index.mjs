@@ -74,6 +74,37 @@ export function toNum(v) {
     return Number.isFinite(n) ? (n | 0) : 0;
 }
 
+/* -- body kinds (shared by a reference model and the engine body) ----------- */
+
+/**
+ * Pure value functions for the oracle-fuzzer node kinds, moved here so the soak
+ * model (bench/soak) evaluates the SAME arithmetic as the engine body. Only the
+ * read path differs: the engine body passes a `read(ref)` that goes through the
+ * engine, the reference model passes one that recurses over plain data. They
+ * carry no caching and no versioning, so sharing them cannot hide an engine bug
+ * in the oracle. Read ORDER is part of the contract (select reads its selector
+ * first, then exactly one dependency).
+ *
+ *   sum      reads every dependency, folds toNum(v) with int32 wrap
+ *   identity passes deps[0] through untouched (-0 stays -0, NaN stays NaN)
+ *   select   reads the selector, then the one dependency it picks
+ */
+export function kindSum(deps, read) {
+    let acc = 0;
+    for (let i = 0; i < deps.length; i++) acc = (acc + toNum(read(deps[i]))) | 0;
+    return acc;
+}
+
+export function kindIdentity(deps, read) {
+    return read(deps[0]);
+}
+
+export function kindSelect(selector, deps, read) {
+    const sel = toNum(read(selector));
+    const n = deps.length;
+    return read(deps[((sel % n) + n) % n]);
+}
+
 /* ── registries ───────────────────────────────────────────────────────────── */
 
 /**
@@ -208,3 +239,19 @@ export const flushMicrotasks = () => Promise.resolve().then(() => {});
 
 /** Drain microtasks AND one macrotask turn, for schedulers built on timers. */
 export const flushAll = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/* -- resident-memory witness (2026-09, LEDGER #27 amendment) ---------------- */
+
+/**
+ * Resident bytes a retention witness must see: V8 heap PLUS ArrayBuffer
+ * backing stores. `heapUsed` alone cannot see typed-array memory (backing
+ * stores live off-heap), so an engine that keeps pool state in Int32Array /
+ * Float64Array columns -- or leaks one -- reads flat on `heapUsed` while the
+ * process grows. The #27 link-SoA fork's "87 -> 58 MB" headline was exactly
+ * that blind spot (true delta with arrayBuffers: -21% to -26%, not -33%).
+ * Call after a forced gc(); every retention witness sums both.
+ */
+export function residentBytes() {
+    const m = process.memoryUsage();
+    return m.heapUsed + m.arrayBuffers;
+}
