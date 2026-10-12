@@ -850,3 +850,428 @@ test('main: failureRecord -- failKnown is per fail, in fail order (two fails exp
     assert.equal(f.known, 'DIV-F6+DIV-F22');
     assert.deepEqual(f.failKnown, ['DIV-F6', 'DIV-F22', 'DIV-F6']);
 });
+
+/* -- S1c B4: replay.mjs / shrink.mjs (TASKS 7-8). Appended hunk; every kernel run uses a frozen kernel. -- */
+
+const RPQ = await import('../bench/soak/replay.mjs');
+const SHQ = await import('../bench/soak/shrink.mjs');
+const CFQ = await import('../bench/soak/config.mjs');
+const LNQ = await import('../bench/soak/lanes/index.mjs');
+const { spawn: spawnB4 } = await import('node:child_process');
+const REPLAY_CLI = join(SOAK, 'replay.mjs');
+const SHRINK_CLI = join(SOAK, 'shrink.mjs');
+// The first REPLAY key of the 1.5.2 BATCH smoke (world 0 of BATCH cycle 0 under the default SOAK_SEED);
+// pinned here and cross-checked against a live smoke run in the A1 test below.
+const KEY152 = 'BATCH:0:0x4d1f455d';
+const b4Cfg = (env, argv = []) => CFQ.parseConfig(env, { roster: LNQ.ROSTER, scenarios: LNQ.ALL_SCENARIOS, covOffSupported: LNQ.COV_OFF_SUPPORTED, argv });
+const batchSeed = (w, cycle = 0, base = DEFAULT_SEED) => worldSeed(seedFor(base, 1, cycle), w);
+const keyOf = (lane, cycle, ws) => lane + ':' + cycle + ':0x' + ws.toString(16);
+let b4N = 0;
+const b4Dir = (name) => { const d = join(TMP, 'b4-' + name + '-' + (b4N++)); mkdirSync(d, { recursive: true }); return d; };
+const readRecs = (p) => (existsSync(p) ? readFileSync(p, 'utf8').trim().split('\n').filter((l) => l.length).map((l) => JSON.parse(l)) : []);
+
+/** Spawn (async, so independent processes run in parallel) with only these SOAK_* keys; SIGKILL at the timeout. */
+function runB4(args, keys, opts = {}) {
+    const { env, out } = soakEnv(keys);
+    return new Promise((res) => {
+        const c = spawnB4(process.execPath, args, { env, cwd: opts.cwd || ROOT });
+        let so = '', se = '';
+        c.stdout.on('data', (d) => { so += d; });
+        c.stderr.on('data', (d) => { se += d; });
+        const t = setTimeout(() => c.kill('SIGKILL'), opts.timeout || 120000);
+        c.on('close', (status, signal) => { clearTimeout(t); res({ status, signal, stdout: so, stderr: se, out: env.SOAK_OUT, recs: readRecs(env.SOAK_OUT) }); });
+    });
+}
+const breachSet = (stderr, key) => stderr.split('\n').filter((l) => l.indexOf('soak: BREACH oracle=') === 0 && l.indexOf(' replay=' + key + ' ') !== -1)
+    .map((l) => { const m = /^soak: BREACH oracle=(\S+) lane=\S+ sig=(\S+) /.exec(l); return m[1] + ':' + m[2]; }).sort();
+const smokeBatch152 = memo(() => soak({ SOAK_LANES: 'BATCH', SOAK_KERNEL: K_152 }, ['--smoke']));
+
+test('replay: resolveReplay is pure -- index solved by findWorldIndex under the SOAK_OPS bound; every unreachable shape fails closed', async () => {
+    const at = (w, env = {}, argv = []) => RPQ.resolveReplay(b4Cfg(Object.assign({ SOAK_REPLAY: keyOf('BATCH', 0, batchSeed(w)) }, env), argv));
+    const { generateWorld, scriptJson } = await import('../bench/soak/gen.mjs');
+    const r0 = at(0, {}, ['--smoke']);
+    assert.equal(r0.unreachable, false);
+    assert.equal(r0.key, KEY152);
+    assert.deepEqual([r0.lane, r0.laneIndex, r0.cycle, r0.world, r0.worldSeed, r0.large, r0.covOff, r0.bound], ['BATCH', 1, 0, 0, 0x4d1f455d, false, null, CFQ.SMOKE_OPS]);
+    assert.equal(r0.cycleSeed, seedFor(DEFAULT_SEED, 1, 0));
+    assert.equal(at(4321).world, 4321, 'any index below the bound is found (no scan)');
+    // the bound is SOAK_OPS: world index ops-1 resolves, index ops does not (every played world adds >= 1 op)
+    assert.equal(at(CFQ.SMOKE_OPS - 1, {}, ['--smoke']).world, CFQ.SMOKE_OPS - 1);
+    const past = at(CFQ.SMOKE_OPS, {}, ['--smoke']);
+    assert.equal(past.unreachable, true);
+    assert.match(past.reason, /^no world index < 20000 \(SOAK_OPS\) of lane-cycle BATCH:0 has world seed 0x/);
+    assert.equal(at(1000, { SOAK_OPS: '1000' }).unreachable, true);
+    assert.equal(at(999, { SOAK_OPS: '1000' }).world, 999);
+    // another SOAK_SEED: the same key names no world of that run
+    assert.equal(at(0, { SOAK_SEED: '0x1' }, ['--smoke']).unreachable, true);
+    // SOAK_LANES without the key's lane; a fixed cycle count the key's cycle reaches; S2 keys
+    assert.match(at(0, { SOAK_LANES: 'GRAPH' }).reason, /does not select the key's lane BATCH/);
+    assert.equal(at(0, { SOAK_LANES: 'GRAPH,BATCH' }).unreachable, false);
+    const c3 = RPQ.resolveReplay(b4Cfg({ SOAK_REPLAY: keyOf('BATCH', 3, batchSeed(0, 3)) }, ['--smoke']));
+    assert.match(c3.reason, /^cycle 3 is past this run's 3 cycles/);
+    assert.equal(RPQ.resolveReplay(b4Cfg({ SOAK_REPLAY: keyOf('BATCH', 2, batchSeed(0, 2)) }, ['--smoke'])).world, 0);
+    assert.equal(RPQ.resolveReplay(b4Cfg({ SOAK_REPLAY: keyOf('BATCH', 30, batchSeed(7, 30)) })).world, 7, 'default cycle count: a longer run\'s key resolves');
+    assert.match(at(0, { SOAK_WRAP: 'W1' }).reason, /^SOAK_WRAP is read by wrap\.mjs/);
+    assert.match(at(0, { SOAK_REPR: '1' }).reason, /^SOAK_REPR is an S2/);
+    // GRAPH large worlds follow isLargeWorld exactly as main does
+    const g63 = RPQ.resolveReplay(b4Cfg({ SOAK_REPLAY: keyOf('GRAPH', 0, worldSeed(seedFor(DEFAULT_SEED, 0, 0), 63)) }));
+    assert.deepEqual([g63.world, g63.large], [63, true]);
+    const ws63 = worldSeed(seedFor(DEFAULT_SEED, 0, 0), 63);
+    const big = scriptJson(generateWorld(LNQ.laneByName('GRAPH'), ws63, { large: true, covOff: null }));
+    assert.equal(scriptJson(RPQ.scriptFor(g63, 63)), big, 'scriptFor builds the LARGE world main builds');
+    assert.notEqual(scriptJson(generateWorld(LNQ.laneByName('GRAPH'), ws63, { large: false, covOff: null })), big, 'and large changes the script');
+    // the script is main's: same generator inputs, same canonical JSON
+    assert.equal(scriptJson(RPQ.scriptFor(r0, 0)), scriptJson(generateWorld(LNQ.laneByName('BATCH'), 0x4d1f455d, { large: false, covOff: null })));
+    const cov = RPQ.resolveReplay(b4Cfg({ SOAK_REPLAY: KEY152, SOAK_MUSTFAIL: 'cov-off:revert-after-mid-read' }));
+    assert.equal(cov.covOff, 'revert-after-mid-read', 'cov-off reaches the generator as in main');
+    assert.equal(RPQ.scriptFor(cov, 0).covOff, 'revert-after-mid-read');
+    for (const bad of [null, {}, { replay: null }]) assert.equal(RPQ.resolveReplay(bad).unreachable, true);
+});
+
+test('replay: A1 -- the first REV-152 BATCH key replays to the same (family, sig) set 3/3 processes and matches its BREACH lines', async () => {
+    const s = smokeBatch152();
+    assert.equal(s.status, 1, s.stderr.slice(0, 400));
+    const first = s.stderr.split('\n').find((l) => l.indexOf('soak: REPLAY SOAK_REPLAY=') === 0);
+    assert.equal(first, 'soak: REPLAY SOAK_REPLAY=' + KEY152, 'the pinned key is the first REPLAY line of the live smoke');
+    const want = breachSet(s.stderr, KEY152);
+    assert.deepEqual(want, ['O1:computed-mismatch']);
+    const burnRec = s.recs.find((x) => x.type === 'cycle' && x.cycle === 0).failures[0];
+    assert.equal(burnRec.replay, KEY152);
+    const runs = await Promise.all([0, 1, 2].map(() => runB4(['--expose-gc', REPLAY_CLI], { SOAK_REPLAY: KEY152, SOAK_KERNEL: K_152 })));
+    for (const r of runs) {
+        assert.equal(r.status, 1, r.stderr);
+        assert.equal(lastLine(r.stdout), 'soak: END verdict=FAIL exit=1 records=3');
+        assert.deepEqual(r.recs.map((x) => x.type), ['header', 'replay', 'summary']);
+        assert.deepEqual(r.recs.map((x) => x.seq), [0, 1, 2]);
+        assert.equal(r.recs[0].kind, 'replay');
+        assert.ok(r.recs[0].kernel.url.endsWith('/lite-signal-1.5.2/Signal.js'), 'the frozen 1.5.2 kernel, never the live Signal.js');
+        const rp = r.recs[1];
+        assert.deepEqual([rp.key, rp.world, rp.worldSeed, rp.large, rp.worldsBefore, rp.opsBefore], [KEY152, 0, 0x4d1f455d, false, 0, 0]);
+        assert.deepEqual(rp.familyKeys.slice().sort(), want, 'replay (family, sig) set == the burn-in BREACH set');
+        assert.deepEqual(breachSet(r.stderr, KEY152), want, 'the replay\'s own BREACH lines');
+        assert.equal(rp.failure.step, burnRec.step, 'same failing step as the burn-in');
+        assert.deepEqual(rp.failure.fails.map((f) => f.oracle + ':' + f.sig), burnRec.fails.map((f) => f.oracle + ':' + f.sig));
+        assert.equal(rp.failure.known, burnRec.known);
+        assert.match(rp.scriptDigest, /^[0-9a-f]{64}$/);
+        assert.equal(rp.scriptOps, 423);
+        assert.equal(rp.ops, rp.failure.step + 1);
+        assert.ok(rp.trace.length === rp.ops && rp.traceTruncated === false);
+        assert.deepEqual([r.recs[2].verdict, r.recs[2].exitCode, r.recs[2].reproduced], ['FAIL', 1, true]);
+        assert.equal(r.stderr.indexOf('soak: REPLAY '), -1, 'a replay prints no REPLAY line of its own');
+    }
+    assert.equal(new Set(runs.map((r) => JSON.stringify(r.recs[1].failure.fails))).size, 1, '3/3 identical');
+    // the same key through main.mjs's dispatch (the fixed contract)
+    const viaMain = await runB4(['--expose-gc', MAIN], { SOAK_REPLAY: KEY152, SOAK_KERNEL: K_152 });
+    assert.equal(viaMain.status, 1, viaMain.stderr);
+    assert.deepEqual(viaMain.recs[1].familyKeys.slice().sort(), want);
+});
+
+test('replay: control -- on headpatched the same key runs clean, exit 0, END verdict=PASS (replay is not "always 1")', async () => {
+    const r = await runB4(['--expose-gc', REPLAY_CLI], { SOAK_REPLAY: KEY152, SOAK_KERNEL: K_HP });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(lastLine(r.stdout), 'soak: END verdict=PASS exit=0 records=3');
+    assert.equal(r.recs[1].failure, null);
+    assert.deepEqual(r.recs[1].familyKeys, []);
+    assert.equal(r.stderr, '');
+});
+
+test('replay: A4 -- unreachable keys exit 2 with ONE CONFIG line: no record, no END, no burn-in (index past the bound; index past the ops budget)', async () => {
+    const noIndex = keyOf('BATCH', 0, batchSeed(CFQ.SMOKE_OPS));
+    const w100 = keyOf('BATCH', 0, batchSeed(100));
+    const cases = [
+        [REPLAY_CLI, { SOAK_REPLAY: noIndex, SOAK_KERNEL: K_152 }, ['--smoke'], /is unreachable: no world index < 20000 \(SOAK_OPS\)/],
+        [MAIN, { SOAK_REPLAY: noIndex, SOAK_KERNEL: K_152 }, ['--smoke'], /is unreachable: no world index < 20000/],
+        // world 100 < 1000 = the bound, but 1.5.2 BATCH worlds stop at ~30 ops: 1000 ops end after ~33 worlds
+        [REPLAY_CLI, { SOAK_REPLAY: w100, SOAK_KERNEL: K_152, SOAK_OPS: '1000' }, [], /is unreachable: the burn-in stops after world \d+ \(\d+ ops >= SOAK_OPS=1000\); world 100 is past the ops budget/],
+        // headpatched runs every world to ~423 ops: a smoke lane-cycle (20000) never reaches world 100
+        [REPLAY_CLI, { SOAK_REPLAY: w100, SOAK_KERNEL: K_HP }, ['--smoke'], /world 100 is past the ops budget/],
+        [SHRINK_CLI, { SOAK_REPLAY: w100, SOAK_SHRINK: '1', SOAK_KERNEL: K_152, SOAK_OPS: '1000' }, [], /world 100 is past the ops budget/],
+        [REPLAY_CLI, { SOAK_REPLAY: KEY152, SOAK_KERNEL: K_152, SOAK_SEED: '0x1' }, [], /is unreachable: no world index/],
+        [REPLAY_CLI, { SOAK_REPLAY: KEY152, SOAK_KERNEL: K_152, SOAK_LANES: 'GRAPH' }, [], /does not select the key's lane BATCH/],
+    ];
+    const dir = b4Dir('a4');
+    const runs = await Promise.all(cases.map(([cli, keys, argv], i) => runB4(['--expose-gc', cli].concat(argv), Object.assign({ SOAK_OUT: join(dir, 'c' + i + '.jsonl') }, keys))));
+    runs.forEach((r, i) => {
+        assert.equal(r.status, 2, 'case ' + i + ': ' + r.stderr);
+        assert.equal(r.stdout, '', 'case ' + i + ': no heartbeat, no END line');
+        const lines = r.stderr.trim().split('\n');
+        assert.equal(lines.length, 1, 'case ' + i + ': one line: ' + r.stderr);
+        assert.match(lines[0], /^soak: CONFIG -- /);
+        assert.match(lines[0], cases[i][3]);
+        assert.equal(existsSync(r.out), false, 'case ' + i + ': no stream, no record');
+    });
+    const { readdirSync } = await import('node:fs');
+    assert.deepEqual(readdirSync(dir), [], 'no shrink artifact either');
+    // control: the SAME world-100 key IS reachable with the smoke budget on 1.5.2 (636 worlds in cycle 0)
+    const ok = await runB4(['--expose-gc', REPLAY_CLI], { SOAK_REPLAY: w100, SOAK_KERNEL: K_152 }, {});
+    assert.equal(ok.status, 1, ok.stderr);
+    assert.equal(ok.recs[1].world, 100);
+    assert.equal(ok.recs[1].worldsBefore, 100);
+    assert.ok(ok.recs[1].opsBefore >= 100 && ok.recs[1].opsBefore < CFQ.DEFAULT_OPS);
+});
+
+test('replay: A5 -- runReplay / runShrink always return an integer 0..3; asExitCode turns a throw or a non-code into 1', async () => {
+    const isCode = (c) => Number.isInteger(c) && c >= 0 && c <= 3;
+    const unreach = b4Cfg({ SOAK_REPLAY: keyOf('BATCH', 0, batchSeed(CFQ.SMOKE_OPS)) }, ['--smoke']);
+    const unreachS = b4Cfg({ SOAK_REPLAY: keyOf('BATCH', 0, batchSeed(CFQ.SMOKE_OPS)), SOAK_SHRINK: '1' }, ['--smoke']);
+    const plain = b4Cfg({ SOAK_REPLAY: KEY152 });
+    // pre-kernel paths only (resolve fails before the adapter loads): no Signal.js is played in this process
+    for (const [fn, cfg, want] of [[RPQ.runReplay, unreach, 2], [RPQ.runReplay, null, 2], [RPQ.runReplay, {}, 2], [RPQ.runReplay, b4Cfg({}), 2],
+        [SHQ.runShrink, unreachS, 2], [SHQ.runShrink, plain, 2], [SHQ.runShrink, null, 2], [SHQ.runShrink, b4Cfg({ SOAK_REPLAY: KEY152, SOAK_WRAP: 'W1' }), 2]]) {
+        const p = fn(cfg);
+        assert.ok(p instanceof Promise);
+        const c = await p;
+        assert.ok(isCode(c), String(c));
+        assert.equal(c, want);
+    }
+    for (const [ret, want] of [[0, 0], [1, 1], [2, 2], [3, 3], [4, 1], [-1, 1], [1.5, 1], ['0', 1], [undefined, 1], [null, 1], [NaN, 1], [2n, 1]]) {
+        assert.equal(await RPQ.asExitCode('t', () => ret), want, 'returned ' + String(ret));
+        assert.equal(await RPQ.asExitCode('t', async () => ret), want, 'resolved ' + String(ret));
+    }
+    let crashed = 0;
+    assert.equal(await RPQ.asExitCode('t', () => { throw new Error('boom'); }, () => { crashed++; }), 1);
+    assert.equal(await RPQ.asExitCode('t', async () => { throw new Error('boom'); }, () => { crashed++; throw new Error('onCrash throws too'); }), 1);
+    assert.equal(crashed, 2);
+    // the process doors: every exit seen in this hunk is one of 0..3 (A1 1, control 0, A4 2, shrink 1 / 3)
+});
+
+test('shrink: ddmin is 1-minimal on synthetic predicates; the budget bounds the runs and an exhausted run is never a hit', () => {
+    const items = Array.from({ length: 40 }, (_, i) => i);
+    const need = (xs) => (s) => xs.every((x) => s.indexOf(x) !== -1);
+    let b = new SHQ.Budget(SHQ.SHRINK_MAX_RUNS);
+    assert.deepEqual(SHQ.ddmin(items, need([3, 11, 37]), { budget: b }), [3, 11, 37]);
+    assert.ok(b.runs > 0 && b.runs < 200 && !b.exhausted, 'runs ' + b.runs);
+    assert.deepEqual(SHQ.ddmin(items, need([5]), {}), [5]);
+    assert.deepEqual(SHQ.ddmin(items, () => true, { min: 0 }), [], 'min 0 tries the empty list');
+    assert.deepEqual(SHQ.ddmin(items, () => true, { min: 1 }).length, 1);
+    assert.deepEqual(SHQ.ddmin([7], () => true, {}), [7]);
+    // an order-sensitive predicate: the result keeps the input order
+    assert.deepEqual(SHQ.ddmin(items, (s) => s.indexOf(30) !== -1 && s.indexOf(2) !== -1 && s.indexOf(2) < s.indexOf(30), {}), [2, 30]);
+    // budget: at most max runs; the result still satisfies the predicate (only accepted candidates move it)
+    b = new SHQ.Budget(5);
+    const p = need([3, 11, 37]);
+    const got = SHQ.ddmin(items, p, { budget: b });
+    assert.equal(b.runs, 5);
+    assert.equal(b.exhausted, true);
+    assert.ok(p(got), 'an exhausted ddmin still returns a reproducing list');
+    const b3 = new SHQ.Budget(3);
+    const p3 = need([3]);
+    const got3 = SHQ.ddmin(items, p3, { budget: b3 });
+    assert.ok(p3(got3) && got3.length < items.length && got3.length > 1, 'partly shrunk: ' + got3.length);
+    assert.deepEqual([b3.runs, b3.exhausted], [3, true]);
+    const b1 = new SHQ.Budget(1);
+    assert.equal(b1.test(() => true), true);
+    assert.equal(b1.test(() => true), false, 'past the budget a test answers no');
+    assert.equal(b1.exhausted, true);
+    assert.equal(new SHQ.Budget(3).test(() => 1), false, 'only a strict true is a hit');
+    assert.throws(() => new SHQ.Budget(0), RangeError);
+    // value simplification and sites
+    assert.deepEqual(SHQ.simplerValues(58), [0, 1, 29]);
+    assert.deepEqual(SHQ.simplerValues(1), [0]);
+    assert.deepEqual(SHQ.simplerValues(0), []);
+    assert.deepEqual(SHQ.simplerValues(-3), [0, 1]);
+    const sc = { ops: [{ o: 'sig', i: 0, v: 9, chk: 1, cs: 5 }, { o: 'batch', body: [{ o: 'set', i: 0, v: 2 }, { o: 'read', is: [1, 2] }] }, { o: 'comp', i: 1, spec: { k: 'select', s: 0, d: [0, 2] } }] };
+    const st = SHQ.sites(sc);
+    const has = (kind, path) => st.some((s) => s.kind === kind && JSON.stringify(s.path) === JSON.stringify(path));
+    assert.ok(has('edit', ['ops', 0]) && has('edit', ['ops', 0, 'v']) && has('list', ['ops', 1, 'body']) && has('edit', ['ops', 1, 'body', 0, 'v']) &&
+        has('list', ['ops', 1, 'body', 1, 'is']) && has('list', ['ops', 2, 'spec', 'd']) && has('edit', ['ops', 2, 'spec']));
+    assert.equal(st.find((s) => s.kind === 'list' && s.path.join() === 'ops,1,body').min, 0, 'an empty batch body is legal');
+    assert.deepEqual(st.find((s) => s.kind === 'edit' && s.path.join() === 'ops,0').cands, [{ o: 'sig', i: 0, v: 9 }], 'chk drops with cs');
+    assert.deepEqual(st.find((s) => s.kind === 'edit' && s.path.join() === 'ops,2,spec').cands, [{ k: 'sum', d: [0, 2] }]);
+    assert.equal(SHQ.countSubOps(sc.ops), 5);
+    // the predicate fails closed: a throwing adapter is never a hit
+    const throwing = { open() { throw new Error('no engine'); } };
+    assert.equal(SHQ.makePredicate(throwing, ['O1:computed-mismatch'])({ ops: [], flushPasses: null, seed: 1 }), false);
+});
+
+test('shrink: A2 + A3 -- the REV-152 key shrinks to <= 8 ops; shrink-BATCH-0x4d1f455d.{json,test.mjs} land next to SOAK_OUT; the test exits 1 on 1.5.2, 0 on headpatched', async () => {
+    const dir = b4Dir('a23');
+    const t0 = performance.now();
+    const r = await runB4(['--expose-gc', SHRINK_CLI], { SOAK_REPLAY: KEY152, SOAK_SHRINK: '1', SOAK_KERNEL: K_152, SOAK_OUT: join(dir, 'never.jsonl') });
+    const ms = performance.now() - t0;
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(lastLine(r.stdout), 'soak: END verdict=FAIL exit=1 records=0');
+    assert.match(r.stdout, /^soak: SHRINK -- key=BATCH:0:0x4d1f455d target=O1:computed-mismatch ops=\d+ /m);
+    assert.deepEqual(breachSet(r.stderr, KEY152), ['O1:computed-mismatch']);
+    const json = join(dir, 'shrink-BATCH-0x4d1f455d.json');
+    const tst = join(dir, 'shrink-BATCH-0x4d1f455d.test.mjs');
+    assert.ok(existsSync(json) && existsSync(tst));
+    assert.equal(existsSync(join(dir, 'never.jsonl')), false, 'a shrink writes no stream at SOAK_OUT itself');
+    const j = JSON.parse(readFileSync(json, 'utf8'));
+    assert.equal(j.key, KEY152);
+    assert.deepEqual(j.target, ['O1:computed-mismatch']);
+    assert.equal(j.reproduced, true);
+    assert.equal(j.confirmed, true);
+    assert.ok(j.ops <= 8, 'A2: shrunk to ' + j.ops + ' ops');
+    assert.ok(j.subOps <= 8, 'A2: ' + j.subOps + ' ops counting batch sub-ops');
+    assert.equal(j.subOps, SHQ.countSubOps(j.script.ops));
+    assert.equal(j.ops, j.script.ops.length);
+    assert.equal(j.opsOriginal, 423);
+    assert.ok(Number.isInteger(j.predicateRuns) && j.predicateRuns >= 1 && j.predicateRuns <= j.maxRuns + 1 && j.maxRuns === SHQ.SHRINK_MAX_RUNS);
+    assert.equal(j.budgetExhausted, false);
+    assert.equal(j.genVersion, CFQ.GEN_VERSION);
+    assert.match(j.kernel.files[0].sha256, /^[0-9a-f]{64}$/);
+    assert.ok(j.kernel.url.endsWith('/lite-signal-1.5.2/Signal.js'));
+    assert.equal(j.scriptDigest, RPQ.scriptDigest(j.script));
+    const src = readFileSync(tst, 'utf8');
+    assert.equal(/[^\x00-\x7f]/.test(src), false, 'the emitted test is ASCII');
+    // the emitted test: no argv, kernel via SOAK_KERNEL, run from an unrelated cwd
+    const t152 = await runB4([tst], { SOAK_KERNEL: K_152 }, { cwd: tmpdir() });
+    const thp = await runB4([tst], { SOAK_KERNEL: K_HP }, { cwd: tmpdir() });
+    assert.equal(t152.status, 1, 'A3: exits 1 on 1.5.2: ' + t152.stdout + t152.stderr);
+    assert.match(t152.stdout, /^shrink-test: REPRODUCED key=BATCH:0:0x4d1f455d /);
+    assert.equal(thp.status, 0, 'A3: exits 0 on headpatched: ' + thp.stdout + thp.stderr);
+    assert.match(thp.stdout, /^shrink-test: CLEAN /);
+    const targ = await runB4([tst, '--smoke'], { SOAK_KERNEL: K_152 });
+    assert.equal(targ.status, 2, 'no new argv');
+    // the DIFFERENT path (exit 3): a target the script does not produce, and a target with one extra key
+    const tline = 'const TARGET = ["O1:computed-mismatch"];';
+    assert.equal(src.split(tline).length, 2, 'the TARGET line occurs once');
+    const variant = (name, from, to) => { const f = join(dir, name); assert.equal(src.split(from).length, 2, from); writeFileSync(f, src.replace(from, to)); return f; };
+    const other = variant('t-other.test.mjs', tline, 'const TARGET = ["O2:glitch"];');
+    const extra = variant('t-extra.test.mjs', tline, 'const TARGET = ["O1:computed-mismatch","O2:glitch"];');
+    const execUrl = JSON.stringify(pathToFileURL(join(SOAK, 'exec.mjs')).href);
+    const missing = variant('t-missing.test.mjs', execUrl, JSON.stringify(pathToFileURL(join(SOAK, 'exec-missing.mjs')).href));
+    const [vo, ve, vm, vu, vr] = await Promise.all([
+        runB4([other], { SOAK_KERNEL: K_152 }), runB4([extra], { SOAK_KERNEL: K_152 }), runB4([missing], { SOAK_KERNEL: K_152 }),
+        runB4([tst], {}), runB4([tst], { SOAK_KERNEL: 'node_modules/lite-signal-1.5.2/Signal.js' }),
+    ]);
+    assert.equal(vo.status, 3, vo.stdout + vo.stderr);
+    assert.match(vo.stdout, /^shrink-test: DIFFERENT key=BATCH:0:0x4d1f455d step=\d+ got=O1:computed-mismatch target=O2:glitch /);
+    assert.equal(ve.status, 3, 'a target with one extra key is not a hit: ' + ve.stdout + ve.stderr);
+    assert.match(ve.stdout, /^shrink-test: DIFFERENT /);
+    assert.equal(vm.status, 2, 'a soak module that fails to load is 2, never 1: ' + vm.stdout + vm.stderr);
+    assert.match(vm.stderr, /^shrink-test: CRASH -- /);
+    assert.equal(vm.stdout, '');
+    assert.equal(vu.status, 2, 'SOAK_KERNEL unset: ' + vu.stderr);
+    assert.match(vu.stderr, /^shrink-test: CONFIG -- SOAK_KERNEL is required /);
+    assert.equal(vr.status, 2, 'a relative SOAK_KERNEL: ' + vr.stderr);
+    assert.match(vr.stderr, /^shrink-test: CONFIG -- SOAK_KERNEL must be an absolute path/);
+    // the predicate on the real 1.5.2 kernel (child process): only the SAME (family, sig) set is a hit
+    const probe = [
+        "const { makePredicate } = await import(" + JSON.stringify(pathToFileURL(SHRINK_CLI).href) + ");",
+        "const { liteAdapter } = await import(" + JSON.stringify(pathToFileURL(join(SOAK, 'adapters', 'lite.mjs')).href) + ");",
+        "const j = JSON.parse((await import('node:fs')).readFileSync(" + JSON.stringify(json) + ", 'utf8'));",
+        "const clean = Object.assign({}, j.script, { ops: j.script.ops.slice(0, 1) });",
+        "const out = [['O1:computed-mismatch'], ['O2:glitch'], ['O1:computed-mismatch', 'O2:glitch']].map((t) => makePredicate(liteAdapter, t)(j.script));",
+        "out.push(makePredicate(liteAdapter, ['O1:computed-mismatch'])(clean));",
+        "process.stdout.write(JSON.stringify(out));",
+    ].join('\n');
+    const pr = await runB4(['--input-type=module', '-e', probe], { SOAK_KERNEL: K_152 });
+    assert.equal(pr.status, 0, pr.stderr);
+    assert.deepEqual(JSON.parse(pr.stdout), [true, false, false, false], 'target hit; another sig, a superset and a clean run are not');
+    // the same shrink through main.mjs's dispatch writes the same minimal script
+    const dir2 = b4Dir('a23-main');
+    const m = await runB4(['--expose-gc', MAIN], { SOAK_REPLAY: KEY152, SOAK_SHRINK: '1', SOAK_KERNEL: K_152, SOAK_OUT: join(dir2, 'x.jsonl') });
+    assert.equal(m.status, 1, m.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(join(dir2, 'shrink-BATCH-0x4d1f455d.json'), 'utf8')).script, j.script, 'deterministic');
+    assert.ok(ms < 60000, 'shrink took ' + Math.round(ms) + ' ms');
+});
+
+test('shrink: a world that runs clean (headpatched) is not reproducible -> exit 3, artifacts still written with target []', async () => {
+    const dir = b4Dir('clean');
+    const r = await runB4(['--expose-gc', SHRINK_CLI], { SOAK_REPLAY: KEY152, SOAK_SHRINK: '1', SOAK_KERNEL: K_HP, SOAK_OUT: join(dir, 'x.jsonl') });
+    assert.equal(r.status, 3, r.stderr);
+    assert.equal(lastLine(r.stdout), 'soak: END verdict=INCONCLUSIVE exit=3 records=0');
+    assert.match(r.stderr, /^soak: INCONCLUSIVE -- shrink: BATCH:0:0x4d1f455d runs clean on this kernel; nothing to shrink$/m);
+    const j = JSON.parse(readFileSync(join(dir, 'shrink-BATCH-0x4d1f455d.json'), 'utf8'));
+    assert.deepEqual([j.reproduced, j.confirmed, j.target, j.ops, j.predicateRuns], [false, false, [], 423, 0]);
+    assert.ok(existsSync(join(dir, 'shrink-BATCH-0x4d1f455d.test.mjs')));
+    // the entry doors: shrink.mjs needs SOAK_SHRINK=1, replay.mjs refuses it, both need a key
+    for (const [cli, keys, re] of [[SHRINK_CLI, { SOAK_REPLAY: KEY152 }, /needs SOAK_SHRINK=1/], [REPLAY_CLI, { SOAK_REPLAY: KEY152, SOAK_SHRINK: '1' }, /SOAK_SHRINK=1 is bench\/soak\/shrink\.mjs/],
+        [REPLAY_CLI, {}, /needs SOAK_REPLAY=/], [SHRINK_CLI, { SOAK_SHRINK: '1' }, /SOAK_SHRINK=1 needs a SOAK_REPLAY key/]]) {
+        const e = await runB4(['--expose-gc', cli], Object.assign({ SOAK_KERNEL: K_HP }, keys));
+        assert.equal(e.status, 2, e.stderr);
+        assert.match(e.stderr, /^soak: CONFIG -- /);
+        assert.match(e.stderr, re);
+        assert.equal(e.stdout, '');
+    }
+});
+
+test('replay: m21 -- failKnown stays per fail in fail order on an ASYMMETRIC fixture (failureRecord and BreachLog)', () => {
+    // the same 1.5.2 ERROR world as above with its fails reordered: perFail is no longer a palindrome
+    const r = {
+        failure: { step: 31, op: 'batch', scen: ['dep-set-flip', 'throw-dep-computed-prewalk', 'throw-in-batch'], fails: [
+            { oracle: 'O4', sig: 'effect-dead', detail: 'effect#22 saw [#0=95,#21=95] model [#0=95,#21=ERR(computed:18)] (ran 0 times this op)' },
+            { oracle: 'O6', sig: 'escape-computed', detail: 'unpredicted escape computed:18' },
+            { oracle: 'O6', sig: 'expected-escape-missing', detail: 'predicted escape batch:31 x1 did not happen' },
+        ] },
+        scen: { 'dep-set-flip': 2, 'recovery-after-throw': 2, 'throw-dep-computed-prewalk': 1, 'throw-in-batch': 1 },
+    };
+    const f = MQ.failureRecord(r, { engine: 'lite', lane: 'ERROR', cycle: 0, world: 0, worldSeed: 1, escape: [{ origin: 'computed', token: 'computed:18' }] });
+    assert.equal(f.known, 'DIV-F6+DIV-F22');
+    assert.deepEqual(f.failKnown, ['DIV-F6', 'DIV-F6', 'DIV-F22']);
+    const lines = [];
+    new MQ.BreachLog((l) => lines.push(l)).noteWorld(f, 'ERROR', 'lite');
+    assert.deepEqual(lines.filter((l) => l.indexOf('soak: BREACH') === 0).map((l) => / oracle=(\S+) lane=\S+ sig=(\S+) known=(\S+)/.exec(l).slice(1).join(' ')),
+        ['O4 effect-dead DIV-F6', 'O6 escape-computed DIV-F6', 'O6 expected-escape-missing DIV-F22']);
+    // three distinct tags: any index permutation in noteWorld is visible
+    const per = [];
+    new MQ.BreachLog((l) => per.push(l)).noteWorld({ known: 'A+B+C', failKnown: ['DIV-A', 'DIV-B', 'DIV-C'], replay: 'ERROR:0:0x3', scen: [],
+        fails: [{ oracle: 'O6', sig: 's1', detail: '' }, { oracle: 'O6', sig: 's2', detail: '' }, { oracle: 'O6', sig: 's3', detail: '' }] }, 'ERROR', 'lite');
+    assert.deepEqual(per.filter((l) => l.indexOf('soak: BREACH') === 0).map((l) => / sig=(\S+) known=(\S+)/.exec(l).slice(1).join(' ')), ['s1 DIV-A', 's2 DIV-B', 's3 DIV-C']);
+});
+
+test('replay: forward play against main\'s own record -- world W (= cycle-0 worlds of the 1.5.2 BATCH smoke) and W+1 are past the budget, W-1 closes the cycle exactly', async () => {
+    const s = smokeBatch152();
+    const c0 = s.recs.find((x) => x.type === 'cycle' && x.cycle === 0);
+    const W = c0.worlds;
+    assert.ok(W > 2 && c0.ops >= CFQ.SMOKE_OPS && !c0.interrupted, JSON.stringify([W, c0.ops]));
+    const [rw, rw1, rlast] = await Promise.all([W, W + 1, W - 1].map((w) => runB4(['--expose-gc', REPLAY_CLI, '--smoke'], { SOAK_REPLAY: keyOf('BATCH', 0, batchSeed(w)), SOAK_KERNEL: K_152 })));
+    assert.equal(rw.status, 2, rw.stderr);
+    assert.match(rw.stderr, new RegExp('^soak: CONFIG -- SOAK_REPLAY=\\S+ is unreachable: worlds 0\\.\\.' + (W - 1) + ' already ran ' + c0.ops + ' ops >= SOAK_OPS=20000; world ' + W + ' is past the ops budget\\n$'));
+    assert.equal(rw1.status, 2, rw1.stderr);
+    assert.match(rw1.stderr, new RegExp('is unreachable: the burn-in stops after world ' + (W - 1) + ' \\(' + c0.ops + ' ops >= SOAK_OPS=20000\\); world ' + (W + 1) + ' is past the ops budget'));
+    assert.equal(rlast.status, 1, rlast.stderr);
+    const rp = rlast.recs[1];
+    assert.deepEqual([rp.world, rp.worldsBefore], [W - 1, W - 1]);
+    assert.equal(rp.opsBefore + rp.ops, c0.ops, 'forward play + the key world == main\'s cycle-0 ops');
+    assert.equal(c0.ops - rp.ops < CFQ.SMOKE_OPS, true, 'main started the last world below the budget');
+    // the forward-throw branch (kernel-free): a world that throws in the forward play makes the key unreachable
+    const cfg = b4Cfg({ SOAK_REPLAY: keyOf('BATCH', 0, batchSeed(5)) }, ['--smoke']);
+    const res = RPQ.resolveReplay(cfg);
+    const fr = RPQ.forwardReach({ open() { throw new Error('engine down'); } }, cfg, res);
+    assert.deepEqual([fr.reachable, fr.worldsBefore, fr.opsBefore], [false, 0, 0]);
+    assert.match(fr.reason, /^world 0 throws in the forward play \(the burn-in crashes there\): engine down$/);
+    // main's onOpen registry check is mirrored: a world without a registry throws (so the key is unreachable)
+    const noReg = { open() { return { registry: null }; } };
+    assert.match(RPQ.forwardReach(noReg, cfg, res).reason, /no registry to track/);
+    assert.equal(RPQ.forwardReach({ open() { throw new Error('x'); } }, cfg, RPQ.resolveReplay(b4Cfg({ SOAK_REPLAY: KEY152 }, ['--smoke']))).reachable, true, 'world 0 plays nothing forward');
+});
+
+const smokeError152 = memo(() => soak({ SOAK_LANES: 'ERROR', SOAK_KERNEL: K_152 }, ['--smoke']));
+
+test('replay: escape carry-through -- a 1.5.2 ERROR key tagged DIV-F6+DIV-F22 replays with the burn-in\'s known, failKnown and escape; the predicate rejects a strict subset', async () => {
+    const s = smokeError152();
+    assert.equal(s.status, 1, s.stderr.slice(0, 400));
+    const burn = s.recs.filter((x) => x.type === 'cycle').flatMap((c) => c.failures).find((f) => f.known === 'DIV-F6+DIV-F22');
+    assert.ok(burn !== undefined, 'the smoke has an F6+F22 world');
+    assert.ok(Array.isArray(burn.escape) && burn.escape.length > 0, 'the attribution needs the outermost-batch escape');
+    const r = await runB4(['--expose-gc', REPLAY_CLI], { SOAK_REPLAY: burn.replay, SOAK_KERNEL: K_152 });
+    assert.equal(r.status, 1, r.stderr);
+    const f = r.recs[1].failure;
+    assert.equal(r.recs[1].world, burn.world);
+    assert.equal(f.known, burn.known);
+    assert.deepEqual(f.failKnown, burn.failKnown);
+    assert.deepEqual(f.escape, burn.escape);
+    assert.deepEqual(f.fails.map((x) => x.oracle + ':' + x.sig), burn.fails.map((x) => x.oracle + ':' + x.sig));
+    const full = r.recs[1].familyKeys;
+    assert.ok(full.length >= 2, 'a multi-key world: ' + full.join(','));
+    // the predicate on this world (child process, 1.5.2): the full set hits; a strict subset and a superset do not
+    const probe = [
+        "const CF = await import(" + JSON.stringify(pathToFileURL(join(SOAK, 'config.mjs')).href) + ");",
+        "const LN = await import(" + JSON.stringify(pathToFileURL(join(SOAK, 'lanes', 'index.mjs')).href) + ");",
+        "const RP = await import(" + JSON.stringify(pathToFileURL(REPLAY_CLI).href) + ");",
+        "const { makePredicate } = await import(" + JSON.stringify(pathToFileURL(SHRINK_CLI).href) + ");",
+        "const { liteAdapter } = await import(" + JSON.stringify(pathToFileURL(join(SOAK, 'adapters', 'lite.mjs')).href) + ");",
+        "const cfg = CF.parseConfig({ SOAK_REPLAY: " + JSON.stringify(burn.replay) + " }, { roster: LN.ROSTER, scenarios: LN.ALL_SCENARIOS, covOffSupported: LN.COV_OFF_SUPPORTED, argv: [] });",
+        "const res = RP.resolveReplay(cfg);",
+        "const script = RP.scriptFor(res, res.world);",
+        "const full = " + JSON.stringify(full) + ";",
+        "const out = [full, full.slice(0, 1), full.slice(1), full.concat(['O2:glitch'])].map((t) => makePredicate(liteAdapter, t)(script));",
+        "process.stdout.write(JSON.stringify(out));",
+    ].join('\n');
+    const pr = await runB4(['--input-type=module', '-e', probe], { SOAK_KERNEL: K_152 });
+    assert.equal(pr.status, 0, pr.stderr);
+    assert.deepEqual(JSON.parse(pr.stdout), [true, false, false, false], 'only the EQUAL set is a hit');
+});

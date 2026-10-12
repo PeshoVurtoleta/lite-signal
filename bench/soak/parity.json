@@ -18,6 +18,8 @@
     "bench/soak/divergences.mjs": "df99c3adf247aeb7b5b0290ef72aeed2221aee89cd360f0340cb27efebb938a2",
     "bench/soak/divergences.json": "2a68cdf6f7a135a3cda3b74e540767033fe034907db06b36eda85cc9a4a53146",
     "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",
-    "bench/soak/main.mjs": "a45d13a7a7310dd0dc438aaa86705a4e50741098841985ed0497360f97ecc0d7"
+    "bench/soak/main.mjs": "a45d13a7a7310dd0dc438aaa86705a4e50741098841985ed0497360f97ecc0d7",
+    "bench/soak/replay.mjs": "3e2d635c46440eda14f79afbeab6e8477c93e97e2657e3672939e50b88400171",
+    "bench/soak/shrink.mjs": "f38857d49b11544674f5e825096a9326034301c50ba8ee12e6fcbbb58d4985cc"
   }
 }

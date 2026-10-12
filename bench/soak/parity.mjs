@@ -38,6 +38,9 @@ export const PARITY_FILES = Object.freeze([
     'bench/soak/seeds.mjs',
     // S1c B3 (pinned after review, burst 7): the burn-in entry decides the records, the BREACH lines and the exit
     'bench/soak/main.mjs',
+    // S1c B4 (pinned after review, burst 7c): replay and shrink decide which world a key plays and what the
+    // emitted shrink test proves
+    'bench/soak/replay.mjs', 'bench/soak/shrink.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
