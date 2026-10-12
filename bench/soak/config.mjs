@@ -24,8 +24,10 @@ const CONSTANTS = Object.freeze({
     // most 2^28 cycles (indices 0 .. 2^28 - 1); a forever run (SOAK_CYCLES=0) ends with reason 'end' at this
     // cap (main.mjs), and seedFor() throws past it. Policy: never wrap the cycle index.
     CYCLES_MAX: 1 << 28,
-    // volume (PLAN 2.5: set in operations, never seconds). DEFAULT_OPS and SCEN_MIN are calibrated in
-    // TASK 9 (v2) with an evidence JSON and a drift-guard test.
+    // volume (PLAN 2.5: set in operations, never seconds). DEFAULT_OPS, SCEN_MIN(_SMOKE) and the evidence
+    // floors below are CALIBRATED (S1d B6): evidence bench/soak/calibration/soak-calibration.json (tool
+    // calibration/calibrate.mjs), drift guard test/41. Rarest required scenario at 11 x DEFAULT_OPS, seed
+    // 0xC0FFEE: 2724 hits (GRAPH deep-pull, headpatched; 22 = ERROR aggregate on 1.5.2) vs SCEN_MIN 8.
     DEFAULT_OPS: 100000,
     OPS_MIN: 1000,
     // 2^30 - 1: SOAK_OPS is a per-lane-cycle counter target, so it stays inside [-2^30, 2^30 - 1] (Smi on
@@ -45,14 +47,21 @@ const CONSTANTS = Object.freeze({
     SCEN_MIN_SMOKE: 1,
     FAIL_CAP: 16,
     DETAIL_MAX: 240,
-    // evidence floors (gates.mjs; S1c amendment 6). PROVISIONAL until the B6 calibration (S1d TASK 11).
+    // evidence floors (gates.mjs; S1c amendment 6), calibrated in S1d B6 (soak-calibration.json):
     //   CHECK_FLOOR      a lane's run must PERFORM at least this many checks of each applicable hard oracle
-    //                    (taint skips never count); below it the lane is INCONCLUSIVE, never PASS
+    //                    (taint skips never count); below it the lane is INCONCLUSIVE, never PASS. The least-
+    //                    performed clean cell is NEST O7a: 41184 at 11 x DEFAULT_OPS (4.1x the floor) and 2170
+    //                    in smoke (4.3x CHECK_FLOOR_SMOKE); a lane at 11 x OPS_MIN reads NEST O7a 413 and
+    //                    BATCH OB 8295 (INCONCLUSIVE). One scalar for every oracle: GRAPH / ERROR at
+    //                    11 x OPS_MIN (O5 14791 / 12643) still clear it.
     //   TAINT_SKIP_MAX   per oracle that skips tainted nodes: skipped / (performed + skipped) above this is
-    //                    hollow evidence -> INCONCLUSIVE (NEST cov-off skipped 53% of effect checks, S1b review)
-    CHECK_FLOOR: 1000,
-    CHECK_FLOOR_SMOKE: 250,
-    TAINT_SKIP_MAX: 0.5,
+    //                    hollow evidence -> INCONCLUSIVE. Clean max 0.2585 (NEST O1c, 8-seed smoke sweep;
+    //                    binding cut 0.2546); headpatched NEST cov-off:saved-cursor-hazard reads O1c 0.43-0.44
+    //                    over 17 seeds and trips. Margins 0.09 below and 0.08 above. On 1.5.2 that cov-off
+    //                    reads 0.25 (not separable here); the coverage gate catches it.
+    CHECK_FLOOR: 10000,
+    CHECK_FLOOR_SMOKE: 500,
+    TAINT_SKIP_MAX: 0.35,
     // memory (HEAP_* applies to residentBytes = heapUsed + arrayBuffers)
     HEAP_RATIO: 1.10,
     HEAP_SLACK_MB: 2,

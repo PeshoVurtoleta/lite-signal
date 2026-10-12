@@ -562,3 +562,231 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
     }
     for (const lane of ['', 'graph', null, undefined, 'GR1']) assert.throws(() => CFG.formatReplayKey(lane, 0, 0), TypeError, 'lane ' + String(lane));
 });
+
+// ---- S1d B6 (burst 8): the calibration drift guard (SPEC-B-S1cd TASK 11; the lite-pick LP pattern) -------
+//
+// bench/soak/calibration/soak-calibration.json is the evidence for DEFAULT_OPS, SCEN_MIN(_SMOKE),
+// CHECK_FLOOR(_SMOKE) and TAINT_SKIP_MAX; calibration/calibrate.mjs cut it. calibrationProblems(doc, C, shaOf)
+// is the static seam (pure: doc, constants and a file-hash function in, problem strings out), so every
+// must-fail runs on a copy:
+//   (a) the cut matches config: seed, cycles, ops, smoke shape, OPS_MIN, GEN_VERSION, CHECK_P, WORLD_STEPS,
+//       LARGE_WORLD_EVERY; doc.constants == config (a constant never moves while the JSON stays stale); the
+//       binding kernels are calibrate.mjs KERNELS; the roster and each lane's required scenarios / oracles
+//   (p) every PINNED file (gen, exec, oracles, lanes, adapters, main, calibrate) and every binding kernel file
+//       still has the sha it had at the cut; a moved file is red with the recut command
+//   (b) every required scenario on every binding kernel: >= SCEN_MIN at full, >= SCEN_MIN_SMOKE in smoke
+//   (c) every applicable oracle's PERFORMED count: >= CHECK_FLOOR at full, >= CHECK_FLOOR_SMOKE in smoke
+//   (d) every applicable skip ratio, computed EXACTLY from the counts as gates.mjs does, <= TAINT_SKIP_MAX
+//       (full and smoke); the stored ratio equals it; no crash in the binding cut
+//   (e) the gates are not toothless: at DEFAULT_CYCLES x OPS_MIN at least one lane falls below CHECK_FLOOR;
+//       CHECK_FLOOR_SMOKE >= 1/8 of the least clean smoke cell; the headpatched NEST cov-off skip ratio
+//       exceeds TAINT_SKIP_MAX on every cov-off sweep seed while every clean sweep cell stays at or below it
+// The live check spawns the REAL main.mjs --smoke on both binding kernels (concurrently) and folds its
+// cycle records, which must equal kernels.<k>.smoke exactly: the JSON was not hand-edited and neither main nor
+// gen / exec / oracles drifted. Only the smoke cells are re-measured live; the full-shape cells are not
+// (accepted LP design: (p) pins the code that cut them, and a recut dies unless the DEFAULT main.mjs run
+// folds to kernels.<k>.full too). A GRAPH smoke cycle (~45 worlds) never reaches its first LARGE world
+// (index 63), so a drift in main's large-world choice is caught by (p) and the recut, not by the live fold.
+
+import { LANES as B6_LANES, ROSTER as B6_ROSTER } from '../bench/soak/lanes/index.mjs';
+import { SKIP_NAMES as B6_SKIP_NAMES } from '../bench/soak/exec.mjs';
+import { KERNELS as B6_KERNELS, PINNED as B6_PINNED, sha256File as b6Sha, foldMainRecords, runMainSmoke } from '../bench/soak/calibration/calibrate.mjs';
+
+const B6_JSON = join(SOAK, 'calibration', 'soak-calibration.json');
+const B6_DOC = JSON.parse(readFileSync(B6_JSON, 'utf8'));
+const B6_RECUT = 'recut: node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json (~6.5 min, untimed), then review the JSON diff';
+const b6Copy = (x) => JSON.parse(JSON.stringify(x));
+const b6Has = (o, k) => o !== null && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
+const b6ShaOf = (rel) => { try { return b6Sha(join(ROOT, rel)); } catch { return null; } };
+const B6_CONST_KEYS = ['DEFAULT_OPS', 'SMOKE_OPS', 'SCEN_MIN', 'SCEN_MIN_SMOKE', 'CHECK_FLOOR', 'CHECK_FLOOR_SMOKE', 'TAINT_SKIP_MAX'];
+
+function calibrationProblems(doc, C, shaOf = b6ShaOf) {
+    const p = [];
+    const cut = doc.cut || {};
+    for (const [k, want] of [['seed', C.DEFAULT_SEED], ['cycles', C.DEFAULT_CYCLES], ['ops', C.DEFAULT_OPS], ['smokeCycles', C.SMOKE_CYCLES],
+        ['smokeOps', C.SMOKE_OPS], ['opsMin', C.OPS_MIN], ['genVersion', C.GEN_VERSION], ['checkP', C.CHECK_P], ['worldSteps', C.WORLD_STEPS],
+        ['largeWorldEvery', C.LARGE_WORLD_EVERY]]) {
+        if (cut[k] !== want) p.push('(a) cut.' + k + '=' + cut[k] + ' != config ' + want + '; ' + B6_RECUT);
+    }
+    for (const k of B6_CONST_KEYS) {
+        const got = b6Has(doc.constants, k) ? doc.constants[k] : null;
+        if (got !== C[k]) p.push('(a) constants.' + k + '=' + got + ' != config ' + C[k] + ' (a constant moved without a recut); ' + B6_RECUT);
+    }
+    if (JSON.stringify(cut.bindingKernels) !== JSON.stringify(Object.keys(B6_KERNELS))) p.push('(a) cut.bindingKernels ' + JSON.stringify(cut.bindingKernels) + ' != calibrate.mjs KERNELS ' + JSON.stringify(Object.keys(B6_KERNELS)));
+    if (JSON.stringify(Object.keys(doc.lanes || {})) !== JSON.stringify(B6_ROSTER)) p.push('(a) lanes ' + Object.keys(doc.lanes || {}) + ' != roster ' + B6_ROSTER);
+    for (const d of B6_LANES) {
+        const L = (doc.lanes || {})[d.name];
+        if (!L) continue;
+        if (JSON.stringify(L.required) !== JSON.stringify(d.required)) p.push('(a) ' + d.name + ' required scenarios changed since the cut; ' + B6_RECUT);
+        if (JSON.stringify(L.oracles) !== JSON.stringify(d.hardOracles)) p.push('(a) ' + d.name + ' hard oracles changed since the cut; ' + B6_RECUT);
+    }
+    const pins = (doc.provenance || {}).pinnedSha256 || {};
+    if (JSON.stringify(Object.keys(pins)) !== JSON.stringify(B6_PINNED)) p.push('(p) the pinned file list changed since the cut; ' + B6_RECUT);
+    for (const f of Object.keys(pins)) if (shaOf(f) !== pins[f]) p.push('(p) ' + f + ' moved since the cut; ' + B6_RECUT);
+    for (const k of Object.keys(B6_KERNELS)) {
+        const K = (doc.kernels || {})[k];
+        if (!K) { p.push('(a) kernel ' + k + ' has no evidence'); continue; }
+        for (const f of K.files || []) if (shaOf(f.path) !== f.sha256) p.push('(p) kernel file ' + f.path + ' moved since the cut; ' + B6_RECUT);
+        for (const d of B6_LANES) {
+            for (const [sh, scenMin, floor] of [['full', C.SCEN_MIN, C.CHECK_FLOOR], ['smoke', C.SCEN_MIN_SMOKE, C.CHECK_FLOOR_SMOKE]]) {
+                const f = (K[sh] || {})[d.name];
+                const at = k + ' ' + sh + ' ' + d.name;
+                if (!f) { p.push('(a) ' + at + ' missing'); continue; }
+                if (f.crashes !== 0) p.push('(d) ' + at + ' crashes=' + f.crashes);
+                for (const s of d.required) {
+                    const n = b6Has(f.scenarios, s) ? f.scenarios[s] : null;
+                    if (!(n >= scenMin)) p.push('(b) ' + at + ' ' + s + '=' + n + ' < ' + scenMin);
+                }
+                for (const o of d.hardOracles) {
+                    const n = b6Has(f.performed, o) ? f.performed[o] : null;
+                    if (!(n >= floor)) p.push('(c) ' + at + ' ' + o + ' performed=' + n + ' < ' + floor);
+                    if (B6_SKIP_NAMES.indexOf(o) === -1) continue;
+                    const k2 = b6Has(f.skipTainted, o) ? f.skipTainted[o] : NaN;
+                    const r = k2 / (n + k2);   // exact, as gates.mjs taintSkipRule
+                    if (!(r <= C.TAINT_SKIP_MAX)) p.push('(d) ' + at + ' ' + o + ' taint=' + r + ' > ' + C.TAINT_SKIP_MAX);
+                    if (!(b6Has(f.taintRatio, o) && f.taintRatio[o] === r)) p.push('(d) ' + at + ' ' + o + ' stored ratio ' + (f.taintRatio || {})[o] + ' != exact ' + r);
+                }
+            }
+        }
+        const hv = (doc.hollowVolume || {})[k];
+        const hollowLanes = hv ? B6_LANES.filter((d) => hv[d.name] && hv[d.name].worst.leastPerformed.performed < C.CHECK_FLOOR).map((d) => d.name) : [];
+        if (hollowLanes.length === 0) p.push('(e) ' + k + ': no lane at ' + C.DEFAULT_CYCLES + ' x OPS_MIN falls below CHECK_FLOOR=' + C.CHECK_FLOOR + ' (the floor is hollow)');
+        let smokeMin = Infinity;
+        for (const d of B6_LANES) for (const o of d.hardOracles) {
+            const f = (K.smoke || {})[d.name];
+            if (f && b6Has(f.performed, o) && f.performed[o] < smokeMin) smokeMin = f.performed[o];
+        }
+        if (!(C.CHECK_FLOOR_SMOKE * 8 >= smokeMin)) p.push('(e) ' + k + ': CHECK_FLOOR_SMOKE=' + C.CHECK_FLOOR_SMOKE + ' is below 1/8 of the least clean smoke cell ' + smokeMin);
+        const clean = ((doc.seedSweep || {}).cells || {});
+        for (const d of B6_LANES) for (const c of clean[k + ':' + d.name] || []) {
+            if (!(c.maxTaint.ratio <= C.TAINT_SKIP_MAX)) p.push('(e) ' + k + ' clean sweep ' + d.name + ' seed ' + c.seed + ' taint ' + c.maxTaint.ratio + ' > ' + C.TAINT_SKIP_MAX);
+        }
+    }
+    const cov = (((doc.covOffSweep || {}).cells || {})['headpatched:NEST:saved-cursor-hazard']) || [];
+    if (cov.length < 17) p.push('(e) the headpatched NEST cov-off sweep has ' + cov.length + ' < 17 seeds');
+    for (const c of cov) if (!(c.maxTaint.ratio > C.TAINT_SKIP_MAX)) p.push('(e) NEST cov-off seed ' + c.seed + ' taint ' + c.maxTaint.ratio + ' <= TAINT_SKIP_MAX ' + C.TAINT_SKIP_MAX + ' (the hollow run passes)');
+    return p;
+}
+
+const B6_C = Object.freeze(Object.assign({}, CFG));
+const b6With = (over) => Object.assign({}, B6_C, over);
+
+// the binding minima, read from the evidence (never typed in): mutants sit one step past them
+function b6Min(sh, pick) {
+    let best = null;
+    for (const k of Object.keys(B6_KERNELS)) for (const d of B6_LANES) {
+        const f = B6_DOC.kernels[k][sh][d.name];
+        for (const [name, n] of pick(d, f)) if (best === null || n < best.n) best = { k, lane: d.name, name, n };
+    }
+    return best;
+}
+const B6_SCEN_FULL = b6Min('full', (d, f) => d.required.map((s) => [s, f.scenarios[s]]));
+const B6_SCEN_SMOKE = b6Min('smoke', (d, f) => d.required.map((s) => [s, f.scenarios[s]]));
+const B6_PERF_FULL = b6Min('full', (d, f) => d.hardOracles.map((o) => [o, f.performed[o]]));
+const B6_PERF_SMOKE = b6Min('smoke', (d, f) => d.hardOracles.map((o) => [o, f.performed[o]]));
+let B6_TAINT_MAX = 0;
+for (const k of Object.keys(B6_KERNELS)) for (const d of B6_LANES) for (const sh of ['full', 'smoke']) {
+    for (const o of d.hardOracles) if (B6_SKIP_NAMES.indexOf(o) !== -1) B6_TAINT_MAX = Math.max(B6_TAINT_MAX, B6_DOC.kernels[k][sh][d.name].taintRatio[o]);
+}
+const B6_COV = B6_DOC.covOffSweep.cells['headpatched:NEST:saved-cursor-hazard'].map((c) => c.maxTaint.ratio);
+
+// main.mjs --smoke on every binding kernel, concurrently, folded per lane (cached: one pair of spawns per file)
+let b6Live = null;
+function b6LiveRun() {
+    if (b6Live === null) {
+        const ks = Object.keys(B6_KERNELS);
+        b6Live = Promise.all(ks.map((k) => runMainSmoke(join(ROOT, B6_KERNELS[k])))).then((runs) => {
+            const out = {};
+            ks.forEach((k, i) => {
+                const m = runs[i];
+                assert.ok(m.recs !== null, 'main.mjs --smoke on ' + k + ' wrote no records (exit ' + m.status + '): ' + m.stderr.slice(0, 400));
+                assert.ok(!m.recs.some((r) => r.type === 'fatal'), 'main.mjs --smoke on ' + k + ' crashed');
+                assert.equal(m.recs[m.recs.length - 1].type, 'summary', 'main.mjs --smoke on ' + k + ' reached its summary');
+                const cyc = m.recs.filter((r) => r.type === 'cycle');
+                out[k] = {};
+                for (const d of B6_LANES) out[k][d.name] = foldMainRecords(B6_DOC.lanes[d.name], cyc.filter((r) => r.lane === d.name), B6_SKIP_NAMES);
+            });
+            return out;
+        });
+    }
+    return b6Live;
+}
+const b6LiveMismatch = (doc, live) => {
+    const out = [];
+    for (const k of Object.keys(live)) for (const lane of B6_ROSTER) {
+        if (JSON.stringify(live[k][lane]) !== JSON.stringify(((doc.kernels[k] || {}).smoke || {})[lane])) out.push(k + ':' + lane);
+    }
+    return out;
+};
+
+test('B6 drift guard: the calibration evidence clears every calibrated constant (a, p, b-e); the binding cells are what the report says', () => {
+    assert.deepEqual(calibrationProblems(B6_DOC, B6_C), []);
+    assert.deepEqual(B6_DOC.cut.bindingKernels, Object.keys(B6_KERNELS));
+    // B6 assertion: >= 8 hits per required scenario per lane at 11 x DEFAULT_OPS and >= 1 in smoke
+    assert.ok(B6_SCEN_FULL.n >= 8 && B6_SCEN_SMOKE.n >= 1, JSON.stringify([B6_SCEN_FULL, B6_SCEN_SMOKE]));
+    assert.equal(B6_DOC.cut.ops * B6_DOC.cut.cycles, 11 * CFG.DEFAULT_OPS);
+});
+
+test('B6 drift guard must-fail: each constant one step past its evidence, a moved cut / pin / constant, an edited JSON, a hollow gate -> red', () => {
+    const red = (doc, C, tag, why, shaOf) => {
+        const got = calibrationProblems(doc, C, shaOf);
+        assert.ok(got.some((x) => x.indexOf(tag) === 0), why + ': expected a ' + tag + ' problem, got ' + JSON.stringify(got));
+    };
+    red(B6_DOC, b6With({ SCEN_MIN: B6_SCEN_FULL.n + 1 }), '(b)', 'SCEN_MIN above the rarest full cell ' + B6_SCEN_FULL.name);
+    red(B6_DOC, b6With({ SCEN_MIN_SMOKE: B6_SCEN_SMOKE.n + 1 }), '(b)', 'SCEN_MIN_SMOKE above the rarest smoke cell');
+    red(B6_DOC, b6With({ CHECK_FLOOR: B6_PERF_FULL.n + 1 }), '(c)', 'CHECK_FLOOR above the least-performed full cell ' + B6_PERF_FULL.lane + ' ' + B6_PERF_FULL.name);
+    red(B6_DOC, b6With({ CHECK_FLOOR_SMOKE: B6_PERF_SMOKE.n + 1 }), '(c)', 'CHECK_FLOOR_SMOKE above the least-performed smoke cell');
+    red(B6_DOC, b6With({ TAINT_SKIP_MAX: B6_TAINT_MAX - 1e-9 }), '(d)', 'TAINT_SKIP_MAX below the clean max ratio');
+    red(B6_DOC, b6With({ TAINT_SKIP_MAX: Math.min.apply(null, B6_COV) }), '(e)', 'TAINT_SKIP_MAX at the cov-off ratio: the hollow run passes');
+    red(B6_DOC, b6With({ TAINT_SKIP_MAX: 0.5 }), '(e)', 'the provisional 0.5 lets the NEST cov-off pass');
+    red(B6_DOC, b6With({ DEFAULT_OPS: CFG.DEFAULT_OPS / 2 }), '(a)', 'DEFAULT_OPS moved without a recut');
+    red(B6_DOC, b6With({ SMOKE_OPS: CFG.SMOKE_OPS + 1 }), '(a)', 'SMOKE_OPS moved');
+    red(B6_DOC, b6With({ DEFAULT_SEED: CFG.DEFAULT_SEED + 1 }), '(a)', 'seed moved');
+    red(B6_DOC, b6With({ GEN_VERSION: CFG.GEN_VERSION + 1 }), '(a)', 'generator version moved');
+    red(B6_DOC, b6With({ CHECK_FLOOR: 100 }), '(e)', 'a floor no hollow run can fall below');
+    red(B6_DOC, b6With({ CHECK_FLOOR_SMOKE: 1 }), '(e)', 'a smoke floor far below the clean cells');
+    red(B6_DOC, b6With({ CHECK_FLOOR: CFG.CHECK_FLOOR - 1 }), '(a)', 'a constant moved inside its margin, JSON not recut');
+    red(B6_DOC, B6_C, '(p)', 'main.mjs moved since the cut', (rel) => (rel === 'bench/soak/main.mjs' ? 'f'.repeat(64) : b6ShaOf(rel)));
+    red(B6_DOC, B6_C, '(p)', 'a binding kernel file moved', (rel) => (rel === B6_DOC.kernels['lite-1.5.2'].files[0].path ? null : b6ShaOf(rel)));
+    const lowered = b6Copy(B6_DOC);
+    lowered.kernels[B6_SCEN_FULL.k].full[B6_SCEN_FULL.lane].scenarios[B6_SCEN_FULL.name] = CFG.SCEN_MIN - 1;
+    red(lowered, B6_C, '(b)', 'evidence edited below SCEN_MIN');
+    const gone = b6Copy(B6_DOC);
+    delete gone.kernels.headpatched.full.NEST.performed.O7a;
+    red(gone, B6_C, '(c)', 'a missing performed count is not zero (null is not zero)');
+    const shrunk = b6Copy(B6_DOC);
+    shrunk.lanes.BATCH.required = shrunk.lanes.BATCH.required.slice(1);
+    red(shrunk, B6_C, '(a)', 'a required scenario the evidence never measured');
+    const crashed = b6Copy(B6_DOC);
+    crashed.kernels.headpatched.smoke.GRAPH.crashes = 1;
+    red(crashed, B6_C, '(d)', 'a crash in the binding cut');
+    const one = b6Copy(B6_DOC);
+    one.cut.bindingKernels = ['headpatched'];
+    red(one, B6_C, '(a)', 'a binding kernel dropped from the evidence (J5)');
+    const stale = b6Copy(B6_DOC);
+    stale.constants.TAINT_SKIP_MAX = 0.5;
+    red(stale, B6_C, '(a)', 'doc.constants stale against config');
+    const rounded = b6Copy(B6_DOC);
+    rounded.kernels.headpatched.full.NEST.taintRatio.O1c = Math.round(rounded.kernels.headpatched.full.NEST.taintRatio.O1c * 1e4) / 1e4;
+    red(rounded, B6_C, '(d)', 'a rounded stored ratio is not the exact one');
+});
+
+test('B6 drift guard live: main.mjs --smoke on BOTH binding kernels folds to exactly kernels.<k>.smoke', async () => {
+    const live = await b6LiveRun();
+    assert.deepEqual(Object.keys(live), Object.keys(B6_KERNELS));
+    assert.deepEqual(b6LiveMismatch(B6_DOC, live), []);
+    // must-fail: hand edits that still clear every constant are caught only by the re-measure (J1 and its twin)
+    for (const k of Object.keys(B6_KERNELS)) {
+        const edited = b6Copy(B6_DOC);
+        edited.kernels[k].smoke.ERROR.scenarios.aggregate += 1;
+        assert.deepEqual(calibrationProblems(edited, B6_C), [], 'precondition: the static checks cannot see this edit');
+        assert.deepEqual(b6LiveMismatch(edited, live), [k + ':ERROR'], k);
+    }
+});
+
+test('B6 TAINT_SKIP_MAX separates: every clean cell at or below it, the headpatched NEST cov-off above it on all 17 seeds; 1.5.2 cov-off is left to coverage', () => {
+    assert.ok(B6_TAINT_MAX <= CFG.TAINT_SKIP_MAX && CFG.TAINT_SKIP_MAX < Math.min.apply(null, B6_COV), JSON.stringify([B6_TAINT_MAX, CFG.TAINT_SKIP_MAX, B6_COV]));
+    assert.equal(B6_COV.length, 17);
+    // 1.5.2: the same cov-off reads inside the clean band, so taint cannot separate it; coverage does (0 hits)
+    for (const c of B6_DOC.covOffSweep.cells['lite-1.5.2:NEST:saved-cursor-hazard']) assert.ok(c.hits < CFG.SCEN_MIN_SMOKE, JSON.stringify(c));
+});

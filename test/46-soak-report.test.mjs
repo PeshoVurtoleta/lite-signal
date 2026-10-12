@@ -1,0 +1,455 @@
+/**
+ * test/46 -- SoakReport (S1cd TASK 9, SPEC-B v2 section 9 row R-tamper x10, B5 assertions + review round 1).
+ *
+ * Every stream is generated AT TEST TIME by the real bench/soak/main.mjs on FROZEN kernels through SOAK_KERNEL
+ * (amendment 11: never the live Signal.js): node_modules/lite-signal-1.5.2 (REV-152),
+ * bench/soak/controls/headpatched, and scratch copies of headpatched (no controls.json pin; one throws a
+ * deferred fatal). No fixture stream is committed: the gates block and the calibrated constants move (B6), and a
+ * stream is only valid against the code that judged it.
+ *
+ * Teeth: every check statement of SoakReport.mjs (one `bad(...)` / `refuse(...)` each) has a tamper below
+ * that goes red when that statement alone is disabled. Honest streams (fatal, signal-interrupted, smoke,
+ * mustfail, scratch kernel) prove the opposite direction: an honest stream is never labelled INTEGRITY.
+ */
+
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { OPS_MIN, MIN_ACTIVE_CYCLES, CHECK_P } from '../bench/soak/config.mjs';
+import { COV_OFF_SUPPORTED, laneByName } from '../bench/soak/lanes/index.mjs';
+import { applicability } from '../bench/soak/adapters/contract.mjs';
+
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
+const SOAK = join(ROOT, 'bench', 'soak');
+const MAIN = join(SOAK, 'main.mjs');
+const REPORT = join(SOAK, 'SoakReport.mjs');
+const K_HP_DIR = join(SOAK, 'controls', 'headpatched');
+const K_HP = join(K_HP_DIR, 'Signal.js');
+const K_152 = join(ROOT, 'node_modules', 'lite-signal-1.5.2', 'Signal.js');
+const SMALL = { SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: String(OPS_MIN) };
+// A cycle that cannot finish before the kernel-armed event lands: ~2,000 worlds, ~30 yields (main yields every 64 worlds).
+const LONG = { SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: '1000000' };
+/**
+ * Scratch-kernel tail: wrap the module's createRegistry binding (a function declaration: a mutable live binding
+ * the adapter reads through the namespace) and run `action` on the 2nd registry, i.e. inside world 1 of cycle 0,
+ * after the stream is open. The event fires at the next yield (world 63), mid-cycle, whatever the host load.
+ */
+const ARMED = 'test/46 ARMED';   // the kernel writes it to stderr when the armed event fires
+const armAt2 = (action) => '\n;const __t46Reg = createRegistry; let __t46N = 0;\n' +
+    'createRegistry = function (config) { if (++__t46N === 2) { process.stderr.write("' + ARMED + '\\n"); ' + action + ' } return __t46Reg(config); };\n';
+const ARMED_KILL_MS = 60000;   // an arm that never fires fails here, not at the 240 s default
+const PINS = JSON.parse(readFileSync(join(SOAK, 'parity.json'), 'utf8')).files;
+const REG_IDS = JSON.parse(readFileSync(join(SOAK, 'divergences.json'), 'utf8')).entries.map((e) => e.id);
+
+let TMP;
+const S = {};   // name -> { path, status, recs, stderr }
+let tn = 0;
+
+function soakEnv(keys) {
+    const env = {};
+    for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
+    return Object.assign(env, keys);
+}
+/**
+ * Spawn main.mjs (async: the streams generate in parallel). Every path SETTLES the promise: a child that exits
+ * without a stream (CONFIG exit, a kernel that throws at load), an unparsable stream or a spawn error rejects
+ * with the child's stderr, so before() fails fast instead of hanging. killMs bounds the child (SIGKILL).
+ */
+function gen(name, keys, argv = [], killMs = 240000) {
+    const out = join(TMP, name + '.jsonl');
+    return new Promise((resolve, reject) => {
+        let err = '', settled = false, timer = null;
+        const settle = (e) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (e) reject(e); else resolve();
+        };
+        let p;
+        try {
+            p = spawn(process.execPath, ['--expose-gc', MAIN].concat(argv), { env: soakEnv(Object.assign({ SOAK_OUT: out }, keys)), stdio: ['ignore', 'ignore', 'pipe'] });
+        } catch (e) { settle(e); return; }
+        p.stderr.on('data', (d) => { err += d; });
+        timer = setTimeout(() => p.kill('SIGKILL'), killMs);
+        p.on('error', (e) => settle(new Error(name + ': spawn failed: ' + e.message)));
+        p.on('close', (status, signal) => {
+            try {
+                const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+                S[name] = { path: out, status, signal, recs, stderr: err };
+                settle(null);
+            } catch (e) {
+                settle(new Error(name + ': no usable stream (exit ' + status + (signal ? ', ' + signal : '') + ', ' + e.message + '): ' + err.slice(0, 400)));
+            }
+        });
+    });
+}
+const readRecs = (name) => S[name].recs.map((r) => JSON.parse(JSON.stringify(r)));
+function write(recs) {
+    const p = join(TMP, 'tamper-' + (tn++) + '.jsonl');
+    writeFileSync(p, recs.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + (recs.length ? '\n' : ''));
+    return p;
+}
+function tamper(name, fn) { const recs = readRecs(name); const out = fn(recs); return write(out === undefined ? recs : out); }
+function report(args) {
+    const r = spawnSync(process.execPath, [REPORT].concat(args), { encoding: 'utf8', timeout: 60000, env: soakEnv({}) });
+    return { status: r.status, out: r.stdout.trim().split('\n').filter(Boolean), err: r.stderr.trim().split('\n').filter(Boolean) };
+}
+const renumber = (recs) => { recs.forEach((r, i) => { r.seq = i; }); return recs; };
+const cyclesOf = (recs) => recs.filter((r) => r.type === 'cycle');
+const summaryOf = (recs) => recs[recs.length - 1];
+const withFailures = (recs) => cyclesOf(recs).find((c) => c.failures.length > 0);
+const clone = (x) => JSON.parse(JSON.stringify(x));
+/** Insert record r before index i, keep tMs non-decreasing, renumber. */
+function insertAt(recs, i, r) { r.tMs = recs[i - 1].tMs; recs.splice(i, 0, r); return renumber(recs); }
+const fatalRec = (kind) => ({ kind, lane: null, cycle: null, world: null, worldSeed: null, message: 'forged', stack: null, type: 'fatal', seq: 0, tMs: 0 });
+
+function expectIntegrity(path, cls) {
+    const r = report([path]);
+    assert.equal(r.status, 1, JSON.stringify(r));
+    assert.equal(r.err.length, 1, JSON.stringify(r));
+    assert.ok(r.err[0].startsWith('soak:report: INTEGRITY -- ' + cls + ': '), 'want class ' + cls + ', got: ' + r.err[0]);
+    assert.ok(!r.out.some((l) => / \(consistent\)$/.test(l)), 'a tampered stream never prints a consistent verdict');
+    return r;
+}
+function expectRefusal(path, reason) {
+    const r = report([path]);
+    assert.equal(r.status, 1, JSON.stringify(r));
+    assert.equal(r.err.length, 1, JSON.stringify(r));
+    assert.ok(r.err[0].startsWith('soak:report: NOT A RELEASE SOAK -- ' + reason + ': '), 'want reason ' + reason + ', got: ' + r.err[0]);
+    assert.match(r.out[r.out.length - 1], /^soak:report: verdict \S+ \(consistent\)$/, 'a refusal follows a consistent verdict');
+    return r;
+}
+function expectConsistent(name) {
+    const r = report([S[name].path]);
+    assert.equal(r.status, 0, JSON.stringify(r));
+    assert.deepEqual(r.err, []);
+    assert.equal(r.out[r.out.length - 1], 'soak:report: verdict ' + summaryOf(S[name].recs).verdict + ' (consistent)');
+    return r;
+}
+
+before(async () => {
+    TMP = mkdtempSync(join(tmpdir(), 'soak-report-'));
+    const hpSrc = readFileSync(K_HP, 'utf8');
+    for (const [dir, tail] of [['kscratch', '\n// test/46 scratch kernel: not a controls.json pin\n'],
+        ['kfatal', armAt2('setImmediate(() => { throw new Error("test/46 deferred fatal"); });')],
+        ['ksigint', armAt2('process.kill(process.pid, "SIGINT");')]]) {
+        mkdirSync(join(TMP, dir));
+        writeFileSync(join(TMP, dir, 'Signal.js'), hpSrc + tail);
+        copyFileSync(join(K_HP_DIR, 'Watch.js'), join(TMP, dir, 'Watch.js'));
+    }
+    await Promise.all([
+        gen('rev', Object.assign({ SOAK_KERNEL: K_152 }, SMALL)),
+        gen('hp', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' }, SMALL)),
+        gen('hperr', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'ERROR' }, SMALL)),
+        gen('scratch', Object.assign({ SOAK_KERNEL: join(TMP, 'kscratch', 'Signal.js'), SOAK_LANES: 'GRAPH' }, SMALL)),
+        gen('mustfail', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH', SOAK_MUSTFAIL: 'cov-off:' + COV_OFF_SUPPORTED.GRAPH[0] }, SMALL)),
+        gen('smoke', { SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' }, ['--smoke']),
+        gen('fatal', Object.assign({ SOAK_KERNEL: join(TMP, 'kfatal', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
+        gen('sigint', Object.assign({ SOAK_KERNEL: join(TMP, 'ksigint', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
+    ]);
+}, { timeout: 300000 });   // node:test has no default timeout: a stuck generator fails, never hangs
+after(() => { if (TMP) rmSync(TMP, { recursive: true, force: true }); });
+
+/* ---- honest streams: consistent, never INTEGRITY ----------------------------------------------------- */
+
+test('B5: the untampered REV-152 stream (1.5.2, 4 lanes, 11 cycles) -> exit 0, `soak:report: verdict FAIL (consistent)`', () => {
+    const s = S.rev;
+    assert.equal(s.status, 1, 'main judged 1.5.2 FAIL: ' + s.stderr.slice(0, 400));
+    assert.equal(s.recs[0].controls.name, 'rev152');
+    const r = expectConsistent('rev');
+    assert.equal(r.out[r.out.length - 1], 'soak:report: verdict FAIL (consistent)');
+    assert.match(r.out[0], /^soak:report: stream records=\d+ kernel=control:rev152 engine=lite lanes=GRAPH,BATCH,ERROR,NEST cycles=\d+ /);
+});
+test('B5: a clean headpatched GRAPH stream -> exit 0, its own verdict re-derived (consistent)', () => {
+    // clean = no oracle failure. The verdict is NOT pinned: heap / retention can go red on a loaded host.
+    assert.equal(summaryOf(S.hp.recs).totals.failingWorlds, 0, 'headpatched GRAPH has no failing world');
+    expectConsistent('hp');
+});
+test('honest headpatched ERROR stream (DIV-F21/F22 failures, no capped cycle) -> exit 0, consistent', () => {
+    assert.ok(summaryOf(S.hperr.recs).totals.failingWorlds > 0, 'the interim kernel still fails ERROR');
+    expectConsistent('hperr');
+});
+test('honest FATAL stream (scratch kernel, uncaught throw armed mid-cycle) -> consistent, then NOT A RELEASE SOAK -- overridden-kernel', () => {
+    const recs = S.fatal.recs;
+    assert.ok(S.fatal.stderr.indexOf(ARMED) !== -1, 'the armed throw fired: ' + S.fatal.stderr.slice(0, 400));
+    assert.equal(S.fatal.status, 1, S.fatal.stderr.slice(0, 400));
+    assert.equal(summaryOf(recs).reason, 'fatal');
+    assert.equal(recs[recs.length - 2].type, 'fatal');
+    assert.equal(recs[recs.length - 2].kind, 'uncaughtException');
+    assert.equal(recs[recs.length - 2].lane, 'GRAPH', 'the throw landed inside a lane-cycle');
+    assert.equal(recs[recs.length - 2].cycle, 0);
+    const r = expectRefusal(S.fatal.path, 'overridden-kernel');
+    assert.equal(r.out[r.out.length - 1], 'soak:report: verdict FAIL (consistent)');
+});
+test('honest SIGINT-interrupted stream (scratch kernel raises SIGINT in world 1 of cycle 0) -> consistent; the interrupted last cycle is accepted', () => {
+    const recs = S.sigint.recs;
+    assert.ok(S.sigint.stderr.indexOf(ARMED) !== -1, 'the armed SIGINT fired: ' + S.sigint.stderr.slice(0, 400));
+    assert.equal(summaryOf(recs).reason, 'signal', S.sigint.stderr.slice(0, 400));
+    const c = cyclesOf(recs);
+    assert.equal(c.length, 1, 'the signal stops cycle 0 itself');
+    assert.equal(c[0].interrupted, true, 'the SIGINT landed mid-cycle (interrupted=true reached)');
+    const r = expectRefusal(S.sigint.path, 'overridden-kernel');
+    assert.equal(r.out[r.out.length - 1], 'soak:report: verdict ' + summaryOf(recs).verdict + ' (consistent)');
+});
+test('honest scratch-kernel stream -> consistent, then NOT A RELEASE SOAK -- overridden-kernel (R-tamper 9)', () => {
+    assert.equal(S.scratch.recs[0].kernel.override, true);
+    assert.equal(S.scratch.recs[0].controls.name, null, 'the scratch kernel matches no control');
+    const r = expectRefusal(S.scratch.path, 'overridden-kernel');
+    assert.equal(r.out[r.out.length - 1], 'soak:report: verdict ' + summaryOf(S.scratch.recs).verdict + ' (consistent)');
+});
+test('honest SOAK_MUSTFAIL cov-off stream (SPEC-B 5.1) -> NOT A RELEASE SOAK -- mustfail', () => {
+    assert.notEqual(S.mustfail.recs[0].mustfail, null);
+    expectRefusal(S.mustfail.path, 'mustfail');
+});
+test('honest smoke stream -> `verdict <V> (consistent)` (SMOKE on a quiet host), then NOT A RELEASE SOAK -- smoke', () => {
+    assert.equal(S.smoke.recs[0].config.SOAK_SMOKE.value, true);
+    const r = expectRefusal(S.smoke.path, 'smoke');
+    assert.equal(r.out[r.out.length - 1], 'soak:report: verdict ' + summaryOf(S.smoke.recs).verdict + ' (consistent)');
+});
+
+/* ---- the tree kernel: identity vs parity.json pins (review blocker 1) -------------------------------- */
+
+/** The scratch stream relabelled as a tree run: override false, SOAK_KERNEL null, kernel sha set by sha(). */
+function asTree(recs, sig, wat, parityOk) {
+    const h = recs[0];
+    h.kernel.override = false;
+    h.config.SOAK_KERNEL = { value: null, source: 'default' };
+    if (sig !== undefined) h.kernel.files[0].sha256 = sig;
+    if (wat !== undefined) h.kernel.files[1].sha256 = wat;
+    h.engine.files = h.kernel.files.map((f) => ({ path: f.path, sha256: f.sha256 }));
+    if (parityOk !== undefined) h.parity.ok = parityOk;
+}
+test('tree run whose kernel sha256 equals the parity.json pins and parity ok -> exit 0, kernel=tree', () => {
+    const r = report([tamper('scratch', (recs) => asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true))]);
+    assert.equal(r.status, 0, JSON.stringify(r));
+    assert.match(r.out[0], / kernel=tree /);
+});
+
+/* ---- one tamper per check statement ------------------------------------------------------------------ */
+
+const I = (cls, detail) => ({ cls, detail });   // detail: when another statement of the same class would also fire
+const R = (reason, detail) => ({ reason, detail });
+const TAMPERS = [
+    // parse
+    ['empty stream', 'rev', () => [], I('parse', /empty stream/)],
+    ['a trailing garbage line', 'rev', (r) => { r.push('not json'); }, I('parse', /is not a JSON object record/)],
+    // seq / record type / keys
+    ['a missing seq field', 'rev', (r) => { delete r[4].seq; }, I('seq-invalid', /is not a non-negative integer/)],
+    ['a duplicate seq', 'rev', (r) => { r[3].seq = 2; }, I('seq-duplicate', /repeats/)],
+    ['R-tamper 3: seq gap', 'rev', (r) => { for (let i = 5; i < r.length; i++) r[i].seq += 1; }, I('seq-gap', /seq \d+, expected \d+/)],
+    ['an unknown record type', 'rev', (r) => { r[2].type = 'checkpoint'; }, I('record-type', /is not a burn-in record/)],
+    ['a missing tMs', 'rev', (r) => { delete r[2].tMs; }, I('record-type', /is not a time/)],
+    ['tMs running backwards', 'rev', (r) => { r[3].tMs = 0; }, I('record-type', /runs backwards/)],
+    ['an extra summary key', 'rev', (r) => { summaryOf(r).forged = 1; }, I('unknown-key', /summary carries an unknown key "forged"/)],
+    ['an extra header key', 'rev', (r) => { r[0].forged = 1; }, I('unknown-key', /seq 0 header carries an unknown key "forged"/)],
+    ['an extra failure-record key', 'rev', (r) => { withFailures(r).failures[0].forged = 1; }, I('unknown-key', /failure world \d+ carries an unknown key "forged"/)],
+    ['an extra BREACH-entry key', 'rev', (r) => { summaryOf(r).breaches[0].forged = 1; }, I('unknown-key', /summary breach carries an unknown key "forged"/)],
+    // header placement, summary, fatal
+    ['record 0 is not the header', 'rev', (r) => { const h = r.shift(); h.tMs = r[0].tMs; r.splice(1, 0, h); return renumber(r); }, I('header', /record 0 is cycle, not the header/)],
+    ['a second header', 'rev', (r) => insertAt(r, 1, clone(r[0])), I('header', /a second header at seq/)],
+    ['R-tamper 8: drop the summary', 'rev', (r) => r.slice(0, -1), I('summary-missing', /no summary record/)],
+    ['a second summary', 'rev', (r) => { const s = clone(summaryOf(r)); s.seq = r.length; r.push(s); }, I('summary-duplicate', /2 summary records/)],
+    ['R-tamper 4: fatal after the summary', 'rev', (r) => { const f = fatalRec('uncaughtException'); f.seq = r.length; f.tMs = summaryOf(r).tMs; r.push(f); }, I('fatal-after-summary', /after the summary at seq/)],
+    ['a record after the summary', 'rev', (r) => { const c = clone(cyclesOf(r)[0]); c.seq = r.length; c.tMs = summaryOf(r).tMs; r.push(c); }, I('after-summary', /record\(s\) after the summary/)],
+    ['two fatal records', 'rev', (r) => { summaryOf(r).reason = 'fatal'; insertAt(r, r.length - 1, fatalRec('uncaughtException')); return insertAt(r, r.length - 1, fatalRec('uncaughtException')); }, I('fatal-placement', /2 fatal records/)],
+    ['an unknown fatal kind', 'rev', (r) => { summaryOf(r).reason = 'fatal'; return insertAt(r, r.length - 1, fatalRec('bogus')); }, I('fatal-placement', /unknown fatal kind bogus/)],
+    ['a fatal record not directly before the summary', 'rev', (r) => { summaryOf(r).reason = 'fatal'; return insertAt(r, r.length - 2, fatalRec('uncaughtException')); }, I('fatal-placement', /not directly before the summary/)],
+    ['a fatal record with summary reason end', 'rev', (r) => insertAt(r, r.length - 1, fatalRec('uncaughtException')), I('fatal-placement', /a fatal record but summary reason end/)],
+    ['summary reason fatal with no fatal record', 'rev', (r) => { summaryOf(r).reason = 'fatal'; }, I('fatal-placement', /without a fatal record/)],
+    // header fields
+    ['a header without mustfail', 'rev', (r) => { delete r[0].mustfail; }, I('header', /header\.mustfail is missing/)],
+    ['a header of another stream kind', 'rev', (r) => { r[0].kind = 'wrap'; }, I('header', /kind wrap is not burn-in/)],
+    ['schemaVersion 2', 'rev', (r) => { r[0].schemaVersion = 2; }, I('header', /schemaVersion 2/)],
+    ['genVersion 2', 'rev', (r) => { r[0].genVersion = 2; }, I('header', /genVersion 2/)],
+    ['genRules edited', 'rev', (r) => { r[0].genRules.pop(); }, I('header', /!= gen\.mjs GEN_RULES/)],
+    ['config is not an object', 'rev', (r) => { r[0].config = []; }, I('header', /header\.config is not an object/)],
+    ['config.SOAK_SEED deleted', 'rev', (r) => { delete r[0].config.SOAK_SEED; }, I('header', /config\.SOAK_SEED is missing/)],
+    ['SOAK_SMOKE value not boolean', 'rev', (r) => { r[0].config.SOAK_SMOKE.value = 'yes'; }, I('header', /SOAK_SMOKE value yes is not a boolean/)],
+    ['SOAK_CYCLES value not a count', 'rev', (r) => { r[0].config.SOAK_CYCLES.value = -1; }, I('header', /SOAK_CYCLES value -1 is not a count/)],
+    ['SOAK_OPS value not a count', 'rev', (r) => { r[0].config.SOAK_OPS.value = 'x'; }, I('header', /SOAK_OPS value x is not a count/)],
+    ['SOAK_SEED value not a uint32', 'rev', (r) => { r[0].config.SOAK_SEED.value = 2 ** 32; }, I('header', /SOAK_SEED value 4294967296 is not a uint32/)],
+    ['SOAK_LANES value not an array', 'rev', (r) => { r[0].config.SOAK_LANES.value = 'GRAPH'; }, I('header', /SOAK_LANES value is not an array/)],
+    ['SOAK_KERNEL value not a path', 'rev', (r) => { r[0].config.SOAK_KERNEL.value = 5; }, I('header', /SOAK_KERNEL value is neither/)],
+    ['SOAK_ENGINE unknown', 'rev', (r) => { r[0].config.SOAK_ENGINE.value = 'alein'; r[0].engine.name = 'alein'; }, I('header', /is no known engine/)],
+    ['engine.name differs from SOAK_ENGINE', 'rev', (r) => { r[0].engine.name = 'alien'; }, I('header', /engine\.name differs/)],
+    ['engine.caps null', 'rev', (r) => { r[0].engine.caps = null; }, I('header', /engine\.caps is not an object/)],
+    ['header.mustfail differs from config', 'rev', (r) => { r[0].mustfail = { mode: 'cov-off', scenario: 'x' }; }, I('header', /header\.mustfail differs/)],
+    ['kernel.files with one entry', 'rev', (r) => { r[0].kernel.files.pop(); }, I('header', /header\.kernel must be/)],
+    ['a kernel sha256 that is not hex', 'rev', (r) => { r[0].kernel.files[1].sha256 = 'x'; }, I('header', /kernel file entry malformed/)],
+    ['controls without name', 'rev', (r) => { delete r[0].controls.name; }, I('header', /controls has no name/)],
+    ['parity without ok', 'rev', (r) => { delete r[0].parity.ok; }, I('header', /parity has no ok/)],
+    // header vs this code
+    ['R-tamper 5: edit gates.CHECK_P', 'rev', (r) => { r[0].gates.CHECK_P = CHECK_P + 0.1; }, I('gates-block', /at CHECK_P \(tampered, or recorded under different code\)/)],
+    ['a divergences digest of another registry', 'rev', (r) => { r[0].divergences = '0'.repeat(64); }, I('registry', /divergences digest differs/)],
+    ['kernel.override true but SOAK_KERNEL null', 'scratch', (r) => { r[0].config.SOAK_KERNEL = { value: null, source: 'default' }; }, I('control', /override is true but config SOAK_KERNEL is null/)],
+    ['kernel.override flipped false on a SOAK_KERNEL run (review repro)', 'scratch', (r) => { r[0].kernel.override = false; }, I('control', /override is false but config SOAK_KERNEL is /)],
+    ['an override path that is not the SOAK_KERNEL value', 'scratch', (r) => { r[0].config.SOAK_KERNEL.value = '/elsewhere/Signal.js'; }, I('control', /is not the SOAK_KERNEL value/)],
+    ['a kernel Watch.js renamed', 'rev', (r) => { r[0].kernel.files[1].path += '.bak'; }, I('control', /must be Signal\.js \+ Watch\.js/)],
+    ['a forged control name (headpatched claims rev152)', 'hp', (r) => { r[0].controls.name = 'rev152'; }, I('control', /controls\.name rev152 does not match/)],
+    ['rev152 relabelled as a tree run (review repro)', 'rev', (r) => { r[0].controls.name = null; asTree(r); }, I('control', /is control rev152 but controls\.name is null/)],
+    ['engine.files differ from kernel.files', 'rev', (r) => { r[0].engine.files[0].sha256 = '0'.repeat(64); }, I('control', /engine\.files differ/)],
+    ['laneRoster edited', 'rev', (r) => { r[0].laneRoster.push('X'); }, I('header-lanes', /laneRoster /)],
+    ['SOAK_LANES out of roster order', 'rev', (r) => { r[0].config.SOAK_LANES.value.reverse(); }, I('header-lanes', /not a roster-ordered subset/)],
+    ['header.lanes short of SOAK_LANES', 'rev', (r) => { r[0].lanes.pop(); }, I('header-lanes', /does not list exactly/)],
+    ['header.lanes entry edited', 'rev', (r) => { r[0].lanes[0].missingCaps = ['x']; }, I('header-lanes', /header\.lanes\[0\] differs/)],
+    ['a header that drops a required scenario', 'rev', (r) => { r[0].scenarios.ERROR.required.pop(); }, I('header-lanes', /header\.scenarios\.ERROR differs/)],
+    ['header.oraclesNA edited', 'rev', (r) => { r[0].oraclesNA.GRAPH = ['O5']; }, I('header-lanes', /oraclesNA\.GRAPH differs/)],
+    // cycle grid
+    ['a 12th cycle record', 'hp', (r) => { const c = clone(cyclesOf(r).pop()); c.cycle += 1; return insertAt(r, r.length - 1, c); }, I('cycle-grid', /cycle records > \d+ cycles x 1 running lanes/)],
+    ['R-tamper 1: delete a cycle (seq renumbered)', 'rev', (r) => { r.splice(r.indexOf(cyclesOf(r)[5]), 1); return renumber(r); }, I('cycle-grid', /a cycle record is missing or out of order/)],
+    ['laneIndex edited', 'rev', (r) => { cyclesOf(r)[1].laneIndex = 0; }, I('cycle-grid', /laneIndex 0 != 1/)],
+    ['warmup flag edited', 'rev', (r) => { cyclesOf(r)[0].warmup = false; }, I('cycle-grid', /warmup false does not match/)],
+    ['interrupted not a boolean', 'rev', (r) => { cyclesOf(r)[0].interrupted = 0; }, I('cycle-grid', /interrupted is not a boolean/)],
+    ['interrupted on a reason-end run', 'rev', (r) => { cyclesOf(r)[0].interrupted = true; }, I('cycle-grid', /interrupted outside a signal-stopped/)],
+    ['R-tamper 1b: delete the LAST cycle of a reason-end run', 'rev', (r) => { const c = cyclesOf(r); r.splice(r.indexOf(c[c.length - 1]), 1); return renumber(r); }, I('cycle-grid', /reason end with \d+ cycle records, expected/)],
+    ['summary.cyclesRun edited', 'rev', (r) => { summaryOf(r).cyclesRun += 1; }, I('cycle-grid', /summary\.cyclesRun/)],
+    // cycle fields
+    ['ops negative', 'rev', (r) => { cyclesOf(r)[2].ops = -1; }, I('cycle-field', /: ops = -1/)],
+    ['largeWorlds > worlds', 'rev', (r) => { const c = cyclesOf(r)[0]; c.largeWorlds = c.worlds + 1; }, I('cycle-field', /largeWorlds exceed/)],
+    ['failingWorlds > worlds', 'rev', (r) => { const c = cyclesOf(r)[0]; c.failingWorlds = c.worlds + 1; }, I('cycle-field', /failingWorlds exceed/)],
+    ['a cycle seed edited', 'rev', (r) => { cyclesOf(r)[1].seed ^= 1; }, I('cycle-field', /is not seedFor/)],
+    ['ops below SOAK_OPS on a not-interrupted cycle', 'hp', (r) => { cyclesOf(r)[3].ops = r[0].config.SOAK_OPS.value - 1; }, I('cycle-field', /vs SOAK_OPS \d+ with interrupted=false/)],
+    ['a deleted counter (checks.O6 of one cycle)', 'rev', (r) => { delete cyclesOf(r)[2].checks.O6; }, I('cycle-field', /checks keys must be exactly/)],
+    ['checks.O6 negative', 'rev', (r) => { cyclesOf(r)[2].checks.O6 = -1; }, I('cycle-field', /checks\.O6 = -1/)],
+    ['opsByClass deleted', 'rev', (r) => { delete cyclesOf(r)[2].opsByClass; }, I('cycle-field', /opsByClass missing/)],
+    ['gateHits value negative', 'rev', (r) => { cyclesOf(r)[2].gateHits.batchTokenEscaped = -1; }, I('cycle-field', /gateHits\.batchTokenEscaped = -1/)],
+    ['opsByClass not summing to ops', 'rev', (r) => { const o = cyclesOf(r)[2].opsByClass; o[Object.keys(o)[0]] += 1; }, I('cycle-field', /opsByClass does not sum/)],
+    ['memory.residentMB not a number', 'rev', (r) => { cyclesOf(r)[2].memory.residentMB = 'x'; }, I('cycle-field', /memory\.residentMB missing/)],
+    ['boundary null', 'rev', (r) => { cyclesOf(r)[2].boundary = null; }, I('cycle-field', /boundary missing/)],
+    ['boundary of another lane', 'rev', (r) => { cyclesOf(r)[2].boundary.lane = 'NEST'; }, I('cycle-field', /boundary belongs to NEST/)],
+    ['boundary.worlds edited', 'rev', (r) => { cyclesOf(r)[2].boundary.worlds += 1; }, I('cycle-field', /boundary\.worlds/)],
+    ['boundary.tracked negative', 'rev', (r) => { cyclesOf(r)[2].boundary.tracked = -1; }, I('cycle-field', /tracked\/witnessed not counts/)],
+    ['boundary.trackerSize deleted', 'rev', (r) => { delete cyclesOf(r)[2].boundary.trackerSize; }, I('cycle-field', /trackerSize\/weakAlive missing/)],
+    // scenario counts
+    ['R-tamper 7: delete a cycle\'s scenario counts', 'rev', (r) => { delete cyclesOf(r).find((c) => c.lane === 'BATCH').scenarios; }, I('scenario-counts', /scenarios missing/)],
+    ['a negative scenario count', 'rev', (r) => { const s = cyclesOf(r)[1].scenarios; s[Object.keys(s)[0]] = -1; }, I('scenario-counts', /scenarios\.\S+ = -1/)],
+    ['R-tamper 7b: delete one scenario key that a stored failure world counted', 'rev', (r) => {
+        const c = cyclesOf(r).find((x) => x.failures.some((f) => f.worldScen.length > 0));
+        delete c.scenarios[c.failures.find((f) => f.worldScen.length > 0).worldScen[0]];
+    }, I('scenario-counts', /> the cycle count/)],
+    // failure counts
+    ['failureCounts null', 'rev', (r) => { withFailures(r).failureCounts = null; }, I('failure-count', /failureCounts missing/)],
+    ['R-tamper 2: zero a failure count', 'rev', (r) => { const c = withFailures(r); c.failureCounts[Object.keys(c.failureCounts)[0]] = 0; }, I('failure-count', /= 0 \(a counted key is >= 1\)/)],
+    ['a failure count above failingWorlds', 'rev', (r) => { const c = withFailures(r); c.failureCounts[Object.keys(c.failureCounts)[0]] = c.failingWorlds + 1; }, I('failure-count', /\(counted once per world\)/)],
+    ['failure counts summing below failingWorlds', 'rev', (r) => { const c = cyclesOf(r).find((x) => x.failingWorlds > 1); c.failureCounts = { [Object.keys(c.failureCounts)[0]]: 1 }; }, I('failure-count', /failureCounts sum \d+ < failingWorlds/)],
+    ['a count below the stored failure records (uncapped cycle)', 'rev', (r) => { const [c, k] = uncappedKey(r); c.failureCounts[k] -= 1; }, I('failure-count', /but the stored failure records hold/)],
+    ['a count above stored + uncapped worlds (uncapped cycle)', 'rev', (r) => { const [c, k] = uncappedKey(r); c.failureCounts[k] += 1; }, I('failure-count', /stored \+ \d+ uncapped worlds/)],
+    // failure records
+    ['failures not an array', 'rev', (r) => { withFailures(r).failures = {}; }, I('failure-records', /failures is not an array/)],
+    ['a deleted failure record', 'rev', (r) => { withFailures(r).failures.pop(); }, I('failure-records', /expected min\(failingWorlds, FAIL_CAP\)/)],
+    ['a failure step negative', 'rev', (r) => { withFailures(r).failures[0].step = -1; }, I('failure-records', /a failure record is malformed/)],
+    ['failure records out of world order', 'rev', (r) => { const f = withFailures(r).failures; const t = f[0]; f[0] = f[1]; f[1] = t; }, I('failure-records', /out of order or out of range/)],
+    ['failure.oracles edited', 'rev', (r) => { withFailures(r).failures[0].oracles = ['O2']; }, I('failure-records', /: oracles does not re-derive/)],
+    ['failure.sigs edited', 'rev', (r) => { withFailures(r).failures[0].sigs = ['x']; }, I('failure-records', /: sigs does not re-derive/)],
+    ['failure.sig edited', 'rev', (r) => { withFailures(r).failures[0].sig = 'x'; }, I('failure-records', /: sig does not re-derive/)],
+    ['failure.detail edited', 'rev', (r) => { withFailures(r).failures[0].detail = 'x'; }, I('failure-records', /: detail does not re-derive/)],
+    ['failure.worldSeed edited', 'rev', (r) => { withFailures(r).failures[0].worldSeed ^= 1; }, I('failure-records', /: worldSeed does not re-derive/)],
+    ['failure.replay edited', 'rev', (r) => { withFailures(r).failures[0].replay = 'BATCH:0:0x1'; }, I('failure-records', /: replay does not re-derive/)],
+    ['failure.worldScen edited', 'rev', (r) => { withFailures(r).failures[0].worldScen.pop(); }, I('failure-records', /: worldScen does not re-derive/)],
+    ['an escape on a non-batch op', 'rev', (r) => { failureWhere(r, (f) => f.op !== 'batch').escape = []; }, I('failure-records', /escape on a non-batch op/)],
+    ['an escape that is not an array', 'rev', (r) => { failureWhere(r, (f) => f.op === 'batch').escape = 'x'; }, I('failure-records', /must be null or an array/)],
+    // known tags
+    ['a failure classify refuses (scen not strings)', 'rev', (r) => { withFailures(r).failures[0].scen = [5]; }, I('known-tag', /classify refused the record/)],
+    ['R-tamper 11: an edited `known` tag', 'rev', (r) => { const f = withFailures(r).failures[0]; f.known = f.known === 'DIV-F21' ? 'DIV-F5' : 'DIV-F21'; }, I('known-tag', /: known "/)],
+    ['an edited `tag`', 'rev', (r) => { withFailures(r).failures[0].tag = 'F99'; }, I('known-tag', /: tag "F99"/)],
+    ['an edited `failKnown`', 'rev', (r) => { withFailures(r).failures[0].failKnown[0] = 'DIV-F99'; }, I('known-tag', /: failKnown \[/)],
+    // summary
+    ['an edited summary total', 'rev', (r) => { summaryOf(r).totals.checks.O1c += 1; }, I('totals', /summary\.totals do not equal/)],
+    ['an unknown summary reason', 'rev', (r) => { summaryOf(r).reason = 'bogus'; }, I('verdict', /summary\.reason bogus/)],
+    ['R-tamper 6: claimed PASS over a FAIL stream', 'rev', (r) => { const s = summaryOf(r); s.verdict = 'PASS'; s.exitCode = 0; }, I('verdict', /claims "PASS", its records re-derive "FAIL"/)],
+    ['only exitCode edited 1 -> 0 (review repro)', 'rev', (r) => { summaryOf(r).exitCode = 0; }, I('verdict', /claims exit 0, its records re-derive 1/)],
+    ['summary.smoke edited', 'rev', (r) => { summaryOf(r).smoke = true; }, I('verdict', /summary\.smoke differs/)],
+    ['summary.lanesRun edited', 'rev', (r) => { summaryOf(r).lanesRun += 1; }, I('verdict', /summary\.lanesRun/)],
+    ['summary.skipped edited', 'rev', (r) => { summaryOf(r).skipped.push({ lane: 'GRAPH' }); }, I('verdict', /summary\.skipped differs/)],
+    ['summary.perLane null', 'rev', (r) => { summaryOf(r).perLane = null; }, I('per-lane', /summary\.perLane missing/)],
+    ['a FAIL lane relabelled PASS (run verdict kept)', 'rev', (r) => { summaryOf(r).perLane.BATCH.status = 'PASS'; }, I('per-lane', /perLane\.BATCH does not re-derive/)],
+    ['a forged INCONCLUSIVE line', 'rev', (r) => { summaryOf(r).inconclusive.push('soak: INCONCLUSIVE -- forged'); }, I('inconclusive', /inconclusive lines do not re-derive/)],
+    // breaches (review blocker 2)
+    ['summary.breaches not an array', 'rev', (r) => { summaryOf(r).breaches = {}; }, I('breaches', /summary\.breaches missing/)],
+    ['a forged gate breach', 'rev', (r) => { summaryOf(r).breaches.push({ gate: 'heap', lane: 'GRAPH', detail: 'x' }); }, I('breaches', /gate breaches do not re-derive/)],
+    ['a duplicated BREACH entry (review repro)', 'rev', (r) => { const b = summaryOf(r).breaches; b.push(clone(b[0])); }, I('breaches', /duplicate BREACH entry/)],
+    ['a forged BREACH entry known DIV-F99 (review repro)', 'rev', (r) => { const b = summaryOf(r).breaches; b.push(Object.assign(clone(b[0]), { known: 'DIV-F99' })); }, I('breaches', /carries a known tag no registry entry can emit/)],
+    ['a forged BREACH entry whose known id does not cover its lane (DIV-F21 on BATCH)', 'rev', (r) => { const b = summaryOf(r).breaches; const e = b.find((x) => x.lane === 'BATCH' && !Object.prototype.hasOwnProperty.call(x, 'gate')); b.push(Object.assign(clone(e), { known: 'DIV-F21' })); }, I('breaches', /a known id does not cover this lane/)],
+    ['two oracle BREACH entries swapped (emission order)', 'rev', (r) => { const b = summaryOf(r).breaches; const t = b[0]; b[0] = b[1]; b[1] = t; }, I('breaches', /not in BreachLog emission order/)],
+    ['a forged BREACH entry with no failure count', 'rev', (r) => { const b = summaryOf(r).breaches; b.push(Object.assign(clone(b[0]), { sig: 'nope', known: null })); }, I('breaches', /has no failure count/)],
+    ['a deleted oracle BREACH entry', 'rev', (r) => { summaryOf(r).breaches.shift(); }, I('breaches', /has no BREACH entry/)],
+    ['an edited BREACH replay (review repro)', 'rev', (r) => { summaryOf(r).breaches[0].replay = 'BATCH:0:0x1'; }, I('breaches', /does not re-derive \(replay\/scen\/detail/)],
+    ['a forged BREACH entry on a lane with no capped cycle', 'hperr', (r) => {
+        const s = summaryOf(r), lane = uncappedLane(r);
+        const e = s.breaches.find((b) => b.lane === lane && !Object.prototype.hasOwnProperty.call(b, 'gate'));
+        s.breaches.push(Object.assign(clone(e), { known: e.known === null ? REG_IDS[0] : null }));
+    }, I('breaches', /matches no stored failure/)],
+    // keys
+    ['a deleted cycle.throughput', 'rev', (r) => { delete cyclesOf(r)[0].throughput; }, I('missing-key', /lacks "throughput"/)],
+    // release refusals
+    ['R-tamper 10: non-lite PARTIAL (engine alien, NEST skipped for a missing cap)', 'hp', nonLite, R('non-lite', /engine alien, skipped lanes NEST/)],
+    ['a tree run under different code (scratch sha, review repro)', 'scratch', (r) => asTree(r), R('tree-parity', /tree Signal\.js sha256 differs from bench\/soak\/parity\.json: recorded under different code/)],
+    ['a tree run whose Watch.js sha differs from the pin', 'scratch', (r) => asTree(r, PINS['Signal.js'], '1'.repeat(64), true), R('tree-parity', /tree Watch\.js sha256 differs/)],
+    ['a tree run at the pins with parity not ok', 'scratch', (r) => asTree(r, PINS['Signal.js'], PINS['Watch.js'], false), R('tree-parity', /parity ok=false/)],
+];
+
+function failureWhere(recs, pred) {
+    for (const c of cyclesOf(recs)) for (const f of c.failures) if (pred(f)) return f;
+    throw new Error('test/46: no failure record matches');
+}
+/** An uncapped cycle (every failing world stored) and a key whose count can move by 1 without tripping the range checks. */
+function uncappedKey(recs) {
+    for (const c of cyclesOf(recs)) {
+        if (c.failingWorlds === 0 || c.failures.length !== c.failingWorlds) continue;
+        const fc = c.failureCounts, sum = Object.values(fc).reduce((a, b) => a + b, 0);
+        const k = Object.keys(fc).find((x) => fc[x] >= 2 && fc[x] < c.failingWorlds && sum - 1 >= c.failingWorlds);
+        if (k !== undefined) return [c, k];
+    }
+    throw new Error('test/46: the REV-152 stream has no uncapped cycle with a movable count');
+}
+/** A lane with failures but no capped cycle. */
+function uncappedLane(recs) {
+    const lanes = recs[0].config.SOAK_LANES.value;
+    const lane = lanes.find((L) => {
+        const cs = cyclesOf(recs).filter((c) => c.lane === L);
+        return cs.some((c) => c.failingWorlds > 0) && cs.every((c) => c.failingWorlds === c.failures.length);
+    });
+    if (lane === undefined) throw new Error('test/46: every failing lane of this stream has a capped cycle');
+    return lane;
+}
+function nonLite(recs) {
+    const h = recs[0], s = summaryOf(recs);
+    h.engine.name = 'alien';
+    h.engine.caps.childEffects = 'no';
+    h.config.SOAK_ENGINE = { value: 'alien', source: 'env' };
+    h.config.SOAK_LANES = { value: ['GRAPH', 'NEST'], source: 'env' };
+    const app = applicability(laneByName('NEST'), h.engine.caps);
+    assert.equal(app.status, 'skip');
+    h.lanes = [Object.assign({}, h.lanes[0], { engine: 'alien' }), { name: 'NEST', status: 'skip', missingCaps: app.missingCaps, engine: 'alien' }];
+    h.scenarios.NEST = { required: app.requiredApplicable, optional: laneByName('NEST').optional.slice(), na: app.scenariosNA };
+    h.oraclesNA.NEST = app.oraclesNA;
+    s.skipped = [{ lane: 'NEST', missingCaps: app.missingCaps, engine: 'alien' }];
+    s.perLane.NEST = { status: 'SKIP', missingCaps: app.missingCaps };
+    if (s.verdict === 'PASS') s.verdict = 'PARTIAL';   // SPEC 8: a non-lite skip on an otherwise green run
+}
+
+for (const [name, base, fn, want] of TAMPERS) {
+    test('tamper: ' + name + ' -> ' + (want.cls ? 'INTEGRITY -- ' + want.cls : 'NOT A RELEASE SOAK -- ' + want.reason), () => {
+        const p = tamper(base, fn);
+        if (want.cls) { const r = expectIntegrity(p, want.cls); if (want.detail) assert.match(r.err[0], want.detail); } else { const r = expectRefusal(p, want.reason); if (want.detail) assert.match(r.err[0], want.detail); }
+    });
+}
+
+test('precedence: an edited CHECK_P AND a seq gap -> the earlier class (seq-gap); CHECK_P plus a claimed PASS -> gates-block', () => {
+    expectIntegrity(tamper('rev', (recs) => { recs[0].gates.CHECK_P = CHECK_P + 0.1; summaryOf(recs).verdict = 'PASS'; for (let i = 5; i < recs.length; i++) recs[i].seq += 1; }), 'seq-gap');
+    const r = expectIntegrity(tamper('rev', (recs) => { recs[0].gates.CHECK_P = CHECK_P + 0.1; summaryOf(recs).verdict = 'PASS'; }), 'gates-block');
+    assert.match(r.err[0], /recorded under different code/, 'a gates-block mismatch may be an honest stale stream: the detail says so');
+});
+test('CONFIG: no path, two paths, an option, a missing file -> exit 2 with one `soak:report: CONFIG --` line', () => {
+    for (const args of [[], [S.hp.path, S.hp.path], ['--help'], [join(TMP, 'nope.jsonl')]]) {
+        const r = report(args);
+        assert.equal(r.status, 2, JSON.stringify(args) + ' ' + JSON.stringify(r));
+        assert.equal(r.err.length, 1);
+        assert.ok(r.err[0].startsWith('soak:report: CONFIG -- '), r.err[0]);
+        assert.deepEqual(r.out, []);
+    }
+});

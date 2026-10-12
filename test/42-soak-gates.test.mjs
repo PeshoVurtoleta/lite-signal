@@ -126,12 +126,14 @@ test('LaneGates evidence: coverage, performed-only check floor and per-oracle ta
     const floor = laneRun(11, () => ({ checks: Object.assign(rec('GRAPH', 0).checks, { O1e: 0 }), skipTainted: Object.assign(rec('GRAPH', 0).skipTainted, { O1e: 1000 }) }));
     assert.ok(floor.causes.some((c) => c.line === 'soak: INCONCLUSIVE -- checks lane=GRAPH oracle=O1e performed=0 < ' + CFG.CHECK_FLOOR), JSON.stringify(floor.causes));
     assert.ok(floor.causes.some((c) => c.cause === 'taint-skip' && c.oracle === 'O1e'), 'and its skip ratio is 1.0');
-    // Synthetic ratios on both sides of the provisional TAINT_SKIP_MAX 0.5. Sources: 0.44 is B1's dev-run
-    // (_dev-run.mjs, headpatched fa2871f0, NEST, 250 worlds = 106,250 ops, seed 0xC0FFEE, cov-off:saved-cursor-
-    // hazard ON: O1c 717511 skipped / 1628962 = 0.44, O1e 0.20); 0.53 is the S1b review's NEST cov-off figure
-    // for effect checks (amendment 6; its kernel and volume are not recorded here). B6 calibrates the threshold.
-    const t = laneRun(11, () => ({ checks: Object.assign(rec('GRAPH', 0).checks, { O1c: 560, O1e: 470 }), skipTainted: Object.assign(rec('GRAPH', 0).skipTainted, { O1c: 440, O1e: 530 }) }));
-    assert.deepEqual(t.gates['taint-skip'].over.map((o) => o.oracle), ['O1e']);
+    // Synthetic ratios on both sides of TAINT_SKIP_MAX 0.35, calibrated in S1d B6 (bench/soak/calibration/
+    // soak-calibration.json, headpatched fa2871f0, seed 0xC0FFEE, smoke shape): 0.44 is the NEST cov-off:saved-
+    // cursor-hazard O1c ratio (0.441; 0.43-0.44 over 17 seeds), 0.26 the clean max (NEST O1c 0.2585 over the
+    // 8-seed sweep). Counts x10 so every oracle clears CHECK_FLOOR and only the taint gate decides; on the
+    // provisional 0.5 this row read PASS (over = []).
+    const t = laneRun(11, () => ({ checks: Object.assign(rec('GRAPH', 0).checks, { O1c: 5600, O1e: 7400 }), skipTainted: Object.assign(rec('GRAPH', 0).skipTainted, { O1c: 4400, O1e: 2600 }) }));
+    assert.equal(t.gates['check-floor'].verdict, 'PASS', 'precondition: only the taint gate decides');
+    assert.deepEqual(t.gates['taint-skip'].over.map((o) => o.oracle), ['O1c']);
     assert.equal(t.status, 'INCONCLUSIVE');
     // O7a is not in the GRAPH oracle list, so a zero O7a count is no floor breach there
     assert.equal(laneRun(11, () => ({ checks: Object.assign(rec('GRAPH', 0).checks, { O7a: 0 }) })).status, 'PASS');

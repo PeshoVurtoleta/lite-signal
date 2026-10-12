@@ -1,0 +1,4312 @@
+{
+ "schema": 1,
+ "task": "SPEC-B-S1cd TASK 11 (burst 8 B6): soak calibration -- DEFAULT_OPS, SCEN_MIN(_SMOKE), CHECK_FLOOR(_SMOKE), TAINT_SKIP_MAX",
+ "tool": "node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --import-throughput <the earlier timed run>",
+ "guard": "test/41-soak-config.test.mjs (B6 drift guard): config values == cut, every binding cell clears its constant, live smoke re-measure == kernels.headpatched.smoke",
+ "cut": {
+  "seed": 12648430,
+  "cycles": 11,
+  "ops": 100000,
+  "smokeCycles": 3,
+  "smokeOps": 20000,
+  "opsMin": 1000,
+  "genVersion": 1,
+  "genRules": [
+   "I1",
+   "I2",
+   "G4",
+   "G5",
+   "G6",
+   "G7",
+   "G8",
+   "G9",
+   "G10"
+  ],
+  "checkP": 0.4,
+  "worldSteps": 400,
+  "largeWorldEvery": 64,
+  "bindingKernels": [
+   "headpatched",
+   "lite-1.5.2"
+  ]
+ },
+ "constants": {
+  "DEFAULT_OPS": 100000,
+  "SMOKE_OPS": 20000,
+  "SCEN_MIN": 8,
+  "SCEN_MIN_SMOKE": 1,
+  "CHECK_FLOOR": 10000,
+  "CHECK_FLOOR_SMOKE": 500,
+  "TAINT_SKIP_MAX": 0.35
+ },
+ "lanes": {
+  "GRAPH": {
+   "index": 0,
+   "required": [
+    "diamond-write",
+    "dep-set-flip",
+    "deep-pull",
+    "second-invalidation",
+    "equality-cutoff",
+    "adversarial-equality"
+   ],
+   "optional": [
+    "wide-mark"
+   ],
+   "oracles": [
+    "O1c",
+    "O1e",
+    "O2",
+    "O4",
+    "O5",
+    "O6"
+   ]
+  },
+  "BATCH": {
+   "index": 1,
+   "required": [
+    "revert-after-mid-read",
+    "revert-no-read",
+    "nested-close",
+    "throw-in-batch",
+    "effect-created-mid-batch",
+    "multi-write-same-signal"
+   ],
+   "optional": [],
+   "oracles": [
+    "O1c",
+    "O1e",
+    "O2",
+    "O4",
+    "O5",
+    "O6",
+    "OB"
+   ]
+  },
+  "ERROR": {
+   "index": 2,
+   "required": [
+    "throw-dep-effect-prewalk",
+    "throw-dep-computed-prewalk",
+    "recovery-after-throw",
+    "aggregate",
+    "throwing-equals"
+   ],
+   "optional": [
+    "cycle-error-surfaces"
+   ],
+   "oracles": [
+    "O1c",
+    "O1e",
+    "O2",
+    "O4",
+    "O5",
+    "O6"
+   ]
+  },
+  "NEST": {
+   "index": 3,
+   "required": [
+    "saved-cursor-hazard",
+    "live-cursor-hazard",
+    "child-first-run-dispose",
+    "nested-computed-dispose",
+    "untrack-dispose",
+    "outer-computed",
+    "early-exit-after-dispose",
+    "lifecycle-callback-dispose",
+    "lifecycle-dispose-recycle"
+   ],
+   "optional": [
+    "dispose-outer-observer"
+   ],
+   "oracles": [
+    "O1c",
+    "O1e",
+    "O2",
+    "O4",
+    "O5",
+    "O6",
+    "O7a"
+   ]
+  }
+ },
+ "provenance": {
+  "date": "2026-10-12T08:45:35.570Z",
+  "gitHead": "c237e61673f836ea30848ec3da508c185e871218",
+  "gitDirty": [
+   "M bench/soak/config.mjs",
+   " M test/41-soak-config.test.mjs",
+   " M test/42-soak-gates.test.mjs",
+   "?? BRIEF.md",
+   "?? bench/bench-runs/",
+   "?? bench/soak/SoakReport.mjs",
+   "?? bench/soak/calibration/calibrate.mjs",
+   "?? bench/soak/calibration/soak-calibration.json",
+   "?? test/46-soak-report.test.mjs"
+  ],
+  "node": "v26.8.2",
+  "v8": "14.6.202.34-node.28",
+  "cpu": "Apple M4 Pro",
+  "host": "MacBook-Pro.local",
+  "loadavgBefore": [
+   5.91,
+   8.25,
+   6.49
+  ],
+  "loadavgAfterTimed": [
+   20.21,
+   14.1,
+   9.25
+  ],
+  "loadavgAfter": [
+   14.35,
+   14.37,
+   10.74
+  ],
+  "busyNodeBefore": [
+   "22898 0.0 node",
+   "22902 0.0 /opt/homebrew/Cellar/node/26.8.2/bin/node",
+   "23020 159.6 /opt/homebrew/Cellar/node/26.8.2/bin/node",
+   "23021 157.1 /opt/homebrew/Cellar/node/26.8.2/bin/node"
+  ],
+  "seconds": 793,
+  "timing": "PENDING (untimed run; throughput decides no gate)",
+  "pinnedSha256": {
+   "bench/soak/gen.mjs": "c634d459bb8a585f287be043c9eb42c7b15cfaa249ee7337166420ddf3c19183",
+   "bench/soak/exec.mjs": "dd3b1e633167348913adf774f7b7d998f505c2523be123479f39906b6fceff9c",
+   "bench/soak/oracles.mjs": "3447e38b646966037044939f367dd533e8212f6143dc1162bc2321cecd205d6b",
+   "bench/soak/model.mjs": "6269d8b3f6fa89a5c88027b2807755c2c4d498de6190313b1670e2e3b51e35a7",
+   "bench/soak/scenarios.mjs": "a28f304c05e147b5e1e0848e41d83ad5862d116a645ae9d2f70e4762e1ca2bc7",
+   "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",
+   "bench/soak/lanes/index.mjs": "a89ad2bc76b4b7e8d5c80602346b8686f973a9688086b3af9fd1c42cbd4030a6",
+   "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
+   "bench/soak/lanes/batch.mjs": "dff120767f134507809b5fe5a095953ef0e6a22b232e1febffba783e5b6721f3",
+   "bench/soak/lanes/error.mjs": "8746bcec3971490be1fbbc88272f17692aa3358e57b00010ae958e85c18f44fa",
+   "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
+   "bench/soak/adapters/lite.mjs": "22c0a4b348792e37408fbde451285ebef21726a293d54c32c710a401e1733158",
+   "bench/soak/adapters/contract.mjs": "7cdd3c5d985f22b6ec91f8d6acb42bd83bdd790fb197f53f163ad3a77a732bb3",
+   "bench/soak/main.mjs": "a45d13a7a7310dd0dc438aaa86705a4e50741098841985ed0497360f97ecc0d7",
+   "bench/soak/calibration/calibrate.mjs": "b300eac655b96114cbb38e33bba229c15d6e41341c99e38714028326a279a9de"
+  }
+ },
+ "worst": {
+  "headpatched": {
+   "full": {
+    "GRAPH": {
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 2724
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 1105187
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.030086645391700313
+     }
+    },
+    "BATCH": {
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 62739
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 664375
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "ERROR": {
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 6457
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 1102419
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "NEST": {
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 4628
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 41184
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.24431054019422
+     }
+    }
+   },
+   "smoke": {
+    "GRAPH": {
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 156
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60836
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03424406872874468
+     }
+    },
+    "BATCH": {
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 3357
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 36722
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "ERROR": {
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 286
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60229
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "NEST": {
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 236
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2170
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.25462197190176084
+     }
+    }
+   }
+  },
+  "lite-1.5.2": {
+   "full": {
+    "GRAPH": {
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 2724
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 1105187
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.030086645391700313
+     }
+    },
+    "BATCH": {
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 18017
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 171053
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "ERROR": {
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 22
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 1100806
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "NEST": {
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 3276
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 49458
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.18812189427049034
+     }
+    }
+   },
+   "smoke": {
+    "GRAPH": {
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 156
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60836
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03424406872874468
+     }
+    },
+    "BATCH": {
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 979
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 9280
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "ERROR": {
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 2
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60035
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "NEST": {
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 162
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2618
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.18949128402018764
+     }
+    }
+   }
+  }
+ },
+ "kernels": {
+  "headpatched": {
+   "kernel": "bench/soak/controls/headpatched/Signal.js",
+   "knownAs": "headpatched",
+   "files": [
+    {
+     "path": "bench/soak/controls/headpatched/Signal.js",
+     "sha256": "fa2871f0af5d0c192e500424c474e0c5603c98a72903be7a5f23841ee6f236c8"
+    },
+    {
+     "path": "bench/soak/controls/headpatched/Watch.js",
+     "sha256": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d"
+    }
+   ],
+   "full": {
+    "GRAPH": {
+     "cycles": 11,
+     "worlds": 2338,
+     "ops": 1102849,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "diamond-write": 90321,
+      "dep-set-flip": 306984,
+      "deep-pull": 2724,
+      "second-invalidation": 501090,
+      "equality-cutoff": 162048,
+      "adversarial-equality": 9888,
+      "wide-mark": 252
+     },
+     "performed": {
+      "O1c": 28095194,
+      "O1e": 18841499,
+      "O2": 11330425,
+      "O4": 17755838,
+      "O5": 1105187,
+      "O6": 2135608,
+      "O7a": 0,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 584462,
+      "O2": 0,
+      "O4": 445801
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0.030086645391700313,
+      "O2": 0,
+      "O4": 0.024492354781896288
+     },
+     "scenarioMinPerCycle": {
+      "diamond-write": 7716,
+      "dep-set-flip": 27425,
+      "deep-pull": 212,
+      "second-invalidation": 42915,
+      "equality-cutoff": 14215,
+      "adversarial-equality": 853,
+      "wide-mark": 14
+     }
+    },
+    "BATCH": {
+     "cycles": 11,
+     "worlds": 2607,
+     "ops": 1102761,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "revert-after-mid-read": 246712,
+      "revert-no-read": 395831,
+      "nested-close": 234548,
+      "throw-in-batch": 62739,
+      "effect-created-mid-batch": 83775,
+      "multi-write-same-signal": 987735
+     },
+     "performed": {
+      "O1c": 5236185,
+      "O1e": 22040973,
+      "O2": 25837059,
+      "O4": 13746674,
+      "O5": 1105368,
+      "O6": 1186536,
+      "O7a": 0,
+      "OB": 664375
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "revert-after-mid-read": 22136,
+      "revert-no-read": 35596,
+      "nested-close": 21108,
+      "throw-in-batch": 5544,
+      "effect-created-mid-batch": 7430,
+      "multi-write-same-signal": 89236
+     }
+    },
+    "ERROR": {
+     "cycles": 11,
+     "worlds": 4090,
+     "ops": 1101368,
+     "failingWorlds": 3039,
+     "crashes": 0,
+     "scenarios": {
+      "throw-dep-effect-prewalk": 165569,
+      "throw-dep-computed-prewalk": 44916,
+      "recovery-after-throw": 292569,
+      "aggregate": 6457,
+      "throwing-equals": 54078,
+      "cycle-error-surfaces": 10843
+     },
+     "performed": {
+      "O1c": 10049539,
+      "O1e": 9875137,
+      "O2": 16657795,
+      "O4": 7332690,
+      "O5": 1102419,
+      "O6": 1306368,
+      "O7a": 0,
+      "OB": 193019
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "throw-dep-effect-prewalk": 14170,
+      "throw-dep-computed-prewalk": 3885,
+      "recovery-after-throw": 26108,
+      "aggregate": 508,
+      "throwing-equals": 4750,
+      "cycle-error-surfaces": 948
+     }
+    },
+    "NEST": {
+     "cycles": 11,
+     "worlds": 33885,
+     "ops": 1100282,
+     "failingWorlds": 33885,
+     "crashes": 0,
+     "scenarios": {
+      "saved-cursor-hazard": 36489,
+      "live-cursor-hazard": 13157,
+      "child-first-run-dispose": 23259,
+      "nested-computed-dispose": 48843,
+      "untrack-dispose": 11248,
+      "outer-computed": 9177,
+      "early-exit-after-dispose": 10740,
+      "lifecycle-callback-dispose": 4628,
+      "lifecycle-dispose-recycle": 15444,
+      "dispose-outer-observer": 16808
+     },
+     "performed": {
+      "O1c": 642231,
+      "O1e": 2419644,
+      "O2": 1946004,
+      "O4": 2389291,
+      "O5": 1100282,
+      "O6": 1959609,
+      "O7a": 41184,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 207630,
+      "O1e": 356848,
+      "O2": 52640,
+      "O4": 71057
+     },
+     "taintRatio": {
+      "O1c": 0.24431054019422,
+      "O1e": 0.12852477154625333,
+      "O2": 0.026337857067091488,
+      "O4": 0.028880873762573426
+     },
+     "scenarioMinPerCycle": {
+      "saved-cursor-hazard": 3291,
+      "live-cursor-hazard": 1155,
+      "child-first-run-dispose": 1957,
+      "nested-computed-dispose": 4376,
+      "untrack-dispose": 989,
+      "outer-computed": 811,
+      "early-exit-after-dispose": 941,
+      "lifecycle-callback-dispose": 398,
+      "lifecycle-dispose-recycle": 1322,
+      "dispose-outer-observer": 1462
+     }
+    }
+   },
+   "smoke": {
+    "GRAPH": {
+     "cycles": 3,
+     "worlds": 135,
+     "ops": 60701,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "diamond-write": 5080,
+      "dep-set-flip": 15532,
+      "deep-pull": 156,
+      "second-invalidation": 15981,
+      "equality-cutoff": 7205,
+      "adversarial-equality": 593,
+      "wide-mark": 0
+     },
+     "performed": {
+      "O1c": 1101954,
+      "O1e": 955291,
+      "O2": 502224,
+      "O4": 898822,
+      "O5": 60836,
+      "O6": 120545,
+      "O7a": 0,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 33873,
+      "O2": 0,
+      "O4": 26106
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0.03424406872874468,
+      "O2": 0,
+      "O4": 0.028224899667866038
+     },
+     "scenarioMinPerCycle": {
+      "diamond-write": 1569,
+      "dep-set-flip": 5048,
+      "deep-pull": 25,
+      "second-invalidation": 5032,
+      "equality-cutoff": 2320,
+      "adversarial-equality": 189,
+      "wide-mark": 0
+     }
+    },
+    "BATCH": {
+     "cycles": 3,
+     "worlds": 144,
+     "ops": 60912,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "revert-after-mid-read": 13491,
+      "revert-no-read": 22076,
+      "nested-close": 13122,
+      "throw-in-batch": 3357,
+      "effect-created-mid-batch": 4617,
+      "multi-write-same-signal": 54818
+     },
+     "performed": {
+      "O1c": 288870,
+      "O1e": 1225590,
+      "O2": 1402313,
+      "O4": 769715,
+      "O5": 61056,
+      "O6": 65529,
+      "O7a": 0,
+      "OB": 36722
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "revert-after-mid-read": 4438,
+      "revert-no-read": 7206,
+      "nested-close": 4295,
+      "throw-in-batch": 1106,
+      "effect-created-mid-batch": 1498,
+      "multi-write-same-signal": 18034
+     }
+    },
+    "ERROR": {
+     "cycles": 3,
+     "worlds": 225,
+     "ops": 60168,
+     "failingWorlds": 164,
+     "crashes": 0,
+     "scenarios": {
+      "throw-dep-effect-prewalk": 9078,
+      "throw-dep-computed-prewalk": 2471,
+      "recovery-after-throw": 16129,
+      "aggregate": 286,
+      "throwing-equals": 2920,
+      "cycle-error-surfaces": 648
+     },
+     "performed": {
+      "O1c": 547801,
+      "O1e": 543597,
+      "O2": 909656,
+      "O4": 405065,
+      "O5": 60229,
+      "O6": 72437,
+      "O7a": 0,
+      "OB": 10542
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "throw-dep-effect-prewalk": 2746,
+      "throw-dep-computed-prewalk": 707,
+      "recovery-after-throw": 5192,
+      "aggregate": 90,
+      "throwing-equals": 932,
+      "cycle-error-surfaces": 204
+     }
+    },
+    "NEST": {
+     "cycles": 3,
+     "worlds": 1832,
+     "ops": 60044,
+     "failingWorlds": 1832,
+     "crashes": 0,
+     "scenarios": {
+      "saved-cursor-hazard": 1976,
+      "live-cursor-hazard": 772,
+      "child-first-run-dispose": 1315,
+      "nested-computed-dispose": 2697,
+      "untrack-dispose": 650,
+      "outer-computed": 478,
+      "early-exit-after-dispose": 588,
+      "lifecycle-callback-dispose": 236,
+      "lifecycle-dispose-recycle": 851,
+      "dispose-outer-observer": 935
+     },
+     "performed": {
+      "O1c": 35600,
+      "O1e": 132933,
+      "O2": 107246,
+      "O4": 131957,
+      "O5": 60044,
+      "O6": 106861,
+      "O7a": 2170,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 12161,
+      "O1e": 20232,
+      "O2": 2923,
+      "O4": 3849
+     },
+     "taintRatio": {
+      "O1c": 0.25462197190176084,
+      "O1e": 0.13209284105376554,
+      "O2": 0.02653196452722635,
+      "O4": 0.028341899474250032
+     },
+     "scenarioMinPerCycle": {
+      "saved-cursor-hazard": 651,
+      "live-cursor-hazard": 241,
+      "child-first-run-dispose": 426,
+      "nested-computed-dispose": 886,
+      "untrack-dispose": 206,
+      "outer-computed": 157,
+      "early-exit-after-dispose": 189,
+      "lifecycle-callback-dispose": 75,
+      "lifecycle-dispose-recycle": 274,
+      "dispose-outer-observer": 291
+     }
+    }
+   },
+   "throughput": {
+    "GRAPH": "PENDING",
+    "BATCH": "PENDING",
+    "ERROR": "PENDING",
+    "NEST": "PENDING"
+   }
+  },
+  "lite-1.5.2": {
+   "kernel": "node_modules/lite-signal-1.5.2/Signal.js",
+   "knownAs": "rev152",
+   "files": [
+    {
+     "path": "node_modules/lite-signal-1.5.2/Signal.js",
+     "sha256": "f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81"
+    },
+    {
+     "path": "node_modules/lite-signal-1.5.2/Watch.js",
+     "sha256": "2244bd9f0151b69062719fce042dc4271165a537e62321e5705b3bc67fa2f24d"
+    }
+   ],
+   "full": {
+    "GRAPH": {
+     "cycles": 11,
+     "worlds": 2338,
+     "ops": 1102849,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "diamond-write": 90321,
+      "dep-set-flip": 306984,
+      "deep-pull": 2724,
+      "second-invalidation": 501090,
+      "equality-cutoff": 162048,
+      "adversarial-equality": 9888,
+      "wide-mark": 252
+     },
+     "performed": {
+      "O1c": 28095194,
+      "O1e": 18841499,
+      "O2": 11330425,
+      "O4": 17755838,
+      "O5": 1105187,
+      "O6": 2135608,
+      "O7a": 0,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 584462,
+      "O2": 0,
+      "O4": 445801
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0.030086645391700313,
+      "O2": 0,
+      "O4": 0.024492354781896288
+     },
+     "scenarioMinPerCycle": {
+      "diamond-write": 7716,
+      "dep-set-flip": 27425,
+      "deep-pull": 212,
+      "second-invalidation": 42915,
+      "equality-cutoff": 14215,
+      "adversarial-equality": 853,
+      "wide-mark": 14
+     }
+    },
+    "BATCH": {
+     "cycles": 11,
+     "worlds": 34732,
+     "ops": 1100216,
+     "failingWorlds": 34732,
+     "crashes": 0,
+     "scenarios": {
+      "revert-after-mid-read": 70683,
+      "revert-no-read": 115312,
+      "nested-close": 67785,
+      "throw-in-batch": 18017,
+      "effect-created-mid-batch": 23760,
+      "multi-write-same-signal": 286125
+     },
+     "performed": {
+      "O1c": 1504589,
+      "O1e": 2222393,
+      "O2": 4302165,
+      "O4": 1429157,
+      "O5": 1100216,
+      "O6": 1123976,
+      "O7a": 0,
+      "OB": 171053
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "revert-after-mid-read": 6325,
+      "revert-no-read": 10187,
+      "nested-close": 5920,
+      "throw-in-batch": 1580,
+      "effect-created-mid-batch": 2079,
+      "multi-write-same-signal": 25477
+     }
+    },
+    "ERROR": {
+     "cycles": 11,
+     "worlds": 17071,
+     "ops": 1100795,
+     "failingWorlds": 17060,
+     "crashes": 0,
+     "scenarios": {
+      "throw-dep-effect-prewalk": 15591,
+      "throw-dep-computed-prewalk": 4499,
+      "recovery-after-throw": 32279,
+      "aggregate": 22,
+      "throwing-equals": 34109,
+      "cycle-error-surfaces": 6849
+     },
+     "performed": {
+      "O1c": 4223649,
+      "O1e": 4742373,
+      "O2": 7180146,
+      "O4": 3589849,
+      "O5": 1100806,
+      "O6": 1230191,
+      "O7a": 0,
+      "OB": 115043
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "throw-dep-effect-prewalk": 1358,
+      "throw-dep-computed-prewalk": 368,
+      "recovery-after-throw": 2774,
+      "aggregate": 0,
+      "throwing-equals": 2973,
+      "cycle-error-surfaces": 596
+     }
+    },
+    "NEST": {
+     "cycles": 11,
+     "worlds": 36726,
+     "ops": 1100166,
+     "failingWorlds": 36726,
+     "crashes": 0,
+     "scenarios": {
+      "saved-cursor-hazard": 27658,
+      "live-cursor-hazard": 9754,
+      "child-first-run-dispose": 17084,
+      "nested-computed-dispose": 35784,
+      "untrack-dispose": 8186,
+      "outer-computed": 6954,
+      "early-exit-after-dispose": 7904,
+      "lifecycle-callback-dispose": 3276,
+      "lifecycle-dispose-recycle": 11146,
+      "dispose-outer-observer": 12331
+     },
+     "performed": {
+      "O1c": 474628,
+      "O1e": 2151386,
+      "O2": 1779454,
+      "O4": 2030598,
+      "O5": 1100166,
+      "O6": 1920770,
+      "O7a": 49458,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 109977,
+      "O1e": 208262,
+      "O2": 38521,
+      "O4": 37031
+     },
+     "taintRatio": {
+      "O1c": 0.18812189427049034,
+      "O1e": 0.08825977433922348,
+      "O2": 0.02118896024422778,
+      "O4": 0.017909886154624452
+     },
+     "scenarioMinPerCycle": {
+      "saved-cursor-hazard": 2475,
+      "live-cursor-hazard": 837,
+      "child-first-run-dispose": 1458,
+      "nested-computed-dispose": 3171,
+      "untrack-dispose": 695,
+      "outer-computed": 606,
+      "early-exit-after-dispose": 671,
+      "lifecycle-callback-dispose": 266,
+      "lifecycle-dispose-recycle": 956,
+      "dispose-outer-observer": 1059
+     }
+    }
+   },
+   "smoke": {
+    "GRAPH": {
+     "cycles": 3,
+     "worlds": 135,
+     "ops": 60701,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "diamond-write": 5080,
+      "dep-set-flip": 15532,
+      "deep-pull": 156,
+      "second-invalidation": 15981,
+      "equality-cutoff": 7205,
+      "adversarial-equality": 593,
+      "wide-mark": 0
+     },
+     "performed": {
+      "O1c": 1101954,
+      "O1e": 955291,
+      "O2": 502224,
+      "O4": 898822,
+      "O5": 60836,
+      "O6": 120545,
+      "O7a": 0,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 33873,
+      "O2": 0,
+      "O4": 26106
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0.03424406872874468,
+      "O2": 0,
+      "O4": 0.028224899667866038
+     },
+     "scenarioMinPerCycle": {
+      "diamond-write": 1569,
+      "dep-set-flip": 5048,
+      "deep-pull": 25,
+      "second-invalidation": 5032,
+      "equality-cutoff": 2320,
+      "adversarial-equality": 189,
+      "wide-mark": 0
+     }
+    },
+    "BATCH": {
+     "cycles": 3,
+     "worlds": 1893,
+     "ops": 60070,
+     "failingWorlds": 1893,
+     "crashes": 0,
+     "scenarios": {
+      "revert-after-mid-read": 3859,
+      "revert-no-read": 6417,
+      "nested-close": 3738,
+      "throw-in-batch": 979,
+      "effect-created-mid-batch": 1241,
+      "multi-write-same-signal": 15775
+     },
+     "performed": {
+      "O1c": 83146,
+      "O1e": 121003,
+      "O2": 233295,
+      "O4": 78109,
+      "O5": 60070,
+      "O6": 61311,
+      "O7a": 0,
+      "OB": 9280
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "revert-after-mid-read": 1251,
+      "revert-no-read": 2012,
+      "nested-close": 1196,
+      "throw-in-batch": 279,
+      "effect-created-mid-batch": 400,
+      "multi-write-same-signal": 5097
+     }
+    },
+    "ERROR": {
+     "cycles": 3,
+     "worlds": 923,
+     "ops": 60035,
+     "failingWorlds": 923,
+     "crashes": 0,
+     "scenarios": {
+      "throw-dep-effect-prewalk": 829,
+      "throw-dep-computed-prewalk": 217,
+      "recovery-after-throw": 1707,
+      "aggregate": 2,
+      "throwing-equals": 1893,
+      "cycle-error-surfaces": 365
+     },
+     "performed": {
+      "O1c": 227156,
+      "O1e": 263557,
+      "O2": 384646,
+      "O4": 200415,
+      "O5": 60035,
+      "O6": 66935,
+      "O7a": 0,
+      "OB": 6333
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "throw-dep-effect-prewalk": 258,
+      "throw-dep-computed-prewalk": 61,
+      "recovery-after-throw": 523,
+      "aggregate": 0,
+      "throwing-equals": 585,
+      "cycle-error-surfaces": 115
+     }
+    },
+    "NEST": {
+     "cycles": 3,
+     "worlds": 1998,
+     "ops": 60042,
+     "failingWorlds": 1998,
+     "crashes": 0,
+     "scenarios": {
+      "saved-cursor-hazard": 1497,
+      "live-cursor-hazard": 578,
+      "child-first-run-dispose": 950,
+      "nested-computed-dispose": 1969,
+      "untrack-dispose": 483,
+      "outer-computed": 362,
+      "early-exit-after-dispose": 425,
+      "lifecycle-callback-dispose": 162,
+      "lifecycle-dispose-recycle": 609,
+      "dispose-outer-observer": 680
+     },
+     "performed": {
+      "O1c": 26177,
+      "O1e": 117656,
+      "O2": 97813,
+      "O4": 111473,
+      "O5": 60042,
+      "O6": 104622,
+      "O7a": 2618,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 6120,
+      "O1e": 11812,
+      "O2": 2130,
+      "O4": 2026
+     },
+     "taintRatio": {
+      "O1c": 0.18949128402018764,
+      "O1e": 0.09123489974356598,
+      "O2": 0.02131214792431686,
+      "O4": 0.01785037753636596
+     },
+     "scenarioMinPerCycle": {
+      "saved-cursor-hazard": 488,
+      "live-cursor-hazard": 175,
+      "child-first-run-dispose": 308,
+      "nested-computed-dispose": 643,
+      "untrack-dispose": 154,
+      "outer-computed": 115,
+      "early-exit-after-dispose": 136,
+      "lifecycle-callback-dispose": 54,
+      "lifecycle-dispose-recycle": 196,
+      "dispose-outer-observer": 223
+     }
+    }
+   },
+   "throughput": {
+    "GRAPH": "PENDING",
+    "BATCH": "PENDING",
+    "ERROR": "PENDING",
+    "NEST": "PENDING"
+   }
+  }
+ },
+ "mainCrossCheck": {
+  "note": "main.mjs --smoke and the default main.mjs run fold to exactly kernels.<k>.smoke / .full; checked at --write time (it dies on a difference); test/41 repeats the smoke half live; this field gates nothing",
+  "smoke": {
+   "headpatched": {
+    "mainExit": 1,
+    "lanesEqual": [
+     "GRAPH",
+     "BATCH",
+     "ERROR",
+     "NEST"
+    ]
+   },
+   "lite-1.5.2": {
+    "mainExit": 1,
+    "lanesEqual": [
+     "GRAPH",
+     "BATCH",
+     "ERROR",
+     "NEST"
+    ]
+   }
+  },
+  "full": {
+   "headpatched": {
+    "mainExit": 1,
+    "lanesEqual": [
+     "GRAPH",
+     "BATCH",
+     "ERROR",
+     "NEST"
+    ]
+   },
+   "lite-1.5.2": {
+    "mainExit": 1,
+    "lanesEqual": [
+     "GRAPH",
+     "BATCH",
+     "ERROR",
+     "NEST"
+    ]
+   }
+  }
+ },
+ "hollowVolume": {
+  "headpatched": {
+   "GRAPH": {
+    "cycles": 11,
+    "ops": 14758,
+    "worlds": 33,
+    "performed": {
+     "O1c": 252427,
+     "O1e": 231825,
+     "O2": 122610,
+     "O4": 217867,
+     "O5": 14791,
+     "O6": 29403,
+     "O7a": 0,
+     "OB": 0
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 35
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 14791
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03194083700109406
+     }
+    }
+   },
+   "BATCH": {
+    "cycles": 11,
+    "ops": 13959,
+    "worlds": 33,
+    "performed": {
+     "O1c": 65782,
+     "O1e": 285414,
+     "O2": 317609,
+     "O4": 180037,
+     "O5": 13992,
+     "O6": 15048,
+     "O7a": 0,
+     "OB": 8295
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 762
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 8295
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   },
+   "ERROR": {
+    "cycles": 11,
+    "ops": 12634,
+    "worlds": 54,
+    "performed": {
+     "O1c": 108584,
+     "O1e": 111168,
+     "O2": 185487,
+     "O4": 82624,
+     "O5": 12643,
+     "O6": 15075,
+     "O7a": 0,
+     "OB": 2152
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 69
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 12643
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   },
+   "NEST": {
+    "cycles": 11,
+    "ops": 11229,
+    "worlds": 345,
+    "performed": {
+     "O1c": 7102,
+     "O1e": 24149,
+     "O2": 20125,
+     "O4": 23866,
+     "O5": 11229,
+     "O6": 20116,
+     "O7a": 413,
+     "OB": 0
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 43
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 413
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.24107715323787135
+     }
+    }
+   }
+  },
+  "lite-1.5.2": {
+   "GRAPH": {
+    "cycles": 11,
+    "ops": 14758,
+    "worlds": 33,
+    "performed": {
+     "O1c": 252427,
+     "O1e": 231825,
+     "O2": 122610,
+     "O4": 217867,
+     "O5": 14791,
+     "O6": 29403,
+     "O7a": 0,
+     "OB": 0
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 35
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 14791
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03194083700109406
+     }
+    }
+   },
+   "BATCH": {
+    "cycles": 11,
+    "ops": 11224,
+    "worlds": 352,
+    "performed": {
+     "O1c": 15914,
+     "O1e": 23023,
+     "O2": 44513,
+     "O4": 14749,
+     "O5": 11224,
+     "O6": 11445,
+     "O7a": 0,
+     "OB": 1789
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 173
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 1789
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   },
+   "ERROR": {
+    "cycles": 11,
+    "ops": 11278,
+    "worlds": 167,
+    "performed": {
+     "O1c": 41741,
+     "O1e": 49024,
+     "O2": 72588,
+     "O4": 37493,
+     "O5": 11278,
+     "O6": 12562,
+     "O7a": 0,
+     "OB": 1227
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 0
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 11278
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   },
+   "NEST": {
+    "cycles": 11,
+    "ops": 11112,
+    "worlds": 369,
+    "performed": {
+     "O1c": 5186,
+     "O1e": 21324,
+     "O2": 18184,
+     "O4": 20172,
+     "O5": 11112,
+     "O6": 19483,
+     "O7a": 502,
+     "OB": 0
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 36
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 502
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.1958443169483641
+     }
+    }
+   }
+  }
+ },
+ "covOff": {
+  "GRAPH:dep-set-flip": {
+   "lane": "GRAPH",
+   "scenario": "dep-set-flip",
+   "kernel": "headpatched",
+   "hits": 0,
+   "ops": 60697,
+   "worlds": 135,
+   "performed": {
+    "O1c": 1088150,
+    "O1e": 942699,
+    "O2": 598538,
+    "O4": 882596,
+    "O5": 60832,
+    "O6": 125979,
+    "O7a": 0,
+    "OB": 0
+   },
+   "skipTainted": {
+    "O1c": 0,
+    "O1e": 33685,
+    "O2": 0,
+    "O4": 25460
+   },
+   "taintRatio": {
+    "O1c": 0,
+    "O1e": 0.03449974600157315,
+    "O2": 0,
+    "O4": 0.02803791836626816
+   },
+   "worst": {
+    "rarestRequired": {
+     "scenario": "dep-set-flip",
+     "hits": 0
+    },
+    "leastPerformed": {
+     "oracle": "O5",
+     "performed": 60832
+    },
+    "maxTaint": {
+     "oracle": "O1e",
+     "ratio": 0.03449974600157315
+    }
+   }
+  },
+  "GRAPH:deep-pull": {
+   "lane": "GRAPH",
+   "scenario": "deep-pull",
+   "kernel": "headpatched",
+   "hits": 0,
+   "ops": 60644,
+   "worlds": 138,
+   "performed": {
+    "O1c": 840685,
+    "O1e": 981311,
+    "O2": 491215,
+    "O4": 923016,
+    "O5": 60782,
+    "O6": 122225,
+    "O7a": 0,
+    "OB": 0
+   },
+   "skipTainted": {
+    "O1c": 0,
+    "O1e": 35805,
+    "O2": 0,
+    "O4": 28008
+   },
+   "taintRatio": {
+    "O1c": 0,
+    "O1e": 0.035202474447359,
+    "O2": 0,
+    "O4": 0.029450360874173524
+   },
+   "worst": {
+    "rarestRequired": {
+     "scenario": "deep-pull",
+     "hits": 0
+    },
+    "leastPerformed": {
+     "oracle": "O5",
+     "performed": 60782
+    },
+    "maxTaint": {
+     "oracle": "O1e",
+     "ratio": 0.035202474447359
+    }
+   }
+  },
+  "BATCH:revert-after-mid-read": {
+   "lane": "BATCH",
+   "scenario": "revert-after-mid-read",
+   "kernel": "headpatched",
+   "hits": 18,
+   "ops": 60912,
+   "worlds": 144,
+   "performed": {
+    "O1c": 288870,
+    "O1e": 1225590,
+    "O2": 1434700,
+    "O4": 742904,
+    "O5": 61056,
+    "O6": 65529,
+    "O7a": 0,
+    "OB": 37339
+   },
+   "skipTainted": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "taintRatio": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "worst": {
+    "rarestRequired": {
+     "scenario": "revert-after-mid-read",
+     "hits": 18
+    },
+    "leastPerformed": {
+     "oracle": "OB",
+     "performed": 37339
+    },
+    "maxTaint": {
+     "oracle": "O1c",
+     "ratio": 0
+    }
+   }
+  },
+  "ERROR:throw-dep-effect-prewalk": {
+   "lane": "ERROR",
+   "scenario": "throw-dep-effect-prewalk",
+   "kernel": "headpatched",
+   "hits": 0,
+   "ops": 60657,
+   "worlds": 144,
+   "performed": {
+    "O1c": 667401,
+    "O1e": 651468,
+    "O2": 985851,
+    "O4": 510955,
+    "O5": 60797,
+    "O6": 73426,
+    "O7a": 0,
+    "OB": 10687
+   },
+   "skipTainted": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "taintRatio": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "worst": {
+    "rarestRequired": {
+     "scenario": "throw-dep-effect-prewalk",
+     "hits": 0
+    },
+    "leastPerformed": {
+     "oracle": "O5",
+     "performed": 60797
+    },
+    "maxTaint": {
+     "oracle": "O1c",
+     "ratio": 0
+    }
+   }
+  },
+  "NEST:saved-cursor-hazard": {
+   "lane": "NEST",
+   "scenario": "saved-cursor-hazard",
+   "kernel": "headpatched",
+   "hits": 0,
+   "ops": 61200,
+   "worlds": 144,
+   "performed": {
+    "O1c": 517526,
+    "O1e": 988337,
+    "O2": 245054,
+    "O4": 1143293,
+    "O5": 61344,
+    "O6": 128678,
+    "O7a": 2864,
+    "OB": 0
+   },
+   "skipTainted": {
+    "O1c": 408299,
+    "O1e": 245661,
+    "O2": 6026,
+    "O4": 62092
+   },
+   "taintRatio": {
+    "O1c": 0.44101099019793155,
+    "O1e": 0.19907730806694987,
+    "O2": 0.02400031862354628,
+    "O4": 0.051512172459421676
+   },
+   "worst": {
+    "rarestRequired": {
+     "scenario": "saved-cursor-hazard",
+     "hits": 0
+    },
+    "leastPerformed": {
+     "oracle": "O7a",
+     "performed": 2864
+    },
+    "maxTaint": {
+     "oracle": "O1c",
+     "ratio": 0.44101099019793155
+    }
+   }
+  }
+ },
+ "seedSweep": {
+  "shape": "3 x 20000",
+  "seeds": [
+   2654435769,
+   1013904242,
+   3668340011,
+   2027808484,
+   387276957,
+   3041712726,
+   1401181199,
+   4055616968
+  ],
+  "cells": {
+   "headpatched:GRAPH": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 154
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60893
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03809177014337559
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 162
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60914
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.031708307590838355
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 160
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61003
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03571606551708356
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 150
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60786
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03383831634533225
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 153
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60816
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03524087713826444
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 152
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60859
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03666503882986326
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 170
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60941
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.032296347378433884
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 158
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60884
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03360309747035906
+     }
+    }
+   ],
+   "headpatched:BATCH": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 3426
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 36669
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 3431
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 36777
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 3446
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 36708
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 3438
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 36713
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 3435
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 36720
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 3453
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 36796
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 3398
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 36849
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 3389
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 36887
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "headpatched:ERROR": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 345
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60582
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 326
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60648
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 335
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60554
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 279
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60410
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 274
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60328
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 300
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60214
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 329
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60597
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 205
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60694
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "headpatched:NEST": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 254
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2187
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.2455627948775556
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 250
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2245
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.2557015927609221
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 264
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2310
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.2410047082199473
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 271
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2238
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.23867008362557324
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 253
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2302
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.25845400775035693
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 250
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2245
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.23464452150098283
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 269
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2262
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.2345887445887446
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 213
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2174
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.24259541984732824
+     }
+    }
+   ],
+   "lite-1.5.2:GRAPH": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 154
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60893
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03809177014337559
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 162
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60914
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.031708307590838355
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 160
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61003
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03571606551708356
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 150
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60786
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03383831634533225
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 153
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60816
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03524087713826444
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 152
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60859
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03666503882986326
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 170
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60941
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.032296347378433884
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "deep-pull",
+      "hits": 158
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60884
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03360309747035906
+     }
+    }
+   ],
+   "lite-1.5.2:BATCH": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 975
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 9288
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 996
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 9257
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 963
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 9340
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 1000
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 9235
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 924
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 9238
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 1021
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 9357
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 941
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 9359
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "throw-in-batch",
+      "hits": 988
+     },
+     "leastPerformed": {
+      "oracle": "OB",
+      "performed": 9019
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "lite-1.5.2:ERROR": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 0
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60157
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 3
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60189
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 0
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60281
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 0
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60084
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 3
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60232
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 0
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60124
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 4
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60228
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "aggregate",
+      "hits": 2
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60052
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "lite-1.5.2:NEST": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 164
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2633
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.18565960396636427
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 185
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2687
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.18363218390804598
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 201
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2736
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.1835627606534759
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 182
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2620
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.18213711924981146
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 179
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2741
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.19900147022788534
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 183
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2690
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.18216978679147167
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 189
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2666
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.18125269446326292
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "lifecycle-callback-dispose",
+      "hits": 149
+     },
+     "leastPerformed": {
+      "oracle": "O7a",
+      "performed": 2601
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.186910793304688
+     }
+    }
+   ]
+  }
+ },
+ "covOffSweep": {
+  "shape": "3 x 20000",
+  "seeds": [
+   12648430,
+   2654435769,
+   1013904242,
+   3668340011,
+   2027808484,
+   387276957,
+   3041712726,
+   1401181199,
+   4055616968,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17,
+   18
+  ],
+  "note": "lite-1.5.2 NEST cov-off reads O1c ~0.25 (inside the clean band): the taint gate cannot separate it there; the coverage gate does (hits 0 < SCEN_MIN_SMOKE)",
+  "cells": {
+   "headpatched:GRAPH:dep-set-flip": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03449974600157315
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03670057030545829
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03502893293078821
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.037212463042242384
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.036180151419859724
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03730362782411531
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03534705096879044
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.031931053573157765
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03488834817265252
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.039272861225680814
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03633843694834183
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03760368871448546
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03816496438240377
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03264108716252999
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.04116896867507216
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03502137286322597
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.038537382387740154
+     }
+    }
+   ],
+   "headpatched:GRAPH:deep-pull": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.035202474447359
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03602497307565443
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03602194595458906
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03453861026744935
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.032664951655792786
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03472370697195281
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03458778657373743
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03200905341945629
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03481997982721572
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03623562590613891
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03582070296232281
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03942473291385939
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03581349869955104
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.031318602377730154
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03675993204340203
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.02955179146812802
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03392361914699156
+     }
+    }
+   ],
+   "headpatched:BATCH:revert-after-mid-read": [
+    {
+     "seed": 12648430,
+     "hits": 18,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 8,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 15,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 18,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 14,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 15,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 16,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 7,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 13,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 18,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 18,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 16,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 17,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 10,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 17,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 22,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 18,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "headpatched:ERROR:throw-dep-effect-prewalk": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "headpatched:NEST:saved-cursor-hazard": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.44101099019793155
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.4418780318477734
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.4394166477535981
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.4317245947721924
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.44285960933685137
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.43742501951457174
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.4405373870929901
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.4431552765857512
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.44140311178842334
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.4418511299008667
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.43586482272374094
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.44223183838217783
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.4314266550876346
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.43736432491871347
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.4434497986246908
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.44125956866278726
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.4384569898158479
+     }
+    }
+   ],
+   "lite-1.5.2:GRAPH:dep-set-flip": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03449974600157315
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03670057030545829
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03502893293078821
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.037212463042242384
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.036180151419859724
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03730362782411531
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03534705096879044
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.031931053573157765
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03488834817265252
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.039272861225680814
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03633843694834183
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03760368871448546
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03816496438240377
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03264108716252999
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.04116896867507216
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03502137286322597
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.038537382387740154
+     }
+    }
+   ],
+   "lite-1.5.2:GRAPH:deep-pull": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.035202474447359
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03602497307565443
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03602194595458906
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03453861026744935
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.032664951655792786
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03472370697195281
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03458778657373743
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03200905341945629
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03481997982721572
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03623562590613891
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03582070296232281
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03942473291385939
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03581349869955104
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.031318602377730154
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03675993204340203
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.02955179146812802
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0.03392361914699156
+     }
+    }
+   ],
+   "lite-1.5.2:BATCH:revert-after-mid-read": [
+    {
+     "seed": 12648430,
+     "hits": 19,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 10,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 15,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 18,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 15,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 17,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 17,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 7,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 12,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 14,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 17,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 15,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 18,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 11,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 18,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 24,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 15,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "lite-1.5.2:ERROR:throw-dep-effect-prewalk": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "lite-1.5.2:NEST:saved-cursor-hazard": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.25312660523529473
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.25883913963047206
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.25543335687619817
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.2513074402064012
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.2565335898669232
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.2509160508484985
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.24254239775276187
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.24528321446342677
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.2611692319828037
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.24932246571727282
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.24918503839484765
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.2515092712376024
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.258451884060778
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.25271635971887346
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.25859922887762227
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.254854443387834
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0.25962539509843463
+     }
+    }
+   ]
+  }
+ },
+ "throughputRun": {
+  "note": "REPORTED tier, decides no gate: an earlier timed run of the same child loop (same seed / cycles / ops), held under quiet-lock; its counts were identical to kernels.*",
+  "date": "2026-10-12T07:58:35.455Z",
+  "gitHead": "c237e61673f836ea30848ec3da508c185e871218",
+  "node": "v26.8.2",
+  "cpu": "Apple M4 Pro",
+  "loadavgBefore": [
+   1.9,
+   1.93,
+   1.82
+  ],
+  "loadavgAfter": [
+   1.49,
+   1.6,
+   1.69
+  ],
+  "busyNodeBefore": [
+   "48582 0.0 node"
+  ],
+  "seconds": 342,
+  "timing": "timed under quiet-lock (REPORTED tier; decides no gate)",
+  "perKernel": {
+   "headpatched": {
+    "GRAPH": {
+     "opsPerSecPerCycle": [
+      14468,
+      14410,
+      14432,
+      14634,
+      13915,
+      13851,
+      14351,
+      14175,
+      14157,
+      13774,
+      13941
+     ],
+     "min": 13774,
+     "median": 14175,
+     "max": 14634
+    },
+    "BATCH": {
+     "opsPerSecPerCycle": [
+      48395,
+      49280,
+      49784,
+      48004,
+      48349,
+      48374,
+      49339,
+      48891,
+      49673,
+      50118,
+      49546
+     ],
+     "min": 48004,
+     "median": 49280,
+     "max": 50118
+    },
+    "ERROR": {
+     "opsPerSecPerCycle": [
+      47231,
+      47710,
+      46928,
+      48885,
+      50520,
+      50270,
+      49859,
+      51306,
+      49654,
+      50611,
+      49560
+     ],
+     "min": 46928,
+     "median": 49654,
+     "max": 51306
+    },
+    "NEST": {
+     "opsPerSecPerCycle": [
+      34349,
+      37364,
+      37407,
+      37359,
+      37141,
+      37651,
+      37255,
+      37203,
+      37092,
+      37314,
+      36094
+     ],
+     "min": 34349,
+     "median": 37255,
+     "max": 37651
+    }
+   },
+   "lite-1.5.2": {
+    "GRAPH": {
+     "opsPerSecPerCycle": [
+      13712,
+      13798,
+      13871,
+      14201,
+      13417,
+      13534,
+      13837,
+      13755,
+      13776,
+      13413,
+      13740
+     ],
+     "min": 13413,
+     "median": 13755,
+     "max": 14201
+    },
+    "BATCH": {
+     "opsPerSecPerCycle": [
+      20005,
+      20560,
+      20703,
+      20593,
+      20452,
+      20513,
+      20561,
+      20650,
+      20424,
+      20588,
+      20328
+     ],
+     "min": 20005,
+     "median": 20560,
+     "max": 20703
+    },
+    "ERROR": {
+     "opsPerSecPerCycle": [
+      48273,
+      66446,
+      67193,
+      67068,
+      67367,
+      67952,
+      67376,
+      66806,
+      67450,
+      67316,
+      67670
+     ],
+     "min": 48273,
+     "median": 67316,
+     "max": 67952
+    },
+    "NEST": {
+     "opsPerSecPerCycle": [
+      32093,
+      35111,
+      35128,
+      35221,
+      35194,
+      35464,
+      35032,
+      35333,
+      34599,
+      35321,
+      35252
+     ],
+     "min": 32093,
+     "median": 35194,
+     "max": 35464
+    }
+   }
+  }
+ }
+}
