@@ -7,7 +7,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, cpSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -360,7 +360,7 @@ test('qa config: SOAK_CYCLES / SOAK_OPS edges -- 0/10/11, 999/1000/OPS_MAX, padd
     assert.equal(PQ({ SOAK_CYCLES: '11' }).cycles, 11);
     assert.equal(PQ({ SOAK_CYCLES: '0' }).cycles, 0);
     assert.equal(PQ({ SOAK_CYCLES: '011' }).cycles, 11, 'decimal, never octal');
-    for (const raw of [' 11', '11 ', '+11', '-0', '-1', '11.0', '1e1', '0x0B', '', 'NaN', 'Infinity', ' 11', '１１']) rejectsQ({ SOAK_CYCLES: raw }, 'SOAK_CYCLES=' + JSON.stringify(raw));
+    for (const raw of [' 11', '11 ', '+11', '-0', '-1', '11.0', '1e1', '0x0B', '', 'NaN', 'Infinity', '\u00A011', '\uFF11\uFF11']) rejectsQ({ SOAK_CYCLES: raw }, 'SOAK_CYCLES=' + JSON.stringify(raw));
     assert.equal(PQ({ SOAK_CYCLES: String(CFGQ.CYCLES_MAX) }).cycles, CFGQ.CYCLES_MAX);
     for (const raw of [String(CFGQ.CYCLES_MAX + 1), '2147483648', '4294967296', '9007199254740991', '9007199254740992', '9007199254740993']) rejectsQ({ SOAK_CYCLES: raw }, 'SOAK_CYCLES=' + raw);
     rejectsQ({ SOAK_OPS: '999' });
@@ -519,4 +519,334 @@ test('qa provenance: untracked files inside a new nested directory, or with a sp
         rmSync(join(W, 'bench', 'soak', 'qa-new'), { recursive: true, force: true });
         assert.equal(probe().dirty, false, 'control after removing ' + JSON.stringify(rel));
     }
+});
+
+/* -- main.mjs: the burn-in entry (S1c B3, SPEC-B-S1cd task 6 + amendment 13) ---------------------------------
+ * Every soak run here uses a FROZEN kernel through SOAK_KERNEL (amendment 11), never the live Signal.js:
+ * bench/soak/controls/headpatched (L-P-INTERIM / L-REV-AUDIT control) and node_modules/lite-signal-1.5.2
+ * (L-REV-152, the published 1.5.2 alias). The full-size runs (11 x DEFAULT_OPS) belong to the B7 battery.
+ */
+
+const MAIN = join(SOAK, 'main.mjs');
+const MQ = await import('../bench/soak/main.mjs');
+const EXQ = await import('../bench/soak/exec.mjs');
+const PRQ = await import('../bench/soak/provenance.mjs');
+const DVQ = await import('../bench/soak/divergences.mjs');
+const K_HP = join(SOAK, 'controls', 'headpatched', 'Signal.js');
+const K_152 = join(ROOT, 'node_modules', 'lite-signal-1.5.2', 'Signal.js');
+let soakN = 0;
+
+/** Spawn main.mjs with exactly these SOAK_* keys (every inherited SOAK_* key is dropped) and a fresh SOAK_OUT. */
+function soakEnv(keys) {
+    const env = {};
+    for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
+    const out = join(TMP, 'main-' + (soakN++) + '.jsonl');
+    return { env: Object.assign(env, { SOAK_OUT: out }, keys), out };
+}
+function soak(keys, argv = []) {
+    const { env, out } = soakEnv(keys);
+    const r = spawnSync(process.execPath, ['--expose-gc', MAIN].concat(argv), { encoding: 'utf8', timeout: 300000, env });
+    const recs = existsSync(out) ? readFileSync(out, 'utf8').trim().split('\n').filter((l) => l.length).map((l) => JSON.parse(l)) : [];
+    const breach = r.stderr.split('\n').filter((l) => l.indexOf('soak: BREACH oracle=') === 0);
+    return { status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr, recs, breach, out };
+}
+const lastLine = (s) => s.trim().split('\n').pop();
+const memo = (fn) => { let v; return () => (v === undefined ? (v = fn()) : v); };
+const smokeGraph = memo(() => soak({ SOAK_LANES: 'GRAPH', SOAK_KERNEL: K_HP }, ['--smoke']));
+
+test('main: headpatched GRAPH soak:smoke -> exit 0, last line END verdict=SMOKE exit=0 records=5, seq 0..4', () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+    assert.equal(pkg.scripts['soak:smoke'], 'node --expose-gc bench/soak/main.mjs --smoke', 'this test spawns exactly the npm script');
+    const r = smokeGraph();
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(lastLine(r.stdout), 'soak: END verdict=SMOKE exit=0 records=5');
+    assert.deepEqual(r.recs.map((x) => x.seq), [0, 1, 2, 3, 4]);
+    assert.deepEqual(r.recs.map((x) => x.type), ['header', 'cycle', 'cycle', 'cycle', 'summary']);
+    assert.equal(r.breach.length, 0, r.stderr);
+    const s = r.recs[4];
+    assert.equal(s.reason, 'end');
+    assert.equal(s.verdict, 'SMOKE');
+    assert.equal(s.exitCode, 0);
+    assert.equal(s.perLane.GRAPH.status, 'PASS');
+    assert.equal(r.recs[0].controls.name, 'headpatched', 'the frozen control kernel, never the live tree');
+});
+
+test('main: retention -- trackerSize === 0 and weakAlive === 0 on all 3 boundaries (warm-up included)', () => {
+    const cyc = smokeGraph().recs.filter((x) => x.type === 'cycle');
+    assert.equal(cyc.length, 3);
+    for (const c of cyc) {
+        assert.equal(c.boundary.trackerSize, 0, 'cycle ' + c.cycle + ' ' + JSON.stringify(c.boundary));
+        assert.equal(c.boundary.weakAlive, 0, 'cycle ' + c.cycle + ' ' + JSON.stringify(c.boundary));
+        assert.ok(c.boundary.forcedGcTries >= 1);
+        assert.ok(c.worlds > 0, 'the boundary witnessed real worlds');
+        // every world of THIS cycle was tracked and witnessed (an untracked world would read 0/0 for free)
+        assert.equal(c.boundary.tracked, c.worlds, 'tracked === worlds, cycle ' + c.cycle);
+        assert.equal(c.boundary.witnessed, c.worlds, 'witnessed === worlds, cycle ' + c.cycle);
+        assert.equal(c.boundary.worlds, c.worlds);
+        assert.equal(c.boundary.cycle, c.cycle, 'a fresh boundary bound to its own cycle, never a reused one');
+        assert.equal(c.boundary.lane, c.lane);
+    }
+    assert.deepEqual(smokeGraph().recs[4].perLane.GRAPH.retention, { badBoundaries: 0, unmeasured: 0 });
+});
+
+test('main: record obligations -- header extras + divergences digest; cycle checks, skipTainted, memory.residentMB, boundary in order', () => {
+    const r = smokeGraph();
+    const h = r.recs[0];
+    for (const k of PRQ.REQUIRED_EXTRAS) assert.ok(Object.prototype.hasOwnProperty.call(h, k) && h[k] !== null, 'header.' + k);
+    assert.equal(h.kind, 'burn-in');
+    assert.equal(h.divergences, DVQ.digest(), 'header digest = sha256 of divergences.json');
+    assert.deepEqual(h.lanes, [{ name: 'GRAPH', status: 'run', missingCaps: [], engine: 'lite' }]);
+    for (const c of r.recs.filter((x) => x.type === 'cycle')) {
+        const keys = Object.keys(c);
+        const at = ['lane', 'cycle', 'checks', 'skipTainted', 'failures', 'memory', 'boundary'].map((k) => keys.indexOf(k));
+        assert.ok(at.every((i) => i !== -1), 'every field present: ' + keys);
+        for (let i = 1; i < at.length; i++) assert.ok(at[i - 1] < at[i], 'field order: ' + keys);
+        assert.deepEqual(Object.keys(c.checks), EXQ.CHECK_NAMES.slice());
+        assert.deepEqual(Object.keys(c.skipTainted), EXQ.SKIP_NAMES.slice());
+        for (const k of EXQ.CHECK_NAMES) assert.ok(Number.isSafeInteger(c.checks[k]) && c.checks[k] >= 0);
+        assert.ok(Number.isFinite(c.memory.residentMB) && c.memory.residentMB > 0);
+        assert.equal(c.boundary.heapSampledAfterGc, true);
+        assert.equal(c.warmup, c.cycle === 0);
+        assert.equal(c.interrupted, false);
+    }
+});
+
+test('main: SIGINT after the first heartbeat -> exit 3, summary reason signal, END verdict=INCONCLUSIVE', async () => {
+    const { spawn } = await import('node:child_process');
+    const { env, out } = soakEnv({ SOAK_LANES: 'GRAPH', SOAK_KERNEL: K_HP, SOAK_CYCLES: '11', SOAK_OPS: '20000' });
+    const child = spawn(process.execPath, ['--expose-gc', MAIN], { env });
+    let stdout = '', stderr = '', sent = false;
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.stdout.on('data', (d) => {
+        stdout += d;
+        if (!sent && /soak: HEARTBEAT /.test(stdout)) { sent = true; child.kill('SIGINT'); }
+    });
+    const [code, sig] = await new Promise((res) => child.on('close', (c, s) => res([c, s])));
+    assert.ok(sent, 'a heartbeat was seen: ' + stdout);
+    assert.equal(sig, null, 'main handles SIGINT itself (never killed by it)');
+    assert.equal(code, 3, stderr);
+    const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const s = recs[recs.length - 1];
+    assert.equal(s.type, 'summary');
+    assert.equal(s.reason, 'signal');
+    assert.equal(s.verdict, 'INCONCLUSIVE');
+    assert.ok(s.cyclesRun < 11, 'interrupted early: ' + s.cyclesRun);
+    for (const c of recs.filter((x) => x.type === 'cycle')) assert.equal(c.interrupted, c.ops < 20000, 'interrupted = the lane-cycle stopped short of SOAK_OPS');
+    assert.match(stderr, /soak: INCONCLUSIVE -- run interrupted before its end/);
+    assert.equal(lastLine(stdout), 'soak: END verdict=INCONCLUSIVE exit=3 records=' + recs.length);
+});
+
+test('main: BreachLog -- an unclassified failure with the same sig as a known one still gets its own BREACH line', () => {
+    const lines = [];
+    const log = new MQ.BreachLog((l) => lines.push(l));
+    const rec = (known, oracle = 'O1c', sig = 'computed-mismatch') => ({ known, failKnown: [known], replay: 'BATCH:0:0x1', scen: ['mid-read'], fails: [{ oracle, sig, detail: 'd' }] });
+    assert.equal(log.noteWorld(rec('DIV-F5'), 'BATCH', 'lite'), 1);
+    assert.equal(log.noteWorld(rec(null), 'BATCH', 'lite'), 1, 'same (family, lane, sig), known null: a NEW line');
+    assert.equal(log.noteWorld(rec(null, 'O1e'), 'BATCH', 'lite'), 0, 'O1e is family O1: deduplicated');
+    assert.equal(log.noteWorld(rec('DIV-F5'), 'BATCH', 'lite'), 0);
+    assert.equal(log.noteWorld(rec(null), 'ERROR', 'lite'), 1, 'another lane: a new line');
+    const b = lines.filter((l) => l.indexOf('soak: BREACH') === 0);
+    assert.deepEqual(b.map((l) => / known=(\S+)/.exec(l)[1]), ['DIV-F5', 'none', 'none']);
+    assert.match(b[1], /^soak: BREACH oracle=O1 lane=BATCH sig=computed-mismatch known=none scen=mid-read engine=lite replay=BATCH:0:0x1 detail=d$/);
+    assert.equal(lines.filter((l) => l.indexOf('soak: REPLAY') === 0).length, 2, 'one REPLAY per distinct (lane, family, sig)');
+    assert.equal(log.size, 3);
+    // each fail's BREACH carries ITS OWN tag (classify perFail), not the world's joined one
+    const per = [];
+    const log2 = new MQ.BreachLog((l) => per.push(l));
+    log2.noteWorld({ known: 'DIV-F6+DIV-F22', failKnown: ['DIV-F6', 'DIV-F22'], replay: 'ERROR:0:0x2', scen: [],
+        fails: [{ oracle: 'O6', sig: 'escape-computed', detail: 'a' }, { oracle: 'O6', sig: 'expected-escape-missing', detail: 'b' }] }, 'ERROR', 'lite');
+    assert.deepEqual(per.filter((l) => l.indexOf('soak: BREACH') === 0).map((l) => / sig=(\S+) known=(\S+)/.exec(l).slice(1).join(' ')),
+        ['escape-computed DIV-F6', 'expected-escape-missing DIV-F22']);
+    assert.throws(() => log2.noteWorld({ known: 'DIV-F5', replay: 'x', scen: [], fails: [{ oracle: 'O1c', sig: 's', detail: '' }] }, 'BATCH', 'lite'), TypeError, 'a known world without failKnown fails closed');
+});
+
+test('main: tapAdapter -- escape is what the OUTERMOST batch threw, never a nested batch\'s; [] when it returned', () => {
+    const fake = Object.freeze({
+        name: 'fake',
+        open() {
+            let d = 0;
+            return {
+                registry: { id: 'reg' },
+                batch(fn) { d++; const my = d; try { return fn(); } catch (e) { throw { tag: 'replaced@' + my }; } finally { d--; } },
+                normalizeEscape(e) { return [{ origin: 'batch', token: String(e.tag) }]; },
+                peek() { return 7; },
+            };
+        },
+    });
+    const opened = [];
+    const tap = { onOpen(w) { opened.push(w); } };
+    const W = MQ.tapAdapter(fake, tap).open({});
+    assert.equal(opened.length, 1);
+    assert.equal(W.registry, opened[0].registry, 'the raw world (and its registry) is what the tap sees');
+    assert.equal(W.peek(), 7, 'other methods delegate');
+    assert.equal(Object.getPrototypeOf(W), Object.prototype, 'a plain delegate: a world is never used as a prototype');
+    assert.throws(() => W.batch(() => W.batch(() => { throw { tag: 'inner' }; })));
+    assert.deepEqual(tap.escape, [{ origin: 'batch', token: 'replaced@1' }], 'the outer call, not replaced@2');
+    W.batch(() => { try { W.batch(() => { throw { tag: 'swallowed' }; }); } catch { /* the outer body swallows it */ } });
+    assert.deepEqual(tap.escape, [], 'a nested throw the outer call swallowed is not the escape');
+    assert.throws(() => W.batch(() => { throw { tag: 'x' }; }));
+    W.batch(() => 1);
+    assert.deepEqual(tap.escape, [], 'every outermost call starts a fresh escape');
+});
+
+test('main: failureRecord -- oracle ids in fails, families in failureCounts; escape only for a batch op', () => {
+    const r = { failure: { step: 3, op: 'set', fails: [{ oracle: 'O1c', sig: 'computed-mismatch', detail: 'x' }, { oracle: 'O1e', sig: 'computed-mismatch', detail: 'y' }], scen: ['a'] }, scen: { a: 1, b: 0, c: 2 } };
+    const f = MQ.failureRecord(r, { engine: 'lite', lane: 'GRAPH', cycle: 2, world: 5, worldSeed: 0xabc, escape: [{ origin: 'batch', token: 'batch:3' }] });
+    assert.deepEqual(f.oracles, ['O1c', 'O1e']);
+    assert.deepEqual(f.sigs, ['computed-mismatch']);
+    assert.equal(f.sig, 'computed-mismatch');
+    assert.equal(f.escape, null, 'op set: no outermost batch call in this step');
+    assert.deepEqual(f.worldScen, ['a', 'c']);
+    assert.deepEqual(f.worldScenCounts, { a: 1, b: 0, c: 2 });
+    assert.equal(f.replay, 'GRAPH:2:0xabc');
+    assert.equal(f.known, null);
+    assert.deepEqual(f.failKnown, [null, null]);
+    for (const k of ['step', 'op', 'fails', 'scen', 'worldScen', 'worldScenCounts', 'escape', 'known']) assert.ok(Object.prototype.hasOwnProperty.call(f, k), k);
+    assert.deepEqual(MQ.familyKeys(f.fails), ['O1:computed-mismatch']);
+    r.failure.op = 'batch';
+    assert.deepEqual(MQ.failureRecord(r, { engine: 'lite', lane: 'GRAPH', cycle: 0, world: 0, worldSeed: 1, escape: [{ origin: 'batch', token: 'batch:3' }] }).escape, [{ origin: 'batch', token: 'batch:3' }]);
+});
+
+test('main: a config error exits 2 with verdict null -- one CONFIG line, no record, no END line', () => {
+    const r = soak({ SOAK_LANES: 'grpah', SOAK_KERNEL: K_HP });
+    assert.equal(r.status, 2);
+    assert.equal(r.stderr, "soak: CONFIG -- SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)\n");
+    assert.equal(r.stdout, '');
+    assert.equal(existsSync(r.out), false, 'no stream file');
+    const g = spawnSync(process.execPath, [MAIN], { encoding: 'utf8', env: soakEnv({ SOAK_LANES: 'GRAPH', SOAK_KERNEL: K_HP }).env });
+    assert.equal(g.status, 2, 'missing --expose-gc');
+    assert.match(g.stderr, /^soak: CONFIG -- --expose-gc is required/);
+});
+
+test('main: SOAK_REPLAY / SOAK_SHRINK dispatch -- a missing replay.mjs / shrink.mjs exits 2, never runs a burn-in', () => {
+    const dir = join(TMP, 'main-dispatch');
+    mkdirSync(join(dir, 'bench'), { recursive: true });
+    cpSync(SOAK, join(dir, 'bench', 'soak'), { recursive: true, filter: (p) => !/[\\/](out|replay\.mjs|shrink\.mjs)$/.test(p) });
+    cpSync(join(ROOT, 'bench', 'torture', 'helpers'), join(dir, 'bench', 'torture', 'helpers'), { recursive: true });
+    const cli = join(dir, 'bench', 'soak', 'main.mjs');
+    for (const [keys, file] of [[{ SOAK_REPLAY: 'GRAPH:0:0x1' }, 'replay.mjs'], [{ SOAK_REPLAY: 'GRAPH:0:0x1', SOAK_SHRINK: '1' }, 'shrink.mjs']]) {
+        const { env, out } = soakEnv(Object.assign({ SOAK_KERNEL: K_HP }, keys));
+        const r = spawnSync(process.execPath, ['--expose-gc', cli], { encoding: 'utf8', timeout: 60000, env });
+        assert.equal(r.status, 2, file + ': ' + r.stderr);
+        assert.match(r.stderr, new RegExp('^soak: CONFIG -- SOAK_(REPLAY|SHRINK): bench/soak/' + file.replace('.', '\\.') + ' is not built yet'));
+        assert.equal(r.stdout, '', 'no heartbeat: no burn-in ran');
+        assert.equal(existsSync(out), false);
+    }
+});
+
+test('main: headpatched ERROR (smoke) -> exit 1, every BREACH carries known in {DIV-F21, DIV-F22} (L-P-INTERIM-ERROR, reduced)', () => {
+    const r = soak({ SOAK_LANES: 'ERROR', SOAK_KERNEL: K_HP }, ['--smoke']);
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(lastLine(r.stdout), 'soak: END verdict=FAIL exit=1 records=5');
+    assert.ok(r.breach.length >= 1, 'the interim kernel still trips F21/F22 on ERROR');
+    for (const l of r.breach) assert.match(l, /^soak: BREACH oracle=O\d lane=ERROR sig=\S+ known=DIV-F2[12] /, l);
+    const fails = r.recs.filter((x) => x.type === 'cycle').flatMap((c) => c.failures);
+    assert.ok(fails.length >= 1);
+    for (const f of fails) assert.ok(f.known === 'DIV-F21' || f.known === 'DIV-F22', JSON.stringify(f).slice(0, 400));
+    assert.ok(fails.some((f) => f.op === 'batch' && Array.isArray(f.escape) && f.escape.length > 0), 'F22 worlds carry the outermost-batch escape');
+});
+
+test('main: 1.5.2 (smoke, 4 lanes) -> exit 1 with the four L-REV-152 BREACH heads; failure records keep ids and families apart', () => {
+    const r = soak({ SOAK_KERNEL: K_152 }, ['--smoke']);
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(r.recs[0].controls.name, 'rev152');
+    assert.equal(lastLine(r.stdout), 'soak: END verdict=FAIL exit=1 records=' + r.recs.length);
+    const err = r.breach.join('\n');
+    assert.match(err, /^soak: BREACH oracle=O1 lane=BATCH sig=\S+ known=\S+ scen=\S*revert-after-mid-read/m, 'F5');
+    assert.match(err, /^soak: BREACH oracle=O6 lane=ERROR sig=escape-computed /m, 'F6');
+    assert.match(err, /^soak: BREACH oracle=O7 lane=NEST sig=dead-registration-fire /m, 'F7');
+    assert.match(err, /^soak: BREACH oracle=O6 lane=NEST sig=\S+ known=\S+ scen=\S*saved-cursor-hazard/m, 'F15');
+    const keys = [];
+    for (const c of r.recs.filter((x) => x.type === 'cycle')) {
+        for (const k of Object.keys(c.failureCounts)) { assert.match(k, /^O[1-7]:[a-z][\w-]*$/, 'family keys only: ' + k); keys.push(k); }
+        for (const f of c.failures) {
+            for (const k of ['step', 'op', 'fails', 'scen', 'worldScen', 'worldScenCounts', 'escape', 'oracles', 'sigs', 'sig', 'known']) assert.ok(Object.prototype.hasOwnProperty.call(f, k), k);
+            for (const x of f.fails) assert.ok(EXQ.CHECK_NAMES.indexOf(x.oracle) !== -1, 'oracle ids in fails: ' + x.oracle);
+            assert.equal(f.escape === null, f.op !== 'batch', 'escape only for a batch op');
+        }
+    }
+    assert.ok(keys.length >= 4);
+});
+
+/** A scratch copy of bench/soak (+ torture helpers, node_modules link). patch: [from, to] applied once to main.mjs; files: {name: text}. */
+function scratchSoak(name, patch, files) {
+    const dir = join(TMP, 'main-scratch-' + name);
+    mkdirSync(join(dir, 'bench'), { recursive: true });
+    cpSync(SOAK, join(dir, 'bench', 'soak'), { recursive: true, filter: (p) => !/[\\/](out|replay\.mjs|shrink\.mjs)$/.test(p) });
+    cpSync(join(ROOT, 'bench', 'torture', 'helpers'), join(dir, 'bench', 'torture', 'helpers'), { recursive: true });
+    symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'));
+    const cli = join(dir, 'bench', 'soak', 'main.mjs');
+    if (patch) {
+        const src = readFileSync(cli, 'utf8');
+        assert.equal(src.split(patch[0]).length, 2, 'the patch anchor occurs exactly once: ' + patch[0]);
+        writeFileSync(cli, src.replace(patch[0], patch[1]));
+    }
+    for (const f of Object.keys(files || {})) writeFileSync(join(dir, 'bench', 'soak', f), files[f]);
+    return cli;
+}
+
+test('main: a replay / shrink module that returns no exit code 0..3 -> CRASH line, exit 1 (never a silent 0)', () => {
+    for (const [ret, label] of [['undefined', 'undefined'], ['7', '7'], ['1.5', '1.5'], ["'0'", '0']]) {
+        const cli = scratchSoak('ret-' + label.replace(/\W/g, '_'), null, { 'replay.mjs': 'export async function runReplay(cfg) { return ' + ret + '; }\n' });
+        const { env } = soakEnv({ SOAK_KERNEL: K_HP, SOAK_REPLAY: 'GRAPH:0:0x1' });
+        const r = spawnSync(process.execPath, ['--expose-gc', cli], { encoding: 'utf8', timeout: 60000, env });
+        assert.equal(r.status, 1, 'runReplay returned ' + ret + ': ' + r.stderr);
+        assert.equal(r.stderr, 'soak: CRASH -- runReplay returned ' + label + ' (expected an exit code 0..3)\n');
+    }
+    const ok = scratchSoak('ret-3', null, { 'replay.mjs': 'export async function runReplay(cfg) { return 3; }\n' });
+    const r3 = spawnSync(process.execPath, ['--expose-gc', ok], { encoding: 'utf8', timeout: 60000, env: soakEnv({ SOAK_KERNEL: K_HP, SOAK_REPLAY: 'GRAPH:0:0x1' }).env });
+    assert.equal(r3.status, 3, 'control: a valid code passes through');
+});
+
+test('main: a throw while summarizing goes down the fatal path -- fatal record, summary, CRASH, END verdict=FAIL exit=1', () => {
+    const cli = scratchSoak('sum-throw', ["const summarize = (reason) => {", "const summarize = (reason) => { if (reason === 'end') throw new Error('injected summarize failure');"]);
+    const { env, out } = soakEnv({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' });
+    const r = spawnSync(process.execPath, ['--expose-gc', cli, '--smoke'], { encoding: 'utf8', timeout: 300000, env });
+    assert.equal(r.status, 1, r.stderr);
+    const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(recs.map((x) => x.type), ['header', 'cycle', 'cycle', 'cycle', 'fatal', 'summary']);
+    assert.equal(recs[4].kind, 'mainRejection');
+    assert.match(recs[4].message, /injected summarize failure/);
+    assert.equal(recs[5].reason, 'fatal');
+    assert.match(r.stderr, /soak: CRASH -- mainRejection: Error: injected summarize failure/);
+    assert.ok(!/before the stream opened/.test(r.stderr));
+    assert.equal(lastLine(r.stdout), 'soak: END verdict=FAIL exit=1 records=6');
+});
+
+test('main: retention must-fail -- a registry leaked behind main\'s back FAILs end to end (BREACH gate=retention)', () => {
+    // the leak holds w.registry itself, independently of what main tracks: only a gate that measures the
+    // REAL registry sees it (a tracked throwaway wrapper or a dropped witness would read 0/0 and pass)
+    const cli = scratchSoak('leak', ['onOpen(w) {', 'onOpen(w) { (globalThis.__leak ||= []).push(w.registry);']);
+    const { env, out } = soakEnv({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' });
+    const r = spawnSync(process.execPath, ['--expose-gc', cli, '--smoke'], { encoding: 'utf8', timeout: 300000, env });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(lastLine(r.stdout), /^soak: END verdict=FAIL exit=1 records=5$/);
+    assert.match(r.stderr, /^soak: BREACH gate=retention lane=GRAPH /m);
+    const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const cyc = recs.filter((x) => x.type === 'cycle');
+    assert.equal(cyc.length, 3);
+    let cum = 0;
+    for (const c of cyc) {
+        cum += c.worlds;
+        assert.equal(c.boundary.cycle, c.cycle);
+        assert.equal(c.boundary.weakAlive, c.worlds, 'this cycle\'s witness: every world still alive, cycle ' + c.cycle);
+        assert.equal(c.boundary.trackerSize, cum, 'the tracker is run-wide: cumulative worlds, cycle ' + c.cycle);
+    }
+    assert.equal(recs[4].perLane.GRAPH.retention.badBoundaries, 2);
+    assert.equal(recs[4].verdict, 'FAIL');
+});
+
+test('main: failureRecord -- failKnown is per fail, in fail order (two fails explained by two registry entries)', () => {
+    // 1.5.2 ERROR world (smoke run, step 31): the F6 pre-walk token replaced the batch token (F6+F22)
+    const r = {
+        failure: { step: 31, op: 'batch', scen: ['dep-set-flip', 'throw-dep-computed-prewalk', 'throw-in-batch'], fails: [
+            { oracle: 'O6', sig: 'escape-computed', detail: 'unpredicted escape computed:18' },
+            { oracle: 'O6', sig: 'expected-escape-missing', detail: 'predicted escape batch:31 x1 did not happen' },
+            { oracle: 'O4', sig: 'effect-dead', detail: 'effect#22 saw [#0=95,#21=95] model [#0=95,#21=ERR(computed:18)] (ran 0 times this op)' },
+        ] },
+        scen: { 'dep-set-flip': 2, 'recovery-after-throw': 2, 'throw-dep-computed-prewalk': 1, 'throw-in-batch': 1 },
+    };
+    const f = MQ.failureRecord(r, { engine: 'lite', lane: 'ERROR', cycle: 0, world: 0, worldSeed: 1, escape: [{ origin: 'computed', token: 'computed:18' }] });
+    assert.equal(f.known, 'DIV-F6+DIV-F22');
+    assert.deepEqual(f.failKnown, ['DIV-F6', 'DIV-F22', 'DIV-F6']);
 });

@@ -125,6 +125,7 @@ class Exec {
         try { residue = this.W.close(); } catch (e) { closeErr = e; }
         if (failure === null) {
             this.stepFails = [];
+            this.did('O5');   // the teardown residue check (counted like the at-rest O5: before close()'s outcome is read)
             if (closeErr !== NONE) this.engineError(closeErr, 'close()');
             else { const f = O.checkTeardown(residue); if (f !== null) this.failF(f); }
             if (this.stepFails.length > 0) failure = { step: ops.length, op: 'teardown', fails: this.stepFails, scen: [] };

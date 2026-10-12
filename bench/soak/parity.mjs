@@ -36,6 +36,8 @@ export const PARITY_FILES = Object.freeze([
     // registry decides which failures are known, and the seeds decide which worlds run
     'bench/soak/gates.mjs', 'bench/soak/boundary.mjs', 'bench/soak/divergences.mjs', 'bench/soak/divergences.json',
     'bench/soak/seeds.mjs',
+    // S1c B3 (pinned after review, burst 7): the burn-in entry decides the records, the BREACH lines and the exit
+    'bench/soak/main.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

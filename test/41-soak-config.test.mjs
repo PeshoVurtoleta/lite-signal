@@ -486,14 +486,15 @@ test('gitDirty: clean -> false; repo-ignored -> false; one untracked .mjs -> tru
     writeFileSync(join(W, 'bench', 'soak', 'out', '.gitignore'), '*\n');
     writeFileSync(join(W, 'bench', 'soak', 'out', 'cfgtest-x', 'model.mjs'), 'export const x = 1;\n');
     assert.equal(probe().dirty, false, 'a repo-ignored path (bench/soak/out/) stays clean');
-    writeFileSync(join(W, 'bench', 'soak', 'model.mjs'), 'export const x = 1;\n');
+    // The probe file must be a path HEAD never tracks (bench/soak/model.mjs became tracked in fc1f826).
+    writeFileSync(join(W, 'bench', 'soak', 'cfgtest-untracked.mjs'), 'export const x = 1;\n');
     assert.equal(probe().dirty, true, 'one untracked, non-ignored .mjs makes the tree dirty');
 
     // Hostile config rows. Each one really hides the file from a plain `git status --porcelain` (asserted),
     // and the probe must still read dirty.
     const hidesUntracked = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'status.showUntrackedFiles', GIT_CONFIG_VALUE_0: 'no' };
     const excludes = join(TMP, 'hostile-excludes');
-    writeFileSync(excludes, '/bench/soak/model.mjs\n');
+    writeFileSync(excludes, '/bench/soak/cfgtest-untracked.mjs\n');
     const excludesEnv = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: excludes };
     const globalCfg = join(TMP, 'hostile-global-gitconfig');
     writeFileSync(globalCfg, '[core]\n\texcludesFile = ' + excludes + '\n[status]\n\tshowUntrackedFiles = no\n');

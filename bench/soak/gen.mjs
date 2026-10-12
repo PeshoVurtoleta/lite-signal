@@ -216,14 +216,17 @@ export class Gen {
 
 /**
  * Generate one world's script. desc: a lane descriptor (lanes/index.mjs). opts: { steps, covOff, large }.
+ * steps: a non-negative integer (default 400 when undefined; anything else throws RangeError before any work).
  * `large` defaults to the lane's own LARGE rule (1 world in LARGE_WORLD_EVERY, decided by the caller).
  */
 export function generateWorld(desc, worldSeed, opts) {
     const o = opts || {};
+    // undefined -> the default 400; 0 means 0 steps (null is not zero: null, NaN, negative, fractional throw)
+    const steps = o.steps === undefined ? 400 : o.steps;
+    if (!(Number.isInteger(steps) && steps >= 0)) throw new RangeError('generateWorld: steps must be a non-negative integer, got ' + String(o.steps));
     const g = new Gen(desc, worldSeed, o);
     g.large = o.large === true;
     desc.init(g);
-    const steps = o.steps || 400;
     for (let s = 0; s < steps; s++) desc.step(g);
     return g.script();
 }

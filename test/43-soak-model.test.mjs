@@ -411,17 +411,17 @@ test('qa counters at 0: empty world, single signal / effect / computed, and the 
     const empty = runWorld(liteAdapter, qScript([]));
     assert.equal(empty.failure, null);
     assert.equal(empty.ops, 0);
-    assert.deepEqual(empty.checks, ZERO_CHECKS);
+    assert.deepEqual(empty.checks, Object.assign({}, ZERO_CHECKS, { O5: 1 }), 'only the teardown O5 (7b F4)');
     assert.deepEqual(empty.skipTainted, ZERO_SKIPS);
     assert.deepEqual(Object.keys(empty.scen), [], 'no scenario counted');
     const one = (ops) => runWorld(liteAdapter, qScript(ops));
     const sig = one([{ o: 'sig', i: 0, v: 1 }]);
     assert.equal(sig.failure, null);
-    assert.deepEqual(sig.checks, Object.assign({}, ZERO_CHECKS, { O5: 1, O6: 1 }));
+    assert.deepEqual(sig.checks, Object.assign({}, ZERO_CHECKS, { O5: 2, O6: 1 }));   // O5: at rest + teardown (7b F4)
     assert.deepEqual(sig.skipTainted, ZERO_SKIPS);
     const eff = one([{ o: 'eff', i: 0, spec: { k: 'child' } }]);
     assert.equal(eff.failure, null);
-    assert.deepEqual(eff.checks, Object.assign({}, ZERO_CHECKS, { O1e: 1, O5: 1, O6: 1 }));
+    assert.deepEqual(eff.checks, Object.assign({}, ZERO_CHECKS, { O1e: 1, O5: 2, O6: 1 }));   // O5: at rest + teardown (7b F4)
     assert.deepEqual(eff.skipTainted, ZERO_SKIPS, 'an effect that ran this op is O4 n/a, not a taint skip');
     const comp = one([{ o: 'comp', i: 0, spec: { k: 'sum', d: [] } }, { o: 'read', is: [0] }]);
     assert.equal(comp.failure, null);
@@ -582,5 +582,148 @@ process.stdout.write(JSON.stringify(out));
     for (const lane of ROSTER) {
         assert.equal(a[lane].all, b[lane].all, lane + ': the op-script digest differs across processes');
         assert.equal(b[lane].distinct, 1000, lane + ': distinct seeds must give distinct op lists');
+    }
+});
+
+/* -- 7b S1ab-fix: QA burst 3 findings 1, 2, 3, 4, 6, 7 (each red on the pre-fix module) ----------------- */
+
+test('7b F1 normalizeEscape never throws: null prototype, throwing getters, toPrimitive, revoked Proxy, bad errors getter', () => {
+    const U = '<unprintable>';
+    // unchanged paths
+    assert.deepEqual(normalizeEscape(null), [{ ctor: 'object', message: 'null' }]);
+    assert.deepEqual(normalizeEscape(undefined), [{ ctor: 'undefined', message: 'undefined' }]);
+    assert.deepEqual(normalizeEscape(new RangeError('r')), [{ ctor: 'RangeError', message: 'r' }]);
+    assert.deepEqual(normalizeEscape(7), [{ ctor: 'Number', message: '7' }]);
+    // null prototype: no constructor to name -> typeof; no toString -> UNPRINTABLE
+    assert.deepEqual(normalizeEscape(Object.create(null)), [{ ctor: 'object', message: U }]);
+    const np = Object.create(null); np.message = 'm';
+    assert.deepEqual(normalizeEscape(np), [{ ctor: 'object', message: 'm' }]);
+    // throwing getters
+    const gm = { get message() { throw new Error('boom'); } };
+    assert.deepEqual(normalizeEscape(gm), [{ ctor: 'Object', message: U }]);
+    const gc = { get constructor() { throw new Error('boom'); }, message: 'x' };
+    assert.deepEqual(normalizeEscape(gc), [{ ctor: 'object', message: 'x' }]);
+    const gn = { constructor: { get name() { throw new Error('boom'); } }, message: 'y' };
+    assert.deepEqual(normalizeEscape(gn), [{ ctor: 'object', message: 'y' }]);
+    const tp = { [Symbol.toPrimitive]() { throw new Error('boom'); } };
+    assert.deepEqual(normalizeEscape(tp), [{ ctor: 'Object', message: U }]);
+    const mp = { message: { toString() { throw new Error('boom'); } } };
+    assert.deepEqual(normalizeEscape(mp), [{ ctor: 'Object', message: U }]);
+    // revoked Proxy: instanceof itself throws -> one leaf
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    assert.deepEqual(normalizeEscape(proxy), [{ ctor: 'object', message: U }]);
+    // AggregateError whose errors getter throws -> one leaf, no partial leaves
+    const ae = new AggregateError([new SoakThrow('effect', 1)], 'agg');
+    Object.defineProperty(ae, 'errors', { get() { throw new Error('boom'); } });
+    assert.deepEqual(normalizeEscape(ae), [{ ctor: 'object', message: U }]);
+    // a nested bad leaf degrades only itself
+    const ok = new AggregateError([new SoakThrow('effect', 2), Object.create(null)], 'agg');
+    assert.deepEqual(normalizeEscape(ok), [{ origin: 'effect', token: 'effect:2' }, { ctor: 'object', message: U }]);
+    for (const leaf of [normalizeEscape(proxy)[0], normalizeEscape(Object.create(null))[0]]) assert.equal(O.escapeSig(leaf), 'escape-object');
+});
+
+test('7b F2 generateWorld steps: undefined -> 400, 0 -> zero steps, NaN / negative / fractional / null throw RangeError', () => {
+    const d = laneByName('GRAPH');
+    assert.equal(scriptJson(generateWorld(d, 5)), scriptJson(generateWorld(d, 5, { steps: 400 })));
+    assert.equal(scriptJson(generateWorld(d, 5, {})), scriptJson(generateWorld(d, 5, { steps: undefined })));
+    const zero = generateWorld(d, 5, { steps: 0 });
+    const full = generateWorld(d, 5, { steps: 400 });
+    assert.ok(zero.ops.length < full.ops.length, 'steps 0 ran ' + zero.ops.length + ' ops, 400 steps ran ' + full.ops.length);
+    // steps 0 is the init prefix of every longer script
+    assert.deepEqual(full.ops.slice(0, zero.ops.length), zero.ops);
+    for (const bad of [NaN, -1, 1.5, null, '5', Infinity]) {
+        assert.throws(() => generateWorld(d, 5, { steps: bad }), RangeError, 'steps ' + String(bad));
+    }
+});
+
+test('7b F3 GRAPH large chain length comes from gen.mjs MAX_DEPTH (single source of truth, no literal)', () => {
+    const src = readFileSync(join(SOAK, 'lanes', 'graph.mjs'), 'utf8');
+    assert.match(src, /import \{[^}]*\bMAX_DEPTH\b[^}]*\} from '\.\.\/gen\.mjs';/);
+    const code = stripCommentsAndStrings(src);
+    assert.equal(/\b200\b/.test(code), false, 'a literal 200 is left in graph.mjs code');
+    assert.match(code, /g\.large \? MAX_DEPTH :/);
+});
+
+test('7b F4 the teardown residue check is counted in checks.O5 (one per world, on top of the at-rest O5)', () => {
+    assert.equal(liteAdapter.caps.links, 'stats', 'the at-rest O5 runs once per op on this adapter');
+    const ops = [{ o: 'sig', i: 0, v: 1, dis: 1 }, { o: 'comp', i: 1, spec: { k: 'sum', d: [0] } }, { o: 'read', is: [1] }];
+    const r = runWorld(liteAdapter, qScript(ops));
+    assert.equal(r.failure, null);
+    assert.equal(r.checks.O5, ops.length + 1, 'at-rest O5 per op (' + ops.length + ') + 1 teardown');
+    const empty = runWorld(liteAdapter, qScript([]));
+    assert.equal(empty.failure, null);
+    assert.equal(empty.checks.O5, 1, 'a world with no ops still performs the teardown O5');
+});
+
+// todo F6: the scrub breaks the GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE test seam of test/40 (qa provenance
+// untracked) and test/41 (T-cfg GIT_DIR=/nonexistent, required provenance, gitDirty); it lands with those seams.
+test('7b F6 gitInfo ignores GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE: it reports THIS repository', { todo: 'F6' }, async (t) => {
+    const { gitInfo } = await import('../bench/soak/provenance.mjs');
+    const clean = {};
+    for (const k of Object.keys(process.env)) if (k.indexOf('GIT_') !== 0) clean[k] = process.env[k];
+    const want = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8', env: clean });
+    if (want.status !== 0) { t.skip('no git repository at ROOT: nothing to relocate'); return; }
+    const other = qfs.mkdtempSync(join(qos.tmpdir(), 'soak-qa-otherrepo-'));
+    const saved = {};
+    const KEYS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'];
+    try {
+        const init = spawnSync('git', ['init', '-q', other], { encoding: 'utf8', env: clean });
+        assert.equal(init.status, 0, 'git init: ' + init.stderr);
+        for (const k of KEYS) saved[k] = process.env[k];
+        process.env.GIT_DIR = join(other, '.git');
+        process.env.GIT_WORK_TREE = other;
+        process.env.GIT_INDEX_FILE = join(other, '.git', 'index');
+        const g = gitInfo();
+        assert.equal(g.sha, want.stdout.trim(), 'gitInfo described another tree: ' + JSON.stringify(g));
+        assert.equal(g.error, null);
+    } finally {
+        for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+        qfs.rmSync(other, { recursive: true, force: true });
+    }
+});
+
+test('7b F7 writeRecord refuses a second summary record, before any write', async () => {
+    const { openStream, writeRecord } = await import('../bench/soak/jsonl.mjs');
+    const dir = qfs.mkdtempSync(join(qos.tmpdir(), 'soak-qa-jsonl-'));
+    try {
+        const path = join(dir, 's.jsonl');
+        const st = openStream(path, performance.now(), 'burn-in');
+        writeRecord(st, 'header', {});
+        writeRecord(st, 'summary', { verdict: 'PASS' });
+        assert.throws(() => writeRecord(st, 'summary', { verdict: 'FAIL' }), /second summary/);
+        assert.equal(st.seq, 2);
+        const lines = qfs.readFileSync(path, 'utf8').trim().split('\n');
+        assert.equal(lines.length, 2);
+        assert.equal(JSON.parse(lines[1]).verdict, 'PASS');
+        writeRecord(st, 'fatal', {});   // a fatal after the summary stays writable (installFatalHandlers relies on it)
+        assert.equal(st.seq, 3);
+    } finally {
+        qfs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('7b F3 behaviour: every large GRAPH world builds ONE linked chain of exactly MAX_DEPTH nodes; normal worlds 0 or 16..24', () => {
+    const d = laneByName('GRAPH');
+    const chainOf = (script) => {
+        const ids = new Set();
+        let len = 0, linked = true;
+        for (const op of script.ops) {
+            if (op.o !== 'comp' || op.spec.role !== 'chain') continue;
+            // link k reads link k-1 (sum also reads the base leaf), so the chain depth is its length
+            if (len > 0 && !op.spec.d.some((x) => ids.has(x))) linked = false;
+            ids.add(op.i);
+            len++;
+        }
+        return { len, linked };
+    };
+    for (let s = 1; s <= 8; s++) {
+        const c = chainOf(generateWorld(d, s, { large: true }));
+        assert.equal(c.len, MAX_DEPTH, 'large seed ' + s + ' chain length');
+        assert.equal(c.linked, true, 'large seed ' + s + ' chain is one linked run');
+    }
+    for (let s = 1; s <= 40; s++) {
+        const n = chainOf(generateWorld(d, s)).len;
+        assert.ok(n === 0 || (n >= 16 && n <= 24), 'normal seed ' + s + ' chain length ' + n);
     }
 });

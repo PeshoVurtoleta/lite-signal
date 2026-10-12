@@ -6,6 +6,7 @@
  */
 
 import { specRefs } from '../kinds.mjs';
+import { MAX_DEPTH } from '../gen.mjs';
 
 const MIX = Object.freeze({
     set: 30, burst: 6, rewrite: 6, steer: 6, partial: 8, untrack: 3, create: 12, stop: 5, dispose: 6, writer: 8, readAll: 10,
@@ -62,7 +63,7 @@ function init(g) {
     const L = g.large ? 40 : 10;
     for (let k = 0; k < L; k++) g.push(g.sig({}), true);
     for (let k = 0; k < (g.large ? 10 : 3); k++) g.push(g.sig({ dis: true }), true);
-    if (!g.ruleOff('chain') && (g.large || g.chance(0.5))) chain(g, g.large ? 200 : 16 + g.int(9));
+    if (!g.ruleOff('chain') && (g.large || g.chance(0.5))) chain(g, g.large ? MAX_DEPTH : 16 + g.int(9));   // large: the chain reaches exactly MAX_DEPTH (G5)
     const tiers = g.large ? 12 : 4, per = g.large ? 100 : 5;
     const hub = g.leaves()[0];
     for (let t = 0; t < tiers; t++) {

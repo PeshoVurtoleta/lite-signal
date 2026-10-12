@@ -50,10 +50,16 @@ export function openStream(path, t0, kind) {
     return { path, t0, kind, seq: 0, summarized: false };
 }
 
-/** Append one typed record; stamps type, seq, tMs. Throws on a type this stream kind does not carry. */
+/**
+ * Append one typed record; stamps type, seq, tMs. Throws on a type this stream kind does not carry, and on a
+ * second summary record (a stream has exactly one summary; the throw comes before any write).
+ */
 export function writeRecord(stream, type, body) {
     if (RECORD_TYPES[stream.kind].indexOf(type) === -1) {
         throw new TypeError('writeRecord: type ' + type + ' is not a ' + stream.kind + ' record (' + RECORD_TYPES[stream.kind].join('|') + ')');
+    }
+    if (type === 'summary' && stream.summarized === true) {
+        throw new Error('writeRecord: this ' + stream.kind + ' stream already has its summary record; a second summary is refused');
     }
     const rec = body || {};
     rec.type = type;

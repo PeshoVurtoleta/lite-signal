@@ -62,21 +62,54 @@ export function decodeValue(code) {
     return VALUE_POOL[-code - 1];
 }
 
+/** The message of a leaf whose text cannot be read (String() or a getter threw). Never starts 'CycleError'. */
+const UNPRINTABLE = '<unprintable>';
+
+const safeString = (x) => { try { return String(x); } catch (e) { return UNPRINTABLE; } };
+
 /**
  * Flatten an escape into leaves: SoakThrow -> {origin, token}; AggregateError -> its errors, recursively;
  * anything else -> {ctor, message}. An AggregateError with NO errors is itself a leaf (never zero leaves:
  * zero leaves would read as "no escape", fail-open).
+ *
+ * Never throws (fail closed): a thrown value is arbitrary user data. A value with no readable constructor
+ * (null prototype, a throwing `constructor` getter) keeps ctor `typeof e`, the same fallback a primitive
+ * gets, so 'object' reads as "no constructor to name". A message that cannot be read or stringified (no
+ * toString, a throwing getter or Symbol.toPrimitive) is UNPRINTABLE. A value whose classification itself
+ * throws (a revoked Proxy fails `instanceof`; an `errors` getter or iterator that throws) collapses to ONE
+ * leaf {ctor: typeof e, message: UNPRINTABLE}, discarding any partial leaves it had produced.
  */
 export function normalizeEscape(err) {
     const out = [];
     const walk = (e, depth) => {
-        if (e instanceof SoakThrow) { out.push({ origin: e.origin, token: e.token }); return; }
-        if (depth < 8 && typeof AggregateError === 'function' && e instanceof AggregateError && Array.isArray(e.errors) && e.errors.length > 0) {
-            for (const x of e.errors) walk(x, depth + 1);
+        const start = out.length;
+        try {
+            if (e instanceof SoakThrow) { out.push({ origin: e.origin, token: e.token }); return; }
+            if (depth < 8 && typeof AggregateError === 'function' && e instanceof AggregateError) {
+                const errs = e.errors;
+                if (Array.isArray(errs) && errs.length > 0) {
+                    for (const x of errs) walk(x, depth + 1);
+                    return;
+                }
+            }
+        } catch (x) {
+            out.length = start;
+            out.push({ ctor: typeof e, message: UNPRINTABLE });
             return;
         }
-        const ctor = e !== null && e !== undefined && e.constructor && typeof e.constructor.name === 'string' ? e.constructor.name : typeof e;
-        const message = e !== null && e !== undefined && e.message !== undefined ? String(e.message) : String(e);
+        let ctor = typeof e;
+        if (e !== null && e !== undefined) {
+            try {
+                const c = e.constructor;
+                const name = c ? c.name : undefined;
+                if (typeof name === 'string') ctor = name;
+            } catch (x) { /* ctor stays typeof e */ }
+        }
+        let message = UNPRINTABLE;
+        try {
+            const m = e !== null && e !== undefined ? e.message : undefined;
+            message = m !== undefined ? safeString(m) : safeString(e);
+        } catch (x) { /* message stays UNPRINTABLE */ }
         out.push({ ctor, message });
     };
     walk(err, 0);
