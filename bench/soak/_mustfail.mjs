@@ -306,7 +306,13 @@ export const CONTROLS = deepFreeze([
         exit: 1, kind: 'match', lines: [], specs: ['gate=heap lane=GRAPH'],
     }, { patches: [[A_CREATE_NODE, A_CREATE_NODE + '        (globalThis.__soakLeak ||= []).push(new Array(128));   // MUSTFAIL L-T-leak\n']] }),
     // L-T-retain: every registry api is pushed to a global -> tracker.size() never drains (main.mjs:316 line).
-    M('L-T-retain', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+    // Sized 11 x OPS_MIN: at 11 x DEFAULT_OPS the retained registries (~500 MB per GRAPH cycle) hit the V8 heap
+    // limit at cycle 7 (burst 10 probe: residentMB=3534.27 after cycle 6, then "FATAL ERROR: Ineffective
+    // mark-compacts near heap limit Allocation failed - JavaScript heap out of memory", SIGABRT, no END). The
+    // gate needs only RETAIN_BAD_BOUNDARIES (2) bad post-warm-up boundaries; every boundary here is bad.
+    // Burst 10 run at this size: END FAIL exit=1, retention badBoundaries=10 (trackerSize 3..33), and the heap
+    // gate trips TOO (late 73.28 MB > limit 43.454 MB) -- accepted: the spec pins the retention line.
+    M('L-T-retain', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: String(OPS_MIN) }, [], {
         exit: 1, kind: 'match', lines: [], specs: ['gate=retention lane=GRAPH'],
     }, { patches: [[A_RETURN, A_RETURN.replace('    return {', '    const __soakApi = {') +
         '    (globalThis.__soakRegs ||= []).push(__soakApi);   // MUSTFAIL L-T-retain\n    return __soakApi;\n']] }),

@@ -19,6 +19,7 @@ import { PARITY_FILES } from '../bench/soak/parity.mjs';
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SOAK = join(ROOT, 'bench', 'soak');
 const TMP = mkdtempSync(join(tmpdir(), 'soak-infra-'));
+process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });   // a --test-name-pattern run skips after()
 after(() => { rmSync(TMP, { recursive: true, force: true }); });
 
 function node(args, opts = {}) {

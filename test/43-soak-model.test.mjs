@@ -932,3 +932,29 @@ test('F5 a batch whose callback never ran performs no OB (closeMark stays -1: no
     assert.equal(r.checks.OB, 0, 'no callback ran, so no close-flush was witnessed');
     assert.equal(runWorld(liteAdapter, qScript(f5A1, 'BATCH')).checks.OB, 1, 'control: the same world on lite performs OB');
 });
+
+/* ==== 7d nit 1 (burst 10, S1d B7c): the two OB closeMark test-pin survivors ================================= */
+
+const f5Eff = [{ o: 'sig', i: 0, v: 0 }, { o: 'eff', i: 1, spec: { k: 'sum', d: [0] } }];
+const f5Set = (v) => ({ o: 'batch', body: [{ o: 'set', i: 0, v }] });
+
+// mutant (exec.mjs runBatch): closeMark set only when the callback RETURNS (moved out of the inner finally) -- a
+// throwing callback leaves closeMark -1, so the close-flush re-run of eff#1 is never witnessed.
+test('F5 a batch whose callback throws after a write still witnesses its close-flush: checks.OB === 1', () => {
+    const r = runWorld(liteAdapter, qScript(f5Eff.concat([{ o: 'batch', body: [{ o: 'set', i: 0, v: 1 }], thr: 1 }]), 'BATCH'));
+    assert.equal(r.failure, null, JSON.stringify(r.failure));
+    assert.equal(r.checks.OB, 1, 'the batch token escaped, the engine still flushed eff#1 at the close: one performed OB');
+});
+
+// mutant (exec.mjs runBatch): the `this.closeMark = -1` reset dropped -- batch 1's mark survives into batch 2,
+// whose skipped callback then reads batch 1's close-flush re-run as its own performed OB.
+test('F5 closeMark resets between batches: an adapter that skips only its 2nd batch callback counts OB on batches 1 and 3 only', () => {
+    const skip2 = f5Adapter((w) => { let n = 0; return { batch: (fn) => (++n === 2 ? undefined : w.batch(fn)) }; });
+    const seq = [f5Set(1), f5Set(2), f5Set(3)];
+    const want = [1, 1, 2];   // cumulative OB after batch 1, 2, 3
+    for (let k = 1; k <= 3; k++) {
+        const r = runWorld(skip2, qScript(f5Eff.concat(seq.slice(0, k)), 'BATCH'));
+        assert.equal(r.failure, null, 'after batch ' + k + ': ' + JSON.stringify(r.failure));
+        assert.equal(r.checks.OB, want[k - 1], 'cumulative OB after batch ' + k);
+    }
+});

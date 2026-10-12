@@ -594,7 +594,7 @@ import { KERNELS as B6_KERNELS, PINNED as B6_PINNED, sha256File as b6Sha, foldMa
 
 const B6_JSON = join(SOAK, 'calibration', 'soak-calibration.json');
 const B6_DOC = JSON.parse(readFileSync(B6_JSON, 'utf8'));
-const B6_RECUT = 'recut: node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json (~6.5 min, untimed), then review the JSON diff';
+const B6_RECUT = 'recut: node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json (~13 min, untimed), then review the JSON diff';
 const b6Copy = (x) => JSON.parse(JSON.stringify(x));
 const b6Has = (o, k) => o !== null && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
 const b6ShaOf = (rel) => { try { return b6Sha(join(ROOT, rel)); } catch { return null; } };
