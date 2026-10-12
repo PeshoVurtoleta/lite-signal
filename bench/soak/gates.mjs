@@ -521,7 +521,7 @@ export class LaneGates {
 
 /* ---- verdict -------------------------------------------------------------------------------------- */
 
-const REASONS = Object.freeze(['end', 'signal', 'fatal']);
+export const REASONS = Object.freeze(['end', 'signal', 'fatal']);
 
 /**
  * The run verdict (SPEC-B section 8, first match wins):

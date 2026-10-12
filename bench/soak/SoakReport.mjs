@@ -45,12 +45,14 @@
  * with the value (leading ./ ../ / stripped). kernel.mjs realpath-resolves the value, so a symlinked value
  * that does not resolve here (another host) is refused, fail closed.
  *
- * B7 HOOK (SPEC-B addendum 9a): this report must IMPORT CHECKS / GAPS / UNREACHABLE from ./teeth.mjs (never
- * copy them) once B7 lands teeth.mjs, and print which gates of the run have no must-fail control. Not wired:
- * teeth.mjs does not exist yet, and an optional import would fail open.
- * B7 ITEMS (copied lists, flagged): REASONS copies gates.mjs's unexported verdict REASONS; the RECORD_KEYS
- * tables copy the literal record shapes of main.mjs / provenance.mjs / jsonl.mjs / boundary.mjs. Both should
- * be exported by their owners (gates / main / provenance are parity-pinned, so not edited here). test/46's
+ * Teeth (SPEC-B addendum 9a): the hard gates and oracles whose only teeth are GAPS come from ./teeth.mjs
+ * gapTeeth() by import (never copied); a consistent stream prints them on one stdout line
+ * `soak:report: NOTE -- teeth GAP gate=<ids> oracle=<ids>` (`none` for an empty list), after the
+ * `stream records=` line and before the verdict line, which stays the last stdout line. REASONS is imported
+ * from gates.mjs.
+ * DEFERRED copied list: the RECORD_KEYS / SUB_KEYS tables copy the literal record shapes of main.mjs /
+ * provenance.mjs / jsonl.mjs / boundary.mjs (no owner exports them). Exporting them from main.mjs is deferred:
+ * main.mjs is in test/41's (p) PINNED list, so an edit there forces a ~13-min calibration recut. test/46's
  * honest streams are the drift guard: a key added in main turns them red.
  *
  * RESIDUALS (not checked, stated plainly):
@@ -58,7 +60,7 @@
  *     read or passed through but not judged; header sub-objects (os, caps, ...) are not key-checked.
  *   - The kernel identity is SELF-REPORTED. A consistent forgery of a scratch stream as a tree run (override,
  *     SOAK_KERNEL, both kernel sha256, engine.files: five fields) exits 0. Signing / attestation of the stream
- *     is out of scope here: a B7 / S4 GAP.
+ *     is out of scope here: teeth.mjs GAP R-kernel-identity (S4).
  *   - A forged BREACH entry with known null on a lane that has a capped cycle, for a family:sig that lane
  *     counted, is admitted: an unstored world could have produced it (the stream keeps FAIL_CAP per cycle).
  *   - Stale vs tampered: gates-block, registry and tree-parity cannot tell an honest stream recorded under
@@ -75,7 +77,7 @@ import {
     gatesBlock, writeLineSync, formatReplayKey, KNOWN_KEYS, SCHEMA_VERSION, GEN_VERSION, FAIL_CAP, WARMUP_CYCLES,
     CYCLES_MAX, EXIT_CODE, ENGINES_KNOWN,
 } from './config.mjs';
-import { LaneGates, judgeRun, oracleFamily, GateInputError } from './gates.mjs';
+import { LaneGates, judgeRun, oracleFamily, GateInputError, REASONS } from './gates.mjs';
 import { classify, digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences.mjs';
 import { CHECK_NAMES, SKIP_NAMES } from './exec.mjs';
 import { GEN_RULES } from './gen.mjs';
@@ -84,6 +86,7 @@ import { ROSTER, laneByName } from './lanes/index.mjs';
 import { applicability } from './adapters/contract.mjs';
 import { RECORD_TYPES, FATAL_KINDS } from './jsonl.mjs';
 import { familyKeys, BreachLog } from './main.mjs';
+import { gapTeeth } from './teeth.mjs';
 
 const own = (o, k) => o !== null && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
 const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -91,9 +94,7 @@ const isCount = (v) => Number.isSafeInteger(v) && v >= 0;
 const json = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));   // the stream's view of a value (NaN -> null)
 const uniq = (arr) => { const out = []; for (const x of arr) if (out.indexOf(x) === -1) out.push(x); return out; };
 const TYPES = RECORD_TYPES['burn-in'];
-// B7 ITEM: a copy of gates.mjs's unexported REASONS (verdict()); export it from gates.mjs.
-const REASONS = ['end', 'signal', 'fatal'];
-// B7 ITEM: copies of the literal record shapes (main.mjs cycle / summary / failureRecord / BreachLog entry,
+// DEFERRED (see the file header): copies of the literal record shapes (main.mjs cycle / summary / failureRecord / BreachLog entry,
 // provenance.mjs buildHeader, jsonl.mjs writeFatal + type/seq/tMs, boundary.mjs memory / gc).
 const STAMP = ['type', 'seq', 'tMs'];
 const RECORD_KEYS = {
@@ -509,6 +510,8 @@ export function report(path) {
         checkMissingKeys(recs);
         const kernel = st.header.controls.name !== null ? 'control:' + st.header.controls.name : (st.header.kernel.override ? 'override' : 'tree');
         out.push('soak:report: stream records=' + recs.length + ' kernel=' + kernel + ' engine=' + cfg.engine + ' lanes=' + cfg.lanes.join(',') + ' cycles=' + st.summary.cyclesRun + ' failingWorlds=' + st.summary.totals.failingWorlds + ' reason=' + st.summary.reason);
+        const gap = gapTeeth(), ids = (a) => (a.length > 0 ? a.join(',') : 'none');
+        out.push('soak:report: NOTE -- teeth GAP gate=' + ids(gap.gate) + ' oracle=' + ids(gap.oracle));
         out.push('soak:report: verdict ' + v.verdict + ' (consistent)');
         checkRelease(st.header, cfg, lanes);
         return { exitCode: 0, out, err: [] };

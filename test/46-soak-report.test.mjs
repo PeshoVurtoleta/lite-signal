@@ -22,6 +22,9 @@ import { fileURLToPath } from 'node:url';
 import { OPS_MIN, MIN_ACTIVE_CYCLES, CHECK_P } from '../bench/soak/config.mjs';
 import { COV_OFF_SUPPORTED, laneByName } from '../bench/soak/lanes/index.mjs';
 import { applicability } from '../bench/soak/adapters/contract.mjs';
+import { GATE_NAMES } from '../bench/soak/gates.mjs';
+import { ORACLES } from '../bench/soak/oracles.mjs';
+import { GAPS, CHECKS } from '../bench/soak/teeth.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SOAK = join(ROOT, 'bench', 'soak');
@@ -47,6 +50,7 @@ const REG_IDS = JSON.parse(readFileSync(join(SOAK, 'divergences.json'), 'utf8'))
 
 let TMP;
 const S = {};   // name -> { path, status, recs, stderr }
+const LIVE = new Set();   // gen() children still running: after() SIGKILLs them before it removes TMP
 let tn = 0;
 
 function soakEnv(keys) {
@@ -58,6 +62,7 @@ function soakEnv(keys) {
  * Spawn main.mjs (async: the streams generate in parallel). Every path SETTLES the promise: a child that exits
  * without a stream (CONFIG exit, a kernel that throws at load), an unparsable stream or a spawn error rejects
  * with the child's stderr, so before() fails fast instead of hanging. killMs bounds the child (SIGKILL).
+ * The handle stays in LIVE until 'close': when one generator rejects, its siblings are still writing into TMP.
  */
 function gen(name, keys, argv = [], killMs = 240000) {
     const out = join(TMP, name + '.jsonl');
@@ -73,10 +78,12 @@ function gen(name, keys, argv = [], killMs = 240000) {
         try {
             p = spawn(process.execPath, ['--expose-gc', MAIN].concat(argv), { env: soakEnv(Object.assign({ SOAK_OUT: out }, keys)), stdio: ['ignore', 'ignore', 'pipe'] });
         } catch (e) { settle(e); return; }
+        LIVE.add(p);
         p.stderr.on('data', (d) => { err += d; });
         timer = setTimeout(() => p.kill('SIGKILL'), killMs);
-        p.on('error', (e) => settle(new Error(name + ': spawn failed: ' + e.message)));
+        p.on('error', (e) => { LIVE.delete(p); settle(new Error(name + ': spawn failed: ' + e.message)); });
         p.on('close', (status, signal) => {
+            LIVE.delete(p);
             try {
                 const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
                 S[name] = { path: out, status, signal, recs, stderr: err };
@@ -152,7 +159,13 @@ before(async () => {
         gen('sigint', Object.assign({ SOAK_KERNEL: join(TMP, 'ksigint', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
     ]);
 }, { timeout: 300000 });   // node:test has no default timeout: a stuck generator fails, never hangs
-after(() => { if (TMP) rmSync(TMP, { recursive: true, force: true }); });
+after(async () => {
+    // a failed before() leaves sibling generators running: kill them and wait for 'close' (bounded) before rmSync
+    const live = Array.from(LIVE);
+    for (const p of live) p.kill('SIGKILL');
+    await Promise.all(live.map((p) => new Promise((res) => { const t = setTimeout(res, 5000); p.once('close', () => { clearTimeout(t); res(); }); })));
+    if (TMP) rmSync(TMP, { recursive: true, force: true });
+});
 
 /* ---- honest streams: consistent, never INTEGRITY ----------------------------------------------------- */
 
@@ -359,6 +372,8 @@ const TAMPERS = [
     ['an edited `failKnown`', 'rev', (r) => { withFailures(r).failures[0].failKnown[0] = 'DIV-F99'; }, I('known-tag', /: failKnown \[/)],
     // summary
     ['an edited summary total', 'rev', (r) => { summaryOf(r).totals.checks.O1c += 1; }, I('totals', /summary\.totals do not equal/)],
+    // malformed (B7): every field check passes, but two GRAPH cycles of checks.O1c = 2^53 - 1 make gates.mjs Totals.add throw
+    ['checks.O1c at 2^53 - 1 in two cycles of one lane (Totals leaves the exact range)', 'rev', (r) => { for (const c of cyclesOf(r).filter((x) => x.lane === 'GRAPH').slice(0, 2)) c.checks.O1c = Number.MAX_SAFE_INTEGER; }, I('malformed', /exact range \(2\^53\)/)],
     ['an unknown summary reason', 'rev', (r) => { summaryOf(r).reason = 'bogus'; }, I('verdict', /summary\.reason bogus/)],
     ['R-tamper 6: claimed PASS over a FAIL stream', 'rev', (r) => { const s = summaryOf(r); s.verdict = 'PASS'; s.exitCode = 0; }, I('verdict', /claims "PASS", its records re-derive "FAIL"/)],
     ['only exitCode edited 1 -> 0 (review repro)', 'rev', (r) => { summaryOf(r).exitCode = 0; }, I('verdict', /claims exit 0, its records re-derive 1/)],
@@ -438,6 +453,20 @@ for (const [name, base, fn, want] of TAMPERS) {
         if (want.cls) { const r = expectIntegrity(p, want.cls); if (want.detail) assert.match(r.err[0], want.detail); } else { const r = expectRefusal(p, want.reason); if (want.detail) assert.match(r.err[0], want.detail); }
     });
 }
+
+test('B7: the NOTE line names exactly the gates and oracles whose only teeth are GAPS (teeth.mjs, by import), between the stream line and the verdict', () => {
+    const r = expectConsistent('hp');
+    const covered = new Set();
+    for (const k of Object.keys(GAPS)) for (const id of GAPS[k].covers) covered.add(id);
+    const only = (id) => covered.has(id) && !Object.prototype.hasOwnProperty.call(CHECKS, id);
+    const ids = (a) => (a.length > 0 ? a.join(',') : 'none');
+    const gate = GATE_NAMES.filter((n) => only('gate:' + n)), oracle = ORACLES.filter((n) => only('oracle:' + n));
+    const notes = r.out.filter((l) => l.indexOf('soak:report: NOTE -- ') === 0);
+    assert.equal(notes.length, 1, JSON.stringify(r.out));
+    assert.equal(r.out.length, 3, JSON.stringify(r.out));
+    assert.match(r.out[0], /^soak:report: stream records=/);
+    assert.equal(r.out[1], 'soak:report: NOTE -- teeth GAP gate=' + ids(gate) + ' oracle=' + ids(oracle));
+});
 
 test('precedence: an edited CHECK_P AND a seq gap -> the earlier class (seq-gap); CHECK_P plus a claimed PASS -> gates-block', () => {
     expectIntegrity(tamper('rev', (recs) => { recs[0].gates.CHECK_P = CHECK_P + 0.1; summaryOf(recs).verdict = 'PASS'; for (let i = 5; i < recs.length; i++) recs[i].seq += 1; }), 'seq-gap');

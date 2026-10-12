@@ -56,6 +56,7 @@
     "soak:shrink": "node --expose-gc bench/soak/shrink.mjs",
     "soak:report": "node bench/soak/SoakReport.mjs",
     "soak:teeth": "node bench/soak/_mustfail.mjs",
+    "soak:teeth:long": "node bench/soak/_mustfail.mjs --long",
     "parity": "node bench/soak/parity.mjs",
     "parity:update": "node bench/soak/parity.mjs --update",
     "soak:parity": "node bench/soak/parity.mjs",
