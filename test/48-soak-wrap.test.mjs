@@ -24,6 +24,12 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { w5Rule, crossRule, wrapRule, WRAP_GATE, wrapStreamProblems, W5_BOP_FAIL } from '../bench/soak/wraprules.mjs';
+import * as WR from '../bench/soak/wraprules.mjs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { REWRITES, derive } from '../bench/soak/nearwrap.mjs';
 import { SoakConfigError } from '../bench/soak/config.mjs';
 import { spinVersion } from '../bench/torture/helpers/spin.mjs';
@@ -104,9 +110,20 @@ const PAIRS = [
 const rec = (check, counter, ops, crossed, pre, post, status) => ({
     check, counter, opsDriven: ops, crossed, pre: { bop: pre }, post: { bop: post }, values: {}, wallMs: 1, status: status || 'PASS',
 });
+// DELTA 1: a W5 side carries all 4 step classes + the binding cls; expand a {bop} side so every class = bop.
+const expand = (r) => {
+    if (r.check !== 'W5') return r;
+    const side = (x) => {
+        if (x.classes) return x;
+        const classes = {};
+        for (const c of WR.W5_CLASSES) classes[c] = { bop: x.bop };
+        return Object.assign({}, x, { cls: 'set->effect', classes });
+    };
+    return Object.assign({}, r, { pre: side(r.pre), post: side(r.post) });
+};
 const full = (patch) => PAIRS.map(([c, n, t]) => {
     const w5 = c === 'W5';
-    return Object.assign(rec(c, n, t, true, w5 ? 0 : null, w5 ? 0.4 : null), patch && patch[c + '/' + n] ? patch[c + '/' + n] : null);
+    return expand(Object.assign(rec(c, n, t, true, w5 ? 0 : null, w5 ? 0.4 : null), patch && patch[c + '/' + n] ? patch[c + '/' + n] : null));
 });
 const without = (key) => full().filter((r) => r.check + '/' + r.counter !== key);
 
@@ -131,7 +148,7 @@ test('wrapRule: a selected pair with no record never PASSes (crossing not witnes
 const SEL_PAIRS = PAIRS.filter(([c]) => c === 'W1' || c === 'W5');
 function clean() {
     const recs = [{ type: 'header', seq: 0, tMs: 0, kind: 'wrap', config: { SOAK_WRAP: { value: ['W1', 'W5'], source: 'env' } } }];
-    SEL_PAIRS.forEach(([c, n, t], i) => recs.push(Object.assign({ type: 'wrap', seq: i + 1, tMs: 10 * (i + 1) }, rec(c, n, t, true, c === 'W5' ? 0 : null, c === 'W5' ? 0.4 : null))));
+    SEL_PAIRS.forEach(([c, n, t], i) => recs.push(Object.assign({ type: 'wrap', seq: i + 1, tMs: 10 * (i + 1) }, expand(rec(c, n, t, true, c === 'W5' ? 0 : null, c === 'W5' ? 0.4 : null)))));
     recs.push({ type: 'summary', seq: recs.length, tMs: 1000, reason: 'end', verdict: 'PASS', exitCode: 0 });
     return recs;
 }
@@ -156,13 +173,13 @@ test('wrapStreamProblems: a CLEAN stream has 0 problems, then every doctored twi
 test('wrapStreamProblems: a summary greener than the re-derivation is a problem; FAIL records are never softened', () => {
     // a W5 breach (post 16 B/op, pre 0) recorded honestly as FAIL, summary claiming PASS
     const bad = clean(); const i = bad.findIndex((r) => r.counter === 'evalCount');
-    bad[i] = Object.assign({}, bad[i], { post: { bop: 16 }, status: 'FAIL' });
+    bad[i] = expand(Object.assign({}, bad[i], { post: { bop: 16 }, status: 'FAIL' }));
     assert.ok(has(wrapStreamProblems(bad), /summary.*verdict/), 'summary PASS over a FAIL record');
     // the honest version (summary FAIL, exit 1) is clean
     const honest = clean(); honest[i] = bad[i]; honest[honest.length - 1] = Object.assign({}, honest[honest.length - 1], { verdict: 'FAIL', exitCode: 1 });
     assert.deepEqual(wrapStreamProblems(honest), [], 'honest FAIL stream');
     // a record whose status says PASS while its B/op breaches
-    const lie = clean(); lie[i] = Object.assign({}, lie[i], { post: { bop: 16 } });
+    const lie = clean(); lie[i] = expand(Object.assign({}, lie[i], { post: { bop: 16 } }));
     assert.ok(has(wrapStreamProblems(lie), /status/), 'status PASS over a breaching B/op');
     // signal-interrupted AFTER a FAIL record: the run stays FAIL, so a summary downgraded to INCONCLUSIVE is a problem
     const sig = clean(); sig[i] = bad[i];
@@ -278,4 +295,162 @@ test('spinVersion(sig, n) performs exactly n real writes (effect on the spun sig
         if (n > 0) assert.equal(sig(), n - 1, 'last write wins');
         r.destroy();
     }
+});
+
+/* ---- DELTA 1 (burst 22, A-B2T): the W5 verdict is the WORST of the 4 step classes (D1) ---------------------- */
+
+// Class names from the spec text (SPEC-S2-groupA DELTA 1 task 11a): the 4 W5 step classes.
+const mkClasses = (over) => {
+    const o = {};
+    for (const c of WR.W5_CLASSES) o[c] = { bop: over && over[c] !== undefined ? over[c] : 0 };
+    return o;
+};
+// A W5/evalCount record. preO / postO: class -> bop overrides (null = unmeasured). cls = the binding class.
+function w5rec(cls, preO, postO, status, drop) {
+    const pc = mkClasses(preO), qc = mkClasses(postO);
+    if (drop) { delete pc[drop]; delete qc[drop]; }
+    return {
+        check: 'W5', counter: 'evalCount', opsDriven: 2 ** 31, crossed: true,
+        pre: { bop: pc[cls] ? pc[cls].bop : 0, cls, classes: pc }, post: { bop: qc[cls] ? qc[cls].bop : 0, cls, classes: qc },
+        values: {}, wallMs: 1, status,
+    };
+}
+// A W5-only run: the other four W5 counters honest (all classes 0 -> 0), evalCount = `target`.
+function w5Run(target) {
+    return ['globalVersion', 'batchEpoch', 'gen', 'nodeSeq', 'evalCount'].map((n) => n === 'evalCount' ? target
+        : Object.assign(w5rec('set->effect', null, null, 'PASS'), { counter: n, opsDriven: WR.WRAP_TARGETS.W5[n] }));
+}
+function w5Stream(target, verdict) {
+    const recs = [{ type: 'header', seq: 0, tMs: 0, kind: 'wrap', config: { SOAK_WRAP: { value: ['W5'], source: 'env' } } }];
+    w5Run(target).forEach((r, i) => recs.push(Object.assign({ type: 'wrap', seq: i + 1, tMs: 10 * (i + 1) }, r)));
+    recs.push({ type: 'summary', seq: recs.length, tMs: 1000, reason: 'end', verdict, exitCode: verdict === 'PASS' ? 0 : verdict === 'FAIL' ? 1 : 3 });
+    return recs;
+}
+// D1: binding class set->effect 0 -> 0 while create+dispose 264.57 -> 296.48 (delta 31.91 >= 8, post >= 8 -> FAIL by w5Rule).
+const D1_PRE = { 'create+dispose': 264.57 }, D1_POST = { 'create+dispose': 296.48 };
+
+test('D1: W5_CLASSES is exported with the 4 step classes in order', () => {
+    assert.deepEqual([...WR.W5_CLASSES], ['set->effect', 'set->computed->effect', 'batch(set)', 'create+dispose']);
+});
+
+test('D1: a W5 record whose worst class (create+dispose 264.57 -> 296.48) breaches is judged FAIL although the binding class is clean', () => {
+    const bad = w5Run(w5rec('set->effect', D1_PRE, D1_POST, 'PASS'));
+    assert.equal(verdictOf(wrapRule(bad, ['W5'])), 'FAIL', 'worst class drives the verdict');
+});
+
+test('D1: wrapStreamProblems flags the non-worst binding class: exactly 1 problem, naming the record', () => {
+    const probs = wrapStreamProblems(w5Stream(w5rec('set->effect', D1_PRE, D1_POST, 'PASS'), 'FAIL'));
+    assert.equal(probs.length, 1, JSON.stringify(probs));
+    assert.match(probs[0], /wrap seq 5/, 'names the record (evalCount is the 5th wrap record, seq 5)');
+    assert.match(probs[0], /binding class set->effect \(PASS\) is not the worst class create\+dispose \(FAIL\)/);
+});
+
+test('D1: the same record under a PASS summary gives exactly 2 problems (class binding + summary verdict)', () => {
+    const probs = wrapStreamProblems(w5Stream(w5rec('set->effect', D1_PRE, D1_POST, 'PASS'), 'PASS'));
+    assert.equal(probs.length, 2, JSON.stringify(probs));
+    assert.ok(probs.some((x) => /wrap seq 5/.test(x) && /binding class set->effect \(PASS\) is not the worst class create\+dispose \(FAIL\)/.test(x)), 'class-binding line names the record');
+    assert.ok(probs.some((x) => /summary: verdict PASS != re-derived FAIL/.test(x)), 'summary line');
+});
+
+test('D1 control: the same record with cls = create+dispose and status FAIL has no class-binding problem', () => {
+    const probs = wrapStreamProblems(w5Stream(w5rec('create+dispose', D1_PRE, D1_POST, 'FAIL'), 'FAIL'));
+    assert.deepEqual(probs, []);
+});
+
+test('D1: worst-class order FAIL > INCONCLUSIVE > PASS (null bop is INCONCLUSIVE, never PASS)', () => {
+    const inc = w5Run(w5rec('set->effect', null, { 'batch(set)': null }, 'PASS'));
+    assert.equal(verdictOf(wrapRule(inc, ['W5'])), 'INCONCLUSIVE', 'one class unmeasured, others PASS');
+    const both = w5Run(w5rec('set->effect', { 'create+dispose': 0 }, { 'batch(set)': null, 'create+dispose': 20 }, 'PASS'));
+    assert.equal(verdictOf(wrapRule(both, ['W5'])), 'FAIL', 'FAIL + INCONCLUSIVE -> FAIL');
+    const ok = w5Run(w5rec('set->effect', null, null, 'PASS'));
+    assert.equal(verdictOf(wrapRule(ok, ['W5'])), 'PASS', 'control: all four classes 0 -> 0');
+});
+
+for (const missing of WR.W5_CLASSES) {
+    test('D1: a W5 record missing class ' + missing + ' is never PASS', () => {
+        const r = w5rec('set->effect', null, null, 'PASS', missing);
+        let v;
+        try { v = verdictOf(wrapRule(w5Run(r), ['W5'])); } catch (e) { v = e instanceof TypeError ? 'THROWS' : 'OTHER'; }
+        assert.ok(v === 'THROWS' || v === 'FAIL' || v === 'INCONCLUSIVE', 'got ' + v);
+        const probs = wrapStreamProblems(w5Stream(r, 'PASS'));
+        assert.ok(probs.length >= 1, 'stream problem for a record missing a class');
+    });
+}
+
+// Parity-style must-fail: the pre-change wraprules (git 3235728) accepts the D1 record (PASS, no problems), so the tests above fail on old code.
+let FROZEN_SRC = null;
+try { FROZEN_SRC = execFileSync('git', ['show', '3235728:bench/soak/wraprules.mjs'], { cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch (e) { FROZEN_SRC = null; }
+test('D1 must-fail on old code: the pre-change wraprules (git 3235728) judges the D1 record PASS with [] problems',
+    { skip: FROZEN_SRC !== null ? false : 'git or commit 3235728 unavailable (shallow or non-git checkout)' }, async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'b22-frozen-'));
+        try {
+            const here = (f) => pathToFileURL(fileURLToPath(new URL('../bench/soak/' + f, import.meta.url))).href;
+            const src = FROZEN_SRC.replace("'./config.mjs'", "'" + here('config.mjs') + "'").replace("'./jsonl.mjs'", "'" + here('jsonl.mjs') + "'");
+            const f = join(dir, 'wraprules-before.mjs');
+            writeFileSync(f, src);
+            const OLD = await import(pathToFileURL(f).href);
+            const old = w5Stream(w5rec('set->effect', D1_PRE, D1_POST, 'PASS'), 'PASS');
+            assert.equal(verdictOf(OLD.wrapRule(w5Run(w5rec('set->effect', D1_PRE, D1_POST, 'PASS')), ['W5'])), 'PASS');
+            assert.deepEqual(OLD.wrapStreamProblems(old), []);
+        } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
+/* ---- R1 additions: the binding check, tie-break, doctored twins, breach cls/pre/post (contract C1, C2) ---- */
+
+test('D1(b): status FAIL, binding set->effect 0->0, worst create+dispose 264.57->296.48: exactly 1 problem, the binding line', () => {
+    const probs = wrapStreamProblems(w5Stream(w5rec('set->effect', D1_PRE, D1_POST, 'FAIL'), 'FAIL'));
+    assert.equal(probs.length, 1, JSON.stringify(probs));
+    assert.match(probs[0], /binding class set->effect \(PASS\) is not the worst class create\+dispose \(FAIL\)/);
+});
+
+test('D1(c): milder FAIL bound (set->effect 0->10) while create+dispose 264.57->296.48 is worse: exactly 1 binding problem', () => {
+    const probs = wrapStreamProblems(w5Stream(w5rec('set->effect', Object.assign({}, D1_PRE), Object.assign({ 'set->effect': 10 }, D1_POST), 'FAIL'), 'FAIL'));
+    assert.equal(probs.length, 1, JSON.stringify(probs));
+    assert.match(probs[0], /binding class set->effect \(FAIL\) is not the worst class create\+dispose \(FAIL\)/);
+});
+
+test('D1(d): tie between two FAIL classes (equal post - pre): binding the LATER one in W5_CLASSES order is flagged, the earlier is not', () => {
+    const post = { 'set->computed->effect': 20, 'batch(set)': 20 };   // both 0 -> 20: equal delta 20, first in order wins
+    const later = wrapStreamProblems(w5Stream(w5rec('batch(set)', null, post, 'FAIL'), 'FAIL'));
+    assert.equal(later.length, 1, JSON.stringify(later));
+    assert.match(later[0], /binding class batch\(set\) \(FAIL\) is not the worst class set->computed->effect \(FAIL\)/);
+    assert.deepEqual(wrapStreamProblems(w5Stream(w5rec('set->computed->effect', null, post, 'FAIL'), 'FAIL')), [], 'earlier binding: clean');
+});
+
+test('D1(e): doctored twins of a clean FAIL record each add exactly one named problem', () => {
+    const base = () => w5Stream(w5rec('create+dispose', D1_PRE, D1_POST, 'FAIL'), 'FAIL');
+    assert.deepEqual(wrapStreamProblems(base()), [], 'control');
+    const doctor = (fn) => { const st = base(); const r = st[5]; r.pre = JSON.parse(JSON.stringify(r.pre)); r.post = JSON.parse(JSON.stringify(r.post)); fn(r); return wrapStreamProblems(st); };
+    const a = doctor((r) => { r.pre.bop = 1; });
+    assert.equal(a.length, 1, JSON.stringify(a)); assert.match(a[0], /pre\.bop .* != pre\.classes\[/);
+    const b = doctor((r) => { r.post.bop = 1; });
+    assert.equal(b.length, 1, JSON.stringify(b)); assert.match(b[0], /post\.bop .* != post\.classes\[/);
+    // pre.cls != post.cls: all-zero PASS record so no bop mismatch or verdict change rides along
+    const st = w5Stream(w5rec('set->effect', null, null, 'PASS'), 'PASS');
+    st[5].post = Object.assign({}, st[5].post, { cls: 'batch(set)' });
+    const c = wrapStreamProblems(st);
+    assert.equal(c.length, 1, JSON.stringify(c)); assert.match(c[0], /pre\.cls|post\.cls/);
+    const d = doctor((r) => { r.pre.classes.x = { bop: 0 }; });
+    assert.equal(d.length, 1, JSON.stringify(d)); assert.match(d[0], /"x"|unknown class/i);
+});
+
+test('D1(f): a wrapRule W5 breach carries the worst class cls/pre/post (create+dispose, 264.57, 296.48)', () => {
+    const r = wrapRule(w5Run(w5rec('set->effect', D1_PRE, D1_POST, 'PASS')), ['W5']);
+    assert.equal(r.verdict, 'FAIL');
+    const b = r.breaches.find((x) => x.counter === 'evalCount');
+    assert.ok(b, 'evalCount breach present');
+    assert.equal(b.cls, 'create+dispose');
+    assert.equal(b.pre, 264.57);
+    assert.equal(b.post, 296.48);
+});
+
+test('D1: breachLine names the WORST class (bop=296.48 detail=class=create+dispose), not the binding one', async () => {
+    const mod = await import('../bench/soak/wrap.mjs');
+    const rec = w5rec('set->effect', D1_PRE, D1_POST, 'PASS');
+    const run = w5Run(rec);
+    const b = wrapRule(run, ['W5']).breaches.find((x) => x.counter === 'evalCount');
+    assert.ok(b, 'evalCount breach present');
+    const line = mod.breachLine(b, rec);
+    assert.match(line, /bop=296\.48 detail=class=create\+dispose /);
+    assert.doesNotMatch(line, /class=set->effect/);
 });

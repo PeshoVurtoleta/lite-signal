@@ -14,7 +14,9 @@
  *                     'innocent') and the stale dispose leaves the resident alive; sameSlot false = retired
  *   W4 nodeSeq        2^31 signal() + dispose() with 16 long-lived nodes; nodeId sampled every 2^20
  *                     allocations and for every live node at the end: in [1, 2^31 - 1], unique among the
- *                     nodes of the last window; collisions with the old nodes are expectedCollisions (DIV-D4)
+ *                     nodes of the last window; collisions with the old nodes are expectedCollisions (DIV-D4).
+ *                     The crossing is witnessed by the registry itself: stats().totalAllocations read before
+ *                     and after the drive (outside every window) must advance by >= the target (W5[nodeSeq] too)
  *   W5 (F16, F19)     each census counter re-driven past its target by its own op on a FRESH registry
  *                     (globalVersion writes, batchEpoch noop batches, gen recycles, nodeSeq create+dispose
  *                     -- the drive that also crosses statTotalAllocations / statTotalDisposals -- and
@@ -32,11 +34,13 @@
  *              side; a grown nursery makes the side null.
  *   retained   lite-gc-profiler measureAllocs (W5_ITER / W5_BATCHES / W5_WARMUP, min over batches).
  * The record carries the class whose (pre, post) pair binds the rule (a FAIL first, then an unmeasured
- * class, then the largest post - pre); every class is in pre.classes / post.classes.
+ * class, then the largest post - pre); every class is in pre.classes / post.classes (all 4, bop null on an
+ * unmeasured post side), and wraprules.mjs judges the record by its WORST class, not by the binding one.
  *
  * Every check runs on its own registry, tracked by lite-leak and a WeakRef witness; after the check the
- * registry is destroy()ed, dropped and drained (boundary.mjs). trackerSize or weakAlive != 0 is a FAIL of
- * that check (values.boundary). The B/op windows hold no performance.now() and no adapter: the steps are
+ * registry is destroy()ed, dropped and drained (boundary.mjs). A tracker growth at that boundary
+ * (trackerDelta > 0; the tracker is run-wide) or weakAlive != 0 is a FAIL of that check (values.boundary;
+ * the first W5 boundary also counts the 'W5-warm' registries). The B/op windows hold no performance.now() and no adapter: the steps are
  * hoisted no-argument closures over Int32Array slots, drive totals live in the Float64Array DRIVE slot and
  * spinVersion only ever gets a Smi chunk (<= CHUNK = 2^24). The one harness allocation inside a bracket is
  * the bracket read itself (v8.getHeapSpaceStatistics(), ~1.8 KB per window, constant): it is cancelled by
@@ -68,7 +72,7 @@ import { spawn } from 'node:child_process';
 import { getHeapSpaceStatistics } from 'node:v8';
 import { PerformanceObserver } from 'node:perf_hooks';
 import { readConfig, configExit, VERDICT, EXIT_CODE, W5_BOP_FAIL, W5_ITER, W5_BATCHES, W5_WARMUP } from './config.mjs';
-import { WRAP_TARGETS, w5Rule, crossRule, wrapRule } from './wraprules.mjs';
+import { WRAP_TARGETS, W5_CLASSES, w5Rule, crossRule, wrapRule } from './wraprules.mjs';
 import { ROSTER, ALL_SCENARIOS, COV_OFF_SUPPORTED } from './lanes/index.mjs';
 import { openStream, writeRecord, protocol, stdoutLine, endLine, installFatalHandlers, defaultOutPath } from './jsonl.mjs';
 import { spinVersion } from '../torture/helpers/spin.mjs';
@@ -97,9 +101,9 @@ const W4_SAMPLE_MASK = 0xFFFFF;    // nodeId sampled every 2^20 allocations
 const ID_MAX = 0x7FFFFFFF;
 const REPR_TIMEOUT_MS = 600000;
 const BURN_IN_KEYS = Object.freeze(['SOAK_CYCLES', 'SOAK_OPS', 'SOAK_SEED', 'SOAK_LANES', 'SOAK_SMOKE', 'SOAK_REPLAY', 'SOAK_SHRINK', 'SOAK_MUSTFAIL']);
-const KERNEL_API = Object.freeze(['signal', 'computed', 'effect', 'batch', 'dispose', 'destroy', 'nodeId']);
+const KERNEL_API = Object.freeze(['signal', 'computed', 'effect', 'batch', 'dispose', 'destroy', 'nodeId', 'stats']);
 
-export const W5_CLASSES = Object.freeze(['set->effect', 'set->computed->effect', 'batch(set)', 'create+dispose']);
+export { W5_CLASSES };   // defined in wraprules.mjs (the judge needs the class list); re-exported here
 const NS_K = Object.freeze([NS_K_SET, NS_K_SET, NS_K_SET, NS_K_CYCLE]);
 
 /* ---- semi-space pin (fail closed) ------------------------------------------------------------------ */
@@ -147,10 +151,14 @@ export function wrapCauseLine(c) {
     throw new TypeError('wrapCauseLine: unknown cause ' + String(c.cause));
 }
 
-/** The BREACH line of one wrapRule breach; rec is the judged record, why the check's own failure text. */
+/**
+ * The BREACH line of one wrapRule breach; why is the check's own failure text. A W5 line prints bop= and
+ * class= from the breach's WORST class (b.cls / b.post, wraprules.mjs wrapRule), never from the record's
+ * binding class; rec is kept for the call shape and not read.
+ */
 export function breachLine(b, rec, why) {
-    const bop = b.check === 'W5' && rec && rec.post && typeof rec.post.bop === 'number' ? ' bop=' + rec.post.bop.toFixed(2) : '';
-    const cls = b.check === 'W5' && rec && rec.post && typeof rec.post.cls === 'string' ? 'class=' + rec.post.cls + ' ' : '';
+    const bop = b.check === 'W5' && typeof b.post === 'number' ? ' bop=' + b.post.toFixed(2) : '';
+    const cls = b.check === 'W5' && typeof b.cls === 'string' ? 'class=' + b.cls + ' ' : '';
     const detail = why ? why : cls + String(b.detail).replace(/^bop=\S+ /, '');   // the bop is already on the line
     return 'soak: BREACH gate=wrap check=' + b.check + ' counter=' + b.counter + bop + ' detail=' + detail;
 }
@@ -322,7 +330,8 @@ async function measureSide(steps, measureAllocs) {
 
 /**
  * The class whose (pre, post) pair binds w5Rule: the FAIL with the largest post - pre, else the first
- * unmeasured class, else the class with the largest post - pre. -> {cls, rule}.
+ * unmeasured class, else the class with the largest post - pre; ties go to the first in W5_CLASSES order
+ * (wraprules.mjs worstClass re-derives the same pick independently). -> {cls, rule}.
  */
 export function pickClass(preClasses, postClasses) {
     let fail = null, unmeasured = null, best = null;
@@ -349,6 +358,18 @@ function nodeOf(h) {
     }
     return undefined;
 }
+
+/**
+ * stats().totalAllocations of a registry (every createNode, pool pop or fresh build), or null when the kernel
+ * exposes no stats() or no safe count (null is not zero: the crossing is then unwitnessed). COLD: read only
+ * outside every measurement window (stats() builds an object).
+ */
+function totalAllocations(r) {
+    const s = typeof r.stats === 'function' ? r.stats() : null;
+    const v = s !== null && typeof s === 'object' ? s.totalAllocations : undefined;
+    return Number.isSafeInteger(v) && v >= 0 ? v : null;
+}
+const allocDelta = (a0, a1) => (a0 === null || a1 === null ? null : a1 - a0);
 
 /** A fresh registry for one check, tracked (lite-leak) and witnessed (WeakRef). */
 function openRegistry(run, label) {
@@ -488,6 +509,7 @@ async function checkW4(run, target) {
     const old = [];
     for (let i = 0; i < W4_LIVE; i++) old.push(r.signal(i));
     W4S[0] = 0; W4S[1] = 0; W4S[2] = -1; W4S[3] = 0;
+    const alloc0 = totalAllocations(r);   // outside the drive: the crossing's own witness
     const chunk = (n) => {
         for (let i = 0; i < n; i++) {
             const s = signal(0);
@@ -503,6 +525,7 @@ async function checkW4(run, target) {
         }
     };
     const d = await drive(run, 'W4', target, chunk);
+    const witness = allocDelta(alloc0, totalAllocations(r));
     const failures = [];
     let values = { interrupted: d.interrupted, samples: W4S[3], badSamples: W4S[0] };
     if (!d.interrupted) {
@@ -524,8 +547,9 @@ async function checkW4(run, target) {
         if (liveBad > 0) failures.push(liveBad + ' live node id(s) out of [1, 2^31-1] after ' + target + ' allocations');
         if (!unique) failures.push('duplicate nodeId among the ' + W4_LIVE + ' nodes of the last window');
     }
+    values.allocDelta = witness;
     r.destroy();
-    return Object.assign(d, { values, failures });
+    return Object.assign(d, { values, failures, witness });
 }
 
 async function checkW5(run, counter, target) {
@@ -533,10 +557,12 @@ async function checkW5(run, counter, target) {
     const steps = w5Steps(r);
     const chunk = w5Drive(r, counter);
     const pre = await measureSide(steps, run.measureAllocs);
+    const alloc0 = counter === 'nodeSeq' ? totalAllocations(r) : null;   // between the windows, never inside one
     const d = await drive(run, 'W5[' + counter + ']', target, chunk);
     const values = { interrupted: d.interrupted };
     let witness;
     if (counter === 'evalCount') { witness = EVALS[0]; values.bodyRuns = witness; }   // read before the post side
+    if (counter === 'nodeSeq') { witness = allocDelta(alloc0, totalAllocations(r)); values.allocDelta = witness; }
     const post = d.interrupted ? null : await measureSide(steps, run.measureAllocs);
     r.destroy();
     return Object.assign(d, { values, failures: [], pre, post, witness });
@@ -546,11 +572,13 @@ async function checkW5(run, counter, target) {
  * Warm every W5 step class on WARM_REGISTRIES throwaway registries through the real measurement path, so
  * the step and kernel call sites are already polymorphic when the first W5 check measures: otherwise the
  * first registry's create+dispose handle mint is optimised away (0.30 B/op) and every later one reads ~264.
- * The throwaway registries are destroyed; they are not part of any check's retention witness.
+ * The throwaway registries are destroyed AND tracked (lite-leak + WeakRef, label 'W5-warm') into the run's
+ * witness, so the first W5 check's boundary counts them: a kept-alive warm registry fails that check's
+ * retention (trackerSize / weakAlive != 0).
  */
 async function warmW5(run) {
     for (let i = 0; i < WARM_REGISTRIES; i++) {
-        const r = run.K.createRegistry({ maxNodes: MAX_NODES });
+        const r = openRegistry(run, 'W5-warm');
         await measureSide(w5Steps(r), run.measureAllocs);
         r.destroy();
     }
@@ -560,11 +588,15 @@ async function warmW5(run) {
 function buildRecord(check, counter, res, boundary) {
     const target = WRAP_TARGETS[check][counter];
     const failures = res.failures.slice();
-    if (boundary.trackerSize !== 0 || boundary.weakAlive !== 0) {
-        failures.push('retention: trackerSize=' + boundary.trackerSize + ' weakAlive=' + boundary.weakAlive + ' after destroy + drain');
+    // the tracker is run-wide: a check fails on what ITS boundary added (trackerDelta > 0) or on its own
+    // witnessed registries (weakAlive), so one kept registry is blamed once, on the boundary that tracked it
+    if (boundary.trackerDelta > 0 || boundary.weakAlive !== 0) {
+        failures.push('retention: trackerSize=' + boundary.trackerSize + ' (+' + boundary.trackerDelta + ' at this boundary' +
+            (boundary.warm > 0 ? "; this boundary also witnessed " + boundary.warm + " 'W5-warm' registries" : '') + ') weakAlive=' + boundary.weakAlive + ' after destroy + drain');
     }
-    // a check with its own witness (W5[evalCount] body runs) must reach the target on it too
-    const crossed = !res.interrupted && res.opsDriven >= target && (res.witness === undefined || res.witness >= target);
+    // a check with its own witness (W5[evalCount] body runs; W4 / W5[nodeSeq] the stats().totalAllocations
+    // delta, null when unread) must reach the target on it too
+    const crossed = !res.interrupted && res.opsDriven >= target && (res.witness === undefined || (typeof res.witness === 'number' && res.witness >= target));
     let pre = { bop: null }, post = { bop: null };
     if (check === 'W5') {
         const preC = res.pre.classes;
@@ -572,8 +604,10 @@ function buildRecord(check, counter, res, boundary) {
         const pick = pickClass(preC, postC);
         const side = (x) => ({ baseline: x.baseline, control: x.control, controlOk: x.controlOk, pinned: x.pinned, capacity: x.capacity, discarded: x.discarded, unmeasured: x.unmeasured });
         pre = Object.assign({ bop: preC[pick.cls].bop, cls: pick.cls, classes: preC }, side(res.pre));
+        const unmeasuredC = {};
+        for (const name of W5_CLASSES) unmeasuredC[name] = { bop: null, transient: null, retained: null, window0: null };
         post = res.post === null
-            ? { bop: null, cls: pick.cls, classes: null }
+            ? { bop: null, cls: pick.cls, classes: unmeasuredC }
             : Object.assign({ bop: postC[pick.cls].bop, cls: pick.cls, classes: postC }, side(res.post));
     }
     const cross = crossRule({ opsDriven: res.opsDriven, target, crossed });
@@ -660,7 +694,7 @@ async function main() {
     const t0 = performance.now();
     const stream = openStream(cfg.out !== null ? cfg.out : defaultOutPath('wrap', header.gitSha), t0, 'wrap');
 
-    const run = { K: KM.K, t0, stop: null, tracker: null, witness: [], measureAllocs, warmed: false };
+    const run = { K: KM.K, t0, stop: null, tracker: null, witness: [], measureAllocs, warmed: false, trackerSeen: 0 };
     const ctx = { lane: null, cycle: null, world: null, worldSeed: null };
     const records = [], why = new Map();
     let repr = null;
@@ -706,7 +740,8 @@ async function main() {
                 const target = WRAP_TARGETS[check][counter];
                 ctx.lane = check === 'W5' ? 'W5[' + counter + ']' : check;
                 run.witness = [];
-                if (check === 'W5' && run.warmed !== true) { await warmW5(run); run.warmed = true; }
+                let warm = 0;
+                if (check === 'W5' && run.warmed !== true) { await warmW5(run); run.warmed = true; warm = WARM_REGISTRIES; }
                 const res = check === 'W1' ? await checkW1(run, target)
                     : check === 'W2' ? await checkW2(run, target)
                     : check === 'W3' ? await checkW3(run, target)
@@ -717,7 +752,10 @@ async function main() {
                 // the check's frame (registry, handles, steps) is gone: res holds plain data only
                 const closed = await closeBoundary({ tracker: run.tracker, witness, profiler: null });
                 const b = closed.boundary;
-                const boundary = { trackerSize: b.trackerSize, weakAlive: b.weakAlive, forcedGcTries: b.forcedGcTries, drainMs: b.drainMs, residentMB: closed.memory.residentMB };
+                // a non-count trackerSize is never a clean delta (null is not zero): NaN > 0 is false, so force it to 1
+                const trackerDelta = Number.isSafeInteger(b.trackerSize) ? b.trackerSize - run.trackerSeen : 1;
+                if (Number.isSafeInteger(b.trackerSize)) run.trackerSeen = b.trackerSize;
+                const boundary = { trackerSize: b.trackerSize, trackerDelta, warm, weakAlive: b.weakAlive, forcedGcTries: b.forcedGcTries, drainMs: b.drainMs, residentMB: closed.memory.residentMB };
                 const built = buildRecord(check, counter, res, boundary);
                 const body = built.rec;
                 records.push(Object.assign({}, body));
