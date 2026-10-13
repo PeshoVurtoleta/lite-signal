@@ -569,6 +569,16 @@ Four designs for keeping a suspended frame's re-tracking cursor safe (the #20 fo
 | **32** | Forward-pointer link pinning for cursor safety (A1 round 2) | REJECTED -- every link freed under a COMPUTING target is withheld until depth 0, so 5000 temporaries in one run, or an effect owning 1000 computeds with maxLinks 1500, throw CapacityError where the pre-A1 tree passes | capacity is consumed by correctness bookkeeping; the cursor stack holds one slot per frame instead |
 | **33** | Cursor-safety alternatives H1-H3 (A1 round 3-4) | H1 savedCursor on the node REJECTED: bimodal, fanout64 up to x1.84, mux x3.7, +8 B/node. H2 Int32 index stack: bounded at x1.076 or worse by the stack-load-only control, not built. H3 derived cursor: unsound (untracked pulls, a node disposed during its own pull, and pre-walk pulls have no read position) | every variant tried with one per-frame memory write ran diamond >= x1.055 (unsafe local-save control x1.003); PRELIMINARY, noisy host (load 3.7-5). H5 (frameNode-narrowed pinning) is unbuilt and open |
 
+## J. 1.6.0 soak findings (2026-10) -- open engine defects
+
+Two defects found by the 1.6.0 verification and soak work (`bench/soak/`, decisions/0001-soak-design.md). Both are
+OPEN at HEAD: they ship in 1.5.2, and the fixes belong to the Phase A groups named below.
+
+| # | finding | status | mechanism |
+|---|---|---|---|
+| **34** | F20: int32 closure counters allocate 12 B per write in [2^30, 2^31) on pointer-compressed V8 (Chrome, Electron) | OPEN at HEAD (shipped 1.5.2; A4-V2 not landed). REPORTED (2026-10-10, jsvu d8 15.7.37 arm64, pointer_compression: true; engine probe s7/eng-set-*.mjs, one signal + one effect, 1e7-write windows, 1 MB semi-space, scavenges counted between markers): kernels 1.5.2 (f8dd50f8) and wt (7f707ccd) both 0 scavenges warm -> 114 scavenges (about 11.95 B/write) once globalVersion is in [2^30, 2^30 + 1.2e7); Node (32-bit Smi) unaffected | a closure-context `let` in a context of more than 2 slots holds a non-Smi as a HeapNumber, so every write allocates 12 B. Rule: no int32 closure counter leaves [-2^30, 2^30-1]; exact counters live in a Float64Array slot. Log: audit/2026-10-07/verification/VERIFICATION-2026-10-10.md:132-159 (git-ignored); SPEC-B addendum 7 |
+| **35** | F21: a CycleError ("flush passes exceeded") leaves stale queue entries that later run a recycled slot | OPEN at HEAD (shipped 1.5.2; A2 not landed; soak entry DIV-F21 is temporary, fixedIn null). Soak ERROR census of 4000 worlds: 3 on 1.5.2, 23 on the audit patch build (bench/soak/calibration/f21-census.json) | the abort branch of flushEffects keeps activeQueue and FLAG_QUEUED; after the effects are disposed and the slots reused, the next flush runs the new residents and a first run throws "Infinite effect loop detected" from an unrelated effect(). Found by the soak ERROR lane |
+
 ---
 
 *MIT © Zahary Shinikchiev. The ledger is the map; the laws are the territory. Keep it whole,

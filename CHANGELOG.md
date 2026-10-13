@@ -6,12 +6,13 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-One engine simplification (LEDGER #30, "observer-fold") plus dev-only gate work: the gate gaps
+One engine simplification (LEDGER #30, "observer-fold") plus dev-only work: the gate gaps
 closed after the link-SoA fork (LEDGER #27) passed the gates while costing +10-39% on four
-shapes, and a gate-1 conformance runner. `Signal.d.ts`
-and `Watch.js` are untouched; `Signal.js` changes only the tracking-flag fold described
-below (no API, no behavior change); nothing else in the published `files[]` changes except
-`README.md`.
+shapes, a gate-1 conformance runner, and the `bench/soak/` randomized soak harness. `Signal.d.ts`
+and `Watch.js` are untouched; `Signal.js` changes the tracking-flag fold described below (no
+API, no behavior change) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
+4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
+published `files[]` changes except `README.md`.
 
 ### Changed -- engine: `isTrackingDeps` folded into `currentObserver` (LEDGER #30)
 
@@ -69,12 +70,47 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
   tests `04` and `09`, and the microscope's heap column. The perf-gate lane already judged
   `arrayBuffersKB`.
 
+### Added -- soak harness tooling (dev-only, not shipped)
+
+`bench/soak/` is a randomized burn-in of the engine against a naive reference model. Nothing here is in
+`files[]`; `Signal.js`, `Watch.js` and `Signal.d.ts` are untouched by it.
+
+- S1a/S1b: fail-closed `SOAK_*` config, seeds, JSONL stream, `SOAK_KERNEL` seam, provenance header, parity pin
+  (`npm run soak:parity`); naive model, oracles O1c/O1e/O2/O4/O5/O6/O7a, op-script generator, executor and the GRAPH,
+  BATCH, ERROR and NEST lanes (tests 40, 41 and 43). Against the published 1.5.2 the lanes find F5, F6, F7 and F15;
+  the ERROR lane found F21 and F22.
+- S1c: `gates.mjs` (verdict ladder; check-floor, taint-skip and coverage evidence gates that go INCONCLUSIVE, never
+  PASS), `boundary.mjs` (forced-GC drain, tracker and WeakRef witness), `divergences.json` (DIV-F21 and DIV-F22 are
+  temporary), `main.mjs` (`npm run soak`, `soak:smoke`), `replay.mjs` and `shrink.mjs` (`soak:replay`, `soak:shrink`).
+- soak: new hard oracle OB (batch-early-run, QA F5): an effect that already ran must not re-run inside an open batch;
+  cycle `checks` gain OB.
+- soak: provenance `gitInfo` scrubs GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR / GIT_OBJECT_DIRECTORY
+  from its git child env (exported `GIT_SCRUB_ENV`, QA F6), so an inherited variable can no longer make a soak header
+  stamp another tree's SHA or dirty state. `GIT_CONFIG_*` stay inherited; config-level `core.worktree` is a known gap.
+  No new config key.
+- S1d: `SoakReport.mjs` (`npm run soak:report -- <stream>`) re-derives a stream's verdict with the code that judged it:
+  exit 0 `verdict <V> (consistent)`, exit 1 `INTEGRITY -- <class>` or `NOT A RELEASE SOAK -- mustfail|smoke|non-lite|
+  overridden-kernel|tree-parity`, exit 2 CONFIG (test/46, 147 tests). Kernel identity is self-reported (residual).
+- Calibration: `calibration/calibrate.mjs` + `soak-calibration.json` (seed 0xC0FFEE, 11 x 100000 + smoke, headpatched
+  and 1.5.2): DEFAULT_OPS 100000 and SCEN_MIN 8 kept; CHECK_FLOOR 1000 -> 10000, CHECK_FLOOR_SMOKE 250 -> 500,
+  TAINT_SKIP_MAX 0.5 -> 0.35; drift guard in test/41.
+- Teeth: `teeth.mjs` (CHECKS / GAPS, ceiling 26, may only shrink / UNREACHABLE, `audit()`) and `_mustfail.mjs` (30
+  controls through the real `main.mjs` on pinned scratch kernels). `npm run soak:teeth` (short), `soak:teeth:long`
+  (L-* controls); `MUSTFAIL_LIST=1`, `MUSTFAIL_ONLY=<regex>`, `MUSTFAIL_HEADS=1`. `soak:report` prints
+  `NOTE -- teeth GAP gate=<ids> oracle=<ids>`. test/45 audits the registry against literal ceilings.
+- Known issue: the BATCH `cov-off` switch leaks (`lanes/batch.mjs:37` compares script codes, `scenarios.mjs:236`
+  compares decoded values), so `T-cov-BATCH` runs 11 x OPS_MIN instead of smoke. The fix needs a calibration recut.
+
 ### Docs
 
 `LEDGER.md` gains the laws' size-axis and allocation-site corollaries, Law 7 (creation cost
 is survival, not allocation), section G (#27 / #28 and the independent re-measure), section
 H (the 2026-09 weak-point analysis of Andrii's harness: #29 rejected, #30 candidate, #31
 null), and the new gate rules. README's VersionMatrix section lists all seven workloads.
+`LEDGER.md` section J records two open engine defects found by the 1.6.0 soak work: #34 (F20,
+int32 closure counters allocate on pointer-compressed V8) and #35 (F21, stale queue after a
+CycleError). New `decisions/0001-soak-design.md` (dev-only ADR) records the soak design, the
+F5 / F6 decisions and their rejected alternatives.
 
 ## [1.5.2] -- 2026-09-19
 
