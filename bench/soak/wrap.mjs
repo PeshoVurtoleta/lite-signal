@@ -71,7 +71,10 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { getHeapSpaceStatistics } from 'node:v8';
 import { PerformanceObserver } from 'node:perf_hooks';
-import { readConfig, configExit, VERDICT, EXIT_CODE, W5_BOP_FAIL, W5_ITER, W5_BATCHES, W5_WARMUP } from './config.mjs';
+import {
+    readConfig, configExit, VERDICT, EXIT_CODE, W5_BOP_FAIL, W5_ITER, W5_BATCHES, W5_WARMUP,
+    SEMI_SPACE_MB, WRAP_CHUNK as CHUNK, NS_K_CYCLE, WRAP_MAX_NODES as MAX_NODES, W4_SAMPLE_MASK, REPR_TIMEOUT_MS, BASELINE_MAX_BYTES,
+} from './config.mjs';
 import { WRAP_TARGETS, W5_CLASSES, w5Rule, crossRule, wrapRule } from './wraprules.mjs';
 import { ROSTER, ALL_SCENARIOS, COV_OFF_SUPPORTED } from './lanes/index.mjs';
 import { openStream, writeRecord, protocol, stdoutLine, endLine, installFatalHandlers, defaultOutPath } from './jsonl.mjs';
@@ -83,23 +86,17 @@ const r1 = (x) => Math.round(x * 10) / 10;
 const tick = () => new Promise((r) => setImmediate(r));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* ---- local constants (A-B2: candidates for config.mjs CONSTANTS + gatesBlock) ------------------------ */
+/* ---- local constants (the gated ones live in config.mjs CONSTANTS + gatesBlock, imported above) ----- */
 
-export const SEMI_SPACE_MB = 4;
+export { SEMI_SPACE_MB };   // defined in config.mjs; re-exported here
 const SEMI_BYTES = SEMI_SPACE_MB * 1048576;
 const SEMI_TOL = 65536;            // new_space used + available reads 4 MB - 256 B with the pinned flags
-const CHUNK = 1 << 24;             // drive chunk: a Smi, <= 1 << 28 (spinVersion's contract)
 const HEARTBEAT_MS = 5000;
-const MAX_NODES = 64;              // every check fits a 64-node pool (SOAK.md appendix A)
 const NS_K_SET = W5_ITER;          // transient window, set / batch classes: <= 32 B/op x 20000 = 640 KB << 4 MB
-const NS_K_CYCLE = 4096;           // transient window, create+dispose (~264 B/op handle mint x 4096 = 1.1 MB)
 const NS_WINDOWS = W5_BATCHES;     // windows per lane; steady state = min over windows 1..n-1
-const BASELINE_MAX_BYTES = 8192;   // empty-step bytes per window (the bracket read is ~1.8 KB); above -> unmeasured
 const WARM_REGISTRIES = 2;         // throwaway registries that warm every W5 step class before the first measure
 const W4_LIVE = 16;
-const W4_SAMPLE_MASK = 0xFFFFF;    // nodeId sampled every 2^20 allocations
 const ID_MAX = 0x7FFFFFFF;
-const REPR_TIMEOUT_MS = 600000;
 const BURN_IN_KEYS = Object.freeze(['SOAK_CYCLES', 'SOAK_OPS', 'SOAK_SEED', 'SOAK_LANES', 'SOAK_SMOKE', 'SOAK_REPLAY', 'SOAK_SHRINK', 'SOAK_MUSTFAIL']);
 const KERNEL_API = Object.freeze(['signal', 'computed', 'effect', 'batch', 'dispose', 'destroy', 'nodeId', 'stats']);
 
@@ -664,6 +661,8 @@ async function main() {
     const semi = semiSpaceProblem(process.execArgv, newSpaceCapacity());
     if (semi !== null) configExit('the wrap job needs the pinned semi-space: ' + semi + ' (run: npm run soak:wrap)');
 
+    // refused BEFORE the kernel loads: kernel.mjs would derive and write a NEARWRAP kernel at import
+    if (cfg.nearwrap !== null) configExit('the wrap job drives the real kernel; a NEARWRAP kernel is refused');
     const KM = await import('./kernel.mjs');   // the kernel loads HERE, through the SOAK_KERNEL seam
     if (KM.KERNEL_NEARWRAP !== undefined && KM.KERNEL_NEARWRAP !== null) configExit('the wrap job drives the real kernel; a NEARWRAP kernel is refused');
     const probe = KM.K.createRegistry({ maxNodes: MAX_NODES });

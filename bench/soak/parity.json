@@ -21,7 +21,7 @@
     "bench/soak/main.mjs": "a45d13a7a7310dd0dc438aaa86705a4e50741098841985ed0497360f97ecc0d7",
     "bench/soak/replay.mjs": "3e2d635c46440eda14f79afbeab6e8477c93e97e2657e3672939e50b88400171",
     "bench/soak/shrink.mjs": "f38857d49b11544674f5e825096a9326034301c50ba8ee12e6fcbbb58d4985cc",
-    "bench/soak/config.mjs": "7d1b141e4ab39747571dce20257710a75bf51426db610cbda4939fe3510e54d3",
-    "bench/soak/SoakReport.mjs": "ba2e2d69a6dcfc85fdf88b24eeb42b4d0ead0dc6fdd71563d384fded967d941a"
+    "bench/soak/config.mjs": "0fc14327bc556b1e6e7482f00857ea921ba92f023db35f7fc962f91e1d4eb8c5",
+    "bench/soak/SoakReport.mjs": "5b022433e761c4b2f77e6b3d80539696c5f0f379eb27eea2bd1d74d9b3c95ae2"
   }
 }

@@ -33,6 +33,16 @@ ACCEPT, PRELIMINARY -- 0 / 45 sweep rows and 0 / 6 microscope scenarios beyond t
 KAIROS and BROADCAST are bimodal and their fast-mode ratios are 0.984 and 0.994. The full
 BENCH-CAMPAIGN runs before release.
 
+### Added -- soak stream schemaVersion 2, `SOAK_NEARWRAP` (dev-only, not shipped)
+
+The soak stream `SCHEMA_VERSION` is 2: the header carries `nearwrap` (null, or `{phase, k, rewrites, baseSha256,
+derivedSha256}`) and the gates block carries the wrap job's 8 constants (`SEMI_SPACE_MB`, `WRAP_CHUNK`, `NS_K_CYCLE`,
+`WRAP_MAX_NODES`, `W4_SAMPLE_MASK`, `REPR_TIMEOUT_MS`, `BASELINE_MAX_BYTES`, `NEARWRAP_K_MAX`). New key
+`SOAK_NEARWRAP=<sign|zero>:<k>` (k 1..64) runs the lanes on a kernel derived by `bench/soak/nearwrap.mjs` with its
+wrap counters preset k below their ceiling; it is never release evidence (`soak:report` exits 1 with its own
+`NOT A RELEASE SOAK -- nearwrap`, after the mustfail / smoke / non-lite reasons). The header's `nearwrap` must match the config key, and the key is refused with
+`SOAK_ENGINE` other than lite. A schemaVersion 1 stream is refused (`INTEGRITY -- header`).
+
 ### Added -- CI (dev-only, not shipped)
 
 `.github/workflows/ci.yml` (npm test + torture on Node 22 / 24 / 26 and macOS Node 24;
@@ -118,7 +128,7 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
   No new config key.
 - S1d: `SoakReport.mjs` (`npm run soak:report -- <stream>`) re-derives a stream's verdict with the code that judged it:
   exit 0 `verdict <V> (consistent)`, exit 1 `INTEGRITY -- <class>` or `NOT A RELEASE SOAK -- mustfail|smoke|non-lite|
-  overridden-kernel|tree-parity|lane-subset|volume|provenance`, exit 2 CONFIG (test/46, 177 tests). Kernel identity is
+  nearwrap|overridden-kernel|tree-parity|lane-subset|volume|provenance`, exit 2 CONFIG (test/46, 177 tests). Kernel identity is
   self-reported (residual).
 - soak release policy (maintainer decision c): a tree run is release evidence only for the full roster at default
   volume (SOAK_OPS >= DEFAULT_OPS and >= DEFAULT_CYCLES completed cycles per lane; an interrupted cycle does not

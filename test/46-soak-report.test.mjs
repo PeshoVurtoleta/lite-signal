@@ -24,7 +24,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, copyFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OPS_MIN, MIN_ACTIVE_CYCLES, CHECK_P, DEFAULT_OPS, DEFAULT_CYCLES } from '../bench/soak/config.mjs';
+import { OPS_MIN, MIN_ACTIVE_CYCLES, CHECK_P, DEFAULT_OPS, DEFAULT_CYCLES, SCHEMA_VERSION } from '../bench/soak/config.mjs';
 import { COV_OFF_SUPPORTED, laneByName, ROSTER } from '../bench/soak/lanes/index.mjs';
 import { applicability } from '../bench/soak/adapters/contract.mjs';
 import { GATE_NAMES } from '../bench/soak/gates.mjs';
@@ -272,8 +272,14 @@ function releaseBase() {
 }
 const lanesTo = (h, n) => { h.lanes = h.lanes.slice(0, n); h.config.SOAK_LANES = { value: ROSTER.slice(0, n), source: 'env' }; };
 const dropLastCycle = (cycles) => cycles.slice(0, (DEFAULT_CYCLES - 1) * ROSTER.length);
+/** A valid header.nearwrap (SPEC-S2 groupA ruling R1b): the exact NEARWRAP shape, sign:8. */
+const NW = () => ({ phase: 'sign', k: 8, rewrites: [], baseSha256: 'a'.repeat(64), derivedSha256: 'b'.repeat(64) });
 const RELEASE = [
     ['full roster, DEFAULT_OPS, DEFAULT_CYCLES completed, clean git', () => {}, null],
+    ['header.nearwrap null (the base, stated)', (h) => { h.nearwrap = null; }, null],
+    // R1c: a NEARWRAP kernel is its own release reason, even at the pins on an otherwise release-shaped stream
+    ['a valid header.nearwrap sign:8 on the release-shaped stream at the pins', (h) => { h.nearwrap = NW(); }, 'nearwrap', /^sign:8 -- a NEARWRAP kernel/],
+    ['precedence: nearwrap AND a Signal.js off the pin: nearwrap first', (h) => { h.nearwrap = NW(); h.kernel.files[0].sha256 = '1'.repeat(64); }, 'nearwrap', /^sign:8 /],
     ['SOAK_OPS above DEFAULT_OPS', (h) => { h.config.SOAK_OPS.value = DEFAULT_OPS * 2; }, null],
     ['a forever run (SOAK_CYCLES=0) that completed DEFAULT_CYCLES', (h) => { h.config.SOAK_CYCLES = { value: 0, source: 'env' }; }, null],
     ['a pinned control kernel (rev152), small and dirty: the tree policy does not apply', (h) => { h.controls.name = 'rev152'; h.config.SOAK_OPS.value = OPS_MIN; h.gitDirty = true; lanesTo(h, 1); }, null],
@@ -356,7 +362,22 @@ const TAMPERS = [
     // header fields
     ['a header without mustfail', 'rev', (r) => { delete r[0].mustfail; }, I('header', /header\.mustfail is missing/)],
     ['a header of another stream kind', 'rev', (r) => { r[0].kind = 'wrap'; }, I('header', /kind wrap is not burn-in/)],
-    ['schemaVersion 2', 'rev', (r) => { r[0].schemaVersion = 2; }, I('header', /schemaVersion 2/)],
+    ['an old-schema stream (schemaVersion 1)', 'rev', (r) => { r[0].schemaVersion = SCHEMA_VERSION - 1; }, I('header', /schemaVersion 1 != 2/)],
+    // R1b: header.nearwrap is null or exactly the NEARWRAP shape; R1c: a valid one is refused as nearwrap
+    ['header.nearwrap deleted', 'rev', (r) => { delete r[0].nearwrap; }, I('header', /header\.nearwrap must be null or exactly/)],
+    ['header.nearwrap phase up', 'rev', (r) => { r[0].nearwrap = Object.assign(NW(), { phase: 'up' }); }, I('header', /header\.nearwrap must be null or exactly/)],
+    ['header.nearwrap k 0', 'rev', (r) => { r[0].nearwrap = Object.assign(NW(), { k: 0 }); }, I('header', /header\.nearwrap must be null or exactly/)],
+    ['header.nearwrap k 65 (> NEARWRAP_K_MAX)', 'rev', (r) => { r[0].nearwrap = Object.assign(NW(), { k: 65 }); }, I('header', /header\.nearwrap must be null or exactly/)],
+    ['header.nearwrap without derivedSha256', 'rev', (r) => { const n = NW(); delete n.derivedSha256; r[0].nearwrap = n; }, I('header', /header\.nearwrap must be null or exactly/)],
+    ['header.nearwrap with an extra key', 'rev', (r) => { r[0].nearwrap = Object.assign(NW(), { extra: 1 }); }, I('header', /header\.nearwrap must be null or exactly/)],
+    ['a valid header.nearwrap sign:8 (config SOAK_NEARWRAP sign:8)', 'rev', (r) => { r[0].nearwrap = NW(); r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' }; }, R('nearwrap', /^soak:report: NOT A RELEASE SOAK -- nearwrap: sign:8 /)],
+    // review R1 blocker 1: header.nearwrap must agree with config SOAK_NEARWRAP (the SOAK_MUSTFAIL cross-check twin)
+    ['config SOAK_NEARWRAP sign:8 but header.nearwrap null', 'rev', (r) => { r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' }; }, I('header', /header\.nearwrap differs from config SOAK_NEARWRAP/)],
+    ['config SOAK_NEARWRAP value garbage', 'rev', (r) => { r[0].config.SOAK_NEARWRAP = { value: 'garbage', source: 'env' }; }, I('header', /config SOAK_NEARWRAP value "garbage" is neither null nor \{phase, k\}/)],
+    ['config SOAK_NEARWRAP null but a valid header.nearwrap', 'rev', (r) => { r[0].nearwrap = NW(); }, I('header', /header\.nearwrap differs from config SOAK_NEARWRAP/)],
+    ['config SOAK_NEARWRAP sign:8 but header.nearwrap k 9', 'rev', (r) => { r[0].nearwrap = Object.assign(NW(), { k: 9 }); r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' }; }, I('header', /header\.nearwrap differs from config SOAK_NEARWRAP/)],
+    // release-reason order: nearwrap fires before overridden-kernel (a scratch kernel that is no pinned control)
+    ['order: a valid nearwrap on an overridden (scratch) kernel -> nearwrap, not overridden-kernel', 'scratch', (r) => { r[0].nearwrap = NW(); r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' }; }, R('nearwrap', /^soak:report: NOT A RELEASE SOAK -- nearwrap: sign:8 /)],
     ['genVersion 2', 'rev', (r) => { r[0].genVersion = 2; }, I('header', /genVersion 2/)],
     ['genRules edited', 'rev', (r) => { r[0].genRules.pop(); }, I('header', /!= gen\.mjs GEN_RULES/)],
     ['config is not an object', 'rev', (r) => { r[0].config = []; }, I('header', /header\.config is not an object/)],

@@ -37,7 +37,8 @@
  * code (B6 moves constants): both are refused, and the detail says so (SPEC-B :92).
  * NOT A RELEASE SOAK reasons, checked only on a consistent stream, in order:
  *   mustfail (SOAK_MUSTFAIL teeth knob, SPEC-B 5.1), smoke, non-lite (an engine other than lite, incl.
- *   PARTIAL skips), overridden-kernel (SOAK_KERNEL that is no pinned control), tree-parity (a tree-kernel run
+ *   PARTIAL skips), nearwrap (header.nearwrap non-null: a NEARWRAP kernel, refused on its own even when the
+ *   kernel sha256 matches the pin), overridden-kernel (SOAK_KERNEL that is no pinned control), tree-parity (a tree-kernel run
  *   whose Signal.js / Watch.js sha256 differ from bench/soak/parity.json -- recorded under different code --
  *   or whose header parity was not ok); then, on a TREE run only (a pinned control kernel stops after
  *   overridden-kernel: it is never release evidence, and its NOTE line says so), the release policy
@@ -88,7 +89,7 @@ import { normalize } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
     gatesBlock, writeLineSync, formatReplayKey, KNOWN_KEYS, SCHEMA_VERSION, GEN_VERSION, FAIL_CAP, WARMUP_CYCLES,
-    CYCLES_MAX, EXIT_CODE, ENGINES_KNOWN, DEFAULT_OPS, DEFAULT_CYCLES,
+    CYCLES_MAX, EXIT_CODE, ENGINES_KNOWN, DEFAULT_OPS, DEFAULT_CYCLES, NEARWRAP_K_MAX,
 } from './config.mjs';
 import { LaneGates, judgeRun, oracleFamily, GateInputError, REASONS } from './gates.mjs';
 import { classify, digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences.mjs';
@@ -111,7 +112,7 @@ const TYPES = RECORD_TYPES['burn-in'];
 // provenance.mjs buildHeader, jsonl.mjs writeFatal + type/seq/tMs, boundary.mjs memory / gc).
 const STAMP = ['type', 'seq', 'tMs'];
 const RECORD_KEYS = {
-    header: ['schemaVersion', 'genVersion', 'kind', 'pkgVersion', 'startedAt', 'gitSha', 'gitDirty', 'gitError', 'kernel', 'engine', 'parity',
+    header: ['schemaVersion', 'genVersion', 'kind', 'pkgVersion', 'startedAt', 'gitSha', 'gitDirty', 'gitError', 'kernel', 'nearwrap', 'engine', 'parity',
         'controls', 'node', 'v8', 'execArgv', 'os', 'config', 'laneRoster', 'lanes', 'scenarios', 'oraclesNA', 'genRules', 'divergences',
         'mustfail', 'seedFormula', 'worldSeedFormula', 'seedRemapCollision', 'gates', 'timerFloorNs'].concat(STAMP),
     cycle: ['lane', 'laneIndex', 'cycle', 'warmup', 'seed', 'interrupted', 'worlds', 'largeWorlds', 'ops', 'opsByClass', 'checks', 'skipTainted',
@@ -208,6 +209,15 @@ function checkStructure(recs) {
 const HEADER_NEEDS = ['schemaVersion', 'genVersion', 'kind', 'kernel', 'engine', 'parity', 'controls', 'config', 'laneRoster', 'lanes',
     'scenarios', 'oraclesNA', 'genRules', 'divergences', 'mustfail', 'gates'];
 
+const NEARWRAP_KEYS = Object.freeze(['baseSha256', 'derivedSha256', 'k', 'phase', 'rewrites']);
+const HEX64 = /^[0-9a-f]{64}$/;
+/** header.nearwrap is exactly {phase: sign|zero, k: int 1..NEARWRAP_K_MAX, rewrites: [], baseSha256, derivedSha256: 64-hex}. */
+function nearwrapShape(n) {
+    return isObj(n) && isDeepStrictEqual(Object.keys(n).sort(), NEARWRAP_KEYS.slice()) && (n.phase === 'sign' || n.phase === 'zero') &&
+        Number.isInteger(n.k) && n.k >= 1 && n.k <= NEARWRAP_K_MAX && Array.isArray(n.rewrites) &&
+        typeof n.baseSha256 === 'string' && HEX64.test(n.baseSha256) && typeof n.derivedSha256 === 'string' && HEX64.test(n.derivedSha256);
+}
+
 function readHeader(h) {
     for (const k of HEADER_NEEDS) if (!own(h, k)) bad('header', 'header.' + k + ' is missing');
     if (h.kind !== 'burn-in') bad('header', 'kind ' + String(h.kind) + ' is not burn-in');
@@ -233,6 +243,11 @@ function readHeader(h) {
     if (!(isObj(h.engine) && h.engine.name === cfg.engine)) bad('header', 'engine.name differs from SOAK_ENGINE ' + cfg.engine);
     if (!isObj(h.engine.caps)) bad('header', 'engine.caps is not an object');
     if (!isDeepStrictEqual(h.mustfail, cfg.mustFail)) bad('header', 'header.mustfail differs from config SOAK_MUSTFAIL');
+    if (!(h.nearwrap === null || nearwrapShape(h.nearwrap))) bad('header', 'header.nearwrap must be null or exactly {phase, k, rewrites, baseSha256, derivedSha256}, got ' + JSON.stringify(h.nearwrap));
+    const nwc = c.SOAK_NEARWRAP.value;
+    if (!(nwc === null || (isObj(nwc) && isDeepStrictEqual(Object.keys(nwc).sort(), ['k', 'phase']) && (nwc.phase === 'sign' || nwc.phase === 'zero') &&
+        Number.isInteger(nwc.k) && nwc.k >= 1 && nwc.k <= NEARWRAP_K_MAX))) bad('header', 'config SOAK_NEARWRAP value ' + JSON.stringify(nwc) + ' is neither null nor {phase, k}');
+    if (!isDeepStrictEqual(nwc, h.nearwrap === null ? null : { phase: h.nearwrap.phase, k: h.nearwrap.k })) bad('header', 'header.nearwrap differs from config SOAK_NEARWRAP');
     const k = h.kernel;
     if (!isObj(k) || typeof k.override !== 'boolean' || !Array.isArray(k.files) || k.files.length !== 2) bad('header', 'header.kernel must be {override, files[2]}');
     for (const f of k.files) if (!isObj(f) || typeof f.path !== 'string' || !/^[0-9a-f]{64}$/.test(String(f.sha256))) bad('header', 'kernel file entry malformed');
@@ -509,6 +524,7 @@ function releaseChecks(h, cycles, pins) {
     if (mustFail !== null) refuse('mustfail', 'SOAK_MUSTFAIL=' + mustFail.mode + ':' + mustFail.scenario + ' is a teeth knob');
     if (val('SOAK_SMOKE') !== false) refuse('smoke', 'a smoke run sits below the gate floor by design');
     if (engine !== 'lite') refuse('non-lite', 'engine ' + engine + (skipped.length ? ', skipped lanes ' + skipped.join(',') : ''));
+    if (h.nearwrap !== null) refuse('nearwrap', h.nearwrap.phase + ':' + h.nearwrap.k + ' -- a NEARWRAP kernel (census counters preset near a ceiling) is never release evidence');
     if (h.controls.name === null && h.kernel.override) refuse('overridden-kernel', 'SOAK_KERNEL=' + h.kernel.files[0].path + ' is no pinned control (controls.json)');
     if (h.controls.name !== null) return;   // a pinned control: never release evidence (its NOTE line), the tree policy below does not apply
     if (h.kernel.files[0].sha256 !== pins['Signal.js']) refuse('tree-parity', 'the tree Signal.js sha256 differs from bench/soak/parity.json: recorded under different code (stale) or tampered');

@@ -77,12 +77,22 @@ const CONSTANTS = Object.freeze({
     W5_ITER: 20000,
     W5_BATCHES: 8,
     W5_WARMUP: 20000,
+    // WRAP job (S2 A-B2p task 9: were wrap.mjs locals; wrap.mjs and wrap-repr.mjs import them)
+    SEMI_SPACE_MB: 4,             // pinned --min/--max-semi-space-size of the wrap job
+    WRAP_CHUNK: 16777216,         // drive chunk 2^24: a Smi, <= 1 << 28 (spinVersion's contract)
+    NS_K_CYCLE: 4096,             // transient window, create+dispose (~264 B/op handle mint x 4096 = 1.1 MB)
+    WRAP_MAX_NODES: 64,           // every check fits a 64-node pool (SOAK.md appendix A)
+    W4_SAMPLE_MASK: 0xFFFFF,      // W4 nodeId sampled every 2^20 allocations
+    REPR_TIMEOUT_MS: 600000,
+    BASELINE_MAX_BYTES: 8192,     // empty-step bytes per W5 window; above -> unmeasured
+    // NEARWRAP (S2 task 9): SOAK_NEARWRAP=<sign|zero>:<k>, 1 <= k <= NEARWRAP_K_MAX (< WORLD_STEPS)
+    NEARWRAP_K_MAX: 64,
     // seeds: lanes are packed into 4 bits of the seed input (seeds.mjs)
     ROSTER_MAX: 16,
     // did-you-mean: Levenshtein <= min(HINT_MAX_DIST, floor(len / 2)) (lite-pick uses <= 4 for keys)
     HINT_MAX_DIST: 4,
     // versions
-    SCHEMA_VERSION: 1,
+    SCHEMA_VERSION: 2,
     GEN_VERSION: 1,
     // policy strings (recorded so a reader never has to guess)
     GC_MAJOR_POLICY: 'report-only: model lanes allocate by design; per-op 0 B/op is owned by test/32-perf-gate (ADR 0014 S1)',
@@ -104,6 +114,7 @@ export const {
     HEAP_RATIO, HEAP_SLACK_MB, RSS_RATIO, RSS_SLACK_MB,
     DRAIN_MS, DRAIN_TRIES, RETAIN_MAX, RETAIN_BAD_BOUNDARIES,
     W5_BOP_FAIL, W5_ITER, W5_BATCHES, W5_WARMUP,
+    SEMI_SPACE_MB, WRAP_CHUNK, NS_K_CYCLE, WRAP_MAX_NODES, W4_SAMPLE_MASK, REPR_TIMEOUT_MS, BASELINE_MAX_BYTES, NEARWRAP_K_MAX,
     ROSTER_MAX, HINT_MAX_DIST, SCHEMA_VERSION, GEN_VERSION, GC_MAJOR_POLICY,
     VERDICT, EXIT_CODE, ENGINES_KNOWN, ENGINES_AVAILABLE, WRAP_CHECKS, MUSTFAIL_MODES,
 } = CONSTANTS;
@@ -117,6 +128,7 @@ export function gatesBlock() {
 export const KNOWN_KEYS = Object.freeze([
     'SOAK_CYCLES', 'SOAK_OPS', 'SOAK_SEED', 'SOAK_LANES', 'SOAK_ENGINE', 'SOAK_KERNEL', 'SOAK_SMOKE',
     'SOAK_OUT', 'SOAK_REPLAY', 'SOAK_SHRINK', 'SOAK_REQUIRE_PROVENANCE', 'SOAK_MUSTFAIL', 'SOAK_WRAP', 'SOAK_REPR',
+    'SOAK_NEARWRAP',
 ]);
 
 const KNOWN_SUFFIXES = Object.freeze(KNOWN_KEYS.map((k) => k.slice(5)));
@@ -201,6 +213,7 @@ function fail(msg) { throw new SoakConfigError(msg); }
 const DEC_RE = /^\d+$/;
 const SEED_RE = /^(0x[0-9a-fA-F]{1,8}|\d{1,10})$/;
 const REPLAY_RE = /^([A-Z]+):(\d+):0x([0-9a-f]{1,8})$/;
+const NEARWRAP_RE = /^(sign|zero):[1-9]\d*$/;
 
 function parseIntKey(name, raw, min, max, allowZero) {
     const range = allowZero ? 'an integer >= ' + min + ' (or 0)' : 'an integer in [' + min + ', ' + max + ']';
@@ -233,6 +246,18 @@ function parseList(name, raw) {
         seen.add(p);
     }
     return parts;
+}
+
+/**
+ * Parse a SOAK_NEARWRAP value `<sign|zero>:<k>` (no leading zero, 1 <= k <= NEARWRAP_K_MAX). Throws
+ * SoakConfigError. Shared by parseConfig and kernel.mjs (which derives the kernel at import). -> frozen {phase, k}.
+ */
+export function parseNearwrap(raw) {
+    if (typeof raw !== 'string' || !NEARWRAP_RE.test(raw)) fail("SOAK_NEARWRAP='" + String(raw) + "' must be sign:<k> or zero:<k> (k a decimal integer in [1, " + NEARWRAP_K_MAX + '])');
+    const i = raw.indexOf(':');
+    const k = Number(raw.slice(i + 1));
+    if (!(Number.isSafeInteger(k) && k <= NEARWRAP_K_MAX)) fail("SOAK_NEARWRAP='" + raw + "': k must be in [1, " + NEARWRAP_K_MAX + '] (NEARWRAP_K_MAX)');
+    return Object.freeze({ phase: raw.slice(0, i), k });
 }
 
 /**
@@ -362,6 +387,9 @@ export function parseConfig(env, opts) {
         if (kernel !== null && engine !== 'lite') {
             fail("SOAK_KERNEL is the lite-only kernel seam; it cannot be combined with SOAK_ENGINE='" + engine + "'");
         }
+        if (has('SOAK_NEARWRAP') && engine !== 'lite') {
+            fail("SOAK_NEARWRAP derives the lite kernel; it cannot be combined with SOAK_ENGINE='" + engine + "'");
+        }
         if (ENGINES_KNOWN.indexOf(engine) === -1) {
             fail("SOAK_ENGINE: unknown engine '" + engine + "'" + hintOrList(engine, ENGINES_KNOWN, 'engines'));
         }
@@ -412,10 +440,11 @@ export function parseConfig(env, opts) {
         mustFail = Object.freeze({ mode, scenario: scen });
     }
     put('SOAK_MUSTFAIL', mustFail, has('SOAK_MUSTFAIL'));
+    const nearwrap = put('SOAK_NEARWRAP', has('SOAK_NEARWRAP') ? parseNearwrap(env.SOAK_NEARWRAP) : null, has('SOAK_NEARWRAP'));
 
     return Object.freeze({
         cycles, forever: cycles === 0, ops, seed, lanes: Object.freeze(lanes), smoke, engine, kernel, out, replay, shrink,
-        requireProvenance, repr, wrap: Object.freeze(wrap), mustFail, roster: Object.freeze(roster.slice()),
+        requireProvenance, repr, wrap: Object.freeze(wrap), mustFail, nearwrap, roster: Object.freeze(roster.slice()),
         record: Object.freeze(record),
     });
 }

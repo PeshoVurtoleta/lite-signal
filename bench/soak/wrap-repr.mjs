@@ -19,10 +19,10 @@
  */
 
 import { K, KERNEL_FILES, KERNEL_KNOWN_AS } from './kernel.mjs';
+import { WRAP_CHUNK as CHUNK } from './config.mjs';   // drive chunk 2^24 (the wrap job's own)
 
 const TWO31 = 2147483648;
 const DRIVE_N = TWO31 + (1 << 20);
-const CHUNK = 1 << 24;
 const TIME_N = 1000000;
 const TIME_ROUNDS = 5;
 const DRIVE = new Float64Array(1);   // the drive total passes 2^31: never a closure let

@@ -12,26 +12,38 @@
  *
  * Exports: K (module namespace), KERNEL_URL, KERNEL_DIR, KERNEL_OVERRIDE, KERNEL_FILES [{path, sha256}]
  * (Signal.js, Watch.js), KERNEL_KNOWN_AS (a controls.json control name when BOTH hashes match, else null),
- * CONTROLS_ERROR (null, or why controls.json could not be read).
+ * CONTROLS_ERROR (null, or why controls.json could not be read), KERNEL_NEARWRAP (null, or the NEARWRAP record).
+ *
+ * NEARWRAP (S2 task 10): SOAK_NEARWRAP=<sign|zero>:<k> derives a kernel from the resolved base Signal.js
+ * (nearwrap.mjs derive: census counters preset to ceiling - k), writes it with a copy of the base Watch.js to
+ * bench/soak/out/nearwrap/<derived Signal.js sha7>-<Watch.js sha7>/ (git-ignored; both hashed in memory before
+ * any write, so two runs that share a folder write byte-identical files) and loads THAT pair: KERNEL_URL / KERNEL_DIR /
+ * KERNEL_FILES describe the derived files, so header kernel.files[0].sha256 == nearwrap.derivedSha256 and the
+ * tree-parity pin never matches (never release evidence). KERNEL_OVERRIDE still means "SOAK_KERNEL was set".
  *
  * Uses top-level await. COLD module.
  */
 
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve, dirname, basename, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { configExit } from './config.mjs';
+import { configExit, parseNearwrap, SoakConfigError } from './config.mjs';
+import { derive } from './nearwrap.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const envKernel = process.env.SOAK_KERNEL;
 const envEngine = process.env.SOAK_ENGINE;
+const envNearwrap = process.env.SOAK_NEARWRAP;
 
 export const KERNEL_OVERRIDE = envKernel !== undefined;
 if (KERNEL_OVERRIDE && envKernel === '') configExit("SOAK_KERNEL='' is not a path");
 // The seam is lite-only; alien and polyfill load from exact-pinned devDependencies (v2 section 3.1).
 if (KERNEL_OVERRIDE && envEngine !== undefined && envEngine !== 'lite') {
     configExit("SOAK_KERNEL is the lite-only kernel seam; it cannot be combined with SOAK_ENGINE='" + envEngine + "'");
+}
+if (envNearwrap !== undefined && envEngine !== undefined && envEngine !== 'lite') {
+    configExit("SOAK_NEARWRAP derives the lite kernel; it cannot be combined with SOAK_ENGINE='" + envEngine + "'");
 }
 
 const requested = KERNEL_OVERRIDE ? resolve(envKernel) : join(ROOT, 'Signal.js');
@@ -40,28 +52,66 @@ const kernelPath = realpathSync(requested);
 if (basename(kernelPath) !== 'Signal.js') {
     configExit('SOAK_KERNEL: the kernel file must be named Signal.js (got ' + basename(kernelPath) + '); Watch.js imports ./Signal.js');
 }
-export const KERNEL_DIR = dirname(kernelPath);
-const watchPath = join(KERNEL_DIR, 'Watch.js');
-if (!existsSync(watchPath)) {
-    configExit('SOAK_KERNEL: sibling Watch.js missing in ' + KERNEL_DIR + ' (scratch kernels are a Signal.js + Watch.js directory pair)');
+const baseDir = dirname(kernelPath);
+const baseWatch = join(baseDir, 'Watch.js');
+if (!existsSync(baseWatch)) {
+    configExit('SOAK_KERNEL: sibling Watch.js missing in ' + baseDir + ' (scratch kernels are a Signal.js + Watch.js directory pair)');
 }
 
-export const KERNEL_URL = pathToFileURL(kernelPath).href;
+/** Write `text` to `path` through a same-directory temp file + rename (a concurrent run never reads a half file). */
+function writeAtomic(path, text) {
+    const tmp = path + '.' + process.pid + '.tmp';
+    writeFileSync(tmp, text);
+    renameSync(tmp, path);
+}
+
+let nearwrap = null;
+let loadPath = kernelPath;
+if (envNearwrap !== undefined) {
+    let opts, d, watchBytes;
+    try {
+        opts = parseNearwrap(envNearwrap);
+        d = derive(readFileSync(kernelPath, 'utf8'), { phase: opts.phase, k: opts.k });
+        watchBytes = readFileSync(baseWatch);
+    } catch (e) {
+        if (e instanceof SoakConfigError) configExit(e.message);
+        throw e;
+    }
+    const watchSha = createHash('sha256').update(watchBytes).digest('hex');
+    const dir = join(ROOT, 'bench', 'soak', 'out', 'nearwrap', d.derivedSha256.slice(0, 7) + '-' + watchSha.slice(0, 7));
+    try {
+        mkdirSync(dir, { recursive: true });
+        writeAtomic(join(dir, 'Signal.js'), d.text);
+        writeAtomic(join(dir, 'Watch.js'), watchBytes);
+    } catch (e) {
+        configExit('SOAK_NEARWRAP: cannot write the derived kernel to ' + dir + ': ' + String(e && e.message ? e.message : e).split('\n')[0]);
+    }
+    loadPath = realpathSync(join(dir, 'Signal.js'));
+    nearwrap = Object.freeze({
+        phase: opts.phase, k: opts.k, rewrites: Object.freeze(d.rewrites.map((r) => Object.freeze(r))),
+        baseSha256: d.baseSha256, derivedSha256: d.derivedSha256,
+    });
+}
+export const KERNEL_NEARWRAP = nearwrap;
+export const KERNEL_DIR = dirname(loadPath);
+const watchPath = join(KERNEL_DIR, 'Watch.js');
+
+export const KERNEL_URL = pathToFileURL(loadPath).href;
 
 let mod;
 try {
     mod = await import(KERNEL_URL);
 } catch (e) {
-    configExit('SOAK_KERNEL: kernel failed to load: ' + String(e && e.message ? e.message : e).split('\n')[0]);
+    configExit((nearwrap !== null ? 'SOAK_NEARWRAP: derived ' : 'SOAK_KERNEL: ') + 'kernel failed to load: ' + String(e && e.message ? e.message : e).split('\n')[0]);
 }
-if (typeof mod.createRegistry !== 'function') configExit('SOAK_KERNEL: ' + kernelPath + ' does not export createRegistry()');
+if (typeof mod.createRegistry !== 'function') configExit('SOAK_KERNEL: ' + loadPath + ' does not export createRegistry()');
 export const K = mod;
 
 function sha256(path) {
     return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 export const KERNEL_FILES = Object.freeze([
-    Object.freeze({ path: kernelPath, sha256: sha256(kernelPath) }),
+    Object.freeze({ path: loadPath, sha256: sha256(loadPath) }),
     Object.freeze({ path: watchPath, sha256: sha256(watchPath) }),
 ]);
 

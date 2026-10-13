@@ -144,7 +144,7 @@ Config comment: config.mjs:50-56 (the CHECK_FLOOR note).
 cycle and world seeds and every failure's known tag with the SAME code that judged the run (gates.mjs, divergences,
 main's BreachLog, seeds). Exact key sets per record type are checked (SoakReport.mjs:1-83, the header comment). Exit 0 = consistent
 (`verdict <V> (consistent)`, any V); exit 1 = `INTEGRITY -- <class>` in fixed precedence (stream, header, cycles,
-summary), or consistent but `NOT A RELEASE SOAK -- mustfail|smoke|non-lite|overridden-kernel|tree-parity|lane-subset|volume|provenance`; CRASH is a
+summary), or consistent but `NOT A RELEASE SOAK -- mustfail|smoke|non-lite|nearwrap|overridden-kernel|tree-parity|lane-subset|volume|provenance`; CRASH is a
 report bug; exit 2 = CONFIG. Control kernels (controls.json pins) re-derive consistent, print `NOTE -- control kernel
 <name>, not release evidence`; a pinned control skips the tree release policy (tree-parity, lane-subset, volume,
 provenance) and exits 0 unless mustfail / smoke / non-lite refuses it first (SoakReport.mjs:510-514). Release
@@ -231,7 +231,8 @@ MUSTFAIL_LIST=1 builds all and runs none; MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=
   not just unlisted.
 - Orchestrator rulings: test numbering is test/48 (group A), test/49 and test/50 (group B); spinVersion lives in a new
   helpers/spin.mjs, not helpers/index.mjs (that file is pinned by calibrate.mjs, so an edit forces a recut); one
-  SCHEMA_VERSION bump (1 -> 2) and one parity.json re-pin rung for all of S2.
+  SCHEMA_VERSION bump (1 -> 2, rides group A's A-B2p); per-rung parity.json re-pin (every rung that edits a pinned
+  file re-pins in the same batch; SPEC-B item 12 ruling 12a).
 - Baseline volume rule (bench/soak/baseline.mjs header): INCOMPATIBLE covers schemaVersion / genVersion / SOAK_ENGINE /
   SOAK_SMOKE mismatches, an unparseable host field, and a SOAK_OPS or SOAK_CYCLES that is out of range or not an
   integer (null / NaN / string: reason config). A merely DIFFERENT volume is never INCOMPATIBLE: it joins the D-B4

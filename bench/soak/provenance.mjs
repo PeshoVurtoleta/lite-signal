@@ -3,7 +3,7 @@
  *
  * buildHeader(cfg, extras) gathers everything needed to COMPARE two runs: schema, generator and package
  * versions, git SHA and dirty flag, the sha256 of the RESOLVED kernel files (Signal.js AND Watch.js), the
- * matching control name, the parity result, Node/V8/execArgv, the host (including loadavg: PLAN 0.5, a busy
+ * matching control name, the NEARWRAP derivation (null when none), the parity result, Node/V8/execArgv, the host (including loadavg: PLAN 0.5, a busy
  * host invalidates timing), every config key with its source, every constant (gatesBlock), and the timer floor.
  *
  * Unknown is null, never a fabricated value: gitSha null + gitError when git fails; gitDirty null when the
@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import os from 'node:os';
 import { SCHEMA_VERSION, GEN_VERSION, gatesBlock, configExit } from './config.mjs';
-import { KERNEL_URL, KERNEL_OVERRIDE, KERNEL_FILES, KERNEL_KNOWN_AS, CONTROLS_ERROR } from './kernel.mjs';
+import { KERNEL_URL, KERNEL_OVERRIDE, KERNEL_FILES, KERNEL_KNOWN_AS, CONTROLS_ERROR, KERNEL_NEARWRAP } from './kernel.mjs';
 import { checkParity } from './parity.mjs';
 import { SEED_FORMULA, WORLD_SEED_FORMULA, remapCollision } from './seeds.mjs';
 
@@ -143,6 +143,8 @@ export function buildHeader(cfg, extras) {
             override: KERNEL_OVERRIDE,
             files: KERNEL_FILES.map((f) => ({ path: f.path, sha256: f.sha256 })),
         },
+        // null, or the NEARWRAP kernel this run loaded: {phase, k, rewrites, baseSha256, derivedSha256} (kernel.mjs)
+        nearwrap: KERNEL_NEARWRAP === null ? null : JSON.parse(JSON.stringify(KERNEL_NEARWRAP)),
         engine: x.engine,
         parity: { ok: parity.ok, mismatched: parity.mismatched.map((m) => m.file), error: parity.error },
         controls: { name: KERNEL_KNOWN_AS, error: CONTROLS_ERROR },

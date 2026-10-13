@@ -15,12 +15,14 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, copyFileSync, writeFileSync, rmSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, copyFileSync, writeFileSync, rmSync, readFileSync, unlinkSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as CFG from '../bench/soak/config.mjs';
 import { PARITY_FILES } from '../bench/soak/parity.mjs';
+import { derive as nwDerive } from '../bench/soak/nearwrap.mjs';
+import { createHash } from 'node:crypto';
 // lanes/index.mjs is kernel-free (gen-side only): the cov-off universe is IMPORTED, never copied.
 import { COV_OFF_SUPPORTED } from '../bench/soak/lanes/index.mjs';
 
@@ -410,7 +412,7 @@ function provenanceCopy() {
     mkdirSync(soak, { recursive: true });
     // The entry's runtime modules, plus EVERY parity-pinned file (the same rule as test/40 parityLayout), so
     // the copy cannot go stale when PARITY_FILES grows.
-    const runtime = ['config.mjs', 'kernel.mjs', 'provenance.mjs', 'parity.mjs', 'seeds.mjs', 'jsonl.mjs', 'controls.json']
+    const runtime = ['config.mjs', 'kernel.mjs', 'nearwrap.mjs', 'provenance.mjs', 'parity.mjs', 'seeds.mjs', 'jsonl.mjs', 'controls.json']
         .map((x) => 'bench/soak/' + x);
     for (const rel of new Set(runtime.concat(PARITY_FILES))) {
         mkdirSync(dirname(join(dir, rel)), { recursive: true });
@@ -930,4 +932,88 @@ test('B6 TAINT_SKIP_MAX separates: every clean cell at or below it, the headpatc
     assert.equal(B6_COV.length, 17);
     // 1.5.2: the same cov-off reads inside the clean band, so taint cannot separate it; coverage does (0 hits)
     for (const c of B6_DOC.covOffSweep.cells['lite-1.5.2:NEST:saved-cursor-hazard']) assert.ok(c.hits < CFG.SCEN_MIN_SMOKE, JSON.stringify(c));
+});
+
+/* ---- S2 A-B2p (DELTA 1 task 9 / 10, assertions D3 + D4): SCHEMA_VERSION 2, SOAK_NEARWRAP, header.nearwrap ---- */
+
+const NW_REPORT = join(SOAK, 'SoakReport.mjs');
+const NW_WRAP = join(SOAK, 'wrap.mjs');
+const nwRecs = (out) => readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+
+test('D3 schema: SCHEMA_VERSION is 2; a default header carries schemaVersion 2, nearwrap null, config.SOAK_NEARWRAP {null, default}', () => {
+    assert.equal(CFG.SCHEMA_VERSION, 2);
+    assert.ok(CFG.KNOWN_KEYS.includes('SOAK_NEARWRAP'));
+    assert.deepEqual(P({}).record.SOAK_NEARWRAP, { value: null, source: 'default' });
+    assert.equal(P({}).nearwrap, null);
+    const r = run({ SOAK_LANES: 'GRAPH', SOAK_KERNEL: join(HP, 'Signal.js') }, { entry: 'inline' });
+    assert.equal(r.status, 3, r.stderr);
+    const h = nwRecs(r.out)[0];
+    assert.equal(h.schemaVersion, 2);
+    assert.ok(Object.prototype.hasOwnProperty.call(h, 'nearwrap'), 'header.nearwrap is present');
+    assert.equal(h.nearwrap, null);
+    assert.deepEqual(h.config.SOAK_NEARWRAP, { value: null, source: 'default' });
+    for (const k of ['SEMI_SPACE_MB', 'WRAP_CHUNK', 'NS_K_CYCLE', 'WRAP_MAX_NODES', 'W4_SAMPLE_MASK', 'REPR_TIMEOUT_MS', 'BASELINE_MAX_BYTES', 'NEARWRAP_K_MAX']) {
+        assert.equal(h.gates[k], CFG[k], 'gates.' + k);
+    }
+    assert.deepEqual([CFG.SEMI_SPACE_MB, CFG.WRAP_CHUNK, CFG.NS_K_CYCLE, CFG.WRAP_MAX_NODES, CFG.W4_SAMPLE_MASK, CFG.REPR_TIMEOUT_MS, CFG.BASELINE_MAX_BYTES, CFG.NEARWRAP_K_MAX],
+        [4, 2 ** 24, 4096, 64, 0xFFFFF, 600000, 8192, 64]);
+});
+
+test('D4 SOAK_NEARWRAP: sign:0, sign:65, up:8, sign:08 (and empty, zero:-1, sign:8 with a space) exit 2 in config AND in kernel.mjs alone', () => {
+    for (const bad of ['sign:0', 'sign:65', 'up:8', 'sign:08', '', 'zero:-1', 'sign: 8', 'sign:8 ']) {
+        rejects({ SOAK_NEARWRAP: bad }, "SOAK_NEARWRAP='" + bad + "'");
+    }
+    rejects({ SOAK_NEARWRAP: 'sign:65' }, 'k must be in [1, 64]');
+    for (const bad of ['sign:0', 'sign:65', 'up:8', 'sign:08']) {
+        assertConfigExit(run({ SOAK_NEARWRAP: bad }), ["SOAK_NEARWRAP='" + bad + "'"]);
+        assertConfigExit(run({ SOAK_NEARWRAP: bad }, { entry: 'kernel' }), ["SOAK_NEARWRAP='" + bad + "'"]);
+    }
+    // positive control: the edges parse
+    assert.deepEqual(P({ SOAK_NEARWRAP: 'sign:1' }).nearwrap, { phase: 'sign', k: 1 });
+    assert.deepEqual(P({ SOAK_NEARWRAP: 'zero:64' }).record.SOAK_NEARWRAP, { value: { phase: 'zero', k: 64 }, source: 'env' });
+});
+
+test('D4 NEARWRAP sign:8 end to end: header.nearwrap.derivedSha256 == kernel.files[0].sha256; soak:report exits 1 NOT A RELEASE SOAK -- nearwrap, never 0', () => {
+    const r = run({ SOAK_NEARWRAP: 'sign:8', SOAK_LANES: 'GRAPH', SOAK_CYCLES: '11', SOAK_OPS: '20000' }, { extraEnv: {} });
+    assert.ok(r.status === 0 || r.status === 1, 'the run completes (exit ' + r.status + ')\n' + r.stderr);
+    const h = nwRecs(r.out)[0];
+    assert.equal(h.schemaVersion, 2);
+    assert.equal(h.nearwrap.phase, 'sign');
+    assert.equal(h.nearwrap.k, 8);
+    assert.equal(h.nearwrap.derivedSha256, h.kernel.files[0].sha256, 'the loaded kernel IS the derived one');
+    assert.notEqual(h.nearwrap.derivedSha256, h.nearwrap.baseSha256);
+    assert.ok(h.nearwrap.rewrites.length >= 3 && h.nearwrap.rewrites.every((x) => x.to === String(2 ** 31 - 8)), JSON.stringify(h.nearwrap.rewrites));
+    assert.equal(h.kernel.override, false);
+    assert.deepEqual(h.config.SOAK_NEARWRAP, { value: { phase: 'sign', k: 8 }, source: 'env' });
+    const rep = spawnSync(process.execPath, [NW_REPORT, r.out], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(rep.status, 1, rep.stderr);
+    assert.match(rep.stderr, /^soak:report: NOT A RELEASE SOAK -- nearwrap: sign:8 -- /m, 'the NEARWRAP reason fires first (before tree-parity)');
+});
+
+test('D4 SOAK_NEARWRAP with a non-lite SOAK_ENGINE exits 2 (config, and kernel.mjs on its own)', () => {
+    const env = { SOAK_NEARWRAP: 'sign:8', SOAK_ENGINE: 'polyfill' };
+    assertConfigExit(run(env), ['SOAK_NEARWRAP derives the lite kernel', "SOAK_ENGINE='polyfill'"]);
+    assertConfigExit(run(env, { entry: 'kernel' }), ['SOAK_NEARWRAP derives the lite kernel', "SOAK_ENGINE='polyfill'"]);
+});
+
+test('D4 the wrap job refuses a NEARWRAP kernel: wrap.mjs with SOAK_NEARWRAP=zero:63 exits 2 before anything is derived or written', () => {
+    const src = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
+    const d = nwDerive(src, { phase: 'zero', k: 63 });
+    const wsha = createHash('sha256').update(readFileSync(join(ROOT, 'Watch.js'))).digest('hex');
+    const NWROOT = join(SOAK, 'out', 'nearwrap');
+    const nwDir = join(NWROOT, d.derivedSha256.slice(0, 7) + '-' + wsha.slice(0, 7));
+    // any folder named for this derived kernel, under any naming scheme (<sha7> or <sha7>-<watch sha7>)
+    const derivedDirs = () => (existsSync(NWROOT) ? readdirSync(NWROOT) : []).filter((n) => n.indexOf(d.derivedSha256.slice(0, 7)) === 0);
+    for (const n of derivedDirs()) rmSync(join(NWROOT, n), { recursive: true, force: true });
+
+    const env = {};
+    for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_OPTIONS' && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
+    const out = join(TMP, 'nw-wrap.jsonl');
+    Object.assign(env, { SOAK_NEARWRAP: 'zero:63', SOAK_WRAP: 'W1', SOAK_OUT: out });
+    const w = spawnSync(process.execPath, ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4', NW_WRAP], { cwd: ROOT, env, encoding: 'utf8', timeout: 60000 });
+    assert.equal(w.status, 2, w.stderr);
+    assert.match(w.stderr, /^soak: CONFIG -- the wrap job drives the real kernel; a NEARWRAP kernel is refused$/m);
+    assert.equal(existsSync(out), false, 'no stream');
+    assert.equal(existsSync(nwDir), false, 'no derived kernel written: ' + nwDir);
+    assert.deepEqual(derivedDirs(), [], 'no derived kernel written under any name');
 });
