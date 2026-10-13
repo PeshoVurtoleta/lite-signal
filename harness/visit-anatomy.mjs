@@ -1,7 +1,8 @@
 // visit-anatomy.mjs
 // Counts what the engine actually DOES per operation -- an Int32-counter-
-// instrumented copy of ../Signal.js generated at RUN TIME from the current
-// source (never a stale snapshot), driven by LCG-deterministic shapes. Where
+// instrumented copy of ../Signal.js (or of the one file named by --engine)
+// generated at RUN TIME from the current source (never a stale snapshot),
+// driven by LCG-deterministic shapes. Where
 // creation-anatomy decomposes the birth tax in nanoseconds, this decomposes
 // the VISIT tax in exact structural counts: cursor hits vs link allocations,
 // mark stamps vs edges walked, clean-short-circuit hits vs dep walks vs
@@ -18,9 +19,14 @@
 // an anchor vanishes (or multiplies), the tool refuses to run rather than
 // reporting half-instrumented numbers. The instrumented copy is written to
 // the system temp dir and imported from there; ../Signal.js is never touched.
+// instrument(src) (./visit-anchors.mjs) is PURE (string in, string out, no
+// fs): it reads no sibling file, so a frozen kernel is measured as exactly
+// that one file.
 //
 // Usage: node harness/visit-anatomy.mjs             # report counters + rates
 //        node harness/visit-anatomy.mjs --verify    # exact-count gate (exit 1 on drift)
+//        ... --engine <Signal.js>                   # instrument THAT file instead of
+//                                                   # ../Signal.js (unreadable -> exit 2)
 //
 // DIAGNOSTIC (default mode) -- the --verify pins are the one gate surface.
 
@@ -28,105 +34,64 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import { I, instrument } from "./visit-anchors.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const VERIFY = process.argv.includes("--verify");
-
-/* -- counter map -------------------------------------------------------------- */
-const NAMES = [
-    "cursorHit",      // 0  read fast path: cursor reused the existing link (x4 sites)
-    "linkAlloc",      // 1  link actually WIRED (past allocateLink's abort + same-pass dedup)
-    "linkFree",       // 2  freeLink entry (sever)
-    "markStamp",      // 3  markDownstream stamped a node's markEpoch (first visit this write)
-    "markEdge",       // 4  markDownstream walked one subscriber edge
-    "scHit",          // 5  pullComputed CLEAN SHORT-CIRCUIT hit (the 1.5.0 markEpoch gate)
-    "pullTotal",      // 6  pullComputed entries
-    "pullCacheHit",   // 7  pullComputed same-globalVersion cache hit
-    "recompute",      // 8  pullComputed actually re-ran the body
-    "eqDispatch",     // 9  `const eq = node.equals` dispatch sites (x3)
-    "effectExec",     // 10 executeEffect entries
-    "depWalk",        // 11 dep-validation edges walked (pullComputed + executeEffect needsRun loops)
-];
-const IDX = Object.fromEntries(NAMES.map((n, i) => [i, n]));
-const I = Object.fromEntries(NAMES.map((n, i) => [n, i]));
-
-/* -- injection ---------------------------------------------------------------- */
-// [anchor, replacement, expectedOccurrences]. Replacement PREPENDS the count
-// so the anchor's own semantics are untouched.
-const bump = (i) => `__VC[${i}]++; `;
-const EDITS = [
-    [`const FLAG_COMPUTED = 1 << 0;`,
-        `const __VC = new Int32Array(16);\nglobalThis.__VISIT__ = __VC;\nconst FLAG_COMPUTED = 1 << 0;`, 1],
-    [`activeObserverCurrentDep = expected.nextDep;`,
-        `${bump(I.cursorHit)}activeObserverCurrentDep = expected.nextDep;`, 4],
-    // linkAlloc counts links actually WIRED, not allocateLink calls: the entry
-    // point aborts on dead targets and dedups same-pass re-reads before any
-    // pool work (2026-08 review LOW: entry counting skewed the cursor-hit rate
-    // on shapes that read one source twice in a pass).
-    [`        let link;
-        if (freeLinkHead === null) {`,
-        `        ${bump(I.linkAlloc)}let link;
-        if (freeLinkHead === null) {`, 1],
-    // depWalk counts dep-validation EDGES in both walks (pullComputed's stale
-    // check and executeEffect's needsRun check). THE fall-through witness
-    // (2026-08 review HIGH): scHit counts short-circuit branch ENTRIES, so a
-    // mutant that guts the branch BODY (drops its return, anchors intact)
-    // keeps scHit green while every clean read silently pays the O(deps)
-    // walk -- which this counter sees exactly.
-    [`                const dep = link.source;
-                if ((dep.flags & FLAG_COMPUTED) !== 0) pullComputed(dep);`,
-        `                ${bump(I.depWalk)}const dep = link.source;
-                if ((dep.flags & FLAG_COMPUTED) !== 0) pullComputed(dep);`, 2],
-    // The tree's Watch.js would import the tree's UNINSTRUMENTED Signal.js --
-    // a second counter-free engine silently reachable through E.watch. Strip
-    // the re-export: any shape touching it crashes loudly instead.
-    [`export {watch, when, whenAsync} from "./Watch.js";`,
-        `// visit-anatomy: watch/when/whenAsync re-export STRIPPED (would bind a second, uninstrumented engine)`, 1],
-    [`function freeLink(link, target, source) {`,
-        `function freeLink(link, target, source) { ${bump(I.linkFree)}`, 1],
-    [`                if (t.markEpoch !== gv) {`,
-        `                ${bump(I.markEdge)}if (t.markEpoch !== gv) { ${bump(I.markStamp)}`, 1],
-    [`if (node.evalVersion !== 0 && ((node.markEpoch - node.evalVersion) | 0) <= 0) {`,
-        `if (node.evalVersion !== 0 && ((node.markEpoch - node.evalVersion) | 0) <= 0) { ${bump(I.scHit)}`, 1],
-    [`function pullComputed(node) {`,
-        `function pullComputed(node) { ${bump(I.pullTotal)}`, 1],
-    [`        if (node.evalVersion === globalVersion) {`,
-        `        if (node.evalVersion === globalVersion) { ${bump(I.pullCacheHit)}`, 1],
-    [`runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute`,
-        `${bump(I.recompute)}runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute`, 1],
-    [`const eq = node.equals;`,
-        `${bump(I.eqDispatch)}const eq = node.equals;`, 3],
-    [`function executeEffect(node) {`,
-        `function executeEffect(node) { ${bump(I.effectExec)}`, 1],
-];
-
-// markEdge counts EDGES WALKED, but the anchor sits inside the epoch check --
-// correction: it must count every loop iteration. The anchor above prepends
-// the edge bump BEFORE `if (t.markEpoch ...)`, which executes once per edge
-// walked: correct.
-
-const srcPath = join(HERE, "../Signal.js");
-let src = readFileSync(srcPath, "utf8");
-const missing = [];
-for (const [anchor, replacement, expected] of EDITS) {
-    const n = src.split(anchor).length - 1;
-    if (n !== expected) { missing.push(`"${anchor.slice(0, 48)}..." found ${n}x, expected ${expected}x`); continue; }
-    src = src.split(anchor).join(replacement);
+// STRICT argv: `--verify` at most once, `--engine <file>` at most once,
+// nothing else. A misspelt `--verfy` would otherwise run the diagnostic
+// mode and exit 0 (no gate), and `--engine=<file>`, a positional or a second
+// --engine would measure a different engine than the caller named. Every
+// rejection exits 2 before anything is read or written.
+const argFail = (msg) => { console.error(`visit-anatomy: ${msg}`); process.exit(2); };
+let VERIFY = false;
+let ENGINE_ARG = null;
+for (let ai = 2; ai < process.argv.length; ai++) {
+    const a = process.argv[ai];
+    if (a === "--verify") {
+        if (VERIFY) argFail(`duplicate argument "--verify"`);
+        VERIFY = true;
+    } else if (a === "--engine") {
+        // The value must be present and not another flag -- a bare `--engine`
+        // fails closed rather than silently measuring ../Signal.js under a
+        // header that claims otherwise.
+        if (ENGINE_ARG !== null) argFail(`duplicate argument "--engine" (exactly one engine per run)`);
+        const v = process.argv[++ai];
+        if (typeof v !== "string" || v === "" || v.startsWith("--")) argFail("--engine needs a Signal.js path");
+        ENGINE_ARG = v;
+    } else {
+        argFail(`unknown argument ${JSON.stringify(a)} (did you mean ${a.startsWith("--v") ? "--verify" : "--engine <path>"}?)`);
+    }
 }
-if (missing.length) {
-    console.error("visit-anatomy: INSTRUMENTATION ANCHORS DRIFTED -- refusing to run half-instrumented:");
-    for (const m of missing) console.error("  " + m);
-    console.error("Update the EDITS table against the current Signal.js before trusting any output.");
+
+/* -- counter map + injection: ./visit-anchors.mjs --------------------------- */
+// NAMES / EDITS / instrument() live there (pure, no fs); this file reads the
+// engine, runs the shapes and owns the pins.
+
+const sha256 = (text) => createHash("sha256").update(text, "utf8").digest("hex");
+const srcPath = ENGINE_ARG === null ? join(HERE, "../Signal.js") : ENGINE_ARG;
+let src;
+try { src = readFileSync(srcPath, "utf8"); } catch (e) {
+    console.error(`visit-anatomy: cannot read engine ${srcPath} (${e.code || e.message})`);
     process.exit(2);
 }
-
-// The generated copy lives outside the repo, so its relative sibling imports
-// (./Watch.js) must be rewritten to absolute URLs back into the tree.
-src = src.replace(/from "\.\/([^"]+)"/g, (_, rel) => `from ${JSON.stringify(pathToFileURL(join(HERE, "..", rel)).href)}`);
+let gen;
+try { gen = instrument(src); } catch (e) {
+    if (Array.isArray(e.drift)) {
+        console.error("visit-anatomy: INSTRUMENTATION ANCHORS DRIFTED -- refusing to run half-instrumented:");
+        for (const m of e.drift) console.error("  " + m);
+        console.error("Update the EDITS table against the current Signal.js before trusting any output.");
+    } else {
+        console.error(e.message);
+    }
+    process.exit(2);
+}
+const SRC_SHA = sha256(src);
+const GEN_SHA = sha256(gen);
 
 const genDir = mkdtempSync(join(tmpdir(), "visit-anatomy-"));
 const genPath = join(genDir, "Signal.instrumented.mjs");
-writeFileSync(genPath, src);
+writeFileSync(genPath, gen);
 process.on("exit", () => { try { rmSync(genDir, { recursive: true, force: true }); } catch { /* best effort */ } });
 const E = await import(pathToFileURL(genPath).href);
 const VC = globalThis.__VISIT__;
@@ -262,7 +227,10 @@ for (const [name, run] of Object.entries(SHAPES)) {
 }
 
 console.log("visit anatomy -- exact structural counters per shape (instrumented engine, LCG-deterministic)");
-console.log(`engine: ../Signal.js @ ${JSON.parse(readFileSync(join(HERE, "../package.json"), "utf8")).version} (tree), instrumented copy in ${genDir}`);
+// Content hashes, not a path / version / temp dir: the header is identical
+// for identical bytes, so a capture is a golden and a different engine (or a
+// different EDITS table) differs on this line even when every count agrees.
+console.log(`engine: Signal.js sha256 ${SRC_SHA} instrumented sha256 ${GEN_SHA}`);
 console.log();
 const COLS = ["cursorHit", "linkAlloc", "linkFree", "markStamp", "markEdge", "scHit", "pullTotal", "pullCacheHit", "recompute", "eqDispatch", "effectExec", "depWalk"];
 console.log("  " + "shape".padEnd(16) + COLS.map((c) => c.padStart(13)).join(""));

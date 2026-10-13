@@ -1,0 +1,190 @@
+{
+  "schema": 1,
+  "about": "Burst 31 (group B, B-B2) golden for harness/visit-anatomy.mjs after the single-line depWalk anchor (T1) and the extraction of the counter map + instrument() into harness/visit-anchors.mjs (T4). Commands: node harness/visit-anatomy.mjs (-> visit-anatomy.txt) and node harness/visit-anatomy.mjs --verify (-> visit-anatomy-verify.txt), run from the repo root of a tree whose Signal.js is the f29k3 kernel; capture rule: `node T args > f 2>&1; echo \"exit=$?\" >> f` (stdout+stderr merged into a file, never a pipe, then an exit=<n> line). Nothing is stripped: the tool is untimed and line 2 carries only content hashes (engine sha256 + instrumented-copy sha256), so the capture is byte-stable. Golden cut from the frozen scratch tree g1 (T1 tool + f29k3 kernel), two runs per mode, cmp-identical.",
+  "goldenFiles": {
+    "visit-anatomy.txt": "c4b0825484a06ed55ee7a0049bae9e9073e209d6a56a2120e21c5bd7c047d43f",
+    "visit-anatomy-verify.txt": "8aa9ae4d74b3d33f7901631ea6332f764326545b5a64f8443078fb1336c7ef65"
+  },
+  "header": {
+    "engineSha256": "0ed7c8e2611786de3840aa61428d701acdd6ab2cc76740c70eb26da88c1ff412",
+    "instrumentedSha256": "817e044ae6268acee0952c10d1e3b88d8ea14d614f26860aa1e3ac3efe3000ec"
+  },
+  "pins": 21,
+  "kernels": {
+    "wt0": "7f707ccdd5302d1ab18d4178d7e21219f5491524dca9e380f8576c1ac36f0275",
+    "a1r4": "bfd063e5773c550887535059bbf6934f8058d0f60337de0686b89e156a678b1a",
+    "f29k3": "0ed7c8e2611786de3840aa61428d701acdd6ab2cc76740c70eb26da88c1ff412",
+    "f29k3Note": "f29k3 == live Signal.js == git show HEAD:Signal.js (HEAD 2f46324)"
+  },
+  "tools": {
+    "head": {
+      "visit-anatomy.mjs": "c4c33d4e700518aaf67fbfc8dd1ba2943bd24d6fdb660e5f45f89e011c85c81b"
+    },
+    "t1": {
+      "visit-anatomy.mjs": "040237066d1481f5ceda6991d425c87566d1a9815daf0231d56541a828adb873"
+    },
+    "t4": {
+      "visit-anatomy.mjs": "6d235ac88159d0409fb79018aa0542e61c821a71ccf7dd961149e920096f5d3d",
+      "visit-anchors.mjs": "4b27fd0094ad82507a984ac7341ca5a0f7b9deba8aa2f76d52961576d898b606"
+    },
+    "fixRound1": {
+      "visit-anatomy.mjs": "e62b72e0442dba1d580c6ac39070ff0650462d2460c0ce300e436d8168bdddd5",
+      "visit-anchors.mjs": "39f1b64e3568c7a885628bdc38e788fa18f1cf45335c0cfeae83744c041f27ab",
+      "note": "review round 1 REJECTED: strict argv (unknown / --engine=... / positional / duplicate -> exit 2 before any read); visit-anchors comment truth only. Final tool. Fix round 1b: instrument() relative-import error text + RELATIVE_IMPORT comment made true (resolves against the copy's dir); golden cmp live both modes ==, rel control exit 2."
+    }
+  },
+  "runs": {
+    "head-f29k3-default": {
+      "exit": 2,
+      "outputSha256": "d2bb8907a2c14bbc013156b7bc8048a610fbc64c9f5ef38f44afea124558aa1c",
+      "result": "depWalk two-line anchor found 0x, expected 2x"
+    },
+    "head-f29k3-verify": {
+      "exit": 2,
+      "outputSha256": "d2bb8907a2c14bbc013156b7bc8048a610fbc64c9f5ef38f44afea124558aa1c",
+      "result": "depWalk two-line anchor found 0x, expected 2x"
+    },
+    "head-wt0-default": {
+      "exit": 0,
+      "outputSha256": "d9e539938fd2eef93897397908767803c80b135ea1d497c2c8f879d01c489f39",
+      "note": "line 2 names a random temp dir"
+    },
+    "head-wt0-verify": {
+      "exit": 0,
+      "outputSha256": "5f9142834033f5e83e918221a91cee4eed01c0f9a458adf781170e32e2d3d678",
+      "result": "VERIFY PASSED 21"
+    },
+    "t1-wt0-default": {
+      "exit": 0,
+      "outputSha256": "d942af7118ea39b6357de69b166f720c62cfcb4f6561064bb5e7a922614add84",
+      "parity": "identical to head-wt0-default except line 2"
+    },
+    "t1-wt0-verify": {
+      "exit": 0,
+      "outputSha256": "c2b1c2fb0f63267647c112444489899de46f3696058412679229767ca64da713",
+      "parity": "identical to head-wt0-verify except line 2"
+    },
+    "t1-engine-wt0-verify": {
+      "exit": 0,
+      "outputSha256": "c2b1c2fb0f63267647c112444489899de46f3696058412679229767ca64da713",
+      "result": "VERIFY PASSED 21"
+    },
+    "t1-engine-a1r4-verify": {
+      "exit": 0,
+      "outputSha256": "13e3c44ab51c0d7dc3826fc01dae7f89348a4a0b9e83bac25dad0b7c450fab25",
+      "result": "VERIFY PASSED 21"
+    },
+    "t1-engine-f29k3-verify": {
+      "exit": 0,
+      "outputSha256": "8aa9ae4d74b3d33f7901631ea6332f764326545b5a64f8443078fb1336c7ef65",
+      "result": "VERIFY PASSED 21"
+    },
+    "g1-default-x2": {
+      "exit": 0,
+      "outputSha256": "c4b0825484a06ed55ee7a0049bae9e9073e209d6a56a2120e21c5bd7c047d43f",
+      "cmp": "identical"
+    },
+    "g1-verify-x2": {
+      "exit": 0,
+      "outputSha256": "8aa9ae4d74b3d33f7901631ea6332f764326545b5a64f8443078fb1336c7ef65",
+      "cmp": "identical"
+    },
+    "g4-default-x2": {
+      "exit": 0,
+      "outputSha256": "c4b0825484a06ed55ee7a0049bae9e9073e209d6a56a2120e21c5bd7c047d43f",
+      "cmp": "== golden"
+    },
+    "g4-verify-x2": {
+      "exit": 0,
+      "outputSha256": "8aa9ae4d74b3d33f7901631ea6332f764326545b5a64f8443078fb1336c7ef65",
+      "cmp": "== golden"
+    },
+    "live-default": {
+      "exit": 0,
+      "outputSha256": "c4b0825484a06ed55ee7a0049bae9e9073e209d6a56a2120e21c5bd7c047d43f",
+      "cmp": "== golden"
+    },
+    "live-verify": {
+      "exit": 0,
+      "outputSha256": "8aa9ae4d74b3d33f7901631ea6332f764326545b5a64f8443078fb1336c7ef65",
+      "cmp": "== golden"
+    },
+    "fix1-red-t4-bad-args": {
+      "tool": "t4",
+      "result": "exit 0 on all 6: --engine=<a1r4> --verify (measured 0ed7c8e2, not a1r4), --verfy (no gate), --engine wt0 --engine a1r4 --verify (measured wt0), positional <a1r4> --verify, --verify --verify, --engine a1r4 --engine a1r4"
+    },
+    "fix1-green-bad-args": {
+      "tool": "fixRound1 (final, anchors 39f1b64e)",
+      "result": "exit 2 on all 6 (unknown argument / duplicate argument), tmp dir count 0 -> 0; outputs cmp-equal to the pre-1b fix-round-1 capture"
+    },
+    "fix1-golden-cmp": {
+      "tool": "fixRound1 (final, anchors 39f1b64e)",
+      "result": "== golden in both modes: live tree no --engine; live tool --engine absolute f29k3; live tool --engine cwd-relative f29k3. Frozen g5 (pre-1b anchors c0b0d32f) also == golden x2 per mode"
+    },
+    "fix1-kernels-verify": {
+      "tool": "fixRound1 (final, anchors 39f1b64e)",
+      "result": "VERIFY PASSED 21 on wt0, a1r4, f29k3; wt0 and a1r4 outputs cmp-equal to the t1-engine runs"
+    },
+    "fix1-mustFail": {
+      "tool": "fixRound1 (final, anchors 39f1b64e)",
+      "result": "sc exit 1 (unrelated-read.depWalk 640,000), del/dup/dbl exit 2; sc/del/dup/dbl outputs cmp-equal to the t4 captures. rel exit 2 with the fix-1b refusal text (\"...resolves against the copy's dir: a crash in an empty temp dir, an uninstrumented sibling module if that dir has one\"); differs from the t4 capture on line 1 only"
+    }
+  },
+  "mustFail": {
+    "sc": {
+      "kernelSha256": "39aa9fb4ab696cad628d086b4b4e6ffacc741ace1d7dae6faa3845687d99f253",
+      "mutation": "f29k3 with the clean short-circuit's `return node.value;` deleted (anchors intact)",
+      "exit": 1,
+      "result": "VERIFY FAIL: unrelated-read.depWalk = 640,000, pinned 0 (only failing pin; scHit stays 640,000)"
+    },
+    "del": {
+      "kernelSha256": "f625ee20a097b7eca6bcdb384b0aefbaf0b7e80488c208bcb69755ce8327c730",
+      "mutation": "f29k3 with the Watch.js re-export line deleted",
+      "exit": 2,
+      "result": "export {watch, when, whenAsync} anchor found 0x, expected 1x"
+    },
+    "dup": {
+      "kernelSha256": "126df5da27afa5a4cdc0efa47cab1725a422c80cd9e61ca27fb944279518e2d1",
+      "mutation": "f29k3 with a third `const dep = link.source;` line (dead block in executeEffect)",
+      "exit": 2,
+      "result": "depWalk anchor found 3x, expected 2x"
+    },
+    "rel": {
+      "kernelSha256": "b23a2970ddba2bcef53819e7cc2b61dca75dd2ecd16f41116041f5e686625399",
+      "mutation": "f29k3 with `import \"./Extra.js\";` added",
+      "exit": 2,
+      "result": "relative import survives instrumentation"
+    },
+    "dbl": {
+      "kernelSha256": "49048882e477de7b6d330ce25efff2d77a7cbdd83ef3d2d840992d304fc6c161",
+      "mutation": "f29k3 with the __VC counter declaration pre-inserted",
+      "exit": 2,
+      "result": "source is already instrumented (__VC present)"
+    },
+    "neutralBump": {
+      "anchorsSha256": "2d770edea8490ed6f9fff51cfa8adf0aaff530dac3dc298022552c46d40aa513",
+      "mutation": "visit-anchors.mjs bump `__VC[i]++; ` -> `__VC[i] += 1; `",
+      "exit": 0,
+      "result": "VERIFY PASSED 21, golden cmp FAILS on line 2 only (instrumented sha256 3af6b6303f52a6a8c7e2e4489183556e3d286980a77a154e645ba04040194721)"
+    },
+    "revertTwoLineAnchor": {
+      "anchorsSha256": "49f6142ed32ca109343692b175e01818b82e2bfb193544f87353fa22afb8163c",
+      "mutation": "visit-anchors.mjs depWalk entry reverted to HEAD's two-line anchor",
+      "exit": 2,
+      "result": "found 0x, expected 2x (output byte-identical to head-f29k3)"
+    },
+    "instrumentDirect": {
+      "result": "instrument(instrument(src)), a `from \"./` import, an `import(\"../` import, null and a Buffer all throw; a depWalk drift throws with .drift; instrument(src) twice returns equal strings"
+    }
+  },
+  "retention": "10 runs (exit 0 x3, exit 1 x2, exit 2 x5): tmpdir visit-anatomy-* count 0 -> 0, delta 0; teeth: a SIGKILLed run leaves exactly 1 (cleaned); final tool (fixRound1, anchors 39f1b64e): same 10 runs (exit 0 x3, 1 x2, 2 x5) + teeth, delta 0, SIGKILL teeth 1 (cleaned)",
+  "provenance": {
+    "date": "2026-10-13T22:56:16Z",
+    "node": "v26.8.2",
+    "uname": "Darwin 27.0.0",
+    "load": "1.28 1.83 2.22",
+    "otherNodeProcesses": "none found by ps",
+    "timed": false,
+    "runCount": "golden: 2 per mode on g1, 2 per mode on g4, 1 per mode live"
+  }
+}

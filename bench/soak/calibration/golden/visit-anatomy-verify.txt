@@ -1,0 +1,28 @@
+visit anatomy -- exact structural counters per shape (instrumented engine, LCG-deterministic)
+engine: Signal.js sha256 0ed7c8e2611786de3840aa61428d701acdd6ab2cc76740c70eb26da88c1ff412 instrumented sha256 817e044ae6268acee0952c10d1e3b88d8ea14d614f26860aa1e3ac3efe3000ec
+
+  shape               cursorHit    linkAlloc     linkFree    markStamp     markEdge        scHit    pullTotal pullCacheHit    recompute   eqDispatch   effectExec      depWalk
+  stable-deep            170000            0            0       170000       170000            0       320000       160000       160000       170000        10000       170000
+  broadcast             2560000            0            0      2560000      2560000            0      2560000      1280000      1280000      1290000      1280000      2560000
+  branch-flip             20000        40000        40000        20000        20000            0        20000        10000        10000        20000        10000        20000
+  unrelated-read              0            0            0            0            0       640000       640000            0            0        10000            0            0
+  error-transparency            0            0            0            0            0        10000        10000            0            0        10000            0            0
+  diamond                 50000            0            0        40000        50000            0        50000        20000        30000        40000        10000        40000
+
+per-op rates (counter / ops):
+  stable-deep             17.00         0.00         0.00        17.00        17.00         0.00        32.00        16.00        16.00        17.00         1.00        17.00
+  broadcast              256.00         0.00         0.00       256.00       256.00         0.00       256.00       128.00       128.00       129.00       128.00       256.00
+  branch-flip              2.00         4.00         4.00         2.00         2.00         0.00         2.00         1.00         1.00         2.00         1.00         2.00
+  unrelated-read           0.00         0.00         0.00         0.00         0.00        64.00        64.00         0.00         0.00         1.00         0.00         0.00
+  error-transparency         0.00         0.00         0.00         0.00         0.00         1.00         1.00         0.00         0.00         1.00         0.00         0.00
+  diamond                  5.00         0.00         0.00         4.00         5.00         0.00         5.00         2.00         3.00         4.00         1.00         4.00
+
+  stable-deep      cursor-hit rate  100.0%   short-circuit 0 of 320000 pulls   marks/edges 170000/170000
+  broadcast        cursor-hit rate  100.0%   short-circuit 0 of 2560000 pulls   marks/edges 2560000/2560000
+  branch-flip      cursor-hit rate   33.3%   short-circuit 0 of 20000 pulls   marks/edges 20000/20000
+  unrelated-read   cursor-hit rate    n/a%   short-circuit 640000 of 640000 pulls   marks/edges 0/0
+  error-transparency cursor-hit rate    n/a%   short-circuit 10000 of 10000 pulls   marks/edges 0/0
+  diamond          cursor-hit rate  100.0%   short-circuit 0 of 50000 pulls   marks/edges 40000/50000
+
+  VERIFY PASSED: 21 exact structural pins hold (incl. the clean-short-circuit gate)
+exit=0
