@@ -336,15 +336,14 @@ export const CONTROLS = deepFreeze([
         exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=NEST missing=saved-cursor-hazard'],
         specs: ['INCONCLUSIVE scenario lane=NEST missing=saved-cursor-hazard', 'INCONCLUSIVE taint-skip lane=NEST oracle=O1c'],
     }),
-    // T-cov-*: the coverage gate (gates.mjs:375). BATCH's cov-off switch LEAKS (maintainer finding, not this file's:
-    // lanes/batch.mjs:37 compares the written CODE with the pre-batch value, while scenarios.mjs:236 counts on the
-    // decoded value, so some reverts slip through): it leaves 4-7 revert-after-mid-read
-    // hits per 20k-op smoke cycle (18 per smoke run >= SCEN_MIN_SMOKE 1; run measured burst 9), so T-cov-BATCH runs
-    // 11 x OPS_MIN, where the fixed seed counts 5 < SCEN_MIN 8 (it also trips T-floor's OB line; both INCONCLUSIVE).
+    // T-cov-*: the coverage gate (gates.mjs:375), each at the smoke shape. BATCH's cov-off switch compares DECODED
+    // values with Object.is (lanes/batch.mjs put, the test scenarios.mjs:236 counts a revert by), so it leaves 0
+    // revert-after-mid-read hits per smoke run (burst 13; the code compare it replaced leaked 18 through the
+    // VALUE_POOL aliases 0 / -1 and 1 / -3, which forced the 11 x OPS_MIN shape this control ran at until then).
     // ERROR on headpatched also carries the tolerated F21 / F22
     // BREACHes (FAIL outranks INCONCLUSIVE, gates.mjs verdict), so T-cov-ERROR is 'explained' at exit 1 and still
     // needs its scenario line (amendment 13 deviation from the SPEC 9 row "exit 3, no BREACH").
-    M('T-cov-BATCH', 'headpatched', { SOAK_LANES: 'BATCH', SOAK_MUSTFAIL: 'cov-off:revert-after-mid-read', SOAK_CYCLES: CYC, SOAK_OPS: String(OPS_MIN) }, [], {
+    M('T-cov-BATCH', 'headpatched', { SOAK_LANES: 'BATCH', SOAK_MUSTFAIL: 'cov-off:revert-after-mid-read' }, ['--smoke'], {
         exit: 3, kind: 'nobreach', lines: [], specs: ['INCONCLUSIVE scenario lane=BATCH missing=revert-after-mid-read'],
     }),
     M('T-cov-GRAPH', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_MUSTFAIL: 'cov-off:dep-set-flip' }, ['--smoke'], {

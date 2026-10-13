@@ -572,25 +572,31 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
 //   (a) the cut matches config: seed, cycles, ops, smoke shape, OPS_MIN, GEN_VERSION, CHECK_P, WORLD_STEPS,
 //       LARGE_WORLD_EVERY; doc.constants == config (a constant never moves while the JSON stays stale); the
 //       binding kernels are calibrate.mjs KERNELS; the roster and each lane's required scenarios / oracles
-//   (p) every PINNED file (gen, exec, oracles, lanes, adapters, main, calibrate) and every binding kernel file
-//       still has the sha it had at the cut; a moved file is red with the recut command
+//   (p) every PINNED file (gen, exec, oracles, lanes, adapters, kinds, the torture value pool) and every binding
+//       kernel file still has the sha it had at the cut; a moved file is red with the recut command. main.mjs and
+//       calibrate.mjs are NOT pinned (addendum 16): the live smoke + probe folds below gate main's loop
 //   (b) every required scenario on every binding kernel: >= SCEN_MIN at full, >= SCEN_MIN_SMOKE in smoke
 //   (c) every applicable oracle's PERFORMED count: >= CHECK_FLOOR at full, >= CHECK_FLOOR_SMOKE in smoke
 //   (d) every applicable skip ratio, computed EXACTLY from the counts as gates.mjs does, <= TAINT_SKIP_MAX
 //       (full and smoke); the stored ratio equals it; no crash in the binding cut
 //   (e) the gates are not toothless: at DEFAULT_CYCLES x OPS_MIN at least one lane falls below CHECK_FLOOR;
 //       CHECK_FLOOR_SMOKE >= 1/8 of the least clean smoke cell; the headpatched NEST cov-off skip ratio
-//       exceeds TAINT_SKIP_MAX on every cov-off sweep seed while every clean sweep cell stays at or below it
-// The live check spawns the REAL main.mjs --smoke on both binding kernels (concurrently) and folds its
-// cycle records, which must equal kernels.<k>.smoke exactly: the JSON was not hand-edited and neither main nor
-// gen / exec / oracles drifted. Only the smoke cells are re-measured live; the full-shape cells are not
-// (accepted LP design: (p) pins the code that cut them, and a recut dies unless the DEFAULT main.mjs run
-// folds to kernels.<k>.full too). A GRAPH smoke cycle (~45 worlds) never reaches its first LARGE world
-// (index 63), so a drift in main's large-world choice is caught by (p) and the recut, not by the live fold.
+//       exceeds TAINT_SKIP_MAX on every cov-off sweep seed while every clean sweep cell stays at or below it;
+//       every covOff cell and every BATCH covOffSweep cell (both kernels) has hits < SCEN_MIN_SMOKE (a cov-off
+//       switch that leaks hits lets the hollow run clear coverage)
+//   (q) doc.probe is the calibrate.mjs PROBE (lane, kernel, cycles, ops); PROBE.cycles === MIN_ACTIVE_CYCLES (main
+//       rejects SOAK_CYCLES below it); every one of the probe's cycles ran >= 1 LARGE world
+// The live check spawns the REAL main.mjs --smoke on both binding kernels and main.mjs on PROBE (all three
+// concurrently) and folds their cycle records, which must equal kernels.<k>.smoke and probe.fold exactly: the
+// JSON was not hand-edited and neither main nor gen / exec / oracles drifted. Only the smoke cells and the
+// probe are re-measured live; the full-shape cells are not (accepted LP design: (p) pins the gen-side code that
+// cut them, and a recut dies unless the DEFAULT main.mjs run folds to kernels.<k>.full too). A GRAPH smoke
+// cycle (~45 worlds) never reaches its first LARGE world (index 63); the probe (11 x 33000 ops, ~70 worlds a
+// cycle) runs exactly one, so a drift in main's large-world choice turns the live probe fold red.
 
 import { LANES as B6_LANES, ROSTER as B6_ROSTER } from '../bench/soak/lanes/index.mjs';
 import { SKIP_NAMES as B6_SKIP_NAMES } from '../bench/soak/exec.mjs';
-import { KERNELS as B6_KERNELS, PINNED as B6_PINNED, sha256File as b6Sha, foldMainRecords, runMainSmoke } from '../bench/soak/calibration/calibrate.mjs';
+import { KERNELS as B6_KERNELS, PINNED as B6_PINNED, PROBE as B6_PROBE, COVOFF_SEEDS as B6_COVOFF_SEEDS, sha256File as b6Sha, foldMainRecords, runMainSmoke, runMainProbe } from '../bench/soak/calibration/calibrate.mjs';
 
 const B6_JSON = join(SOAK, 'calibration', 'soak-calibration.json');
 const B6_DOC = JSON.parse(readFileSync(B6_JSON, 'utf8'));
@@ -600,7 +606,12 @@ const b6Has = (o, k) => o !== null && typeof o === 'object' && Object.prototype.
 const b6ShaOf = (rel) => { try { return b6Sha(join(ROOT, rel)); } catch { return null; } };
 const B6_CONST_KEYS = ['DEFAULT_OPS', 'SMOKE_OPS', 'SCEN_MIN', 'SCEN_MIN_SMOKE', 'CHECK_FLOOR', 'CHECK_FLOOR_SMOKE', 'TAINT_SKIP_MAX'];
 
-function calibrationProblems(doc, C, shaOf = b6ShaOf) {
+const B6_PROBE_KEYS = ['lane', 'kernel', 'cycles', 'ops'];
+const b6Count = (n) => Number.isSafeInteger(n) && n >= 0;   // null / undefined / NaN are not a count (null is not zero)
+// a cov-off sweep cell list must hold exactly COVOFF_SEEDS, in order (no duplicate, missing or extra seed)
+const b6SeedsOk = (cells) => JSON.stringify(cells.map((c) => (c || {}).seed)) === JSON.stringify(B6_COVOFF_SEEDS);
+
+function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE) {
     const p = [];
     const cut = doc.cut || {};
     for (const [k, want] of [['seed', C.DEFAULT_SEED], ['cycles', C.DEFAULT_CYCLES], ['ops', C.DEFAULT_OPS], ['smokeCycles', C.SMOKE_CYCLES],
@@ -663,8 +674,31 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf) {
         }
     }
     const cov = (((doc.covOffSweep || {}).cells || {})['headpatched:NEST:saved-cursor-hazard']) || [];
-    if (cov.length < 17) p.push('(e) the headpatched NEST cov-off sweep has ' + cov.length + ' < 17 seeds');
+    if (!b6SeedsOk(cov)) p.push('(e) the headpatched NEST cov-off sweep seeds ' + JSON.stringify(cov.map((c) => (c || {}).seed)) + ' != COVOFF_SEEDS');
     for (const c of cov) if (!(c.maxTaint.ratio > C.TAINT_SKIP_MAX)) p.push('(e) NEST cov-off seed ' + c.seed + ' taint ' + c.maxTaint.ratio + ' <= TAINT_SKIP_MAX ' + C.TAINT_SKIP_MAX + ' (the hollow run passes)');
+    // (e) a cov-off must really switch its scenario off: every covOff cell, every covOffSweep cell, both kernels
+    for (const lane of Object.keys(COV_OFF_SUPPORTED)) for (const scen of COV_OFF_SUPPORTED[lane]) {
+        const c = (doc.covOff || {})[lane + ':' + scen];
+        if (!c) { p.push('(e) cov-off ' + lane + ':' + scen + ' has no evidence; ' + B6_RECUT); continue; }
+        if (!(b6Count(c.hits) && c.hits < C.SCEN_MIN_SMOKE)) p.push('(e) cov-off ' + lane + ':' + scen + ' hits=' + c.hits + ' >= SCEN_MIN_SMOKE ' + C.SCEN_MIN_SMOKE + ' (the cov-off switch leaks: the hollow run clears coverage)');
+    }
+    for (const k of Object.keys(B6_KERNELS)) for (const lane of Object.keys(COV_OFF_SUPPORTED)) for (const scen of COV_OFF_SUPPORTED[lane]) {
+        const key = k + ':' + lane + ':' + scen;
+        const cells = (((doc.covOffSweep || {}).cells || {})[key]) || [];
+        if (!b6SeedsOk(cells)) p.push('(e) the ' + key + ' cov-off sweep seeds ' + JSON.stringify(cells.map((c) => (c || {}).seed)) + ' != COVOFF_SEEDS');
+        for (const c of cells) if (!(b6Count(c.hits) && c.hits < C.SCEN_MIN_SMOKE)) p.push('(e) cov-off sweep ' + key + ' seed ' + c.seed + ' hits=' + c.hits + ' >= SCEN_MIN_SMOKE ' + C.SCEN_MIN_SMOKE + ' (the cov-off switch leaks)');
+    }
+    // (q) the large-world probe evidence is the PROBE calibrate.mjs runs, at main's minimum cycle count
+    for (const k of B6_PROBE_KEYS) if (!b6Has(probe, k)) p.push('(q) calibrate.mjs PROBE has no ' + k);
+    const pr = doc.probe;
+    if (pr === null || typeof pr !== 'object') p.push('(q) no probe evidence (doc.probe); ' + B6_RECUT);
+    else {
+        for (const k of B6_PROBE_KEYS) if (!b6Has(probe, k) || pr[k] !== probe[k]) p.push('(q) probe.' + k + '=' + pr[k] + ' != calibrate.mjs PROBE.' + k + '=' + (probe || {})[k] + '; ' + B6_RECUT);
+        const lw = pr.largeWorldsPerCycle;
+        if (!(Array.isArray(lw) && lw.length === (probe || {}).cycles && lw.every((n) => Number.isSafeInteger(n) && n >= 1))) p.push('(q) probe.largeWorldsPerCycle ' + JSON.stringify(lw) + ': every one of PROBE.cycles=' + (probe || {}).cycles + ' cycles must run a LARGE world');
+        if (pr.fold === null || typeof pr.fold !== 'object') p.push('(q) probe.fold missing; ' + B6_RECUT);
+    }
+    if (!(b6Has(probe, 'cycles') && probe.cycles === C.MIN_ACTIVE_CYCLES)) p.push('(q) PROBE.cycles=' + (probe || {}).cycles + ' != MIN_ACTIVE_CYCLES ' + C.MIN_ACTIVE_CYCLES + ' (main rejects SOAK_CYCLES below MIN_ACTIVE_CYCLES: the probe shape is not what main runs)');
     return p;
 }
 
@@ -693,6 +727,7 @@ const B6_COV = B6_DOC.covOffSweep.cells['headpatched:NEST:saved-cursor-hazard'].
 // main.mjs --smoke on every binding kernel, concurrently, folded per lane (cached: one pair of spawns per file)
 let b6Live = null;
 function b6LiveRun() {
+    b6ProbeRun();   // the probe child runs concurrently with the smoke pair
     if (b6Live === null) {
         const ks = Object.keys(B6_KERNELS);
         b6Live = Promise.all(ks.map((k) => runMainSmoke(join(ROOT, B6_KERNELS[k])))).then((runs) => {
@@ -711,6 +746,42 @@ function b6LiveRun() {
     }
     return b6Live;
 }
+// main.mjs on PROBE (headpatched GRAPH, 11 x PROBE.ops), started together with the smoke pair (cached)
+// the run shape a probe must have: records, no fatal, the summary last, exit 0 with verdict PASS (pure: must-fail seam)
+const b6ProbeRunProblems = (m) => {
+    if (m.recs === null || m.recs.length === 0) return ['no records (exit ' + m.status + '): ' + String(m.stderr).slice(0, 400)];
+    const out = [];
+    if (m.recs.some((r) => r.type === 'fatal')) out.push('crashed (a fatal record)');
+    const last = m.recs[m.recs.length - 1];
+    if (last.type !== 'summary') out.push('last record is ' + last.type + ', not the summary');
+    if (m.status !== 0) out.push('exit ' + m.status + ' != 0');
+    if (last.verdict !== 'PASS' || last.exitCode !== 0) out.push('summary verdict ' + last.verdict + ' exitCode ' + last.exitCode + ' != PASS 0');
+    return out;
+};
+let b6Probe = null;
+function b6ProbeRun() {
+    if (b6Probe === null) {
+        b6Probe = runMainProbe().then((m) => {
+            assert.deepEqual(b6ProbeRunProblems(m), [], 'main.mjs probe run shape');
+            const cyc = m.recs.filter((r) => r.type === 'cycle');
+            return {
+                raw: m, cycles: cyc.length, lanes: cyc.map((r) => r.lane),
+                largeWorldsPerCycle: cyc.map((r) => r.largeWorlds),
+                boundaries: cyc.map((r) => [r.boundary.trackerSize, r.boundary.weakAlive]),
+                fold: foldMainRecords(B6_DOC.lanes[B6_PROBE.lane], cyc, B6_SKIP_NAMES),
+            };
+        });
+        b6Probe.catch(() => {});   // started early: its own test awaits (and reports) the rejection
+    }
+    return b6Probe;
+}
+const b6ProbeMismatch = (docProbe, live) => {
+    const out = [];
+    if (docProbe === null || typeof docProbe !== 'object') return ['no doc.probe (the JSON predates the probe; recut)'];
+    if (JSON.stringify(live.largeWorldsPerCycle) !== JSON.stringify(docProbe.largeWorldsPerCycle)) out.push('largeWorldsPerCycle ' + JSON.stringify(live.largeWorldsPerCycle) + ' != ' + JSON.stringify(docProbe.largeWorldsPerCycle));
+    if (JSON.stringify(live.fold) !== JSON.stringify(docProbe.fold)) out.push('fold');
+    return out;
+};
 const b6LiveMismatch = (doc, live) => {
     const out = [];
     for (const k of Object.keys(live)) for (const lane of B6_ROSTER) {
@@ -728,9 +799,12 @@ test('B6 drift guard: the calibration evidence clears every calibrated constant 
 });
 
 test('B6 drift guard must-fail: each constant one step past its evidence, a moved cut / pin / constant, an edited JSON, a hollow gate -> red', () => {
-    const red = (doc, C, tag, why, shaOf) => {
-        const got = calibrationProblems(doc, C, shaOf);
-        assert.ok(got.some((x) => x.indexOf(tag) === 0), why + ': expected a ' + tag + ' problem, got ' + JSON.stringify(got));
+    // a mutant must add a NEW problem with its tag: a problem the evidence already carries (a stale JSON awaiting
+    // its recut) is not the mutant's red
+    const before = calibrationProblems(B6_DOC, B6_C);
+    const red = (doc, C, tag, why, shaOf, probe) => {
+        const got = calibrationProblems(doc, C, shaOf, probe);
+        assert.ok(got.some((x) => x.indexOf(tag) === 0 && before.indexOf(x) === -1), why + ': expected a new ' + tag + ' problem, got ' + JSON.stringify(got));
     };
     red(B6_DOC, b6With({ SCEN_MIN: B6_SCEN_FULL.n + 1 }), '(b)', 'SCEN_MIN above the rarest full cell ' + B6_SCEN_FULL.name);
     red(B6_DOC, b6With({ SCEN_MIN_SMOKE: B6_SCEN_SMOKE.n + 1 }), '(b)', 'SCEN_MIN_SMOKE above the rarest smoke cell');
@@ -746,7 +820,56 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     red(B6_DOC, b6With({ CHECK_FLOOR: 100 }), '(e)', 'a floor no hollow run can fall below');
     red(B6_DOC, b6With({ CHECK_FLOOR_SMOKE: 1 }), '(e)', 'a smoke floor far below the clean cells');
     red(B6_DOC, b6With({ CHECK_FLOOR: CFG.CHECK_FLOOR - 1 }), '(a)', 'a constant moved inside its margin, JSON not recut');
-    red(B6_DOC, B6_C, '(p)', 'main.mjs moved since the cut', (rel) => (rel === 'bench/soak/main.mjs' ? 'f'.repeat(64) : b6ShaOf(rel)));
+    red(B6_DOC, B6_C, '(p)', 'kinds.mjs moved since the cut', (rel) => (rel === 'bench/soak/kinds.mjs' ? 'f'.repeat(64) : b6ShaOf(rel)));
+    red(B6_DOC, B6_C, '(p)', 'the torture VALUE_POOL moved since the cut', (rel) => (rel === 'bench/torture/helpers/index.mjs' ? 'f'.repeat(64) : b6ShaOf(rel)));
+    // main.mjs and calibrate.mjs are gated live (smoke + probe folds), not pinned: a moved sha is no static problem
+    assert.equal(B6_PINNED.indexOf('bench/soak/main.mjs'), -1, 'main.mjs is not pinned');
+    assert.equal(B6_PINNED.indexOf('bench/soak/calibration/calibrate.mjs'), -1, 'calibrate.mjs is not pinned');
+    const base = calibrationProblems(B6_DOC, B6_C);
+    for (const f of ['bench/soak/main.mjs', 'bench/soak/calibration/calibrate.mjs']) {
+        assert.deepEqual(calibrationProblems(B6_DOC, B6_C, (rel) => (rel === f ? 'f'.repeat(64) : b6ShaOf(rel))), base, f + ' moved: no static problem');
+    }
+    // (q): the probe evidence must be the PROBE main runs at its minimum cycle count
+    const { ops: _dropOps, ...probeNoOps } = B6_PROBE;
+    red(B6_DOC, B6_C, '(q)', 'an entry removed from PROBE', b6ShaOf, probeNoOps);
+    red(B6_DOC, B6_C, '(q)', 'PROBE.cycles 10 (main rejects SOAK_CYCLES below 11)', b6ShaOf, Object.assign({}, B6_PROBE, { cycles: 10 }));
+    red(B6_DOC, b6With({ MIN_ACTIVE_CYCLES: CFG.MIN_ACTIVE_CYCLES + 1 }), '(q)', 'MIN_ACTIVE_CYCLES moved off PROBE.cycles');
+    const noProbe = b6Copy(B6_DOC);
+    delete noProbe.probe;
+    red(noProbe, B6_C, '(q)', 'an old JSON without doc.probe');
+    if (b6Has(B6_DOC, 'probe')) {
+        const p2 = b6Copy(B6_DOC);
+        delete p2.probe.ops;
+        red(p2, B6_C, '(q)', 'an entry removed from doc.probe');
+        const p3 = b6Copy(B6_DOC);
+        p3.probe.largeWorldsPerCycle[B6_PROBE.cycles - 1] = 0;
+        red(p3, B6_C, '(q)', 'a probe cycle that ran no LARGE world');
+    }
+    // (e): a cov-off cell with hits at SCEN_MIN_SMOKE (the leaking switch); a BATCH sweep cell likewise; null is not 0
+    const leak = b6Copy(B6_DOC);
+    leak.covOff['GRAPH:dep-set-flip'].hits = CFG.SCEN_MIN_SMOKE;
+    red(leak, B6_C, '(e)', 'a covOff cell with hits >= SCEN_MIN_SMOKE');
+    for (const k of Object.keys(B6_KERNELS)) {
+        const sw = b6Copy(B6_DOC);
+        sw.covOffSweep.cells[k + ':BATCH:revert-after-mid-read'][3].hits = CFG.SCEN_MIN_SMOKE;
+        red(sw, B6_C, '(e)', k + ' BATCH covOffSweep cell with hits >= SCEN_MIN_SMOKE');
+    }
+    const nul = b6Copy(B6_DOC);
+    nul.covOff['NEST:saved-cursor-hazard'].hits = null;
+    red(nul, B6_C, '(e)', 'a null cov-off hit count is not zero');
+    // the sweep must hold exactly COVOFF_SEEDS: a duplicated seed (17 x DEFAULT_SEED) or an extra cell is red
+    for (const key of ['headpatched:BATCH:revert-after-mid-read', 'headpatched:NEST:saved-cursor-hazard', 'lite-1.5.2:GRAPH:deep-pull']) {
+        const dup = b6Copy(B6_DOC);
+        for (const c of dup.covOffSweep.cells[key]) c.seed = B6_COVOFF_SEEDS[0];
+        red(dup, B6_C, '(e)', key + ': every sweep seed = 0xC0FFEE (duplicated seed)');
+        const extra = b6Copy(B6_DOC);
+        extra.covOffSweep.cells[key].push(b6Copy(extra.covOffSweep.cells[key][0]));
+        red(extra, B6_C, '(e)', key + ': an 18th sweep cell');
+    }
+    // every cov-off sweep (not only BATCH) is hit-checked, both kernels
+    const gHit = b6Copy(B6_DOC);
+    gHit.covOffSweep.cells['lite-1.5.2:ERROR:throw-dep-effect-prewalk'][0].hits = CFG.SCEN_MIN_SMOKE;
+    red(gHit, B6_C, '(e)', 'an ERROR cov-off sweep cell with hits >= SCEN_MIN_SMOKE');
     red(B6_DOC, B6_C, '(p)', 'a binding kernel file moved', (rel) => (rel === B6_DOC.kernels['lite-1.5.2'].files[0].path ? null : b6ShaOf(rel)));
     const lowered = b6Copy(B6_DOC);
     lowered.kernels[B6_SCEN_FULL.k].full[B6_SCEN_FULL.lane].scenarios[B6_SCEN_FULL.name] = CFG.SCEN_MIN - 1;
@@ -782,6 +905,24 @@ test('B6 drift guard live: main.mjs --smoke on BOTH binding kernels folds to exa
         assert.deepEqual(calibrationProblems(edited, B6_C), [], 'precondition: the static checks cannot see this edit');
         assert.deepEqual(b6LiveMismatch(edited, live), [k + ':ERROR'], k);
     }
+});
+
+test('B6 drift guard live probe: main.mjs on PROBE runs a LARGE world every cycle and folds to exactly doc.probe.fold', async () => {
+    const live = await b6ProbeRun();
+    assert.equal(live.cycles, B6_PROBE.cycles, 'one cycle record per PROBE cycle');
+    assert.ok(live.lanes.every((l) => l === B6_PROBE.lane), JSON.stringify(live.lanes));
+    assert.ok(live.largeWorldsPerCycle.every((n) => n >= 1), 'every probe cycle ran a LARGE world: ' + JSON.stringify(live.largeWorldsPerCycle));
+    assert.deepEqual(live.boundaries, live.boundaries.map(() => [0, 0]), 'every probe boundary: trackerSize 0, weakAlive 0');
+    assert.deepEqual(b6ProbeMismatch(B6_DOC.probe, live), []);
+    // must-fail twin: a hand edit of the probe fold is caught by the re-measure
+    const edited = b6Copy(B6_DOC.probe);
+    edited.fold.ops += 1;
+    assert.deepEqual(b6ProbeMismatch(edited, live), ['fold'], 'fold.ops + 1 must mismatch');
+    // must-fail twins of the run shape: a forced non-zero exit, a non-PASS verdict, a record after the summary
+    const raw = (f) => { const m = b6Copy(live.raw); f(m); return b6ProbeRunProblems(m); };
+    assert.deepEqual(raw((m) => { m.status = 1; }), ['exit 1 != 0']);
+    assert.deepEqual(raw((m) => { m.recs[m.recs.length - 1].verdict = 'FAIL'; }), ['summary verdict FAIL exitCode 0 != PASS 0']);
+    assert.deepEqual(raw((m) => { m.recs.push(m.recs[1]); }), ['last record is cycle, not the summary', 'summary verdict undefined exitCode undefined != PASS 0']);
 });
 
 test('B6 TAINT_SKIP_MAX separates: every clean cell at or below it, the headpatched NEST cov-off above it on all 17 seeds; 1.5.2 cov-off is left to coverage', () => {

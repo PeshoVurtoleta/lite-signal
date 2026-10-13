@@ -162,7 +162,7 @@ export const GAPS = deepFreeze({
     },
     'T-no-lane': { why: 'lite with a SKIP exits 2 (gates.mjs:553) and SOAK_LANES never parses empty (config.mjs:229), so no-lane (gates.mjs:558) needs a non-lite engine', until: 'S5 adapters', covers: ['cause:no-lane'] },
     'T-post-cycles': { why: 'config.mjs:339 floors SOAK_CYCLES at MIN_ACTIVE_CYCLES, so post-cycles fires only on an interrupted or forever (SOAK_CYCLES=0) run stopped early; no control pins that line', until: 'a forever-run SIGINT control', covers: ['cause:post-cycles'] },
-    'R-kernel-identity': { why: 'kernel identity is self-reported: a consistent 5-field forgery of a scratch stream as a tree run exits 0 (SoakReport.mjs:60 RESIDUALS); signing is out of scope', until: 'S4 stream signing', covers: [] },
+    'R-kernel-identity': { why: 'kernel identity is self-reported: a consistent 5-field forgery of a scratch stream as a tree run exits 0 (SoakReport.mjs:70 RESIDUALS); signing is out of scope', until: 'S4 stream signing', covers: [] },
 });
 
 /** Ids no input can reach, each with a proof and an anchor that must occur EXACTLY once. */

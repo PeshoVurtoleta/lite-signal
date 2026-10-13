@@ -10,8 +10,8 @@
     "bench/soak/scenarios.mjs": "a28f304c05e147b5e1e0848e41d83ad5862d116a645ae9d2f70e4762e1ca2bc7",
     "bench/soak/lanes/index.mjs": "a89ad2bc76b4b7e8d5c80602346b8686f973a9688086b3af9fd1c42cbd4030a6",
     "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
-    "bench/soak/lanes/batch.mjs": "dff120767f134507809b5fe5a095953ef0e6a22b232e1febffba783e5b6721f3",
-    "bench/soak/lanes/error.mjs": "8746bcec3971490be1fbbc88272f17692aa3358e57b00010ae958e85c18f44fa",
+    "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
+    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
     "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
     "bench/soak/gates.mjs": "5b75bfece904601246d37e510827fb125bcd01f91458f3074a14a0051864e951",
     "bench/soak/boundary.mjs": "ab9e0c140ccbb01698678e28e3b988e377cb66af61c9e7a0cb2e3637b1e8c6de",
@@ -21,7 +21,7 @@
     "bench/soak/main.mjs": "a45d13a7a7310dd0dc438aaa86705a4e50741098841985ed0497360f97ecc0d7",
     "bench/soak/replay.mjs": "3e2d635c46440eda14f79afbeab6e8477c93e97e2657e3672939e50b88400171",
     "bench/soak/shrink.mjs": "f38857d49b11544674f5e825096a9326034301c50ba8ee12e6fcbbb58d4985cc",
-    "bench/soak/config.mjs": "c166f081e76113219d25d8c31d8b19d96292cadb9498f201fe3a2047293b0acc",
-    "bench/soak/SoakReport.mjs": "4070f61d35f13b5ea90ab525919a2bd26aeba8eda5fa65ac11efb5c495b65d6e"
+    "bench/soak/config.mjs": "7d1b141e4ab39747571dce20257710a75bf51426db610cbda4939fe3510e54d3",
+    "bench/soak/SoakReport.mjs": "ba2e2d69a6dcfc85fdf88b24eeb42b4d0ead0dc6fdd71563d384fded967d941a"
   }
 }

@@ -17,15 +17,21 @@
  *          mainCrossCheck  main.mjs --smoke AND the default main.mjs run, on BOTH kernels, fold
  *                       (foldMainRecords) to exactly kernels.<k>.smoke / .full; --write dies on any difference.
  *                       test/41 repeats the smoke half live.
+ *          probe        PROBE (headpatched GRAPH, 11 x PROBE_OPS): the calibration child and main.mjs both run it;
+ *                       --write dies unless the folds and largeWorldsPerCycle are equal and every cycle ran a
+ *                       LARGE world. test/41 re-runs main.mjs on it live (main's large-world choice is gated live).
  *          hollowVolume DEFAULT_CYCLES x OPS_MIN, both kernels (the smallest gated volume config accepts)
  *          covOff       every supported cov-off at the smoke shape on headpatched (hollow-evidence controls)
  *          seedSweep    SWEEP_SEEDS at the smoke shape, both kernels (REPORTED seed spread; binds nothing)
  *          covOffSweep  every cov-off at the smoke shape over COVOFF_SEEDS, both kernels (taint separation)
  *   node bench/soak/calibration/calibrate.mjs --child <kernel> --cycles C --ops O [--lanes L,..] [--cov-off s] [--timed]
  *        one kernel per process (kernel.mjs reads SOAK_KERNEL once, at import); one JSON line on stdout
- * The drift guard (test/41) re-measures the SMOKE cells only, through the real main.mjs; the full-shape cells
- * are not re-measured live (accepted LP design). PINNED shas are checked by the guard: a pinned file that
- * moves (gen, exec, oracles, lanes, main, this tool ...) turns it red with a "recut" message.
+ * The drift guard (test/41) re-measures the SMOKE cells and the PROBE through the real main.mjs; the full-shape
+ * cells are not re-measured live (accepted LP design). PINNED shas are checked by the guard: a pinned file that
+ * moves (gen, exec, oracles, lanes, kinds, the value pool ...) turns it red with a "recut" message. main.mjs and
+ * this tool are NOT pinned (burst 13, SPEC-B-S1cd addendum 16): the live smoke + probe folds gate main's loop,
+ * and pinning them made every edit of either a ~13-min recut. Residual: a main.mjs drift outside the smoke and
+ * probe shapes is caught only at the next recut (its full-run cross-check).
  */
 
 import { spawnSync } from 'node:child_process';
@@ -44,14 +50,23 @@ export const KERNELS = Object.freeze({
     'lite-1.5.2': 'node_modules/lite-signal-1.5.2/Signal.js',
 });
 // The file hashes that pin "the generator and checker that cut this evidence" (provenance; the live
-// re-measure in test/41 is the gate, a hash change alone is not).
+// re-measure in test/41 is the gate, a hash change alone is not). kinds.mjs (the op-kind codes) and the torture
+// helpers (VALUE_POOL: the value each code decodes to) shape every script; main.mjs and this tool are gated by
+// the live smoke + probe folds instead (header).
 const PINNED = Object.freeze([
     'bench/soak/gen.mjs', 'bench/soak/exec.mjs', 'bench/soak/oracles.mjs', 'bench/soak/model.mjs', 'bench/soak/scenarios.mjs',
     'bench/soak/seeds.mjs', 'bench/soak/lanes/index.mjs', 'bench/soak/lanes/graph.mjs', 'bench/soak/lanes/batch.mjs',
     'bench/soak/lanes/error.mjs', 'bench/soak/lanes/nest.mjs', 'bench/soak/adapters/lite.mjs', 'bench/soak/adapters/contract.mjs',
-    'bench/soak/main.mjs', 'bench/soak/calibration/calibrate.mjs',
+    'bench/soak/kinds.mjs', 'bench/torture/helpers/index.mjs',
 ]);
 export { PINNED };
+
+// The large-world probe (addendum 16): a GRAPH smoke cycle never reaches its first LARGE world (index 63), so the
+// smoke fold cannot see main's large-world choice. 11 cycles: main REJECTS SOAK_CYCLES below MIN_ACTIVE_CYCLES
+// (config.mjs parseIntKey, exit 2), so 11 is the smallest probe main runs (test/41 (q) pins the equality). ops: headpatched GRAPH at DEFAULT_SEED runs at most 28416 ops
+// through world 62 over cycles 0-10 (burst 13 16.0c, deterministic count), so PROBE_OPS = ceil(1.15 x 28416 /
+// 1000) x 1000 = 33000 makes every cycle run world 63 (and stop before world 127: one LARGE world per cycle).
+export const PROBE = Object.freeze({ lane: 'GRAPH', kernel: 'headpatched', cycles: 11, ops: 33000 });
 
 export const sha256File = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 
@@ -110,14 +125,15 @@ async function child(opts) {
         const perCycle = [];
         for (let cycle = 0; cycle < cycles; cycle++) {
             const cycleSeed = seedFor(seed, desc.index, cycle);
-            const c = { worlds: 0, ops: 0, failingWorlds: 0, crashes: 0, checks: zero(CHECK_NAMES), skipTainted: zero(SKIP_NAMES), scenarios: {} };
+            const c = { worlds: 0, largeWorlds: 0, ops: 0, failingWorlds: 0, crashes: 0, checks: zero(CHECK_NAMES), skipTainted: zero(SKIP_NAMES), scenarios: {} };
             let smokeSnap = null;
             const wantSmoke = cycle < CFG.SMOKE_CYCLES;
             const t0 = timed ? performance.now() : 0;
             let w = 0;
             while (c.ops < ops) {
                 const ws = worldSeed(cycleSeed, w);
-                const script = generateWorld(desc, ws, { large: isLargeWorld(desc, w), covOff: laneCovOff });
+                const large = isLargeWorld(desc, w);
+                const script = generateWorld(desc, ws, { large, covOff: laneCovOff });
                 let r;
                 try {
                     r = runWorld(liteAdapter, script);
@@ -127,6 +143,7 @@ async function child(opts) {
                     die('crash: lane ' + name + ' cycle ' + cycle + ' world ' + w + ' seed 0x' + (ws >>> 0).toString(16) + ': ' + String(e && e.message));
                 }
                 c.worlds++;
+                if (large) c.largeWorlds++;
                 c.ops += r.ops;
                 if (r.failure !== null) c.failingWorlds++;
                 for (const o of CHECK_NAMES) c.checks[o] += r.checks[o];
@@ -190,8 +207,11 @@ export function runMainSmoke(kernelAbs) {
     return runMain(kernelAbs, true);
 }
 
-/** runMain(kernel, smoke): smoke = `--smoke`; otherwise the DEFAULT run (DEFAULT_CYCLES x DEFAULT_OPS, all lanes). */
-export async function runMain(kernelAbs, smoke) {
+/**
+ * runMain(kernel, smoke, extraEnv): smoke = `--smoke`; otherwise the DEFAULT run (DEFAULT_CYCLES x DEFAULT_OPS, all
+ * lanes) unless extraEnv sets SOAK_* keys (applied after the inherited SOAK_* keys are dropped).
+ */
+export async function runMain(kernelAbs, smoke, extraEnv) {
     const { spawn } = await import('node:child_process');
     const { mkdtempSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
@@ -199,6 +219,7 @@ export async function runMain(kernelAbs, smoke) {
     const out = join(dir, 'smoke.jsonl');
     const env = {};
     for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
+    if (extraEnv !== undefined) for (const k of Object.keys(extraEnv)) env[k] = extraEnv[k];
     env.SOAK_KERNEL = kernelAbs;
     env.SOAK_OUT = out;
     const p = spawn(process.execPath, ['--expose-gc', join(ROOT, 'bench/soak/main.mjs')].concat(smoke ? ['--smoke'] : []), { cwd: ROOT, env, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -209,6 +230,11 @@ export async function runMain(kernelAbs, smoke) {
     try { recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l)); } catch { recs = null; }
     rmSync(dir, { recursive: true, force: true });
     return { status, recs, stderr: err };
+}
+
+/** main.mjs on PROBE (SOAK_LANES / SOAK_CYCLES / SOAK_OPS from PROBE, the PROBE kernel); resolves like runMain. */
+export function runMainProbe() {
+    return runMain(join(ROOT, KERNELS[PROBE.kernel]), false, { SOAK_LANES: PROBE.lane, SOAK_CYCLES: String(PROBE.cycles), SOAK_OPS: String(PROBE.ops) });
 }
 
 /** Full and smoke summaries of one child result. */
@@ -288,6 +314,35 @@ export const SWEEP_SEEDS = Object.freeze([1, 2, 3, 4, 5, 6, 7, 8].map((i) => (i 
 // The cov-off sweep: DEFAULT_SEED (0xC0FFEE), the 8 sweep seeds, and the plain seeds 11..18 (17 seeds).
 export const COVOFF_SEEDS = Object.freeze([0xC0FFEE].concat(SWEEP_SEEDS, [11, 12, 13, 14, 15, 16, 17, 18]));
 
+/**
+ * write() step 2b, the large-world probe: the calibration child and main.mjs on PROBE, concurrently (untimed).
+ * Dies unless main exited 0 with a PASS summary as its last record, both folds and both largeWorldsPerCycle lists
+ * are equal, every cycle ran >= 1 LARGE world and every main boundary read trackerSize 0 / weakAlive 0. Returns doc.probe.
+ */
+export async function probeStep(skipNames) {
+    const [kids, m] = await Promise.all([
+        runChildren([['--kernel', KERNELS[PROBE.kernel], '--lanes', PROBE.lane, '--cycles', String(PROBE.cycles), '--ops', String(PROBE.ops)]], 1),
+        runMainProbe(),
+    ]);
+    const L = kids[0].lanes[PROBE.lane];
+    const fold = foldLane(L, L.perCycle, skipNames);
+    const largeWorldsPerCycle = L.perCycle.map((c) => c.largeWorlds);
+    if (m.recs === null) die('main.mjs probe wrote no records (exit ' + m.status + '): ' + m.stderr.slice(0, 400));
+    if (m.recs.some((r) => r.type === 'fatal')) die('main.mjs probe crashed');
+    const last = m.recs[m.recs.length - 1];
+    if (last.type !== 'summary') die('main.mjs probe: the last record is ' + last.type + ', not the summary');
+    if (m.status !== 0 || last.verdict !== 'PASS' || last.exitCode !== 0) die('main.mjs probe: exit ' + m.status + ' verdict ' + last.verdict + ' exitCode ' + last.exitCode + ', want exit 0 PASS');
+    const cyc = m.recs.filter((r) => r.type === 'cycle');
+    if (cyc.length !== PROBE.cycles || cyc.some((r) => r.lane !== PROBE.lane)) die('main.mjs probe wrote ' + cyc.length + ' cycle records, want ' + PROBE.cycles + ' on ' + PROBE.lane);
+    const mainFold = foldMainRecords(L, cyc, skipNames);
+    const mainLarge = cyc.map((r) => r.largeWorlds);
+    if (JSON.stringify(mainFold) !== JSON.stringify(fold)) die('main.mjs probe disagrees with the calibration loop on lane ' + PROBE.lane);
+    if (JSON.stringify(mainLarge) !== JSON.stringify(largeWorldsPerCycle)) die('probe largeWorldsPerCycle: main ' + JSON.stringify(mainLarge) + ' != calibration ' + JSON.stringify(largeWorldsPerCycle));
+    if (largeWorldsPerCycle.length !== PROBE.cycles || !largeWorldsPerCycle.every((n) => n >= 1)) die('probe: a cycle ran no LARGE world ' + JSON.stringify(largeWorldsPerCycle) + '; raise PROBE.ops (never below world 63)');
+    for (const r of cyc) if (r.boundary.trackerSize !== 0 || r.boundary.weakAlive !== 0) die('probe cycle ' + r.cycle + ' boundary trackerSize=' + r.boundary.trackerSize + ' weakAlive=' + r.boundary.weakAlive);
+    return { lane: PROBE.lane, kernel: PROBE.kernel, cycles: PROBE.cycles, ops: PROBE.ops, largeWorldsPerCycle, fold };
+}
+
 async function write(outPath, timed, importFrom) {
     const CFG = await import('../config.mjs');
     const { SKIP_NAMES } = await import('../exec.mjs');
@@ -338,6 +393,9 @@ async function write(outPath, timed, importFrom) {
         });
         note('main ' + sh + ' cross-check equal on ' + Object.keys(KERNELS).join(', '));
     }
+    // 2b) the large-world probe: main's loop past world 63 (the smoke never gets there), equal to the calibration loop
+    const probe = await probeStep(SKIP_NAMES);
+    note('probe equal: largeWorldsPerCycle ' + JSON.stringify(probe.largeWorldsPerCycle));
     // 3) hollow volume: DEFAULT_CYCLES x OPS_MIN (the smallest gated volume config accepts), both kernels
     const hollowVolume = {};
     const hv = await runChildren(Object.keys(KERNELS).map((k) => ['--kernel', KERNELS[k], '--cycles', String(CFG.DEFAULT_CYCLES), '--ops', String(CFG.OPS_MIN)]), 2);
@@ -406,7 +464,7 @@ async function write(outPath, timed, importFrom) {
         schema: 1,
         task: 'SPEC-B-S1cd TASK 11 (burst 8 B6): soak calibration -- DEFAULT_OPS, SCEN_MIN(_SMOKE), CHECK_FLOOR(_SMOKE), TAINT_SKIP_MAX',
         tool: 'node bench/soak/calibration/calibrate.mjs --write ' + relative(ROOT, resolve(outPath)) + (timed ? ' --timed' : '') + (importFrom !== undefined ? ' --import-throughput <the earlier timed run>' : ''),
-        guard: 'test/41-soak-config.test.mjs (B6 drift guard): config values == cut, every binding cell clears its constant, live smoke re-measure == kernels.headpatched.smoke',
+        guard: 'test/41-soak-config.test.mjs (B6 drift guard): config values == cut, every binding cell clears its constant, live smoke re-measure == kernels.<k>.smoke, live main.mjs probe fold == probe.fold',
         cut: {
             seed: CFG.DEFAULT_SEED, cycles: CFG.DEFAULT_CYCLES, ops: CFG.DEFAULT_OPS, smokeCycles: CFG.SMOKE_CYCLES, smokeOps: CFG.SMOKE_OPS, opsMin: CFG.OPS_MIN,
             genVersion: GEN_VERSION, genRules: GEN_RULES.slice(), checkP: CFG.CHECK_P, worldSteps: CFG.WORLD_STEPS, largeWorldEvery: CFG.LARGE_WORLD_EVERY,
@@ -427,6 +485,7 @@ async function write(outPath, timed, importFrom) {
         worst,
         kernels,
         mainCrossCheck: { note: 'main.mjs --smoke and the default main.mjs run fold to exactly kernels.<k>.smoke / .full; checked at --write time (it dies on a difference); test/41 repeats the smoke half live; this field gates nothing', smoke: mainCheck.smoke, full: mainCheck.full },
+        probe,
         hollowVolume,
         covOff,
         seedSweep,

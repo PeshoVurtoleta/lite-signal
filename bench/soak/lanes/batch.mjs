@@ -4,6 +4,8 @@
  * mid-batch, no-op batches and plain writes. Built on model-lane.mjs:71-79.
  */
 
+import { decodeValue } from '../kinds.mjs';
+
 const MIX = Object.freeze({ batch: 40, nested: 15, throwIn: 6, effMid: 8, noop: 3, set: 28 });
 
 function compPool(g) {
@@ -28,13 +30,16 @@ function effOp(g) {
 /**
  * Append k writes (+ mid-reads, reverts) to body. st: the outermost batch's state
  * { pre: Map(s -> pre-batch code), mid: Set(s), hist: Map(s -> [codes]) }.
+ * The cov-off guard compares DECODED values with Object.is, the same test scenarios.mjs onBatchWrite
+ * counts a revert by: VALUE_POOL aliases codes (0 / -1 both decode to 0, 1 / -3 both to 1), so a code
+ * compare let a value-equal revert through and the switch leaked (18 hits at the smoke shape).
  */
 function writes(g, body, k, st) {
     const leaves = g.leaves();
     const comps = g.nodes((nd) => nd.t === 'c');
     const guardOff = g.ruleOff('mid-read-revert');
     const put = (s, v) => {
-        if (guardOff && st.mid.has(s) && v === st.pre.get(s)) return;   // cov-off: never revert after a mid-read
+        if (guardOff && st.mid.has(s) && Object.is(decodeValue(v), decodeValue(st.pre.get(s)))) return;   // cov-off: never revert after a mid-read
         body.push(g.set(s, v));
         st.hist.get(s).push(v);
     };

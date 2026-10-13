@@ -103,7 +103,7 @@ function step(g) {
 export const ERROR = Object.freeze({
     name: 'ERROR',
     needsCaps: Object.freeze([]),
-    hardOracles: Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6']),
+    hardOracles: Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'OB']),
     required: Object.freeze(['throw-dep-effect-prewalk', 'throw-dep-computed-prewalk', 'recovery-after-throw', 'aggregate', 'throwing-equals']),
     optional: Object.freeze(['cycle-error-surfaces']),
     scenCaps: Object.freeze({}),

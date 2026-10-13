@@ -60,9 +60,9 @@
  * `stream records=`, teeth NOTE, control NOTE on a control run, verdict). REASONS is imported from gates.mjs;
  * DEFAULT_OPS / DEFAULT_CYCLES from config.mjs and ROSTER from lanes/index.mjs (never copied).
  * DEFERRED copied list: the RECORD_KEYS / SUB_KEYS tables copy the literal record shapes of main.mjs /
- * provenance.mjs / jsonl.mjs / boundary.mjs (no owner exports them). Exporting them from main.mjs is deferred:
- * main.mjs is in test/41's (p) PINNED list, so an edit there forces a ~13-min calibration recut. test/46's
- * honest streams are the drift guard: a key added in main turns them red.
+ * provenance.mjs / jsonl.mjs / boundary.mjs (no owner exports them). Since burst 13 main.mjs is not recut-pinned
+ * (test/41's live smoke + large-world probe folds and parity.json guard it), so the export is merely not done
+ * yet, no longer blocked. test/46's honest streams are the drift guard: a key added in main turns them red.
  *
  * RESIDUALS (not checked, stated plainly):
  *   - config keys beyond KNOWN_KEYS, engine.version, controls.error, parity.error and the gateHits names are

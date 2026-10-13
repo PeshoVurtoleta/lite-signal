@@ -802,7 +802,7 @@ test('7b F3 behaviour: every large GRAPH world builds ONE linked chain of exactl
  * overrides only batch (fn => fn()); it never spreads the world object. Revert-check (old exec, burst 7d task 0):
  * the lying adapter passes 64/64 BATCH worlds there (failure null), so these tests are red on the old exec.
  * Mutants (scratch copies): the OB check moved out of the `runs > 0` branch (F5 A2 red); OB dropped from
- * lanes/batch hardOracles, CHECK_NAMES, ORACLE_CAPS or the oracle gate's mustFail (F5 wiring red).
+ * lanes/batch or lanes/error hardOracles, CHECK_NAMES, ORACLE_CAPS or the oracle gate's mustFail (F5 wiring red).
  */
 
 const { WORLD_METHODS: f5Methods, ORACLE_CAPS: f5OracleCaps, applicability: f5Applicability } = await import('../bench/soak/adapters/contract.mjs');
@@ -874,23 +874,61 @@ test('F5 A3: 64 BATCH worlds -- lite: 0 OB fails and >= 1 performed OB per world
     assert.equal(lyingOB, 64);
 });
 
-test('F5 wiring: OB is a check name (not a skip name), an oracle with its sig, a BATCH hard oracle, needs cap batch, family OB', () => {
+test('F5 wiring: OB is a check name (not a skip name), an oracle with its sig, a BATCH and ERROR hard oracle, needs cap batch, family OB', () => {
     assert.ok(f5CheckNames.includes('OB'), 'CHECK_NAMES');
     assert.ok(!f5SkipNames.includes('OB'), 'OB skips nothing: not a SKIP_NAMES oracle');
     assert.ok(O.ORACLES.includes('OB'));
     assert.deepEqual(O.SIGS.OB, ['batch-early-run']);
     assert.deepEqual(O.checkBatchRun(3, 2), { oracle: 'OB', sig: 'batch-early-run', detail: 'effect#3 re-ran inside an open batch (depth 2)' });
     assert.ok(laneByName('BATCH').hardOracles.includes('OB'), 'BATCH hardOracles (the check floor counts it)');
-    for (const lane of ['GRAPH', 'ERROR', 'NEST']) assert.ok(!laneByName(lane).hardOracles.includes('OB'), lane + ': OB runs, no floor');
+    // burst 13 (addendum 16 task 2): ERROR batches close-flush too, so OB is a hard ERROR oracle (the check floor counts it)
+    assert.ok(laneByName('ERROR').hardOracles.includes('OB'), 'ERROR hardOracles (the check floor counts it)');
+    for (const lane of ['GRAPH', 'NEST']) assert.ok(!laneByName(lane).hardOracles.includes('OB'), lane + ': OB runs, no floor');
     assert.deepEqual(f5OracleCaps.OB, ['batch']);
-    assert.ok(f5Applicability(laneByName('BATCH'), Object.assign({}, liteAdapter.caps, { batch: 'no' })).oraclesNA.includes('OB'));
-    assert.ok(!f5Applicability(laneByName('BATCH'), liteAdapter.caps).oraclesNA.includes('OB'));
+    // contract.mjs ORACLE_CAPS: OB is N/A on an adapter without the batch cap, for BATCH and ERROR alike
+    for (const lane of ['BATCH', 'ERROR']) {
+        assert.ok(f5Applicability(laneByName(lane), Object.assign({}, liteAdapter.caps, { batch: 'no' })).oraclesNA.includes('OB'), lane);
+        assert.ok(!f5Applicability(laneByName(lane), liteAdapter.caps).oraclesNA.includes('OB'), lane);
+    }
     assert.equal(f5Family('OB'), 'OB');
     const gate = f5Gates.find((g) => g.id === 'oracle');
     const ob = gate.mustFail.filter((m) => Object.keys(m.input.failureCounts || {}).some((k) => k.indexOf('OB:') === 0));
     assert.equal(ob.length, 1, 'the oracle gate carries an OB must-fail control (amendment 9)');
     assert.equal(gate.check(ob[0].input).verdict, ob[0].expect);
     assert.notEqual(gate.check(ob[0].input).verdict, gate.check(gate.pass[0]).verdict);
+});
+
+/*
+ * Burst 13 (addendum 16 task 5): the BATCH cov-off switch is closed. lanes/batch.mjs put compares DECODED values with
+ * Object.is, the test scenarios.mjs onBatchWrite counts a revert by; the code compare it replaced leaked 18 hits over
+ * this exact prefix (VALUE_POOL aliases 0 / -1 and 1 / -3). The smoke prefix of main / calibrate: DEFAULT_SEED,
+ * cycles 0..SMOKE_CYCLES-1, each until SMOKE_OPS ops, on headpatched (in-process, the section 5 kernel).
+ * Mutant (scratch copy): `v === st.pre.get(s)` back in put -> covOff hits 18, red.
+ */
+const { SMOKE_CYCLES: b13Cycles, SMOKE_OPS: b13Ops, DEFAULT_SEED: b13Seed } = await import('../bench/soak/config.mjs');
+
+function b13SmokeHits(covOff) {
+    const desc = laneByName('BATCH');
+    let hits = 0, ops = 0, worlds = 0;
+    for (let cycle = 0; cycle < b13Cycles; cycle++) {
+        const cs = f5SeedFor(b13Seed, desc.index, cycle);
+        let c = 0;
+        for (let w = 0; c < b13Ops; w++) {
+            const r = runWorld(liteAdapter, generateWorld(desc, f5WorldSeed(cs, w), { large: f5IsLarge(desc, w), covOff }));
+            c += r.ops; worlds++;
+            hits += r.scen['revert-after-mid-read'] || 0;
+        }
+        ops += c;
+    }
+    return { hits, ops, worlds };
+}
+
+test('B13 BATCH cov-off revert-after-mid-read: the smoke prefix on headpatched counts 0 hits; covOff null counts > 0', () => {
+    const off = b13SmokeHits('revert-after-mid-read');
+    const on = b13SmokeHits(null);
+    assert.ok(off.worlds > 0 && off.ops >= b13Cycles * b13Ops, JSON.stringify(off));
+    assert.equal(off.hits, 0, 'cov-off leaks revert-after-mid-read: ' + JSON.stringify(off));
+    assert.ok(on.hits > 0, 'the trigger is live without the cov-off (teeth): ' + JSON.stringify(on));
 });
 
 // mutant (exec.mjs runBody): `if (this.effReruns < COUNTER_CAP)` dropped -- the per-world re-run counter leaves

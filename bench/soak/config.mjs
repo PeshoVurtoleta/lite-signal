@@ -51,9 +51,9 @@ const CONSTANTS = Object.freeze({
     //   CHECK_FLOOR      a lane's run must PERFORM at least this many checks of each applicable hard oracle
     //                    (taint skips never count); below it the lane is INCONCLUSIVE, never PASS. The least-
     //                    performed clean cell is NEST O7a: 41184 at 11 x DEFAULT_OPS (4.1x the floor) and 2170
-    //                    in smoke (4.3x CHECK_FLOOR_SMOKE); a lane at 11 x OPS_MIN reads NEST O7a 413 and
-    //                    BATCH OB 8295 (INCONCLUSIVE). One scalar for every oracle: GRAPH / ERROR at
-    //                    11 x OPS_MIN (O5 14791 / 12643) still clear it.
+    //                    in smoke (4.3x CHECK_FLOOR_SMOKE). At 11 x OPS_MIN (headpatched / 1.5.2, burst 13 recut)
+    //                    NEST O7a 413 / 502, BATCH OB 8295 / 1789 and ERROR OB 2152 / 1227 read INCONCLUSIVE.
+    //                    One scalar for every oracle: only GRAPH at 11 x OPS_MIN (O5 14791 / 14791) clears it.
     //   TAINT_SKIP_MAX   per oracle that skips tainted nodes: skipped / (performed + skipped) above this is
     //                    hollow evidence -> INCONCLUSIVE. Clean max 0.2585 (NEST O1c, 8-seed smoke sweep;
     //                    binding cut 0.2546); headpatched NEST cov-off:saved-cursor-hazard reads O1c 0.43-0.44
