@@ -90,7 +90,16 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
   No new config key.
 - S1d: `SoakReport.mjs` (`npm run soak:report -- <stream>`) re-derives a stream's verdict with the code that judged it:
   exit 0 `verdict <V> (consistent)`, exit 1 `INTEGRITY -- <class>` or `NOT A RELEASE SOAK -- mustfail|smoke|non-lite|
-  overridden-kernel|tree-parity`, exit 2 CONFIG (test/46, 147 tests). Kernel identity is self-reported (residual).
+  overridden-kernel|tree-parity|lane-subset|volume|provenance`, exit 2 CONFIG (test/46, 177 tests). Kernel identity is
+  self-reported (residual).
+- soak release policy (maintainer decision c): a tree run is release evidence only for the full roster at default
+  volume (SOAK_OPS >= DEFAULT_OPS and >= DEFAULT_CYCLES completed cycles per lane; an interrupted cycle does not
+  count) from a clean committed tree (gitSha a 40- or 64-hex commit sha, gitDirty false, gitError null); anything else
+  prints `NOT A RELEASE
+  SOAK -- lane-subset|volume|provenance`. A pinned control kernel skips that tree policy and prints `NOTE -- control
+  kernel <name>, not release evidence`, exiting 0 unless mustfail / smoke / non-lite refuses it. The decision is the
+  exported pure `releaseRefusal()`. `parity.json` also pins `config.mjs`
+  and `SoakReport.mjs` (decision b; 23 pins).
 - Calibration: `calibration/calibrate.mjs` + `soak-calibration.json` (seed 0xC0FFEE, 11 x 100000 + smoke, headpatched
   and 1.5.2): DEFAULT_OPS 100000 and SCEN_MIN 8 kept; CHECK_FLOOR 1000 -> 10000, CHECK_FLOOR_SMOKE 250 -> 500,
   TAINT_SKIP_MAX 0.5 -> 0.35; drift guard in test/41.
@@ -98,8 +107,20 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
   controls through the real `main.mjs` on pinned scratch kernels). `npm run soak:teeth` (short), `soak:teeth:long`
   (L-* controls); `MUSTFAIL_LIST=1`, `MUSTFAIL_ONLY=<regex>`, `MUSTFAIL_HEADS=1`. `soak:report` prints
   `NOTE -- teeth GAP gate=<ids> oracle=<ids>`. test/45 audits the registry against literal ceilings.
-- Known issue: the BATCH `cov-off` switch leaks (`lanes/batch.mjs:37` compares script codes, `scenarios.mjs:236`
-  compares decoded values), so `T-cov-BATCH` runs 11 x OPS_MIN instead of smoke. The fix needs a calibration recut.
+- soak: the BATCH `cov-off` switch no longer leaks. `lanes/batch.mjs` guarded on script codes while the detector
+  (`scenarios.mjs`) compares decoded values with `Object.is`; VALUE_POOL aliasing (codes 0 / -1 and 1 / -3 decode
+  equal) let a revert through. The guard now compares decoded values: 0 hits on every `cov-off` cell and every
+  `covOffSweep` cell (5 cov-off scenarios x 17 seeds x 2 kernels = 170 cells), clean streams byte-identical, and
+  `T-cov-BATCH` is back on `--smoke`.
+- soak: the ERROR lane gains OB in its hard oracles (decision e): a clean ERROR run performs OB 193019 (headpatched) /
+  115043 (1.5.2) times at 11 x 100000, and OB is now each ERROR cell's least-performed oracle. At 11 x OPS_MIN ERROR
+  OB (2152 / 1227) joins BATCH OB (8295 / 1789) and NEST O7a (413 / 502) below `CHECK_FLOOR`; only GRAPH clears it.
+- soak: test/41 (40 tests, now ~32 s on an M4 Pro) adds a live large-world probe (decision d): main.mjs
+  runs GRAPH 11 x 33000 on headpatched and its fold must equal the recorded `probe.fold`, with one LARGE world in
+  every
+  cycle. The pinned set drops `main.mjs` and `calibrate.mjs` (an edit of either was a ~13-minute recut) and adds
+  `kinds.mjs` and `bench/torture/helpers/index.mjs`. Recut 2026-10-13: one `--timed` run of 734 s under quiet-lock
+  (sequential children, throughput REPORTED, decides no gate); the `kernels.*.full` / `smoke` counts are unchanged.
 
 ### Docs
 
