@@ -32,8 +32,10 @@
  *
  * ---- TASK 1 census (read-only; tree Signal.js sha256 bfd063e5 @ 8b9c013, headpatched fa2871f0) -----------
  * Line numbers are the base files' at the census; the ANCHORS below, not these numbers, are what derive uses.
+ * Every tree number in this header is @ bfd063e5 (pre-F29), a dated record, not renumbered. F29 skips (head terms):
+ * read.set 1448, boxSet 1555 (@ ba8d1554).
  *
- * Counters (closure `let` unless noted)      tree: init / bump               headpatched: init / bump
+ * Counters (closure `let` unless noted)      tree @ bfd063e5 (pre-F29): init / bump  headpatched: init / bump
  *   globalVersion  int32                     408 / 1445, 1550 `(v+1)|0`      400 / 1328, 1435 `(v+1)|0`
  *   batchEpoch     int32, 0 skipped          409 / 1760 + guard 1765         402 / 1646 + guard 1651
  *   nodeSeq        int32                     437 / 877                       410 / 834
@@ -42,43 +44,48 @@
  *   statTotalDisposals    float64 `++`       399 / 835                       391 / 771
  *   gen (ReactiveNode field)                 112 / 817, 1947 `(gen+1)|0`     102 / 767, 1837 `gen+1` float64 (FIX-G)
  *                                            int32 (1947 = destroy's n.gen)
- *   destroy() resets globalVersion / batchEpoch / statTotal* (tree 1987-1993, hp 1877-1883): not rewritten
+ *   destroy() resets globalVersion / batchEpoch / statTotal* (tree @ bfd063e5 1987-1993, hp 1877-1883): not rewritten
  *   (a destroyed registry is never reused by a lane; destroy is the end of a world).
  *
  * Signed-distance compares `((a-b)|0)`:
- *   tree  1184 executeEffect  ((dep.version - evalVer)|0) > 0
+ *   tree @ bfd063e5 (pre-F29):
+ *         1184 executeEffect  ((dep.version - evalVer)|0) > 0
  *         1260 pullComputed   ((node.markEpoch - node.evalVersion)|0) <= 0     (guarded: evalVersion !== 0)
  *         1277 pullComputed   ((dep.version - evalVer)|0) > 0
  *   hp    1080, 1154, 1167    the same three
  *         944  isOldStamp     d = (gv - st)|0; d > 2^30 || d < 0               (guarded: st === 0 -> false, 943)
  *         949  clampSweep     F = (gv - 2^30)|0                                (guarded: F 0 / -1 -> -2, 950)
  * `=== 0` / `!== 0` sentinel tests:
- *   tree  1174 evalVersion !== 0 (executeEffect pre-walk)   1260 evalVersion !== 0 (clean short-circuit)
+ *   tree @ bfd063e5 (pre-F29):
+ *         1174 evalVersion !== 0 (executeEffect pre-walk)   1260 evalVersion !== 0 (clean short-circuit)
  *         1267 shouldRun = evalVersion === 0                1310 evalVersion === 0 || ... (equality cutoff bypass)
  *         1765 batchEpoch === 0 -> 1 (the counter skips its sentinel)
  *   hp    1072, 1154, 1160, 1197 (the same four)           1651 batchEpoch guard
  *         943 st === 0   950 F === 0 || F === -1   1329, 1436 (globalVersion & 0x1FFFFFFF) === 0 -> clampSweep
  * Equality compares against a stamp whose reset value is 0 (an implicit 0 sentinel):
- *   tree  1059 markDownstream t.markEpoch !== gv     1252 pullComputed evalVersion === globalVersion
+ *   tree @ bfd063e5 (pre-F29):
+ *         1059 markDownstream t.markEpoch !== gv     1252 pullComputed evalVersion === globalVersion
  *         1435/1441/1540/1546 revertEpoch !== / === batchEpoch (safe: batchEpoch never 0)
  *   hp    975, 1146, 1317/1324/1424/1431 (+ preBatchEvals === evalCount, float64, no sentinel)
  * gen / id: gen is equality-only (savedGen / birthGen / NODE_GEN / schedulerThunk); its only 0 is the
  *   `po !== null ? po.gen : 0` default, guarded by the null test. id has no sentinel test in either kernel.
  * Locals initialised from a census counter (all re-read per call, so a preset keeps them consistent):
- *   tree  let shouldRun 1267; const gv 1047; evalVer 1176, 1270; savedGen 1172, 1266; birthGen 1412, 1476,
+ *   tree @ bfd063e5 (pre-F29):
+ *         let shouldRun 1267; const gv 1047; evalVer 1176, 1270; savedGen 1172, 1266; birthGen 1412, 1476,
  *         1703; gen 1686; g 748; sg/tg 511; pg/pwg 444, 451, 1014-1015, 1365, 1571, 1799, 1831-1832, 1844-1845
  *   hp    let F 949; let shouldRun 1160; const gv 948, 963; evalVer 1074, 1163; savedGen 1113, 1191; birthGen
  *         1294, 1360, 1589; gen 1572; lcGens[] 441; lifecycle entry gen 1900
  *
- * FINDING (both kernels; inferred by reading, unproven -- NEARWRAP zero:k is the witness, PENDING):
- *   globalVersion's bump has no 0-skip (batchEpoch's has), but evalVersion and markEpoch use 0 as "unset".
+ * FINDING F29 (both kernels; WITNESSED b17 by NEARWRAP zero:k; FIXED tree, SPEC-A A13; headpatched keeps it):
+ *   globalVersion's bump had no 0-skip (batchEpoch's has), but evalVersion and markEpoch use 0 as "unset".
+ *   The tree kernel now skips 0 at both bumps (read.set, boxSet), so (a)-(c) below are the headpatched control's.
  *   On the write that makes globalVersion 0:
- *   (a) pullComputed's fast path `evalVersion === globalVersion` (tree 1252, hp 1146) has no `!== 0` guard:
+ *   (a) pullComputed's fast path `evalVersion === globalVersion` (tree @ bfd063e5 1252, hp 1146) has no `!== 0` guard:
  *       a computed first read while globalVersion is 0 returns its unset cache without running its body or
  *       linking its deps -- a stale read that nothing downstream re-marks.
- *   (b) markDownstream's `t.markEpoch !== gv` (tree 1059, hp 975) skips every subscriber still at the reset
+ *   (b) markDownstream's `t.markEpoch !== gv` (tree @ bfd063e5 1059, hp 975) skips every subscriber still at the reset
  *       markEpoch 0: that write marks / queues none of them (a lost notification for that write).
- *   (c) a node evaluated at globalVersion 0 stamps evalVersion 0 and reads as never evaluated (tree 1174,
+ *   (c) a node evaluated at globalVersion 0 stamps evalVersion 0 and reads as never evaluated (tree @ bfd063e5 1174,
  *       1260, 1267, 1310; hp 1072, 1154, 1160, 1197): conservative extra runs, equality cutoff bypassed.
  *
  * COLD module (runs once, at kernel load). Errors are SoakConfigError: config / kernel code maps them to exit 2.
