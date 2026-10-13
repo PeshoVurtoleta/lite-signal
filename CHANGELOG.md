@@ -10,9 +10,37 @@ One engine simplification (LEDGER #30, "observer-fold") plus dev-only work: the 
 closed after the link-SoA fork (LEDGER #27) passed the gates while costing +10-39% on four
 shapes, a gate-1 conformance runner, and the `bench/soak/` randomized soak harness. `Signal.d.ts`
 and `Watch.js` are untouched; `Signal.js` changes the tracking-flag fold described below (no
-API, no behavior change) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
+API, no behavior change), the F29 version-counter fix ("### Fixed" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md`.
+
+### Fixed -- engine: `globalVersion` skips 0, the "unset" stamp sentinel (F29)
+
+`evalVersion` and `markEpoch` use 0 as "unset", but `globalVersion` bumped as a plain
+`(v + 1) | 0` and so first reached 0 after 2^32 - 1 version bumps in one registry lifetime (then every
+2^32). At that write a lazy computed's first read could return `undefined`, and an effect created or
+read at that moment could go permanently deaf (no re-run after 1000 further writes); an
+effect stamped 0 skipped its dependency check, a computed stamped 0 bypassed the equality
+cutoff, and a batch revert inside the window re-ran. Both bump sites (`read.set`, `boxSet`)
+now spell the bump `((v + 1) | 0) || 1`, so the only 0 stamps left are the "unset" ones `createNode` and `destroy()` write;
+the version counter's period is 2^32 - 1. The `|| 1` arm is `c8`-ignored (unreachable in a
+test run; see COVERAGE-NOTES.md). Bytecode, `--print-bytecode` (bake-off, 2026-10-13, PRELIMINARY):
+`read.set` 252 B, unchanged vs the pre-fix tree; `boxSet` 200 -> 204 B. New
+`test/51-version-zero-sentinel.test.mjs` (6 tests, red on the pre-fix tree, with must-fail
+mutants per site). Acceptance campaign (reduced: sweep + microscope, REPS=10, no Andrii suite; 2026-10-13,
+M4 Pro, Node 26.8.2, quiet-lock, load 1.05-2.91; Chrome busy during part of the sweep, 31 of 59 samples):
+ACCEPT, PRELIMINARY -- 0 / 45 sweep rows and 0 / 6 microscope scenarios beyond the A/A noise;
+KAIROS and BROADCAST are bimodal and their fast-mode ratios are 0.984 and 0.994. The full
+BENCH-CAMPAIGN runs before release.
+
+### Added -- CI (dev-only, not shipped)
+
+`.github/workflows/ci.yml` (npm test + torture on Node 22 / 24 / 26 and macOS Node 24;
+parity, perf gate and a soak smoke checked by `soak:report` on Node 26.8.2) and
+`soak-nightly.yml` (a release-shaped 33 x 200000 burn-in judged by `soak:report`,
+`soak:teeth`, `soak:teeth:long`). The tree soak steps are report-only while teeth.mjs GAPS
+lists P-TREE. `package-lock.json` is now committed. `test/47` guards the workflow files
+(closed-world schema + sha256 pin).
 
 ### Changed -- engine: `isTrackingDeps` folded into `currentObserver` (LEDGER #30)
 

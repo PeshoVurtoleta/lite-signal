@@ -217,6 +217,54 @@ MUSTFAIL_LIST=1 builds all and runs none; MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=
 - (e) ERROR gains OB as a hard oracle (built); a per-oracle CHECK_FLOOR stays deferred. Separately, the 1.5.2 ERROR smoke
   `aggregate` count (SCEN_MIN_SMOKE coverage, not an oracle floor) is seed-dependent; recorded, no action.
 
+#### Addendum 2026-10-13 (S2, SPEC-B addendum item 12): rulings and accepted recommendations
+
+- Group A (wrap job + NEARWRAP), accepted as recommended: M1 NEARWRAP is a kernel mode on the four lanes, not a fifth
+  ROSTER lane; M2 a nearwrap stream is NOT A RELEASE SOAK; M3 if the head passes NEARWRAP, accept mutant-only teeth and
+  record a finding; M4 the d8-pc job gets its own S2 burst; M5 the NEARWRAP offset k is fixed per run, not per world (a
+  per-world k breaks replay).
+- Group B (resource witness), accepted as recommended: D-B1 lite-sketch is an exact-pinned devDependency (0b version,
+  expected 1.2.0), static import, fail closed; D-B2 the rss tier is a `fail` kind inside the soak only (like heap), the
+  unit rule is deterministic and never runs in npm test; D-B3 the HTML report is an argv-only CLI (CI wiring is an S4
+  follow-up, since test/47 pins the workflow sha); D-B4 a baseline heap +2 MB is a REGRESSION FAIL only on the same Node
+  major and runner class, else a NOTE; D-B5 the two retired files are deleted (the pointer cites `git show 8b9c013:`),
+  not just unlisted.
+- Orchestrator rulings: test numbering is test/48 (group A), test/49 and test/50 (group B); spinVersion lives in a new
+  helpers/spin.mjs, not helpers/index.mjs (that file is pinned by calibrate.mjs, so an edit forces a recut); one
+  SCHEMA_VERSION bump (1 -> 2) and one parity.json re-pin rung for all of S2.
+- Baseline volume rule (bench/soak/baseline.mjs header): INCOMPATIBLE covers schemaVersion / genVersion / SOAK_ENGINE /
+  SOAK_SMOKE mismatches, an unparseable host field, and a SOAK_OPS or SOAK_CYCLES that is out of range or not an
+  integer (null / NaN / string: reason config). A merely DIFFERENT volume is never INCOMPATIBLE: it joins the D-B4
+  comparability predicate, so the heap delta becomes a NOTE while the volume-independent failingWorlds 0 -> >0 and
+  missing-lane regressions still FAIL. A forever run (SOAK_CYCLES 0) on either side states no volume and is never
+  volume-comparable (heap NOTE).
+- S2 modules (spin, wraprules, nearwrap, rss, report-html, baseline) are built (test/48-50 run them in npm test) but not yet wired into a soak run or CI at this
+  date; no number in this addendum is a measurement.
+
+### 13. CI (S4-min, SPEC-B addendum item 11; dated 2026-10-13)
+
+- Files: `.github/workflows/ci.yml` (test cells on Node 22 / 24 / 26 and macOS Node 24: npm ci, npm test,
+  torture:semantic, torture.mjs; a `gates` job on the pinned Node: soak:parity, test:gate, a P-TREE probe step, a soak
+  smoke checked by soak:report) and `soak-nightly.yml` (burn-in, teeth, teeth-long). `package-lock.json` is committed
+  (`npm ci`).
+- P-TREE switch: the tree soak steps are report-only while teeth.mjs GAPS lists P-TREE. A `ptree` step reads GAPS and
+  keys `continue-on-error` on it (a red step then prints a `::warning::`); deleting the GAP makes the same steps gate
+  with no workflow edit.
+- Volume and floors: the burn-in is release-shaped (33 cycles x 200000 ops, full roster, SOAK_REQUIRE_PROVENANCE=1,
+  no LANES / KERNEL / SMOKE / MUSTFAIL), and `soak:report` judges it. Dispatch inputs are read only through `env:` and
+  a volume guard fails closed below DEFAULT_OPS / DEFAULT_CYCLES. Must-fail confirmed on CI (2026-10-13): a dispatch
+  with ops=50000 failed at the volume guard (`SOAK_OPS="50000" is not a decimal integer >= DEFAULT_OPS 100000`).
+- CI streams as release-shaped evidence: a clean-checkout burn-in stream carries gitSha with gitDirty false, so the
+  section 9 release policy can accept it. The hosted wall and L-T-retain RSS were unmeasured at design time; a first-run
+  timeout fails closed and is resized from the stream's tMs. The cron fires only from the default branch.
+- Byte pin: test/47 pins the sha256 of both workflow files (check C19) on top of the closed-world schema checks
+  C1-C18. Any workflow edit turns the real-files test red until a REVIEWED test/47 edit re-pins it (same policy as the
+  package.json script pins); the semantic checks then judge the new content.
+- Node-24 action floor: no action that runs on Node 20 (deprecated by GitHub): actions/checkout, setup-node and
+  upload-artifact are pinned at v7 (all node24; upload-artifact v5 is still node20). The soak steps use the pinned
+  PIN_NODE (26.8.2, renamed from SOAK_NODE because config rejects unknown SOAK_* env keys).
+- Known limits: Node 22 / 24 cells could not be run locally when the workflows were written (only Node 26 installed).
+
 ## Consequences
 
 - The BATCH cov-off switch is closed: lanes/batch.mjs:42 compares DECODED values with Object.is, as the detector does

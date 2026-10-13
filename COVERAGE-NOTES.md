@@ -102,6 +102,13 @@ Forcing it throws `CapacityError` instead.
 `batch()` calls. Retained because `revertEpoch` comparisons treat `0` as
 "no capture".
 
+**`read.set` and `boxSet` `|| 1`** -- the F29 0-skip, `((globalVersion + 1) | 0) || 1`, in
+the signal setter closure and in `boxSet`. The `|| 1` arm runs only when the bump produces 0,
+which takes 2^32 - 1 version bumps in one registry lifetime (one full wrap of `globalVersion`),
+so the unmodified source never reaches it under the c8-instrumented suite. Each site carries a `/* c8 ignore next */` (one line only). The
+arm is still exercised, on derived kernels, by `test/51-version-zero-sentinel` (and its
+must-fail mutants), which is how the skip is pinned without a 2^32-write run.
+
 `Watch.js` keeps its single pre-existing ignore on the `when()` re-entry guard.
 
 ---

@@ -12,7 +12,7 @@
  * confirmed here by really spinning globalVersion ~2.1 billion steps
  * (~10s per band crossing on the 2026 reference host):
  *
- *   THE BAND (dormancy gap in [2^31-1, 2^32)): the FIRST dependency write
+ *   THE BAND (dormancy gap in [2^31-1, 2^32); one write off for windows that cross 0, now that the version period is 2^32-1): the FIRST dependency write
  *   after the dormancy is silently absorbed — the computed's pull
  *   short-circuits on the aliased diff and serves the stale cache. OBSERVED
  *   cones are hit HARDER: the effect is marked and queued, but
@@ -23,7 +23,7 @@
  *   pull re-stamps evalVersion to the current globalVersion, so the NEXT
  *   write propagates normally.
  *
- *   BELOW THE BAND (gap <= 2^31-17 measured; boundary at 2^31-1): exact.
+ *   BELOW THE BAND (gap <= 2^31-17 measured; boundary at 2^31-1, one write off for windows that cross 0): exact.
  *
  * These are pins of ACTUAL behavior, not endorsements: a future engine that
  * closes the band (uint32 compare epochs, dormancy re-stamping, 53-bit

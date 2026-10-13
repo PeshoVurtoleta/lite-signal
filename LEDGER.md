@@ -149,6 +149,45 @@ registry `cursorStack` and repairs every frame (`repairCursor` / `dropCursors`),
 slot of a node disposed while RUNNING until depth 0. A line that carries only the
 one-line repair (published 1.5.x, 1.6.0-rc..1.11.0, LiteSignal+/1.13.0) still has F15.
 
+### F29 -- `globalVersion` reached the 0 "unset" sentinel *(found by reading, 2026-10-13; FIXED in the 1.6.0 working tree)*
+
+`evalVersion` / `markEpoch` use 0 as "unset", and `globalVersion` bumped as a plain `(v + 1) | 0`, so
+one full wrap (2^32 - 1 bumps in one registry lifetime) put a 0 stamp in the graph. Witnessed by the
+NEARWRAP census (SPEC-A A13): a one-shot lost notification, a lazy computed first read returning
+`undefined`, an effect created at the crossing permanently deaf, an effect stamped 0 skipping its
+dependency check, a computed stamped 0 bypassing the equality cutoff. **Fixed** at the two bump sites
+(`read.set`, `boxSet`) with `((v + 1) | 0) || 1`; the counter's period becomes 2^32 - 1 and `test/51`
+pins it with must-fail mutants per site.
+
+*The bake-off (PRELIMINARY, 2026-10-13, M4 Pro, Node 26.8.2, quiet-lock, load 1.06-1.91, 132 runs (30 + 60 + 42, three batches)).*
+Six spellings were built and compared: the pre-fix bump, `if (!globalVersion) globalVersion = 1;`, the
+single-expression `|| 1` form, the chained store at both sites, chained in `read.set` with the plain
+form in `boxSet` (shipped), and a step-by-2 odd counter. `--trace-turbo-inlining` decision logs were
+identical after masking the size / budget figures for every spelling (KAIROS and BROADCAST, sync and concurrent; `read.set` inlined into
+`drive` and `runOne` in all; the inlining budget never binds, 543 of 920 at most). Bytecode
+`read.set` 252-264 B, `boxSet` 200-208 B across the spellings; shipped 252 / 204 (pre-fix 252 / 200). In three rotated A/B
+batches the shipped spelling (K3) stayed within the A/A spread (K3 / pre-fix medians at most 1.028;
+per-batch A/A up to 1.074); K2's raw 1.080 (KAIROS) and 1.106 (BROADCAST) fall on the bimodal
+scenarios and were not mode-split. Law 1's failure mode (#17: bytes pushing a hot body past the
+inline budget) did not occur; this is a default-build correctness fix no build-time twin can carry,
+so it is a measured exception to Law 1, not a counter-example. KAIROS (~510 vs ~600 ms) and
+BROADCAST (~420 vs ~480 ms) are BIMODAL, with a slow-mode frequency independent of the kernel: an
+earlier 4-round A/B read KAIROS 1.083; in batch 3 the byte-identical A/A twin K1b read 1.081 against
+the pre-fix tree while K1 read 1.007 -- mode counting, not a cost. Do not read
+a 4-round A/B on those two scenarios without splitting the modes first.
+
+*Rejected: step-by-2* (`(v + 2) | 0`, an odd counter that never lands on 0): it halves the ordering
+window (about 2^30 bumps instead of about 2^31) and wraps at 2^31, colliding with the 2^31 band tests
+and the A4 rebase work.
+
+*Acceptance (reduced campaign: sweep + microscope, REPS=10, no Andrii suite; 2026-10-13, M4 Pro, Node
+26.8.2, quiet-lock, load 1.05-2.91; Chrome busy during part of the sweep, 31 of 59 cpu-sampler
+samples): ACCEPT, PRELIMINARY.* 0 / 45 sweep rows and 0 / 6 microscope scenarios beyond the A/A
+noise; KAIROS / BROADCAST fast-mode ratios (KCAND / KWT0) 0.984 / 0.994. The worst regression-direction
+sweep row, `updateComputations2to1` (raw 1.454), is a slow-mode count (fast-mode ratio 0.987, Fisher p
+0.656). The full BENCH-CAMPAIGN runs before release. Report:
+audit/2026-10-07/verification/campaign-f29/REPORT.md (git-ignored).
+
 ---
 
 ## C. Shelved — built and measured, parked (not disproven, not rejected)
