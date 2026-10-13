@@ -623,7 +623,7 @@ health.set(8);  // same -- no fire
 health.set(0);  // crossed -- fires once with (true, false)
 ```
 
-**Throwing callbacks and kept stop handles** -- the new value becomes the baseline *before* the callback runs, so a callback that throws does not leave a stale `oldValue`: the next fire reports the value the throwing fire saw as its `oldValue`. The first `stop()` call also drops the watcher's value slots, so a stop handle kept after disposal does not keep the last observed value reachable; later calls are no-ops.
+**Throwing callbacks and kept stop handles** -- the new value becomes the baseline *before* the callback runs, so a callback that throws does not leave a stale `oldValue`: the next fire reports the value the throwing fire saw as its `oldValue`. The first `stop()` call also drops the last observed value, `source`, `callback` and the engine dispose handle, so a stop handle kept after disposal keeps none of them reachable; later calls are no-ops. Stopped wins: `stop()` called inside `source()` means the callback does not run after it. A watcher disposed by its *owner* (a parent effect disposed first) keeps all four (value, `source`, `callback`, engine handle) until its stop handle is called (safe, releases everything) or dropped, as a raw `effect()` dispose handle keeps its registry.
 
 Without this guard, the callback would fire on every `health` mutation regardless of whether `isDead` changed. Wrapping the source in `computed()` would achieve the same via the computed's own equality check -- the guard makes that wrapping optional.
 
@@ -646,7 +646,7 @@ const cancel = when(() => slowApi.ready, () => start());
 if (userBacked) cancel();
 ```
 
-Once the watcher has fired or been cancelled, the handle drops the engine dispose handle; later calls are no-ops. A kept handle still references `predicate` and `callback`, so whatever they close over (usually the registry's own signals) stays reachable while you keep it -- drop the handle when you no longer need it. A callback that throws on a later fire (not at registration) skips the auto-dispose: the effect stays live and the handle keeps it until `cancel()` is called (same on 1.5.2).
+Once the watcher has fired or been cancelled, the handle releases `predicate`, `callback` and the engine dispose handle, so a kept handle retains nothing of the watcher; later calls are no-ops. `cancel()` called inside the predicate means the callback does not run, even if that run returns truthy. A callback that throws on a later fire (not at registration) skips the auto-dispose: the throw propagates out of the write, later writes do not refire, and the handle keeps the live effect (and predicate / callback) until `cancel()`, which releases everything (same on 1.5.2). A watcher disposed by its *owner* keeps them until the handle is called (safe) or dropped.
 
 ### `whenAsync(predicate)`
 

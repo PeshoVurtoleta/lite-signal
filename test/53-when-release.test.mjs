@@ -6,8 +6,8 @@
 // on 7676dac. Three go through stop() (a later fire, an explicit cancel, cancel inside
 // the callback) and one through the wantsStopEarly path (predicate truthy at
 // registration); removing `stopFn = null` at either site turns that site's rows red.
-// Scope: the rows clear the predicate's holder, because a kept handle still references
-// predicate and callback (shared closure context) -- that retention is not fixed here.
+// These rows clear the predicate's holder, so they isolate the engine dispose handle; the
+// predicate / callback slots themselves are pinned by the burst-30 rows further down.
 //
 // The premise rows pin the engine fact the release rows rest on: a kept effect dispose
 // handle -- live OR already disposed -- keeps its registry reachable. If an engine
@@ -182,5 +182,237 @@ describe("whenAsync -- a kept promise does not retain the registry", () => {
         });
         assert.ok(kept instanceof Promise);
         assert.equal(retained, false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Burst 30: the kept handle must also drop predicate + callback. These rows let the
+// predicate close DIRECTLY over an r2 signal (no holder clearing) and the callback over
+// a second WeakRef'd payload, so the closure slots themselves are the path under test.
+// Red on 01c00bc (kept handle still references predicate + callback): A1, A1s, A2, A3,
+// A4, A5, A8b, A9b. Pins green on 01c00bc: A8, A9, A10. A6 / A7 (cancel inside the
+// predicate / callback AT REGISTRATION) are not expressible: the handle does not exist
+// until when() returns, so there is nothing to call.
+// ---------------------------------------------------------------------------
+
+/** Like probe(), but also WeakRefs a callback payload; run(r2, cb) returns the handle(s). */
+async function probe2(run) {
+    const gc = enableGc();
+    let regRef = null, cbRef = null, out = null;
+    (() => {
+        const r2 = createRegistry();
+        setDefaultRegistry(r2);
+        const payload = { big: new Array(4096).fill(1) };
+        regRef = new WeakRef(payload);
+        r2.signal(payload);                  // held only by r2's node pool
+        const cb = { big: new Array(4096).fill(2) };
+        cbRef = new WeakRef(cb);
+        out = run(r2, cb);
+        setDefaultRegistry(r);
+    })();
+    await collect(gc);
+    return {
+        out,
+        regRetained: regRef.deref() !== undefined,
+        cbRetained: cbRef.deref() !== undefined
+    };
+}
+
+// Built in separate function scopes so the two closures do not share a V8 context: each
+// slot is then the only path to its own payload, which pins each `= null` on its own.
+function predOf(s) { return () => s() > 0; }
+function counterOf(cb, cnt) { return () => { cnt.n += cb.big.length > 0 ? 1 : 100; }; }
+
+describe("when -- a kept handle drops predicate and callback (closure slots)", () => {
+    it("A1 after a later fire", async () => {
+        let fires = 0;
+        const { out, regRetained, cbRetained } = await probe2((r2, cb) => {
+            const s = r2.signal(0);
+            const cancel = when(() => s() > 0, () => { fires += cb.big.length > 0 ? 1 : 100; });
+            s.set(1);
+            return cancel;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 1);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+
+    it("A1s after a later fire, predicate and callback in separate scopes: each slot released", async () => {
+        const cnt = { n: 0 };
+        const { out, regRetained, cbRetained } = await probe2((r2, cb) => {
+            const s = r2.signal(0);
+            const cancel = when(predOf(s), counterOf(cb, cnt));
+            s.set(1);
+            return cancel;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(cnt.n, 1);
+        assert.equal(regRetained, false, "predicate slot retained (registry payload)");
+        assert.equal(cbRetained, false, "callback slot retained (callback payload)");
+    });
+
+    it("A2 after an explicit cancel before the fire", async () => {
+        let fires = 0;
+        const { out, regRetained, cbRetained } = await probe2((r2, cb) => {
+            const s = r2.signal(0);
+            const cancel = when(() => s() > 0, () => { fires += cb.big.length > 0 ? 1 : 100; });
+            cancel();
+            s.set(1);
+            return cancel;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 0);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+
+    it("A3 predicate truthy at registration (wantsStopEarly)", async () => {
+        let fires = 0;
+        const { out, regRetained, cbRetained } = await probe2((r2, cb) => {
+            const s = r2.signal(1);
+            const cancel = when(() => s() > 0, () => { fires += cb.big.length > 0 ? 1 : 100; });
+            s.set(2);
+            return cancel;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 1);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+
+    it("A4 cancel() inside a later predicate run that returns falsy", async () => {
+        let fires = 0;
+        let cancel = null;
+        const { out, regRetained, cbRetained } = await probe2((r2, cb) => {
+            const s = r2.signal(0);
+            cancel = when(() => {
+                if (s() === 1) { cancel(); return false; }
+                return false;
+            }, () => { fires += cb.big.length > 0 ? 1 : 100; });
+            s.set(1);                        // must not throw
+            s.set(2);
+            return cancel;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 0);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+
+    it("A5 cancel() inside a later predicate run that returns truthy: cancel wins", async () => {
+        let fires = 0;
+        let cancel = null;
+        const { out, regRetained, cbRetained } = await probe2((r2, cb) => {
+            const s = r2.signal(0);
+            cancel = when(() => {
+                if (s() === 1) { cancel(); return true; }
+                return false;
+            }, () => { fires += cb.big.length > 0 ? 1 : 100; });
+            s.set(1);                        // must not throw
+            s.set(2);
+            return cancel;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 0);              // 01c00bc: 1 (callback still fires after cancel)
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+});
+
+describe("when -- a callback that throws on a later fire", () => {
+    // A8 pins the throw surface on 01c00bc (green there and on head): the throw of a
+    // later-fire callback propagates out of s.set(); fired is already true so later
+    // writes never refire, and stop() was skipped so the effect stays live and the kept
+    // handle (not cancelled) retains the registry. A8b: cancel() then releases (red).
+    function build(withCancel) {
+        let fires = 0, thrown = null, cancel = null, predCalls = 0;
+        return probe2((r2, cb) => {
+            const s = r2.signal(0);
+            cancel = when(() => { predCalls++; return s() > 0; }, () => {
+                fires++;
+                if (cb.big.length > 0) throw new Error("boom");
+            });
+            // Keep only the message: a kept Error with an unformatted .stack keeps its call-site
+            // frames (and through them r2 and the callback) alive, which would mask A8b and
+            // make A8's retention pin pass for the wrong reason.
+            try { s.set(1); } catch (e) { thrown = e instanceof Error ? e.message : e; }
+            s.set(2);                        // already fired: must not refire
+            if (withCancel) cancel();
+            return cancel;
+        }).then((res) => ({ ...res, fires, thrown, predCalls }));
+    }
+
+    it("A8 throw surfaces from s.set(); no refire; live effect retains the registry", async () => {
+        const { out, regRetained, fires, thrown, predCalls } = await build(false);
+        assert.equal(typeof out, "function");
+        assert.equal(thrown, "boom");
+        assert.equal(fires, 1);
+        // registration + s.set(1); the write after the throw re-runs the live effect, which
+        // must exit at the first `done` guard without calling the predicate again
+        assert.equal(predCalls, 2);
+        assert.equal(regRetained, true);     // live effect + uncancelled handle
+    });
+
+    it("A8b then cancel() releases registry and callback", async () => {
+        const { out, regRetained, cbRetained, fires } = await build(true);
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 1);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+});
+
+describe("when -- owner-disposed watcher (D2: documented, not fixed)", () => {
+    // The owner is an effect (createRoot() returns fn()'s result and has no dispose).
+    // A9 pins that the kept handle of an owner-disposed, never-fired when() retains
+    // (green on both); A9b: calling the kept handle releases (red on 01c00bc).
+    function ownerBuild(callHandle) {
+        let fires = 0;
+        return probe2((r2, cb) => {
+            const s = r2.signal(0);
+            let cancel = null;
+            const owner = r2.effect(() => {
+                cancel = when(() => s() > 0, () => { fires += cb.big.length > 0 ? 1 : 100; });
+            });
+            owner();                         // dispose the owner before the fire
+            s.set(1);
+            if (callHandle) cancel();
+            return cancel;
+        }).then((res) => ({ ...res, fires }));
+    }
+
+    it("A9 kept handle retains (pin)", async () => {
+        const { out, regRetained, fires } = await ownerBuild(false);
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 0);
+        assert.equal(regRetained, true);
+    });
+
+    it("A9b calling the kept handle releases", async () => {
+        const { out, regRetained, cbRetained, fires } = await ownerBuild(true);
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 0);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+});
+
+describe("when -- stale cancel handles after owner disposal (regression pin)", () => {
+    it("A10 1000 stale handles called after slot reuse: no throw, no collateral", () => {
+        const s = r.signal(0);
+        const handles = [];
+        const owner = r.effect(() => {
+            for (let i = 0; i < 1000; i++) handles.push(when(() => s() > 0, () => {}));
+        });
+        assert.equal(handles.length, 1000);
+        owner();                             // cascades: every when() is disposed
+        let newFires = 0, sibRuns = 0;
+        when(() => s() > 0, () => { newFires++; });
+        r.effect(() => { sibRuns++; s(); });
+        for (let i = 0; i < 1000; i++) handles[i]();   // must not throw or hit residents
+        s.set(1);
+        assert.equal(newFires, 1);
+        assert.equal(sibRuns, 2);
     });
 });

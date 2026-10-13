@@ -26,8 +26,8 @@ Two defects in `watch()` (Watch.js), both present through 1.5.2:
   before invoking the callback.
 - `stop()` disposed the effect but kept both value slots, so a stop handle the caller kept after
   disposal kept the last observed value reachable. The first `stop()` now drops `oldValue`,
-  `currentNewValue` and the engine dispose handle; later calls are no-ops (the late-binding
-  `wantsStopEarly` path for `stop()` inside the immediate fire is kept).
+  `currentNewValue`, `source`, `callback` and the engine dispose handle; later calls are no-ops (the
+  late-binding `wantsStopEarly` path for `stop()` inside the immediate fire is kept).
 
 Per-fire cost stays at zero allocations: `test/torture.mjs` gains a `watch()` fire lane in the
 pinned-semi-space child (new-space delta minus an empty-step baseline, in the same process as the
@@ -35,32 +35,54 @@ pinned-semi-space child (new-space delta minus an empty-step baseline, in the sa
 or the lane is blind). An escaping per-fire object, an inline `untrack(() => ...)` arrow in the
 effect body and a fresh `() => stop()` closure passed to the callback per fire each turn it red (the
 lane's callback stores its stop argument in a hoisted slot, so that closure escapes and V8 cannot
-escape-analyse it away). New `test/52-watch-commit-release.test.mjs` (9 tests; 8 are red
-on the 1.5.2 Watch.js; the idempotence row pins engine behaviour and passes on both). Every clear in
-`stop()` is load-bearing: removing the `oldValue` or `currentNewValue` clear turns the 3
-value-release tests red, and removing `stopFn = null` at either release site (outside `stop()`, or
-the `wantsStopEarly` path) turns that site's dispose-handle test red -- a kept stop handle would
-otherwise keep the whole registry reachable. A re-entrant
-write to the source from inside the callback is unchanged: the engine does not re-run an effect for a
-write made during its own run, so that write is not observed by the watcher (same on 1.5.2).
+escape-analyse it away). New `test/52-watch-commit-release.test.mjs` (17 tests). Of the first 9, 8 are
+red on the 1.5.2 Watch.js; the idempotence row pins engine behaviour and passes on both). Every clear
+in `stop()` is load-bearing: removing the `oldValue` or `currentNewValue` clear turns the 3
+value-release tests red, and removing `stopFn = null` at either release site (outside `stop()`, or the
+`wantsStopEarly` path) turns that site's dispose-handle test red -- a kept stop handle would otherwise
+keep the whole registry reachable. 8 later rows: a kept stop handle releases `source` and `callback`
+(stop from outside, also with source and callback in separate scopes, inside a later callback, inside
+the immediate fire), stopped wins, and owner-disposed / sibling-stop pins; 6 are red on the 01c00bc
+Watch.js (removing `source = null` or `callback = null` in `stop()` turns them red, removing the
+`stopped` test after `source()` turns the stopped-wins row red). **Behaviour change (stopped wins):**
+`stop()` called inside `source()` now means the callback does not run after it and the value slots are
+not re-populated. Through 1.5.2 the callback still fired after `stop()` with `(v, prev)`, with or
+without `immediate` (on the unreleased 7676dac / 01c00bc only with `immediate: true`, as `(v,
+undefined)`), and the value was re-retained. The per-fire path gains one boolean test after `source()`
+and no allocation (torture `watch()` lane 0.000 B/op). A watcher disposed by its OWNER (a parent
+effect disposed first) keeps the last value, `source`, `callback` and the engine handle until its stop
+handle is called (safe, gen-guarded, releases everything) or dropped, as a raw `effect()` dispose
+handle keeps its registry; not fixable at zero cost without an engine hook (documented, not fixed). A
+re-entrant write to the source from inside the callback is unchanged: the engine does not re-run an
+effect for a write made during its own run, so that write is not observed by the watcher (same on
+1.5.2).
 
-### Fixed -- `when()`: the cancel handle drops the engine dispose handle on fire and on cancel
+### Fixed -- `when()`: the cancel handle releases predicate, callback and the engine handle on fire and cancel
 
 `when()` (Watch.js) never cleared its engine dispose handle (`stopFn`), present through 1.5.2: a
 cancel handle the caller kept after the predicate fired, or after an explicit cancel, kept the
 disposed effect's dispose handle and, through it, the whole registry -- every value its nodes hold --
 reachable for as long as the handle lived. Both release paths now drop the handle before calling it:
 `stop()` (run on fire and on cancel) and the `wantsStopEarly` path (predicate truthy at registration);
-later calls find it null and are no-ops. Scope: the kept handle still shares `when()`'s closure
-context, so it still references `predicate` and `callback`; whatever they close over (typically the
-registry's own signals) stays reachable while the handle is kept, as with `watch()`'s `source` /
-`callback`. A `when()` disposed by its owner (never fired, never cancelled) also keeps the dispose
-handle, and a callback that throws on a later fire skips the auto-dispose (`stop()` never runs, the
-effect stays live and the handle keeps it until `cancel()`; same on 1.5.2; a throw at registration
-makes `when()` throw and the engine disposes the effect). All three are filed follow-ups. No
-per-check or per-fire allocation is added (the change is in the once-only dispose paths). `whenAsync()` was not affected: it discards `when()`'s handle and the
-Promise holds no path back to the registry (now pinned). New `test/53-when-release.test.mjs` (9
-tests): 4 release rows, all red on the 1.5.2 / 7676dac Watch.js; removing `stopFn = null` in `stop()`
+later calls find it null and are no-ops. `stop()` also nulls `predicate` and `callback`, so the kept
+handle retains nothing of the watcher (no closure-context retention). **Behaviour change (stopped
+wins):** `cancel()` called inside the predicate on a later run now means the callback does not run
+even if that run returns truthy; through 1.5.2 / 01c00bc it still fired. Unchanged and documented: a
+callback that throws on a later fire skips the auto-dispose (the throw propagates out of the write,
+later writes do not refire, the live effect and predicate / callback stay referenced by the handle
+until `cancel()`, which releases everything; a throw at registration makes `when()` throw and the
+engine disposes the effect). Documented, not fixed: a `when()` disposed by its OWNER (never fired,
+never cancelled) keeps the engine handle, predicate and callback until its handle is called (safe) or
+dropped; no zero-cost fix without an engine hook. The `fired` guard is now `done` and its comment
+corrected (it is reached after a later-fire callback throw). No per-check allocation is added: the
+per-check path is unchanged (one more `done` test runs only on the truthy, once-only path).
+`whenAsync()` was not affected: it discards `when()`'s handle and the Promise holds no path back to
+the registry (now pinned). New `test/53-when-release.test.mjs` (20 tests; 11 rows added for the
+closure-slot release: after fire (and once with predicate and callback in separate scopes), cancel and
+a truthy registration, cancel inside a later predicate run (falsy, and truthy: stopped wins), a
+later-fire throw pin + cancel, owner-disposed pin + call, 1000 stale handles after slot reuse; 8 are
+red on the 01c00bc Watch.js): 4 original release rows, all red on the 1.5.2 / 7676dac Watch.js;
+removing `stopFn = null` in `stop()`
 turns 3 of them red and removing it on the `wantsStopEarly` path turns the fourth red. Two premise rows
 pin the engine fact the release rows rest on (a kept effect dispose handle, live or already disposed,
 keeps its registry reachable), so an engine change that breaks it fails those rows instead of leaving

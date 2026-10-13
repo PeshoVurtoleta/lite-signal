@@ -2,8 +2,9 @@
 // watcher's value slots. Both are regressions against the 1.5.2 Watch.js, where
 // untrackedFire wrote `oldValue = currentNewValue` AFTER the callback (a throwing
 // callback left a stale baseline) and stop() only disposed the effect (a kept stop
-// handle kept the last observed value reachable). Every test below is red on 1.5.2
-// except the idempotence row, which pins engine behaviour (see its comment).
+// handle kept the last observed value reachable). Every test in the first three describe
+// blocks is red on 1.5.2 except the idempotence row, which pins engine behaviour (see its
+// comment); the burst-30 blocks further down carry their own red / pin notes.
 //
 // The release tests enable gc via v8.setFlagsFromString inside this process. That is
 // safe only because node:test runs each test file in its own process; never run this
@@ -228,5 +229,188 @@ describe("watch -- stop() drops the engine dispose handle", () => {
         assert.equal(typeof stop, "function");
         assert.equal(fires, 1);                  // disposed: the later write did not fire
         assert.equal(ref.deref(), undefined);    // 1.5.2: retained (stopFn -> registry)
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Burst 30: stop() also drops source + callback, and the effect body stops after a
+// stop() inside source(). Rows let the source close DIRECTLY over an r2 signal (no
+// holder clearing) and the callback over a second WeakRef'd payload. Red on 01c00bc:
+// W1, W1s, W2, W3, W4, W6b. Pins green on 01c00bc: W6, W7. "stop() inside source() at
+// registration" is not expressible (the stop handle does not exist until watch()
+// returns, and source() is not handed one), so there is no W5.
+// ---------------------------------------------------------------------------
+
+async function probeW(run) {
+    const gc = enableGc();
+    let regRef = null, cbRef = null, out = null;
+    (() => {
+        const r2 = createRegistry();
+        setDefaultRegistry(r2);
+        const payload = { big: new Array(4096).fill(1) };
+        regRef = new WeakRef(payload);
+        r2.signal(payload);                  // held only by r2's node pool
+        const cb = { big: new Array(4096).fill(2) };
+        cbRef = new WeakRef(cb);
+        out = run(r2, cb);
+        setDefaultRegistry(r);
+    })();
+    await collect(gc);
+    return {
+        out,
+        regRetained: regRef.deref() !== undefined,
+        cbRetained: cbRef.deref() !== undefined
+    };
+}
+
+// Built in separate function scopes so the two closures do not share a V8 context: each
+// slot is then the only path to its own payload, which pins each `= null` on its own.
+function readerOf(s) { return () => s(); }
+function counterOf(cb, cnt) { return () => { cnt.n += cb.big.length > 0 ? 1 : 100; }; }
+
+describe("watch -- a kept stop handle drops source and callback (closure slots)", () => {
+    it("W1 stop() from outside", async () => {
+        let fires = 0;
+        const { out, regRetained, cbRetained } = await probeW((r2, cb) => {
+            const s = r2.signal(0);
+            const stop = watch(() => s(), () => { fires += cb.big.length > 0 ? 1 : 100; });
+            s.set(1);
+            stop();
+            return stop;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 1);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+
+    it("W1s stop() from outside, source and callback in separate scopes: each slot released", async () => {
+        const cnt = { n: 0 };
+        const { out, regRetained, cbRetained } = await probeW((r2, cb) => {
+            const s = r2.signal(0);
+            const stop = watch(readerOf(s), counterOf(cb, cnt));
+            s.set(1);
+            stop();
+            return stop;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(cnt.n, 1);
+        assert.equal(regRetained, false, "source slot retained (registry payload)");
+        assert.equal(cbRetained, false, "callback slot retained (callback payload)");
+    });
+
+    it("W2 stop() inside a later callback", async () => {
+        let fires = 0;
+        const { out, regRetained, cbRetained } = await probeW((r2, cb) => {
+            const s = r2.signal(0);
+            const stop = watch(() => s(), (n, p, st) => {
+                fires += cb.big.length > 0 ? 1 : 100;
+                st();
+            });
+            s.set(1);
+            s.set(2);
+            return stop;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 1);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+
+    it("W3 stop() inside the immediate fire (wantsStopEarly)", async () => {
+        let fires = 0;
+        const { out, regRetained, cbRetained } = await probeW((r2, cb) => {
+            const s = r2.signal(0);
+            const stop = watch(() => s(), (n, p, st) => {
+                fires += cb.big.length > 0 ? 1 : 100;
+                st();
+            }, { immediate: true });
+            s.set(1);
+            return stop;
+        });
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 1);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+
+    it("W4 stop() inside source() on a later run, immediate: nothing fires after stop, nothing re-retained", async () => {
+        const gc = enableGc();
+        let regRef = null, cbRef = null, valRef = null, stop = null, fires = 0;
+        (() => {
+            const r2 = createRegistry();
+            setDefaultRegistry(r2);
+            const payload = { big: new Array(4096).fill(1) };
+            regRef = new WeakRef(payload);
+            r2.signal(payload);
+            const cb = { big: new Array(4096).fill(2) };
+            cbRef = new WeakRef(cb);
+            const s = r2.signal(0);
+            stop = watch(() => {
+                const v = s();
+                if (v !== 1) return v;
+                stop();                      // stop() inside source() of the run in progress
+                const o = { big: new Array(4096).fill(3) };
+                valRef = new WeakRef(o);
+                return o;
+            }, () => { fires += cb.big.length > 0 ? 1 : 100; }, { immediate: true });
+            s.set(1);
+            setDefaultRegistry(r);
+        })();
+        await collect(gc);
+        assert.equal(typeof stop, "function");
+        assert.equal(fires, 1);              // 01c00bc: 2 (callback still fires after stop)
+        assert.notEqual(valRef, null);
+        assert.equal(valRef.deref(), undefined, "value from the stopped run retained");
+        assert.equal(regRef.deref(), undefined, "registry payload retained");
+        assert.equal(cbRef.deref(), undefined, "callback payload retained");
+    });
+});
+
+describe("watch -- owner-disposed watcher (documented, not fixed)", () => {
+    // The owner is an effect (createRoot() has no dispose). W6 pins that the kept stop
+    // handle of an owner-disposed watcher retains (green on both); W6b: calling it
+    // releases (red on 01c00bc).
+    function ownerBuild(callHandle) {
+        let fires = 0;
+        return probeW((r2, cb) => {
+            const s = r2.signal(0);
+            let stop = null;
+            const owner = r2.effect(() => {
+                stop = watch(() => s(), () => { fires += cb.big.length > 0 ? 1 : 100; });
+            });
+            owner();
+            s.set(1);
+            if (callHandle) stop();
+            return stop;
+        }).then((res) => ({ ...res, fires }));
+    }
+
+    it("W6 kept handle retains (pin)", async () => {
+        const { out, regRetained, fires } = await ownerBuild(false);
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 0);
+        assert.equal(regRetained, true);
+    });
+
+    it("W6b calling the kept handle releases", async () => {
+        const { out, regRetained, cbRetained, fires } = await ownerBuild(true);
+        assert.equal(typeof out, "function");
+        assert.equal(fires, 0);
+        assert.equal(regRetained, false, "registry payload retained");
+        assert.equal(cbRetained, false, "callback payload retained");
+    });
+});
+
+describe("watch -- stopping a sibling from a callback (regression pin)", () => {
+    it("W7 X's callback stops Y in the same flush: Y does not fire, no throw", () => {
+        const s = signal(0);
+        let xFires = 0, yFires = 0, stopY = null;
+        watch(s, () => { xFires++; stopY(); });
+        stopY = watch(s, () => { yFires++; });
+        s.set(1);                            // must not throw
+        s.set(2);
+        assert.equal(xFires, 2);
+        assert.equal(yFires, 0);
     });
 });

@@ -109,7 +109,9 @@ so the unmodified source never reaches it under the c8-instrumented suite. Each 
 arm is still exercised, on derived kernels, by `test/51-version-zero-sentinel` (and its
 must-fail mutants), which is how the skip is pinned without a 2^32-write run.
 
-`Watch.js` keeps its single pre-existing ignore on the `when()` re-entry guard.
+`Watch.js` has no ignores (1.6.0-dev burst 30 removed the one on the `when()` re-entry guard: it is
+reached after a callback throws on a later fire, and `test/53` A8 covers it and pins that a later write
+does not call the predicate again).
 
 ---
 

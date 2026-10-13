@@ -472,7 +472,11 @@ export interface WatchOptions {
  *
  * @returns Dispose function. Idempotent and safe to call at any time, including
  *          synchronously during the immediate callback. The first call releases
- *          the watcher's last observed value.
+ *          the last observed value, `source`, `callback` and the engine dispose
+ *          handle. Called inside `source()`, the callback does not run (stopped
+ *          wins). A watcher disposed by its OWNER keeps all four until this
+ *          handle is called or dropped, as a raw `effect()` dispose handle
+ *          keeps its registry.
  */
 export function watch<T>(
     source: () => T,
@@ -488,12 +492,16 @@ export function watch<T>(
  * @param predicate  Reactive read function; callback fires when truthy.
  * @param callback   Called once when predicate first truthy. Reads inside are untracked.
  * @returns Dispose function. Call before predicate fires to cancel; idempotent.
- *          Once the watcher has fired or been cancelled, the handle drops the
- *          engine dispose handle; it still references `predicate` and
- *          `callback`, so what they close over stays reachable while kept.
+ *          Once the watcher has fired or been cancelled, the handle holds
+ *          nothing of it: `predicate`, `callback` and the engine dispose
+ *          handle are released. Cancelled inside `predicate()`, the callback
+ *          does not run, even if that run returns truthy (cancel wins).
  *          A callback that throws on a later fire (not at registration) skips
- *          the auto-dispose: the effect stays live and the handle keeps it
- *          until it is called (same on 1.5.2).
+ *          the auto-dispose: the effect stays live and the handle keeps it,
+ *          with `predicate` and `callback`, until it is called (same on 1.5.2).
+ *          A watcher disposed by its OWNER keeps them until the handle is
+ *          called or dropped, as a raw `effect()` dispose handle keeps its
+ *          registry.
  */
 export function when(
     predicate: () => unknown,

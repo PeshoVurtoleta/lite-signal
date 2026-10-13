@@ -47,7 +47,15 @@ const UNINITIALIZED = Symbol("watch.uninitialized");
  *                                            `oldValue = undefined`.
  * @returns {() => void}                      Dispose function. Idempotent;
  *                                            the first call releases the
- *                                            watcher's last observed value.
+ *                                            last observed value, source,
+ *                                            callback and the engine dispose
+ *                                            handle. Called inside source(),
+ *                                            the callback does not run. A
+ *                                            watcher disposed by its OWNER
+ *                                            keeps all four until this
+ *                                            handle is called or dropped
+ *                                            (as a raw effect() handle
+ *                                            keeps its registry).
  * @template T
  */
 export function watch(source, callback, options) {
@@ -60,14 +68,17 @@ export function watch(source, callback, options) {
 
     // Late-binding stop handle: safe to call before `stopFn` is assigned (e.g.,
     // synchronously inside the immediate fire), and safe to call multiple times.
-    // The first call drops both value slots and the engine dispose handle, so a
-    // stop handle the caller keeps does not keep the last observed value (or the
-    // effect node) reachable. Later calls are no-ops.
+    // The first call drops both value slots, source, callback and the engine
+    // dispose handle, so a stop handle the caller keeps does not keep the last
+    // observed value, whatever source / callback close over, or the effect node
+    // reachable. Later calls are no-ops.
     const stop = () => {
         if (stopped) return;
         stopped = true;
         oldValue = UNINITIALIZED;
         currentNewValue = undefined;
+        source = null;
+        callback = null;
         if (stopFn !== null) {
             const dispose = stopFn;
             stopFn = null;
@@ -99,7 +110,9 @@ export function watch(source, callback, options) {
     };
 
     stopFn = effect(() => {
-        currentNewValue = source();
+        const value = source();
+        if (stopped) return;   // stop() ran inside source(): nothing fires, nothing is kept
+        currentNewValue = value;
         untrack(untrackedFire);
     });
 
@@ -133,24 +146,33 @@ export function watch(source, callback, options) {
  * @param {() => void} callback     Called once when predicate first truthy.
  *                                  Internal reads are untracked.
  * @returns {() => void}            Dispose function. Idempotent; once the
- *                                  watcher has fired or been cancelled, it
- *                                  drops the engine dispose handle (it still
- *                                  references predicate and callback). A
- *                                  callback that throws on a later fire
+ *                                  watcher has fired or been cancelled, the
+ *                                  handle holds nothing of it (predicate,
+ *                                  callback and the engine dispose handle
+ *                                  are released). Cancelled inside
+ *                                  predicate(), the callback does not run.
+ *                                  A callback that throws on a later fire
  *                                  skips the auto-dispose: the handle keeps
- *                                  the live effect until cancel() (as on
- *                                  1.5.2).
+ *                                  the live effect, predicate and callback
+ *                                  until cancel() (as on 1.5.2). A watcher
+ *                                  disposed by its OWNER keeps them until
+ *                                  this handle is called or dropped (as a
+ *                                  raw effect() handle keeps its registry).
  */
 export function when(predicate, callback) {
     let stopFn = null;
     let wantsStopEarly = false;
-    let fired = false;
+    let done = false;
 
-    // Runs on fire and on cancel. Drops the engine dispose handle before calling
-    // it, so a cancel handle the caller keeps does not keep the effect node (and
-    // through it the registry) reachable. Later calls find stopFn null: no-ops
-    // (wantsStopEarly is read only once, at registration).
+    // Runs on fire and on cancel. Marks the watcher done and drops predicate,
+    // callback and the engine dispose handle before calling it, so a cancel
+    // handle the caller keeps does not keep whatever they close over, or the
+    // effect node (and through it the registry), reachable. Later calls find
+    // stopFn null: no-ops (wantsStopEarly is read only once, at registration).
     const stop = () => {
+        done = true;
+        predicate = null;
+        callback = null;
         if (stopFn !== null) {
             const dispose = stopFn;
             stopFn = null;
@@ -161,21 +183,20 @@ export function when(predicate, callback) {
     };
 
     stopFn = effect(() => {
-        // Defense-in-depth: even if dispose timing lets one more evaluation
-        // through (e.g., during sync propagation), don't fire twice. In practice
-        // stop() disposes this effect before any re-entry, so the early return is
-        // unreachable under the engine's self-cycle no-re-run guard -- hence ignored.
-        /* c8 ignore next -- unreachable defensive guard; see comment above */
-        if (fired) return;
+        // Reached after a callback threw on a later fire (done is set, stop()
+        // was skipped, the effect stays live and later writes re-run it), and
+        // the defense against any re-run after stop(): never fire twice.
+        if (done) return;
         if (predicate()) {
-            fired = true;
+            if (done) return;  // cancel() ran inside predicate(): cancelled wins, callback never runs
+            done = true;
             untrack(callback);
             stop();
         }
     });
 
-    // If the predicate was truthy at registration (or the callback cancelled),
-    // stop() ran before stopFn was assigned: dispose and drop the handle now.
+    // If the predicate was truthy at registration, the fire's stop() ran before
+    // stopFn was assigned: dispose and drop the handle now.
     if (wantsStopEarly) {
         const dispose = stopFn;
         stopFn = null;
