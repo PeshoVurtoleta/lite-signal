@@ -8,11 +8,41 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 One engine simplification (LEDGER #30, "observer-fold") plus dev-only work: the gate gaps
 closed after the link-SoA fork (LEDGER #27) passed the gates while costing +10-39% on four
-shapes, a gate-1 conformance runner, and the `bench/soak/` randomized soak harness. `Signal.d.ts`
-and `Watch.js` are untouched; `Signal.js` changes the tracking-flag fold described below (no
+shapes, a gate-1 conformance runner, and the `bench/soak/` randomized soak harness. `Watch.js`
+changes `watch()`'s fire order and `stop()` ("### Fixed -- `watch()`" below; `Signal.d.ts` gains a
+doc comment only); `Signal.js` changes the tracking-flag fold described below (no
 API, no behavior change), the F29 version-counter fix ("### Fixed" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
-published `files[]` changes except `README.md`.
+published `files[]` changes except `README.md` and `llms.txt`.
+
+### Fixed -- `watch()`: baseline committed before the callback; `stop()` releases the last value
+
+Two defects in `watch()` (Watch.js), both present through 1.5.2:
+- The fire wrote `oldValue = currentNewValue` AFTER calling the callback, so a callback that threw
+  left the previous baseline in place. With `s = signal(0)` and a callback that throws once on
+  `s.set(1)`, the next `s.set(2)` reported `(2, 0)` instead of `(2, 1)`, and the `Object.is` guard
+  compared later values against the stale baseline (a projection that returned to the thrown fire's
+  value re-fired). The fire now reads `next` / `prev` into locals and commits `next` as the baseline
+  before invoking the callback.
+- `stop()` disposed the effect but kept both value slots, so a stop handle the caller kept after
+  disposal kept the last observed value reachable. The first `stop()` now drops `oldValue`,
+  `currentNewValue` and the engine dispose handle; later calls are no-ops (the late-binding
+  `wantsStopEarly` path for `stop()` inside the immediate fire is kept).
+
+Per-fire cost stays at zero allocations: `test/torture.mjs` gains a `watch()` fire lane in the
+pinned-semi-space child (new-space delta minus an empty-step baseline, in the same process as the
+>= 8 B/op box control), gated at the nest budget (`watch=` on the GATE line; fires must equal steps,
+or the lane is blind). An escaping per-fire object, an inline `untrack(() => ...)` arrow in the
+effect body and a fresh `() => stop()` closure passed to the callback per fire each turn it red (the
+lane's callback stores its stop argument in a hoisted slot, so that closure escapes and V8 cannot
+escape-analyse it away). New `test/52-watch-commit-release.test.mjs` (9 tests; 8 are red
+on the 1.5.2 Watch.js; the idempotence row pins engine behaviour and passes on both). Every clear in
+`stop()` is load-bearing: removing the `oldValue` or `currentNewValue` clear turns the 3
+value-release tests red, and removing `stopFn = null` at either release site (outside `stop()`, or
+the `wantsStopEarly` path) turns that site's dispose-handle test red -- a kept stop handle would
+otherwise keep the whole registry reachable. A re-entrant
+write to the source from inside the callback is unchanged: the engine does not re-run an effect for a
+write made during its own run, so that write is not observed by the watcher (same on 1.5.2).
 
 ### Fixed -- engine: `globalVersion` skips 0, the "unset" stamp sentinel (F29)
 

@@ -633,7 +633,8 @@ Three composable watcher primitives, all built from `effect` + `untrack`. Tree-s
 Fires callback on every change of the projected source value.
 
 - **Signature**: `watch<T>(source: () => T, callback: (newValue: T, oldValue: T | undefined, stop: () => void) => void, options?: { immediate?: boolean }): () => void`
-- **Returns**: dispose function. Idempotent. Safe to call synchronously inside the callback.
+- **Returns**: dispose function. Idempotent. Safe to call synchronously inside the callback. The first call drops the watcher's value slots (and the engine dispose handle), so a kept stop handle does not retain the last observed value; later calls are no-ops.
+- **Baseline commit order**: each fire reads the new value and the previous baseline into locals and commits the new value as the baseline BEFORE invoking the callback. A callback that throws therefore cannot leave a stale `oldValue`: with `s = signal(0)`, a callback that throws once on `s.set(1)` reports `(2, 1)` on the next `s.set(2)` (1.5.2 reported `(2, 0)`).
 - **options.immediate**: when `true`, callback fires once on registration with `oldValue = undefined`. Default `false`.
 - **Equality guard**: uses `Object.is(newValue, oldValue)` internally to avoid firing when the projected value is unchanged across dep mutations. Critical for raw getter sources like `() => health() <= 0` -- many dep changes can produce the same boolean. Wrapping the source in `computed()` would achieve the same via the computed's own equality check.
 - **UNINITIALIZED sentinel**: uses `Symbol("watch.uninitialized")` instead of `undefined` to detect first-run. This means `signal(undefined)` is correctly distinguished from "watcher hasn't fired yet".

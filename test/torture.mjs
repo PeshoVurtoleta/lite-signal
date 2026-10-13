@@ -17,6 +17,10 @@
 //     The B/op lane runs in a CHILD with pinned semi-space (fail closed if the
 //     flags are missing) and reads V8 new-space deltas, so it sees a transient
 //     box; a one-box-per-op control MUST read >= 8 B/op or the lane is blind.
+//   * WATCH: watch() fire (Watch.js; default registry), measured in the SAME
+//     pinned child as NEST -> <= 0.05 B/op steady state; every step must fire
+//     the callback (fires === steps) or the lane is blind. (An in-process
+//     measureAllocs lane cannot see a per-fire allocation that dies young.)
 //   * NEST retention: 1e4 cycles of the P10 + F8 shapes (nested-frame disposal,
 //     onDisconnect disposing the next dep) -> engine-owned WeakRefs all collected,
 //     activeNodes/activeLinks back to baseline, resident delta <= 64 KB
@@ -36,7 +40,7 @@ import { fileURLToPath } from 'node:url';
 import { getHeapSpaceStatistics } from 'node:v8';
 
 // >>> WIRE: the engine under test -- the working-tree source, NOT node_modules.
-import { createRegistry } from '../Signal.js';
+import { createRegistry, signal as defaultSignal, watch } from '../Signal.js';
 
 const R = createRegistry();
 const { signal, computed, effect, untrack, dispose, stats, observeObservers, getOwner } = R;
@@ -81,15 +85,30 @@ if (process.argv.includes('--nest-lane')) {
   const stopN = effect(() => { sN(); sinkN = (sinkN + c2()) & 0x3FFFFFFF; });   // frames: effect -> c2 -> c1
   const nestStep = (i) => { sN.set(i & 0xFFFF); };
   const emptyStep = (i) => { sinkN = (sinkN + (i & 1)) & 0x3FFFFFFF; };
+  // WATCH lane: watch() binds to the default registry. Every step changes the value
+  // (consecutive i differ; each window ends at (NEST_K - 1) & 0xFFFF != 0), so every
+  // step runs the full fire. Step and callback are hoisted: no closure per op.
+  // The callback stores its 3rd argument (the stop handle) in a hoisted slot: a body
+  // that ignored it would be inlined and let escape analysis delete anything Watch.js
+  // allocates for the call (e.g. a fresh `() => stop()` per fire would read 0).
+  const sW = defaultSignal(-1);
+  const KEEPW = [null];
+  let sinkW = 0, firesW = 0, stepsW = 0;
+  const watchBody = (next, prev, st) => { KEEPW[0] = st; sinkW = (sinkW + next - prev) & 0x3FFFFFFF; firesW++; };
+  const stopW = watch(sW, watchBody);
+  const watchStep = (i) => { stepsW++; sW.set(i & 0xFFFF); };
   const BOX = ['tagged'];   // PACKED_ELEMENTS: a double stored here is a fresh HeapNumber
   const boxStep = (i) => { BOX[0] = i + 0.5; };   // control: one 16 B HeapNumber per op
-  for (let i = 0; i < 50000; i++) { nestStep(i); emptyStep(i); boxStep(i); }   // warm up
+  for (let i = 0; i < 50000; i++) { nestStep(i); emptyStep(i); boxStep(i); watchStep(i); }   // warm up
   const base = laneBytesPerOp(emptyStep);
   const nest = laneBytesPerOp(nestStep);
+  const wat = laneBytesPerOp(watchStep);
   const ctl = laneBytesPerOp(boxStep);
   stopN();
-  console.log(JSON.stringify({ pinned, nest: steadyMin(nest, base), control: steadyMin(ctl, base),
-    window0: nest[0], sink: sinkN }));
+  stopW();
+  console.log(JSON.stringify({ pinned, nest: steadyMin(nest, base), watch: steadyMin(wat, base),
+    control: steadyMin(ctl, base), window0: nest[0], watchWindow0: wat[0],
+    watchFires: firesW, watchSteps: stepsW, sink: sinkN + sinkW }));
   process.exit(0);
 }
 
@@ -155,6 +174,8 @@ let sinkB = 0;
 const untrackedBody = () => { sinkB++; };
 const stopB = effect(() => { sb(); untrack(untrackedBody); });
 const untrackStep = (i) => { sb.set(i); };
+
+// (watch() fire is measured in the pinned child lane, phase 4b.)
 
 // 2a: GC budget over 1e5 + 1e5 ops.
 const gc = new GcProfiler().start();
@@ -243,7 +264,13 @@ try { nestLane = JSON.parse(lane.stdout.trim().split('\n').pop()); } catch { nes
 const nestOk = nestLane !== null && nestLane.pinned === true &&
   nestLane.nest !== null && nestLane.nest <= NEST_BUDGET &&
   nestLane.control !== null && nestLane.control >= 8;   // a blind lane is a FAIL, not a pass
+// WATCH rides the same child: the box control above proves that process can see.
+// Blind unless every measured + warm-up step fired the callback.
+const watchFired = nestLane !== null && nestLane.watchSteps > 0 && nestLane.watchFires === nestLane.watchSteps;
+const watchOk = nestOk && watchFired &&
+  typeof nestLane.watch === 'number' && nestLane.watch <= NEST_BUDGET;
 const nestLabel = nestLane === null || nestLane.nest === null ? 'unmeasured' : nestLane.nest.toFixed(3);
+const watchLabel = nestLane === null || typeof nestLane.watch !== 'number' ? 'unmeasured' : nestLane.watch.toFixed(3);
 const ctlLabel = nestLane === null || nestLane.control === null ? 'unmeasured' : nestLane.control.toFixed(2);
 
 // 4c: retention -- 1e4 cycles of the P10 (child effect's nested first run disposes
@@ -389,7 +416,7 @@ const pinOk = pinThrew === null && pinPoolDelta === 0 && pinGcReport.ok && deadO
   pinAfter.activeNodes === pinBase.activeNodes;
 
 // ---- verdict --------------------------------------------------------------
-const ok = gcReport.ok && allocOk && selfOk && nestGcReport.ok && nestOk && nestRetOk && pinOk &&
+const ok = gcReport.ok && allocOk && selfOk && nestGcReport.ok && nestOk && watchOk && nestRetOk && pinOk &&
   live === 0 && findings.length === 0 && leaks.length === 0 && warns.length === 0 &&
   nodesBaseline && linksBaseline;
 
@@ -400,7 +427,7 @@ console.log(
   ' maxMs=' + s.gc.maxMs.toFixed(2) +
   ' | alloc=' + bpcLabel + ' B/op' +
   ' | nest gc major=' + ns.gc.major + ' minor=' + ns.gc.minor + ' alloc=' + nestLabel + ' B/op' +
-  ' control=' + ctlLabel + ' B/op retention=' + nestAlive + '/' + nestRefs.length + ' res=' + nestResKB.toFixed(1) + 'KB' +
+  ' watch=' + watchLabel + ' B/op control=' + ctlLabel + ' B/op retention=' + nestAlive + '/' + nestRefs.length + ' res=' + nestResKB.toFixed(1) + 'KB' +
   ' | pin pool=+' + pinPoolDelta + ' major=' + ps.gc.major + ' deadOwner=' + deadOwnerFail + '/1000' +
   ' | ' + (ok ? 'ok' : 'FAIL')
 );
@@ -414,6 +441,9 @@ if (!ok) {
   if (!nestGcReport.ok) for (const v of nestGcReport.violations) console.error('  nest gc violation ' + v.metric + ' limit=' + v.limit + ' actual=' + v.actual);
   if (!nestOk) console.error('  nest lane: ' + (nestLane === null ? 'no result (exit ' + lane.status + ') ' + String(lane.stderr).slice(0, 400) : JSON.stringify(nestLane)) +
     ' budget<=' + NEST_BUDGET + ' control>=8');
+  if (!watchOk) console.error('  watch lane: ' + (nestLane === null ? 'no result' :
+    'watch=' + nestLane.watch + ' window0=' + nestLane.watchWindow0 + ' fires=' + nestLane.watchFires +
+    ' steps=' + nestLane.watchSteps) + ' budget<=' + NEST_BUDGET + (nestOk ? '' : ' (child lane failed: control/pin)'));
   if (!nestRetOk) console.error('  nest retention: shapeFail=' + nestShapeFail + ' alive=' + nestAlive + '/' + nestRefs.length +
     ' nodes ' + nestBase.activeNodes + '->' + nestAfter.activeNodes +
     ' links ' + nestBase.activeLinks + '->' + nestAfter.activeLinks + ' res=' + nestResKB.toFixed(1) + 'KB (<=64)');

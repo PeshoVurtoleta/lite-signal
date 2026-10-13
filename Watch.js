@@ -45,7 +45,9 @@ const UNINITIALIZED = Symbol("watch.uninitialized");
  * @param {{ immediate?: boolean }} [options] `immediate: true` runs callback
  *                                            once on registration with
  *                                            `oldValue = undefined`.
- * @returns {() => void}                      Dispose function. Idempotent.
+ * @returns {() => void}                      Dispose function. Idempotent;
+ *                                            the first call releases the
+ *                                            watcher's last observed value.
  * @template T
  */
 export function watch(source, callback, options) {
@@ -54,12 +56,25 @@ export function watch(source, callback, options) {
     let currentNewValue;            // shared mutable state, read by untrackedFire
     let stopFn = null;
     let wantsStopEarly = false;
+    let stopped = false;
 
     // Late-binding stop handle: safe to call before `stopFn` is assigned (e.g.,
     // synchronously inside the immediate fire), and safe to call multiple times.
+    // The first call drops both value slots and the engine dispose handle, so a
+    // stop handle the caller keeps does not keep the last observed value (or the
+    // effect node) reachable. Later calls are no-ops.
     const stop = () => {
-        if (stopFn !== null) stopFn();
-        else wantsStopEarly = true;
+        if (stopped) return;
+        stopped = true;
+        oldValue = UNINITIALIZED;
+        currentNewValue = undefined;
+        if (stopFn !== null) {
+            const dispose = stopFn;
+            stopFn = null;
+            dispose();
+        } else {
+            wantsStopEarly = true;
+        }
     };
 
     // ZERO-GC HOT PATH: the untrack body is hoisted into a closure allocated
@@ -68,13 +83,19 @@ export function watch(source, callback, options) {
     // fresh closure on every fire -- at 120fps that's 7,200 allocations per
     // minute per watcher. The shared `currentNewValue` variable is the price
     // for keeping the per-fire cost at exactly zero allocations.
+    //
+    // The baseline is committed BEFORE the callback runs: `next` / `prev` are
+    // captured into locals and `oldValue` is advanced first, so a callback that
+    // throws cannot leave a stale `oldValue` behind for the next fire.
     const untrackedFire = () => {
-        if (oldValue === UNINITIALIZED) {
-            if (immediate) callback(currentNewValue, undefined, stop);
-        } else if (!Object.is(currentNewValue, oldValue)) {
-            callback(currentNewValue, oldValue, stop);
+        const next = currentNewValue;
+        const prev = oldValue;
+        oldValue = next;
+        if (prev === UNINITIALIZED) {
+            if (immediate) callback(next, undefined, stop);
+        } else if (!Object.is(next, prev)) {
+            callback(next, prev, stop);
         }
-        oldValue = currentNewValue;
     };
 
     stopFn = effect(() => {
@@ -83,8 +104,12 @@ export function watch(source, callback, options) {
     });
 
     // If the immediate callback called stop() before stopFn was assigned,
-    // honor it now.
-    if (wantsStopEarly) stopFn();
+    // honor it now (stop() already cleared the value slots).
+    if (wantsStopEarly) {
+        const dispose = stopFn;
+        stopFn = null;
+        dispose();
+    }
     return stop;
 }
 

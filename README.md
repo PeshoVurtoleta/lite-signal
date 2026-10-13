@@ -623,6 +623,8 @@ health.set(8);  // same -- no fire
 health.set(0);  // crossed -- fires once with (true, false)
 ```
 
+**Throwing callbacks and kept stop handles** -- the new value becomes the baseline *before* the callback runs, so a callback that throws does not leave a stale `oldValue`: the next fire reports the value the throwing fire saw as its `oldValue`. The first `stop()` call also drops the watcher's value slots, so a stop handle kept after disposal does not keep the last observed value reachable; later calls are no-ops.
+
 Without this guard, the callback would fire on every `health` mutation regardless of whether `isDead` changed. Wrapping the source in `computed()` would achieve the same via the computed's own equality check -- the guard makes that wrapping optional.
 
 ### `when(predicate, callback)`

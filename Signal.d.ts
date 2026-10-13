@@ -462,12 +462,17 @@ export interface WatchOptions {
  * Uses `Object.is` to guard against the raw-getter case where a dep mutation
  * fires the effect but the projected value is unchanged.
  *
+ * The new value is committed as the baseline before the callback runs, so a
+ * callback that throws does not leave a stale `oldValue` for the next fire.
+ *
  * @param source    Reactive read function.
  * @param callback  Called with the new and previous values plus a stop handle.
  * @param options   `immediate: true` runs the callback once on registration
  *                  with `oldValue = undefined`.
+ *
  * @returns Dispose function. Idempotent and safe to call at any time, including
- *          synchronously during the immediate callback.
+ *          synchronously during the immediate callback. The first call releases
+ *          the watcher's last observed value.
  */
 export function watch<T>(
     source: () => T,
