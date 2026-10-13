@@ -41,6 +41,8 @@
 
 import * as Signal from "../../Signal.js";
 import { createReport, ENV_SKIP_EXIT } from "./helpers/index.mjs";
+// spin(sig, n): advance globalVersion by n REAL writes on an observer-free signal (helpers/spin.mjs).
+import { spinVersion as spin } from "./helpers/spin.mjs";
 
 if (process.env.TORTURE_WRAPAROUND !== "1") {
     console.log("lite-signal wraparound torture -- SKIP: opt-in soak (set TORTURE_WRAPAROUND=1; ~30s of real version spinning)");
@@ -53,18 +55,6 @@ const R = createReport("lite-signal wraparound torture -- the 2^31 dormancy band
 const BAND = 0x80000000;           // 2^31
 const UNDER = BAND - 64;           // safely below the boundary
 const OVER = BAND + 64;            // safely inside the band
-
-/** Advance the registry's globalVersion by `n` REAL writes on a dedicated
- *  observer-free signal (markDownstream on an empty sub list; ~4.7 ns/write
- *  measured). Chunked so the loop variable stays int32-friendly. */
-function spin(sig, n) {
-    let done = 0;
-    while (done < n) {
-        const chunk = Math.min(n - done, 1 << 28);
-        for (let i = 0; i < chunk; i++) sig.set(i);
-        done += chunk;
-    }
-}
 
 /* -- 1. below the band: exact at 2^31 - 65 dormancy ------------------------- */
 {
