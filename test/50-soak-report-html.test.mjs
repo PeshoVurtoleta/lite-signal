@@ -101,13 +101,6 @@ function stream(cycles, hdr) {
 const ok = () => stream(mkCycles(12));
 
 const P = '</script><img src=x onerror=1>';
-// map every string AND every object key (lane names are keys of perLane) so the payload reaches every printed field
-function evil(o) {
-    if (typeof o === 'string') return P + o;
-    if (Array.isArray(o)) return o.map(evil);
-    if (o !== null && typeof o === 'object') { const out = {}; for (const k of Object.keys(o)) out[P + k] = evil(o[k]); return out; }
-    return o;
-}
 // keep the structural keys (only STRING VALUES and perLane / latency / p99Ns / config keys carry the payload)
 function evilStream(s) {
     const cycles = s.cycles.map((c) => Object.assign({}, c, { lane: P + c.lane }));
@@ -127,6 +120,9 @@ function evilStream(s) {
     });
     return { header, cycles, summary };
 }
+
+const headWith = (delta, hdr) => stream(mkCycles(12, () => ({ memory: { heapUsedMB: 30, arrayBuffersMB: 1, residentMB: 40 + delta, rssMB: 120 } })), hdr);
+const baseStream = () => stream(mkCycles(12, () => ({ memory: { heapUsedMB: 30, arrayBuffersMB: 1, residentMB: 40, rssMB: 120 } })));
 
 test('renderHtml: an XSS payload in EVERY printed string field (header / <title> / lane names / reasons / causes / breaches / config / diff / lines) leaves no raw <script or <img', () => {
     const e = evilStream(ok());
@@ -195,8 +191,6 @@ test('renderHtml: self-contained (no remote src / href / link / import / url(), 
 
 const jsonOf = (r) => JSON.stringify(r);
 const top = (r) => { assert.equal(typeof r.verdict, 'string', jsonOf(r)); return r.verdict; };
-const headWith = (delta, hdr) => stream(mkCycles(12, () => ({ memory: { heapUsedMB: 30, arrayBuffersMB: 1, residentMB: 40 + delta, rssMB: 120 } })), hdr);
-const baseStream = () => stream(mkCycles(12, () => ({ memory: { heapUsedMB: 30, arrayBuffersMB: 1, residentMB: 40, rssMB: 120 } })));
 function assertNote(r, why, kind) {
     assert.equal(top(r), 'NOTE', why + ': ' + jsonOf(r));
     assert.equal(r.exitCode, 0, why + ' exit');
@@ -284,6 +278,60 @@ test('diffBaseline: a differing SOAK_OPS / SOAK_CYCLES is not INCOMPATIBLE: heap
         gone.header.config[key] = { value: 777777, source: 'env' };
         assert.equal(top(diffBaseline(baseStream(), gone)), 'REGRESSION', key + ' missing lane');
     }
+});
+
+test('diffBaseline: a SOAK_OPS / SOAK_CYCLES that is present but not a finite positive integer is INCOMPATIBLE (null is not "same volume")', () => {
+    const common = [null, NaN, '100000', -5, 1.5, Infinity, undefined];
+    for (const key of ['SOAK_OPS', 'SOAK_CYCLES']) {
+        // 0 is bad for SOAK_OPS only (SOAK_CYCLES 0 is a forever run); config.mjs OPS_MAX 0x3FFFFFFF, CYCLES_MAX 2^28
+        const bads = key === 'SOAK_OPS' ? common.concat([0, 2 ** 40, 0x3FFFFFFF + 1]) : common.concat([2 ** 28 + 1, 2 ** 40]);
+        for (const bad of bads) {
+            const both = baseStream(); both.header.config[key] = { value: bad, source: 'env' };
+            const head = baseStream(); head.header.config[key] = { value: bad, source: 'env' };
+            const r1 = diffBaseline(both, head);       // identical bad value on both sides: still unknown, never comparable
+            assert.equal(top(r1), 'INCOMPATIBLE', key + '=' + String(bad) + ' both: ' + jsonOf(r1));
+            assert.equal(r1.exitCode, 2);
+            const h2 = baseStream(); h2.header.config[key] = { value: bad, source: 'env' };
+            assert.equal(top(diffBaseline(baseStream(), h2)), 'INCOMPATIBLE', key + '=' + String(bad) + ' head only');
+            const b3 = baseStream(); b3.header.config[key] = { value: bad, source: 'env' };
+            assert.equal(top(diffBaseline(b3, baseStream())), 'INCOMPATIBLE', key + '=' + String(bad) + ' base only');
+        }
+        const absent = baseStream(); delete absent.header.config[key];
+        assert.equal(top(diffBaseline(absent, baseStream())), 'INCOMPATIBLE', key + ' absent');
+    }
+});
+
+test('diffBaseline: accept edges -- SOAK_OPS 1 / OPS_MAX and SOAK_CYCLES CYCLES_MAX on both sides are NOT INCOMPATIBLE', () => {
+    // bounds from config.mjs: OPS_MAX 0x3FFFFFFF, CYCLES_MAX 1 << 28
+    const edges = [['SOAK_OPS', 1], ['SOAK_OPS', 0x3FFFFFFF], ['SOAK_CYCLES', 1 << 28], ['SOAK_CYCLES', 0]];
+    for (const [key, v] of edges) {
+        const b = baseStream(); b.header.config[key] = { value: v, source: 'env' };
+        const h = baseStream(); h.header.config[key] = { value: v, source: 'env' };
+        const r = diffBaseline(b, h);
+        assert.ok(r.verdict === 'PASS' || r.verdict === 'NOTE', key + '=' + v + ': ' + jsonOf(r));
+        assert.equal(r.exitCode, 0);
+    }
+});
+
+test('diffBaseline: a forever run (SOAK_CYCLES 0) is valid but states no volume: heap +3 MB is a NOTE (head only / base only / both)', () => {
+    const forever = (s) => { s.header.config.SOAK_CYCLES = { value: 0, source: 'env' }; return s; };
+    assertNote(diffBaseline(baseStream(), forever(headWith(3))), 'forever head only', 'heap');
+    assertNote(diffBaseline(forever(baseStream()), headWith(3)), 'forever base only', 'heap');
+    assertNote(diffBaseline(forever(baseStream()), forever(headWith(3))), 'forever both', 'heap');
+});
+
+test('diffBaseline: INCOMPATIBLE outranks REFUSED (a red base with a null / absent SOAK_OPS is INCOMPATIBLE config, not REFUSED)', () => {
+    for (const how of ['null', 'absent']) {
+        const b = baseStream(); b.summary.verdict = 'FAIL'; b.summary.exitCode = 1;
+        if (how === 'null') b.header.config.SOAK_OPS = { value: null, source: 'env' }; else delete b.header.config.SOAK_OPS;
+        const r = diffBaseline(b, baseStream());
+        assert.equal(top(r), 'INCOMPATIBLE', how + ': ' + jsonOf(r));
+        assert.equal(r.reason, 'config', how);
+        assert.equal(r.exitCode, 2);
+    }
+    // control: the same red base with a valid volume is REFUSED
+    const red = baseStream(); red.summary.verdict = 'FAIL'; red.summary.exitCode = 1;
+    assert.equal(top(diffBaseline(red, baseStream())), 'REFUSED');
 });
 
 test('diffBaseline: a base that is not a green tree release run is REFUSED (red verdict, override, control kernel, mustfail)', () => {

@@ -15,7 +15,8 @@
  *     verdict      BASELINE_VERDICT: the FIRST that applies, in this order
  *                    INCOMPATIBLE  the two streams cannot be compared (exit 2): schemaVersion differs between them
  *                                  or from this code's SCHEMA_VERSION, genVersion likewise, SOAK_ENGINE /
- *                                  SOAK_SMOKE differ, or a header / summary / node / os field this diff needs is
+ *                                  SOAK_SMOKE differ, SOAK_OPS not an integer in [1, OPS_MAX] or SOAK_CYCLES not an
+ *                                  integer in [0, CYCLES_MAX] on either side (null / NaN / string / out of range: reason config), or a header / summary / node / os field this diff needs is
  *                                  missing or unparsable (unknown is never comparable)
  *                    REFUSED       the base is not a green release-shaped stream (exit 2): verdict !== PASS or
  *                                  exitCode !== 0 (red, INCONCLUSIVE, SMOKE, PARTIAL), kernel.override !== false,
@@ -37,7 +38,8 @@
  *   heap           delta = round3(head late - base late) of perLane[lane].drift.heap.late (the summary's late
  *                  median residentMB, gates.mjs LaneGates.compute). delta > BASELINE_HEAP_MB -> REGRESSION when
  *                  nodeMajor, runner AND volume (config SOAK_OPS and SOAK_CYCLES) are equal, else a NOTE
- *                  (orchestrator ruling, SPEC-B item 12: a volume difference is never INCOMPATIBLE, so the
+ *                  (a forever run, SOAK_CYCLES 0, on either side -- or both -- states no volume and is never volume-comparable: NOTE;
+ *                  orchestrator ruling, SPEC-B item 12: a volume difference is never INCOMPATIBLE, so the
  *                  volume-independent failingWorlds / missing-lane regressions still FAIL). A head late that is not a finite number ->
  *                  REGRESSION `heap` (unmeasured is never "no growth"), on any Node major.
  *                  Rounded to 3 decimals first so 12.1 - 10.1 (2.0000000000000004 in binary) is not > 2.
@@ -61,7 +63,7 @@
  * COLD module.
  */
 
-import { SCHEMA_VERSION, GEN_VERSION, GATE_N, VERDICT } from './config.mjs';
+import { SCHEMA_VERSION, GEN_VERSION, GATE_N, VERDICT, OPS_MAX, CYCLES_MAX } from './config.mjs';
 
 export const BASELINE_HEAP_MB = 2;
 export const BASELINE_THROUGHPUT_DROP = 0.15;
@@ -168,12 +170,22 @@ export function diffBaseline(base, head) {
         checkCompatible(base, head);
         const major = { base: nodeMajor(base.header, 'base'), head: nodeMajor(head.header, 'head') };
         const runner = { base: runnerClass(base.header, 'base'), head: runnerClass(head.header, 'head') };
-        checkBaseGreen(base);
+        // volume: SOAK_OPS a safe integer in (0, OPS_MAX]; SOAK_CYCLES a safe integer in [0, CYCLES_MAX] (0 = a forever run,
+        // config.mjs allowZero). null === null is not "same volume": anything else is INCOMPATIBLE
         const volume = {
             base: [configValue(base.header, 'SOAK_OPS', 'base'), configValue(base.header, 'SOAK_CYCLES', 'base')],
             head: [configValue(head.header, 'SOAK_OPS', 'head'), configValue(head.header, 'SOAK_CYCLES', 'head')],
         };
-        const sameVolume = volume.base[0] === volume.head[0] && volume.base[1] === volume.head[1];
+        for (const side of ['base', 'head']) {
+            for (let k = 0; k < 2; k++) {
+                const v = volume[side][k];
+                const okv = k === 0 ? (Number.isSafeInteger(v) && v > 0 && v <= OPS_MAX) : (Number.isSafeInteger(v) && v >= 0 && v <= CYCLES_MAX);
+                if (!okv) incompatible('config', side + ' ' + (k === 0 ? 'SOAK_OPS' : 'SOAK_CYCLES') + ' ' + String(v) + ' is not ' + (k === 0 ? 'an integer in [1, ' + OPS_MAX + ']' : 'an integer in [0, ' + CYCLES_MAX + ']'));
+            }
+        }
+        checkBaseGreen(base);
+        // a forever run (SOAK_CYCLES 0) states no volume: it is never comparable, even against another forever run
+        const sameVolume = volume.base[0] === volume.head[0] && volume.base[1] === volume.head[1] && volume.base[1] > 0 && volume.head[1] > 0;
         // comparable heap: same Node major, runner class AND volume (SPEC-B item 12 ruling); else a heap delta is a NOTE
         const sameHost = major.base === major.head && runner.base === runner.head && sameVolume;
         const regressions = [], notes = [], lanes = [];

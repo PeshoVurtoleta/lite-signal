@@ -28,7 +28,6 @@ import { REWRITES, derive } from '../bench/soak/nearwrap.mjs';
 import { SoakConfigError } from '../bench/soak/config.mjs';
 import { spinVersion } from '../bench/torture/helpers/spin.mjs';
 import { createRegistry } from '../Signal.js';
-import { SCHEMA_VERSION } from '../bench/soak/config.mjs';
 
 const SIGNAL_JS = fileURLToPath(new URL('../Signal.js', import.meta.url));
 const HP_JS = fileURLToPath(new URL('../bench/soak/controls/headpatched/Signal.js', import.meta.url));
@@ -136,7 +135,6 @@ function clean() {
     recs.push({ type: 'summary', seq: recs.length, tMs: 1000, reason: 'end', verdict: 'PASS', exitCode: 0 });
     return recs;
 }
-const reseq = (recs) => recs.map((r, i) => Object.assign({}, r, { seq: i }));
 const has = (probs, re) => probs.some((x) => re.test(x));
 
 test('wrapStreamProblems: a CLEAN stream has 0 problems, then every doctored twin adds its named problem', () => {
@@ -173,7 +171,6 @@ test('wrapStreamProblems: a summary greener than the re-derivation is a problem;
     // control: a signal stream with no FAIL record is honestly INCONCLUSIVE
     const sigOk = clean().slice(0, 3); sigOk.push({ type: 'summary', seq: 3, tMs: 1000, reason: 'signal', verdict: 'INCONCLUSIVE', exitCode: 3 });
     assert.ok(!has(wrapStreamProblems(sigOk), /summary.*verdict/), 'signal without a FAIL: INCONCLUSIVE is honest');
-    void reseq;
 });
 
 /* ---- NEARWRAP derive (A5) --------------------------------------------------------------------------- */

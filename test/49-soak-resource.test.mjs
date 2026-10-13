@@ -170,3 +170,22 @@ test('p95 / bandMedian over an array holding null, undefined, a string, a negati
     }
     assert.equal(p95([10, 20, 30, 0, 40]), 40, 'control: 0 is a legal value');
 });
+
+test('RssSampler constructor rejects cap < 4 (2 and 3 throw RangeError; 4 is the smallest legal cap)', () => {
+    // module header: cap is a power of two in [4, RSS_CAP_MAX]; cap 2 would let stride exceed 2^30
+    for (const cap of [0, 1, 2, 3, 5, 6, 100, -4, NaN, '8']) assert.throws(() => new RssSampler(cap), RangeError, 'cap ' + String(cap));
+    assert.equal(new RssSampler(4).cap, 4);
+});
+
+test('RssSampler: push after reset() recomputes max() / p95() from scratch (no stale max)', () => {
+    const r = new RssSampler(8);
+    for (const v of [500, 600, 700, 900]) r.push(v);
+    assert.equal(r.max(), 900);
+    r.reset();
+    assert.ok(Number.isNaN(r.max()) && Number.isNaN(r.p95()), 'empty after reset');
+    r.push(10); r.push(20); r.push(30);
+    assert.equal(r.max(), 30, 'max is over post-reset pushes only');
+    assert.equal(r.p95(), 30, 'nearest-rank p95 of [10,20,30] is v[ceil(2.85)-1] = 30');
+    assert.deepEqual(r.samples(), [10, 20, 30]);
+    assert.equal(r.pushes, 3); assert.equal(r.stride, 1);
+});
