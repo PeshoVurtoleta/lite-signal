@@ -405,7 +405,7 @@ export function createRegistry(config) {
     let activeQueueLen = 0;
     let isQueueA = true;
 
-    // 0 is reserved for "unset" (evalVersion / markEpoch stamps): the read.set / boxSet bumps skip it (F29).
+    // 0 is reserved for "unset" (evalVersion / markEpoch stamps): the read.set / boxSet bumps skip it via `|| 1` (F29).
     let globalVersion = 1;
     let batchEpoch = 1;
     let currentObserver = null;           // tracking context: whose reads link deps
@@ -1426,7 +1426,7 @@ export function createRegistry(config) {
         };
 
         read.peek = sharedSignalPeek;
-        // set stays a CLOSURE (byte-identical to 1.2.0 + F29 0-skip): its call path is the hot
+        // set stays a CLOSURE (byte-identical to 1.2.0 + the F29 `|| 1` 0-skip): its call path is the hot
         // path, and a closure over `node` beats a shared method's this[NODE_PTR]
         // load. Keeping it a closure also restores detached `const {set}=signal()`.
         read.set = (value) => {
@@ -1443,10 +1443,8 @@ export function createRegistry(config) {
                 node.version = node.preBatchVersion;
                 return;
             }
-            globalVersion = (globalVersion + 1) | 0;
-            /* c8 ignore next -- 2^32 wraparound */
-            if (!globalVersion) globalVersion = 1;
-            node.version = globalVersion;
+            /* c8 ignore next -- 2^32 wraparound: || 1 skips the 0 "unset" sentinel (F29); A4 replaces this line */
+            node.version = globalVersion = ((globalVersion + 1) | 0) || 1;
             markDownstream(node);
             if (batchDepth === 0) flushEffects();
         };
@@ -1550,9 +1548,8 @@ export function createRegistry(config) {
             node.version = node.preBatchVersion;
             return;
         }
-        globalVersion = (globalVersion + 1) | 0;
-        /* c8 ignore next -- 2^32 wraparound */
-        if (!globalVersion) globalVersion = 1;
+        /* c8 ignore next -- 2^32 wraparound: || 1 skips the 0 "unset" sentinel (F29); A4 replaces this line */
+        globalVersion = ((globalVersion + 1) | 0) || 1;
         node.version = globalVersion;
         markDownstream(node);
         if (batchDepth === 0) flushEffects();

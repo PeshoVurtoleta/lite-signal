@@ -23,7 +23,8 @@
  *   zero  int32 start -k (== 2^32 - k mod 2^32): the k-th bump reaches 0, the "unset" sentinel value;
  *         float64 start 2^32 - k: the k-th bump crosses 2^32 (where an int32 counter would alias)
  * The arithmetic class of each counter is read from the source (its bump witness), never assumed.
- * Census completeness: every int32 `x = (x + 1) | 0` bump in the source must be a census counter or one of
+ * Census completeness: every int32 `x = (x + 1) | 0` or 0-skipping `x = ((x + 1) | 0) || 1` bump in the source
+ * (bare or as the right side of a chained `o.f = x = ...`) must be a census counter or one of
  * BOUNDED (live counts and depths, bounded by the node population or the JS stack, never near 2^31); any
  * other one is a counter the census missed -> SoakConfigError (tree / hp today: activeLinks, activeNodes,
  * batchDepth, lifecycleCount + the census counters; cursorDepth is bumped as `d + 1`, a Smi stack depth).
@@ -33,7 +34,8 @@
  * ---- TASK 1 census (read-only; tree Signal.js sha256 bfd063e5 @ 8b9c013, headpatched fa2871f0) -----------
  * Line numbers are the base files' at the census; the ANCHORS below, not these numbers, are what derive uses.
  * Every tree number in this header is @ bfd063e5 (pre-F29), a dated record, not renumbered. F29 skips (head terms):
- * read.set 1448, boxSet 1555 (@ ba8d1554).
+ * read.set 1447, boxSet 1552 (@ 0ed7c8e2), spelled `x = ((x + 1) | 0) || 1` (read.set chains it into
+ * node.version); both spellings are int32 bump witnesses.
  *
  * Counters (closure `let` unless noted)      tree @ bfd063e5 (pre-F29): init / bump  headpatched: init / bump
  *   globalVersion  int32                     408 / 1445, 1550 `(v+1)|0`      400 / 1328, 1435 `(v+1)|0`
@@ -108,7 +110,7 @@ function fail(msg) { throw new SoakConfigError('NEARWRAP: ' + msg); }
 function bumps(...xs) {
     const int32 = [], float64 = [];
     for (const x of xs) {
-        int32.push(x + ' = (' + x + ' + 1) | 0');
+        int32.push(x + ' = (' + x + ' + 1) | 0', x + ' = ((' + x + ' + 1) | 0) || 1');   // plain | F29 0-skip
         float64.push(x + '++', x + ' = ' + x + ' + 1', x + ' += 1');
     }
     return Object.freeze({ int32: Object.freeze(int32), float64: Object.freeze(float64) });
@@ -141,10 +143,10 @@ export const REWRITES = Object.freeze([
     }),
 ]);
 
-/** int32 `x = (x + 1) | 0` bumps (a property bump `o.f` names `f`) that are neither census nor BOUNDED. */
+/** int32 `x = (x + 1) | 0` / `x = ((x + 1) | 0) || 1` bumps (a property bump `o.f` names `f`) that are neither census nor BOUNDED. */
 function uncensused(src) {
     const known = REWRITES.map((r) => r.counter).concat(BOUNDED);
-    const re = /(^|[^\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?) = \(\2 \+ 1\) \| 0/g;
+    const re = /(^|[^\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?) = (?:\(\2 \+ 1\) \| 0|\(\(\2 \+ 1\) \| 0\) \|\| 1)/g;
     const out = [];
     for (let m = re.exec(src); m !== null; m = re.exec(src)) {
         const name = m[2].slice(m[2].lastIndexOf('.') + 1);

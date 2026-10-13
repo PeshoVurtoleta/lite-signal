@@ -244,6 +244,23 @@ test('derive(): an injected uncensused `foo = (foo + 1) | 0` int32 bump trips th
     }
 });
 
+test('derive(): an injected uncensused 0-skip bump (`((x + 1) | 0) || 1`: plain, chained, member) trips the stale-census check', () => {
+    // F29 spelling; the 0-skip branch of nearwrap uncensused() must see each form (a branch-deleted mutant is red)
+    const forms = [
+        '\nlet foo = 0;\nfoo = ((foo + 1) | 0) || 1;\n',
+        '\nlet foo = 0;\nconst o = { v: 0 };\no.v = foo = ((foo + 1) | 0) || 1;\n',
+        '\nconst o = { cnt: 0 };\no.cnt = ((o.cnt + 1) | 0) || 1;\n',
+    ];
+    for (const [name, src] of KERNELS) {
+        for (const f of forms) {
+            let msg = null;
+            try { derive(src + f, { phase: 'sign', k: 8 }); } catch (e) { msg = e; }
+            assert.ok(msg !== null && thrownConfig(() => { throw msg; }), name + ' throws SoakConfigError for ' + JSON.stringify(f));
+            assert.match(String(msg.message), /stale census/, name + ' ' + JSON.stringify(f));
+        }
+    }
+});
+
 /* ---- spinVersion ------------------------------------------------------------------------------------ */
 
 // The version counter is not exposed by the API, so the oracle is observable writes: a signal that starts at -1 and is

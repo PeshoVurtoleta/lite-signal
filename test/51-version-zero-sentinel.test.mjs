@@ -7,6 +7,10 @@
 // full zero:k kernel it is gv-caused WRONG for k>=2 without the F29 fix (witnessed on the tree and headpatched alike),
 // so (a) needs it correct on the FIXED full kernel; (c)/(d) assert it WRONG for k>=2. A "rest" kernel (globalVersion left
 // at 1, every other counter preset) is an extra control in (b).
+// The skip is spelled `((globalVersion + 1) | 0) || 1` (b19 K3): read.set chains it (`node.version = globalVersion = ...`),
+// boxSet stores it then stamps `node.version = globalVersion;`. (d) reverts both sites to the plain `(globalVersion + 1) | 0`;
+// (d2) reverts one site (del*) or moves its `|| 1` onto the bump's input (mov*: `((globalVersion || 1) + 1) | 0`, the
+// skip-before-the-bump placement), each WRONG on its own site's rows only. Every site text must occur exactly once first.
 // Row count: 8 scenarios x 5 k = 40, minus c-effectStamp0 at k=1 (needs f>=1 at f=k-1=0) = 39 = 34 F29 + 5 batchEpoch per mode; call + box modes -> 78 = 68 F29 + 10 batchEpoch per kernel.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +22,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { derive } = await import(pathToFileURL(path.join(ROOT, 'bench/soak/nearwrap.mjs')).href);
 const KS = [1, 2, 3, 5, 8];
-const SKIP = 'if (!globalVersion) globalVersion = 1;';
+const SKIPPED = '((globalVersion + 1) | 0) || 1';
+const READ_SITE = 'node.version = globalVersion = ' + SKIPPED + ';';
+const BOX_SITE = '\n        globalVersion = ' + SKIPPED + ';\n        node.version = globalVersion;';
+const PLAIN = '(globalVersion + 1) | 0', MOVED = '((globalVersion || 1) + 1) | 0';
 
 function occurrences(s, t) { let n = 0, i = s.indexOf(t); while (i !== -1) { n++; i = s.indexOf(t, i + t.length); } return n; }
 
@@ -171,14 +178,18 @@ function deaf(K) {   // ii-lazyInEffect at k=3, f=2 (crossing on the unrelated w
 
 let tree, hp, mutant, treeCtl, hpCtl;   // k -> rows
 const T = { sites: {}, zero: {}, sign: {}, rest: {}, hpZero: {}, mutZero: {} };
-let teethRows, treeDeaf, hpDeaf, treeCtlRows, mutatedOccurrences;
+let teethRows, treeDeaf, hpDeaf, treeCtlRows, siteCounts, sitesOk;
 
 before(async () => {
     TREE_SRC = fs.readFileSync(path.join(ROOT, 'Signal.js'), 'utf8');
     WATCH_SRC = fs.readFileSync(path.join(ROOT, 'Watch.js'), 'utf8');
     HP_SRC = fs.readFileSync(path.join(ROOT, 'bench/soak/controls/headpatched/Signal.js'), 'utf8');
     HP_WATCH = fs.readFileSync(path.join(ROOT, 'bench/soak/controls/headpatched/Watch.js'), 'utf8');
-    mutatedOccurrences = occurrences(TREE_SRC, SKIP);
+    siteCounts = [occurrences(TREE_SRC, READ_SITE), occurrences(TREE_SRC, BOX_SITE), occurrences(TREE_SRC, SKIPPED)];
+    sitesOk = siteCounts.join(',') === '1,1,2';
+    // replace the skip at exactly one site (READ_SITE / BOX_SITE, located once) with `to`
+    const at = (site, to) => { const i = TREE_SRC.indexOf(site); return TREE_SRC.slice(0, i) + site.replace(SKIPPED, to) + TREE_SRC.slice(i + site.length); };
+    const both = sitesOk ? at(READ_SITE, PLAIN).replace(BOX_SITE, BOX_SITE.replace(SKIPPED, PLAIN)) : null;
     for (const k of KS) {
         T.zero[k] = (await zeroRows(TREE_SRC, WATCH_SRC, k, 'tree-zero-k' + k));
         if (k === 3) treeDeaf = deaf(await mk(derive(TREE_SRC, { phase: 'zero', k }).text, WATCH_SRC));
@@ -187,21 +198,15 @@ before(async () => {
         T.rest[k] = runK(await mk(restOf(derive(TREE_SRC, { phase: 'zero', k }).text, k), WATCH_SRC), k, 'tree-rest-k' + k);
         T.hpZero[k] = (await zeroRows(HP_SRC, HP_WATCH, k, 'hp-zero-k' + k));
         if (k === 3) hpDeaf = deaf(await mk(derive(HP_SRC, { phase: 'zero', k }).text, HP_WATCH));
-        if (mutatedOccurrences === 2) {
-            T.mutZero[k] = (await zeroRows(TREE_SRC.split(SKIP).join(''), WATCH_SRC, k, 'mut-zero-k' + k));
+        if (sitesOk) {
+            T.mutZero[k] = (await zeroRows(both, WATCH_SRC, k, 'mut-zero-k' + k));
         }
     }
-    if (mutatedOccurrences === 2) {
-        // site-specific mutants: drop / move-above-the-bump exactly one of the two skips (1st = read.set, 2nd = boxSet)
-        const at1 = TREE_SRC.indexOf(SKIP), at2 = TREE_SRC.indexOf(SKIP, at1 + 1);
-        const del = (at) => TREE_SRC.slice(0, at) + TREE_SRC.slice(at + SKIP.length);
-        const BUMP = 'globalVersion = (globalVersion + 1) | 0;';
-        const mov = (at) => {   // put the skip on the line above the nearest preceding bump
-            const b = TREE_SRC.lastIndexOf(BUMP, at);
-            assert.ok(b !== -1 && at - b < 200, 'bump not found just above the skip');
-            return TREE_SRC.slice(0, b) + SKIP + '\n' + TREE_SRC.slice(b, at) + TREE_SRC.slice(at + SKIP.length);
-        };
-        const defs = { delRead: del(at1), delBox: del(at2), movRead: mov(at1), movBox: mov(at2) };
+    if (sitesOk) {
+        // site-specific mutants: revert (del*) or misplace (mov*) exactly one of the two skips
+        assert.equal(occurrences(both, SKIPPED), 0, 'both-sites mutant left a skip behind');
+        const defs = { delRead: at(READ_SITE, PLAIN), delBox: at(BOX_SITE, PLAIN), movRead: at(READ_SITE, MOVED), movBox: at(BOX_SITE, MOVED) };
+        for (const [nm, text] of Object.entries(defs)) assert.equal(occurrences(text, SKIPPED), 1, nm + ': other site must keep its skip');
         for (const k of KS) for (const [nm, text] of Object.entries(defs)) (T.sites[nm] ||= {})[k] = await zeroRows(text, WATCH_SRC, k, 'site-' + nm + '-k' + k);
     }
     const plain = await mk(TREE_SRC, WATCH_SRC);
@@ -249,8 +254,8 @@ describe('F29 globalVersion 0-sentinel', () => {
         assert.notEqual(hpDeaf.len, 1003);   // the permanently deaf effect
     });
 
-    test('(d) MUST-FAIL mutant -- tree source minus the 2 skips behaves like the headpatched control', () => {
-        assert.equal(mutatedOccurrences, 2, 'expected the skip text exactly twice (read.set + boxSet)');
+    test('(d) MUST-FAIL mutant -- tree source with both skips reverted to the plain bump behaves like the headpatched control', () => {
+        assert.deepEqual(siteCounts, [1, 1, 2], 'expected each skip spelling exactly once (read.set chained, boxSet stored) and no other');
         const rows = flat(T.mutZero);
         assert.equal(rows.length, 78);
         for (const n of F29) {
@@ -262,8 +267,8 @@ describe('F29 globalVersion 0-sentinel', () => {
         assert.equal(pat(rows), pat(flat(T.hpZero)));
     });
 
-    test('(d2) MUST-FAIL site mutants -- each skip alone is driven behaviourally (delete and move-above)', () => {
-        assert.equal(mutatedOccurrences, 2);
+    test('(d2) MUST-FAIL site mutants -- each skip alone is driven behaviourally (revert and move onto the input)', () => {
+        assert.deepEqual(siteCounts, [1, 1, 2]);
         const isBox = (r) => r.name.endsWith('[box]');
         for (const nm of ['delRead', 'movRead', 'delBox', 'movBox']) {
             const rows = flat(T.sites[nm]);
