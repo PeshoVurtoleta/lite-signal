@@ -347,8 +347,10 @@ test('closeBoundary order: profiler read before the first forced GC, memory afte
     assert.deepEqual(r.boundary, Object.assign({}, r.boundary, { trackerSize: 0, weakAlive: 0, forcedGcTries: 3, heapSampledAfterGc: true }));
     assert.deepEqual(r.gc, { major: 0, minor: 2, maxPauseMs: 0.5 });
     assert.ok(r.memory.residentMB > 0 && r.memory.heapUsedMB > 0);
-    // a retained target spends the (short) budget and is reported, never hidden
-    const held = await closeBoundary({ tracker: { size: () => 1 }, witness: [], profiler: null, forceGc: () => {}, drainMs: 30, drainTries: 2 });
+    // a retained target spends the (short) budget and is reported, never hidden (a stepped clock: 5 ms per
+    // read, so the try count never depends on host load)
+    let clk = 0;
+    const held = await closeBoundary({ tracker: { size: () => 1 }, witness: [], profiler: null, forceGc: () => {}, drainMs: 30, drainTries: 2, now: () => (clk += 5) });
     assert.equal(held.boundary.trackerSize, 1);
     assert.ok(held.boundary.drainMs >= 30 && held.boundary.forcedGcTries >= 3);
     assert.equal(held.gc, null);
@@ -380,6 +382,40 @@ process.stdout.write(JSON.stringify({ a: a.boundary, b: b.boundary, keep: keep.i
     assert.equal(o.b.weakAlive, 1, 'the WeakRef witness sees the kept one');
     assert.equal(o.b.trackerSize, 1);
     assert.equal(o.keep, 5);
+});
+
+test('closeBoundary deref KeepDuringJob pin (child, --expose-gc): a target held only at the FIRST gc drains to 0/0; held throughout stays 1/1', () => {
+    // Regression for the 2026-10-13 flake (test/40 GRAPH cycle 0 read 1/1 after 139 forced GCs): countAlive()'s
+    // deref() pins a live target until the job ends, so a gc() in the same job can never collect it.
+    const src = `
+const { createLeakTracker } = await import('@zakkster/lite-leak');
+const { closeBoundary } = await import(${JSON.stringify(pathToFileURL(join(SOAK, 'boundary.mjs')).href)});
+let holder = null;
+// allocate inside a function: a top-level temporary could stay in the suspended module frame
+function make(tracker, witness) { const o = { big: new Array(64).fill(1) }; tracker.track(o, () => {}, 'w'); witness.push(new WeakRef(o)); holder = o; }
+const t1 = createLeakTracker({ name: 't42-pin-released' });
+const w1 = [];
+make(t1, w1);
+let calls = 0;
+const releaseAfterFirst = () => { gc(); if (++calls === 1) holder = null; };
+const a = await closeBoundary({ tracker: t1, witness: w1, profiler: null, forceGc: releaseAfterFirst, drainMs: 2000, drainTries: 8 });
+const t2 = createLeakTracker({ name: 't42-pin-held' });
+const w2 = [];
+make(t2, w2);
+const b = await closeBoundary({ tracker: t2, witness: w2, profiler: null, drainMs: 200, drainTries: 8 });
+process.stdout.write(JSON.stringify({ a: a.boundary, b: b.boundary, held: holder !== null, calls }));
+`;
+    const r = spawnSync(process.execPath, ['--expose-gc', '--input-type=module', '-e', src], { cwd: ROOT, encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 0, r.stderr);
+    const o = JSON.parse(r.stdout);
+    assert.ok(o.a.forcedGcTries >= 2, 'the first gc ran with the holder live, so the drain needs a second: ' + r.stdout);
+    assert.equal(o.a.weakAlive, 0, 'released after the first gc -> collected (no harness deref pin): ' + r.stdout);
+    assert.equal(o.a.trackerSize, 0, 'and finalized (size() is the authority): ' + r.stdout);
+    // teeth: the fix must not hide a real leak
+    assert.equal(o.held, true);
+    assert.equal(o.b.weakAlive, 1, 'a target held for the whole drain is still seen alive: ' + r.stdout);
+    assert.equal(o.b.trackerSize, 1, r.stdout);
+    assert.ok(o.b.drainMs >= 200, 'a held target spends the budget: ' + r.stdout);
 });
 
 /* ---- QA burst 3b (2026-10-12): boundary matrix, appended ------------------------------------------- */

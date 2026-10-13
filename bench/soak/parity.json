@@ -14,7 +14,7 @@
     "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
     "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
     "bench/soak/gates.mjs": "5b75bfece904601246d37e510827fb125bcd01f91458f3074a14a0051864e951",
-    "bench/soak/boundary.mjs": "ab9e0c140ccbb01698678e28e3b988e377cb66af61c9e7a0cb2e3637b1e8c6de",
+    "bench/soak/boundary.mjs": "a9b1b75ca945b31f7454e5243cf1ed5ac1c12a625299c5a34d2413d02373eec7",
     "bench/soak/divergences.mjs": "df99c3adf247aeb7b5b0290ef72aeed2221aee89cd360f0340cb27efebb938a2",
     "bench/soak/divergences.json": "2a68cdf6f7a135a3cda3b74e540767033fe034907db06b36eda85cc9a4a53146",
     "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",

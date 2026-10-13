@@ -12,6 +12,9 @@
  *      sleep 10 ms so FinalizationRegistry callbacks can land (the 2026-10-05 finalizer-timing flake).
  *      tracker.size() is the AUTHORITY (TASK 0g: it decrements on finalization without untrack()); the
  *      WeakRef count is the second witness. A real leak never drains, it just spends the budget.
+ *      Every gc() runs after the drain's last deref() of a witness: deref() pins a live target (KeepDuringJob)
+ *      until the microtask checkpoint ends, so a macrotask tick separates countAlive() from the next gc() (the
+ *      2026-10-13 flake: test/40 GRAPH cycle 0 read 1/1 after 139 tries, pinned by the harness itself).
  *   5. memory sample STRICTLY AFTER the last forced GC: residentMB = helpers.residentBytes() (heapUsed +
  *      arrayBuffers), the number the heap gate reads; heapUsedMB, arrayBuffersMB and rssMB are report-only
  *   6. one more yield (the forced GCs' entries land), then profiler.reset(): the next window is workload only
@@ -27,7 +30,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const r3 = (x) => Math.round(x * 1000) / 1000;
 
-/** Live WeakRef witnesses. deref() keeps a target alive only until the current job ends. */
+/** Live WeakRef witnesses. deref() keeps a target alive until the current microtask checkpoint ends. */
 export function countAlive(witness) {
     let n = 0;
     for (let i = 0; i < witness.length; i++) if (witness[i].deref() !== undefined) n++;
@@ -78,17 +81,20 @@ export async function closeBoundary(opts) {
     // 3) drop the cycle's references
     if (typeof dropRefs === 'function') dropRefs();
 
-    // 4) time-bounded drain; always at least one forced GC
+    // 4) time-bounded drain; always at least one forced GC. The trailing tick (a macrotask; a microtask yield
+    //    is not enough) ends the microtask checkpoint, releasing countAlive()'s deref() pins before the next gc().
     let tries = 0;
     let size, alive;
     const t0 = now();
-    do {
+    for (;;) {
         forceGc();
         tries++;
         await (tries <= drainTries ? tick() : sleep(10));
         size = tracker.size();
         alive = countAlive(witness);
-    } while ((size !== 0 || alive !== 0) && now() - t0 < drainMs);
+        if ((size === 0 && alive === 0) || !(now() - t0 < drainMs)) break;
+        await tick();
+    }
     const spent = Math.round((now() - t0) * 10) / 10;
 
     // 5) memory, strictly after the last forced GC
