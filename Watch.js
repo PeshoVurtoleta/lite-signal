@@ -132,16 +132,32 @@ export function watch(source, callback, options) {
  * @param {() => unknown} predicate Reactive read function; fired when truthy.
  * @param {() => void} callback     Called once when predicate first truthy.
  *                                  Internal reads are untracked.
- * @returns {() => void}            Dispose function. Idempotent.
+ * @returns {() => void}            Dispose function. Idempotent; once the
+ *                                  watcher has fired or been cancelled, it
+ *                                  drops the engine dispose handle (it still
+ *                                  references predicate and callback). A
+ *                                  callback that throws on a later fire
+ *                                  skips the auto-dispose: the handle keeps
+ *                                  the live effect until cancel() (as on
+ *                                  1.5.2).
  */
 export function when(predicate, callback) {
     let stopFn = null;
     let wantsStopEarly = false;
     let fired = false;
 
+    // Runs on fire and on cancel. Drops the engine dispose handle before calling
+    // it, so a cancel handle the caller keeps does not keep the effect node (and
+    // through it the registry) reachable. Later calls find stopFn null: no-ops
+    // (wantsStopEarly is read only once, at registration).
     const stop = () => {
-        if (stopFn !== null) stopFn();
-        else wantsStopEarly = true;
+        if (stopFn !== null) {
+            const dispose = stopFn;
+            stopFn = null;
+            dispose();
+        } else {
+            wantsStopEarly = true;
+        }
     };
 
     stopFn = effect(() => {
@@ -158,7 +174,13 @@ export function when(predicate, callback) {
         }
     });
 
-    if (wantsStopEarly) stopFn();
+    // If the predicate was truthy at registration (or the callback cancelled),
+    // stop() ran before stopFn was assigned: dispose and drop the handle now.
+    if (wantsStopEarly) {
+        const dispose = stopFn;
+        stopFn = null;
+        dispose();
+    }
     return stop;
 }
 

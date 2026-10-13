@@ -488,6 +488,12 @@ export function watch<T>(
  * @param predicate  Reactive read function; callback fires when truthy.
  * @param callback   Called once when predicate first truthy. Reads inside are untracked.
  * @returns Dispose function. Call before predicate fires to cancel; idempotent.
+ *          Once the watcher has fired or been cancelled, the handle drops the
+ *          engine dispose handle; it still references `predicate` and
+ *          `callback`, so what they close over stays reachable while kept.
+ *          A callback that throws on a later fire (not at registration) skips
+ *          the auto-dispose: the effect stays live and the handle keeps it
+ *          until it is called (same on 1.5.2).
  */
 export function when(
     predicate: () => unknown,

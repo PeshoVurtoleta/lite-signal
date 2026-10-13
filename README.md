@@ -646,6 +646,8 @@ const cancel = when(() => slowApi.ready, () => start());
 if (userBacked) cancel();
 ```
 
+Once the watcher has fired or been cancelled, the handle drops the engine dispose handle; later calls are no-ops. A kept handle still references `predicate` and `callback`, so whatever they close over (usually the registry's own signals) stays reachable while you keep it -- drop the handle when you no longer need it. A callback that throws on a later fire (not at registration) skips the auto-dispose: the effect stays live and the handle keeps it until `cancel()` is called (same on 1.5.2).
+
 ### `whenAsync(predicate)`
 
 > ### ! Hot-path warning

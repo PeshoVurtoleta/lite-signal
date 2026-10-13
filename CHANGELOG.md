@@ -9,8 +9,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 One engine simplification (LEDGER #30, "observer-fold") plus dev-only work: the gate gaps
 closed after the link-SoA fork (LEDGER #27) passed the gates while costing +10-39% on four
 shapes, a gate-1 conformance runner, and the `bench/soak/` randomized soak harness. `Watch.js`
-changes `watch()`'s fire order and `stop()` ("### Fixed -- `watch()`" below; `Signal.d.ts` gains a
-doc comment only); `Signal.js` changes the tracking-flag fold described below (no
+changes `watch()`'s fire order and `stop()` ("### Fixed -- `watch()`" below) and `when()`'s cancel
+handle ("### Fixed -- `when()`" below; `Signal.d.ts` gains doc comments only); `Signal.js` changes the tracking-flag fold described below (no
 API, no behavior change), the F29 version-counter fix ("### Fixed" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
@@ -43,6 +43,28 @@ the `wantsStopEarly` path) turns that site's dispose-handle test red -- a kept s
 otherwise keep the whole registry reachable. A re-entrant
 write to the source from inside the callback is unchanged: the engine does not re-run an effect for a
 write made during its own run, so that write is not observed by the watcher (same on 1.5.2).
+
+### Fixed -- `when()`: the cancel handle drops the engine dispose handle on fire and on cancel
+
+`when()` (Watch.js) never cleared its engine dispose handle (`stopFn`), present through 1.5.2: a
+cancel handle the caller kept after the predicate fired, or after an explicit cancel, kept the
+disposed effect's dispose handle and, through it, the whole registry -- every value its nodes hold --
+reachable for as long as the handle lived. Both release paths now drop the handle before calling it:
+`stop()` (run on fire and on cancel) and the `wantsStopEarly` path (predicate truthy at registration);
+later calls find it null and are no-ops. Scope: the kept handle still shares `when()`'s closure
+context, so it still references `predicate` and `callback`; whatever they close over (typically the
+registry's own signals) stays reachable while the handle is kept, as with `watch()`'s `source` /
+`callback`. A `when()` disposed by its owner (never fired, never cancelled) also keeps the dispose
+handle, and a callback that throws on a later fire skips the auto-dispose (`stop()` never runs, the
+effect stays live and the handle keeps it until `cancel()`; same on 1.5.2; a throw at registration
+makes `when()` throw and the engine disposes the effect). All three are filed follow-ups. No
+per-check or per-fire allocation is added (the change is in the once-only dispose paths). `whenAsync()` was not affected: it discards `when()`'s handle and the
+Promise holds no path back to the registry (now pinned). New `test/53-when-release.test.mjs` (9
+tests): 4 release rows, all red on the 1.5.2 / 7676dac Watch.js; removing `stopFn = null` in `stop()`
+turns 3 of them red and removing it on the `wantsStopEarly` path turns the fourth red. Two premise rows
+pin the engine fact the release rows rest on (a kept effect dispose handle, live or already disposed,
+keeps its registry reachable), so an engine change that breaks it fails those rows instead of leaving
+the release rows passing vacuously; plus a cancel-after-done no-op row and two `whenAsync` pins.
 
 ### Fixed -- engine: `globalVersion` skips 0, the "unset" stamp sentinel (F29)
 

@@ -647,7 +647,7 @@ Fires callback on every change of the projected source value.
 Fires callback exactly once when predicate first returns truthy, then auto-disposes.
 
 - **Signature**: `when(predicate: () => unknown, callback: () => void): () => void`
-- **Returns**: dispose function. Useful for cancelling before predicate fires; idempotent; no-op after callback has fired.
+- **Returns**: dispose function. Useful for cancelling before predicate fires; idempotent; no-op after callback has fired. Once the watcher has fired or been cancelled, the handle drops the engine dispose handle (through 1.5.2 it kept it, so a kept handle retained the whole registry even when predicate and callback held nothing of it). A kept handle still references `predicate` and `callback`, so whatever they close over (usually the registry's own signals) stays reachable while it is kept. A callback that throws on a later fire (not at registration) skips the auto-dispose: the effect stays live and the handle keeps it until `cancel()` is called (same on 1.5.2).
 - **Synchronous fire**: if predicate is already truthy at registration, callback fires synchronously and watcher disposes immediately (same `wantsStopEarly` pattern as `watch`).
 - **One-shot guarantee**: internal `fired` flag protects against double-fire even if dispose timing lets one more evaluation through.
 - **Callback reads are untracked.**
