@@ -10,6 +10,11 @@
  * Teeth: every check statement of SoakReport.mjs (one `bad(...)` / `refuse(...)` each) has a tamper below
  * that goes red when that statement alone is disabled. Honest streams (fatal, signal-interrupted, smoke,
  * mustfail, scratch kernel) prove the opposite direction: an honest stream is never labelled INTEGRITY.
+ *
+ * Release policy (burst 12, maintainer decision c: the full roster, at default volume, on a clean committed tree):
+ * a release-size tree stream (4 lanes x DEFAULT_CYCLES x DEFAULT_OPS) is too slow to generate here, so the ACCEPTED
+ * path is proven on the exported PURE releaseRefusal() with the REAL REV-152 header relabelled as a tree run and
+ * edited field by field (RELEASE table); the CLI rows prove the small honest streams refuse with the first class.
  */
 
 import { test, before, after } from 'node:test';
@@ -19,12 +24,13 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, copyFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OPS_MIN, MIN_ACTIVE_CYCLES, CHECK_P } from '../bench/soak/config.mjs';
-import { COV_OFF_SUPPORTED, laneByName } from '../bench/soak/lanes/index.mjs';
+import { OPS_MIN, MIN_ACTIVE_CYCLES, CHECK_P, DEFAULT_OPS, DEFAULT_CYCLES } from '../bench/soak/config.mjs';
+import { COV_OFF_SUPPORTED, laneByName, ROSTER } from '../bench/soak/lanes/index.mjs';
 import { applicability } from '../bench/soak/adapters/contract.mjs';
 import { GATE_NAMES } from '../bench/soak/gates.mjs';
 import { ORACLES } from '../bench/soak/oracles.mjs';
 import { GAPS, CHECKS } from '../bench/soak/teeth.mjs';
+import { releaseRefusal } from '../bench/soak/SoakReport.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SOAK = join(ROOT, 'bench', 'soak');
@@ -169,13 +175,15 @@ after(async () => {
 
 /* ---- honest streams: consistent, never INTEGRITY ----------------------------------------------------- */
 
-test('B5: the untampered REV-152 stream (1.5.2, 4 lanes, 11 cycles) -> exit 0, `soak:report: verdict FAIL (consistent)`', () => {
+test('B5: the untampered REV-152 stream (1.5.2, 4 lanes, 11 cycles) -> exit 0, the control NOTE, `soak:report: verdict FAIL (consistent)` last', () => {
     const s = S.rev;
     assert.equal(s.status, 1, 'main judged 1.5.2 FAIL: ' + s.stderr.slice(0, 400));
     assert.equal(s.recs[0].controls.name, 'rev152');
     const r = expectConsistent('rev');
     assert.equal(r.out[r.out.length - 1], 'soak:report: verdict FAIL (consistent)');
     assert.match(r.out[0], /^soak:report: stream records=\d+ kernel=control:rev152 engine=lite lanes=GRAPH,BATCH,ERROR,NEST cycles=\d+ /);
+    assert.equal(r.out[r.out.length - 2], 'soak:report: NOTE -- control kernel rev152, not release evidence');
+    assert.equal(r.out.filter((l) => l.indexOf('soak:report: NOTE -- control kernel ') === 0).length, 1, JSON.stringify(r.out));
 });
 test('B5: a clean headpatched GRAPH stream -> exit 0, its own verdict re-derived (consistent)', () => {
     // clean = no oracle failure. The verdict is NOT pinned: heap / retention can go red on a loaded host.
@@ -236,10 +244,82 @@ function asTree(recs, sig, wat, parityOk) {
     h.engine.files = h.kernel.files.map((f) => ({ path: f.path, sha256: f.sha256 }));
     if (parityOk !== undefined) h.parity.ok = parityOk;
 }
-test('tree run whose kernel sha256 equals the parity.json pins and parity ok -> exit 0, kernel=tree', () => {
-    const r = report([tamper('scratch', (recs) => asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true))]);
-    assert.equal(r.status, 0, JSON.stringify(r));
+test('a small GRAPH-only tree run at the parity.json pins, parity ok -> consistent, then NOT A RELEASE SOAK -- lane-subset (the first class), kernel=tree', () => {
+    const r = expectRefusal(tamper('scratch', (recs) => asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true)), 'lane-subset');
     assert.match(r.out[0], / kernel=tree /);
+    assert.match(r.err[0], /ran GRAPH of the roster \["GRAPH","BATCH","ERROR","NEST"\]/);
+    assert.ok(!r.out.some((l) => l.indexOf('NOTE -- control kernel') !== -1), 'a tree run prints no control NOTE');
+});
+test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x OPS_MIN) -> NOT A RELEASE SOAK -- volume', () => {
+    const r = expectRefusal(tamper('rev', (recs) => { recs[0].controls.name = null; asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true); }), 'volume');
+    assert.match(r.out[0], / kernel=tree engine=lite lanes=GRAPH,BATCH,ERROR,NEST /);
+    assert.match(r.err[0], new RegExp('SOAK_OPS ' + OPS_MIN + ' is not a count >= config DEFAULT_OPS ' + DEFAULT_OPS));
+});
+
+/* ---- release policy: the PURE releaseRefusal() on the real REV-152 header, field by field ------------- */
+
+/** The REV-152 stream as a release-size clean tree run: relabelled tree at the pins, SOAK_OPS DEFAULT_OPS, clean git. */
+function releaseBase() {
+    const recs = readRecs('rev');
+    recs[0].controls.name = null;
+    asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true);
+    const h = recs[0];
+    h.config.SOAK_OPS = { value: DEFAULT_OPS, source: 'default' };
+    h.gitSha = '0123456789abcdef0123456789abcdef01234567';
+    h.gitDirty = false;
+    h.gitError = null;
+    return { h, cycles: cyclesOf(recs) };
+}
+const lanesTo = (h, n) => { h.lanes = h.lanes.slice(0, n); h.config.SOAK_LANES = { value: ROSTER.slice(0, n), source: 'env' }; };
+const dropLastCycle = (cycles) => cycles.slice(0, (DEFAULT_CYCLES - 1) * ROSTER.length);
+const RELEASE = [
+    ['full roster, DEFAULT_OPS, DEFAULT_CYCLES completed, clean git', () => {}, null],
+    ['SOAK_OPS above DEFAULT_OPS', (h) => { h.config.SOAK_OPS.value = DEFAULT_OPS * 2; }, null],
+    ['a forever run (SOAK_CYCLES=0) that completed DEFAULT_CYCLES', (h) => { h.config.SOAK_CYCLES = { value: 0, source: 'env' }; }, null],
+    ['a pinned control kernel (rev152), small and dirty: the tree policy does not apply', (h) => { h.controls.name = 'rev152'; h.config.SOAK_OPS.value = OPS_MIN; h.gitDirty = true; lanesTo(h, 1); }, null],
+    ['SOAK_LANES GRAPH,BATCH,ERROR', (h) => lanesTo(h, 3), 'lane-subset', /^ran GRAPH,BATCH,ERROR of the roster/],
+    ['a roster lane with status skip', (h) => { h.lanes[3].status = 'skip'; }, 'lane-subset', /^ran GRAPH,BATCH,ERROR of the roster/],
+    ['a laneRoster that is not lanes/index.mjs ROSTER (all of it ran)', (h) => { lanesTo(h, 3); h.laneRoster = ROSTER.slice(0, 3); }, 'lane-subset', /is not lanes\/index\.mjs ROSTER/],
+    ['SOAK_OPS DEFAULT_OPS - 1', (h) => { h.config.SOAK_OPS.value = DEFAULT_OPS - 1; }, 'volume', new RegExp('^SOAK_OPS ' + (DEFAULT_OPS - 1) + ' is not a count >= config DEFAULT_OPS')],
+    ['SOAK_OPS null (fail closed)', (h) => { h.config.SOAK_OPS.value = null; }, 'volume', /^SOAK_OPS null is not a count/],
+    ['SOAK_OPS undefined (fail closed)', (h) => { h.config.SOAK_OPS.value = undefined; }, 'volume', /^SOAK_OPS undefined is not a count/],
+    ['SOAK_OPS NaN (fail closed)', (h) => { h.config.SOAK_OPS.value = NaN; }, 'volume', /^SOAK_OPS null is not a count/],
+    ['SOAK_OPS the string "200000" (never coerced)', (h) => { h.config.SOAK_OPS.value = String(DEFAULT_OPS * 2); }, 'volume', /^SOAK_OPS "200000" is not a count/],
+    ['DEFAULT_CYCLES - 1 cycles', (h, c) => dropLastCycle(c), 'volume', new RegExp('^' + (DEFAULT_CYCLES - 1) + ' completed cycle\\(s\\) per lane < config DEFAULT_CYCLES ' + DEFAULT_CYCLES)],
+    ['the last cycle interrupted (signal): it does not count', (h, c) => { c[c.length - 1].interrupted = true; }, 'volume', new RegExp('^' + (DEFAULT_CYCLES - 1) + ' completed')],
+    ['a forever run (SOAK_CYCLES=0) stopped after DEFAULT_CYCLES - 1', (h, c) => { h.config.SOAK_CYCLES = { value: 0, source: 'env' }; return dropLastCycle(c); }, 'volume', /SOAK_CYCLES=0;/],
+    ['gitSha null', (h) => { h.gitSha = null; }, 'provenance', /^gitSha null /],
+    ['gitSha not a commit sha', (h) => { h.gitSha = 'HEAD'; }, 'provenance', /^gitSha "HEAD" /],
+    ['gitSha abbreviated (7 hex)', (h) => { h.gitSha = 'abc1234'; }, 'provenance', /^gitSha "abc1234" /],
+    ['gitSha 39 hex', (h) => { h.gitSha = 'a'.repeat(39); }, 'provenance', /^gitSha "a{39}" /],
+    ['gitSha 41 hex', (h) => { h.gitSha = 'a'.repeat(41); }, 'provenance', /^gitSha "a{41}" /],
+    ['gitSha upper-case 40 hex', (h) => { h.gitSha = 'A'.repeat(40); }, 'provenance', /^gitSha "A{40}" /],
+    ['gitSha 64 hex (a sha256 repository)', (h) => { h.gitSha = 'b'.repeat(64); }, null],
+    ['gitDirty true', (h) => { h.gitDirty = true; }, 'provenance', /^gitDirty true:/],
+    ['gitDirty null (the probe failed: unknown, never clean)', (h) => { h.gitDirty = null; }, 'provenance', /^gitDirty null:/],
+    ['gitError non-null', (h) => { h.gitError = 'fatal: x'; }, 'provenance', /^gitError "fatal: x"/],
+    // precedence: tree-parity, lane-subset, volume, provenance
+    ['precedence: a Signal.js off the pin AND a lane subset: tree-parity first', (h) => { h.kernel.files[0].sha256 = '1'.repeat(64); lanesTo(h, 1); }, 'tree-parity', /Signal\.js sha256 differs/],
+    ['precedence: a lane subset AND OPS_MIN AND dirty: lane-subset first', (h) => { lanesTo(h, 2); h.config.SOAK_OPS.value = OPS_MIN; h.gitDirty = true; }, 'lane-subset', /^ran GRAPH,BATCH of/],
+    ['precedence: OPS_MIN AND gitSha null: volume first', (h) => { h.config.SOAK_OPS.value = OPS_MIN; h.gitSha = null; }, 'volume', /^SOAK_OPS 1000 is not a count/],
+];
+for (const [name, edit, reason, detail] of RELEASE) {
+    test('releaseRefusal: ' + name + ' -> ' + (reason === null ? 'null (release evidence)' : reason), () => {
+        const b = releaseBase();
+        const cycles = edit(b.h, b.cycles) || b.cycles;
+        const got = releaseRefusal(b.h, cycles, PINS);
+        if (reason === null) { assert.equal(got, null, JSON.stringify(got)); return; }
+        assert.ok(got !== null, 'want ' + reason + ', got null');
+        assert.equal(got.reason, reason, JSON.stringify(got));
+        assert.match(got.detail, detail);
+    });
+}
+test('releaseRefusal: the base really is the REV-152 header (4 lanes x DEFAULT_CYCLES completed, the roster by import)', () => {
+    const b = releaseBase();
+    assert.deepEqual(b.h.laneRoster, ROSTER.slice());
+    assert.deepEqual(b.h.lanes.map((L) => L.status), ROSTER.map(() => 'run'));
+    assert.equal(b.cycles.length, DEFAULT_CYCLES * ROSTER.length);
+    assert.ok(b.cycles.every((c) => c.interrupted === false));
 });
 
 /* ---- one tamper per check statement ------------------------------------------------------------------ */
@@ -461,11 +541,13 @@ test('B7: the NOTE line names exactly the gates and oracles whose only teeth are
     const only = (id) => covered.has(id) && !Object.prototype.hasOwnProperty.call(CHECKS, id);
     const ids = (a) => (a.length > 0 ? a.join(',') : 'none');
     const gate = GATE_NAMES.filter((n) => only('gate:' + n)), oracle = ORACLES.filter((n) => only('oracle:' + n));
-    const notes = r.out.filter((l) => l.indexOf('soak:report: NOTE -- ') === 0);
+    const notes = r.out.filter((l) => l.indexOf('soak:report: NOTE -- teeth ') === 0);
     assert.equal(notes.length, 1, JSON.stringify(r.out));
-    assert.equal(r.out.length, 3, JSON.stringify(r.out));
+    // hp is the headpatched CONTROL: stream line, teeth NOTE, control NOTE, verdict
+    assert.equal(r.out.length, 4, JSON.stringify(r.out));
     assert.match(r.out[0], /^soak:report: stream records=/);
     assert.equal(r.out[1], 'soak:report: NOTE -- teeth GAP gate=' + ids(gate) + ' oracle=' + ids(oracle));
+    assert.equal(r.out[2], 'soak:report: NOTE -- control kernel headpatched, not release evidence');
 });
 
 test('precedence: an edited CHECK_P AND a seq gap -> the earlier class (seq-gap); CHECK_P plus a claimed PASS -> gates-block', () => {

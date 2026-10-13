@@ -16,7 +16,8 @@
  *
  * Exit codes and lines (report lines on stdout, refusals on stderr):
  *   0  `soak:report: verdict <V> (consistent)`   the stream re-derives to its own verdict (any V, FAIL too)
- *      and is a release soak or a pinned control-kernel run (header.controls.name, re-verified here)
+ *      and is a release soak or a pinned control-kernel run (header.controls.name, re-verified here); a
+ *      control run prints `soak:report: NOTE -- control kernel <name>, not release evidence` before the verdict
  *   1  `soak:report: INTEGRITY -- <class>: <detail>`   the first failing check, in the precedence below
  *   1  `soak:report: NOT A RELEASE SOAK -- <reason>: <detail>`   consistent (the verdict line is printed
  *      first) but not release evidence
@@ -38,7 +39,14 @@
  *   mustfail (SOAK_MUSTFAIL teeth knob, SPEC-B 5.1), smoke, non-lite (an engine other than lite, incl.
  *   PARTIAL skips), overridden-kernel (SOAK_KERNEL that is no pinned control), tree-parity (a tree-kernel run
  *   whose Signal.js / Watch.js sha256 differ from bench/soak/parity.json -- recorded under different code --
- *   or whose header parity was not ok).
+ *   or whose header parity was not ok); then, on a TREE run only (a pinned control kernel stops after
+ *   overridden-kernel: it is never release evidence, and its NOTE line says so), the release policy
+ *   (maintainer decision c, 2026-10-13: the full roster, at default volume, on a clean committed tree):
+ *   lane-subset (the header.lanes that ran != header.laneRoster, or laneRoster != lanes/index.mjs ROSTER),
+ *   volume (SOAK_OPS < config DEFAULT_OPS, or fewer than config DEFAULT_CYCLES COMPLETED cycles per lane:
+ *   cycle records with interrupted false, the minimum over the lanes; a forever run, SOAK_CYCLES=0, counts the
+ *   cycles it actually ran, like any other), provenance (gitSha not a commit sha, gitDirty !== false -- null
+ *   is unknown, never clean -- or gitError non-null). The decision is the exported PURE releaseRefusal().
  *
  * Kernel identity (control class): kernel.override must agree with config SOAK_KERNEL (null <=> no override);
  * an override's resolved path must equal realpath(SOAK_KERNEL value) when that resolves on this host, or end
@@ -48,8 +56,9 @@
  * Teeth (SPEC-B addendum 9a): the hard gates and oracles whose only teeth are GAPS come from ./teeth.mjs
  * gapTeeth() by import (never copied); a consistent stream prints them on one stdout line
  * `soak:report: NOTE -- teeth GAP gate=<ids> oracle=<ids>` (`none` for an empty list), after the
- * `stream records=` line and before the verdict line, which stays the last stdout line. REASONS is imported
- * from gates.mjs.
+ * `stream records=` line and before the verdict line, which stays the last stdout line (stdout order:
+ * `stream records=`, teeth NOTE, control NOTE on a control run, verdict). REASONS is imported from gates.mjs;
+ * DEFAULT_OPS / DEFAULT_CYCLES from config.mjs and ROSTER from lanes/index.mjs (never copied).
  * DEFERRED copied list: the RECORD_KEYS / SUB_KEYS tables copy the literal record shapes of main.mjs /
  * provenance.mjs / jsonl.mjs / boundary.mjs (no owner exports them). Exporting them from main.mjs is deferred:
  * main.mjs is in test/41's (p) PINNED list, so an edit there forces a ~13-min calibration recut. test/46's
@@ -58,9 +67,13 @@
  * RESIDUALS (not checked, stated plainly):
  *   - config keys beyond KNOWN_KEYS, engine.version, controls.error, parity.error and the gateHits names are
  *     read or passed through but not judged; header sub-objects (os, caps, ...) are not key-checked.
- *   - The kernel identity is SELF-REPORTED. A consistent forgery of a scratch stream as a tree run (override,
- *     SOAK_KERNEL, both kernel sha256, engine.files: five fields) exits 0. Signing / attestation of the stream
- *     is out of scope here: teeth.mjs GAP R-kernel-identity (S4).
+ *   - The kernel identity is SELF-REPORTED. A consistent forgery of a release-size scratch stream (full roster,
+ *     default volume) as a tree run (override, SOAK_KERNEL, both kernel sha256, engine.files: five fields, plus
+ *     gitSha / gitDirty / gitError when the scratch run was not on a clean committed tree) exits 0. The git
+ *     fields are self-reported too. Signing / attestation of the stream is out of scope here: teeth.mjs GAP
+ *     R-kernel-identity (S4).
+ *   - Release eligibility reads no verdict: a consistent release-size tree stream exits 0 whatever V it
+ *     re-derives (FAIL too); the verdict line says which.
  *   - A forged BREACH entry with known null on a lane that has a capped cycle, for a family:sig that lane
  *     counted, is admitted: an unstored world could have produced it (the stream keeps FAIL_CAP per cycle).
  *   - Stale vs tampered: gates-block, registry and tree-parity cannot tell an honest stream recorded under
@@ -75,7 +88,7 @@ import { normalize } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
     gatesBlock, writeLineSync, formatReplayKey, KNOWN_KEYS, SCHEMA_VERSION, GEN_VERSION, FAIL_CAP, WARMUP_CYCLES,
-    CYCLES_MAX, EXIT_CODE, ENGINES_KNOWN,
+    CYCLES_MAX, EXIT_CODE, ENGINES_KNOWN, DEFAULT_OPS, DEFAULT_CYCLES,
 } from './config.mjs';
 import { LaneGates, judgeRun, oracleFamily, GateInputError, REASONS } from './gates.mjs';
 import { classify, digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences.mjs';
@@ -473,16 +486,61 @@ function fits(e, b) {
 
 /* ---- release eligibility --------------------------------------------------------------------------- */
 
-function checkRelease(h, cfg, lanes) {
-    if (cfg.mustFail !== null) refuse('mustfail', 'SOAK_MUSTFAIL=' + cfg.mustFail.mode + ':' + cfg.mustFail.scenario + ' is a teeth knob');
-    if (cfg.smoke) refuse('smoke', 'a smoke run sits below the gate floor by design');
-    if (cfg.engine !== 'lite') refuse('non-lite', 'engine ' + cfg.engine + (lanes.skipped.length ? ', skipped lanes ' + lanes.skipped.map((x) => x.lane).join(',') : ''));
+/**
+ * The release decision, PURE (no file, env or clock): h = a header that passed readHeader + checkHeader, cycles =
+ * the stream's cycle records, pins = bench/soak/parity.json `files`. Returns null (release evidence, or a pinned
+ * control kernel: report() prints its NOTE line) or { reason, detail }, the FIRST refusal in the order of the file
+ * header. Every check is ONE refuse() statement; test/46 holds a row per statement.
+ */
+export function releaseRefusal(h, cycles, pins) {
+    try {
+        releaseChecks(h, cycles, pins);
+        return null;
+    } catch (e) {
+        if (e instanceof Refusal) return { reason: e.reason, detail: e.message };
+        throw e;
+    }
+}
+
+function releaseChecks(h, cycles, pins) {
+    const val = (k) => h.config[k].value;
+    const mustFail = val('SOAK_MUSTFAIL'), engine = val('SOAK_ENGINE');
+    const skipped = h.lanes.filter((L) => L.status === 'skip').map((L) => L.name);
+    if (mustFail !== null) refuse('mustfail', 'SOAK_MUSTFAIL=' + mustFail.mode + ':' + mustFail.scenario + ' is a teeth knob');
+    if (val('SOAK_SMOKE') !== false) refuse('smoke', 'a smoke run sits below the gate floor by design');
+    if (engine !== 'lite') refuse('non-lite', 'engine ' + engine + (skipped.length ? ', skipped lanes ' + skipped.join(',') : ''));
     if (h.controls.name === null && h.kernel.override) refuse('overridden-kernel', 'SOAK_KERNEL=' + h.kernel.files[0].path + ' is no pinned control (controls.json)');
-    if (h.controls.name !== null) return;
-    const pins = JSON.parse(readFileSync(new URL('./parity.json', import.meta.url), 'utf8')).files;
+    if (h.controls.name !== null) return;   // a pinned control: never release evidence (its NOTE line), the tree policy below does not apply
     if (h.kernel.files[0].sha256 !== pins['Signal.js']) refuse('tree-parity', 'the tree Signal.js sha256 differs from bench/soak/parity.json: recorded under different code (stale) or tampered');
     if (h.kernel.files[1].sha256 !== pins['Watch.js']) refuse('tree-parity', 'the tree Watch.js sha256 differs from bench/soak/parity.json: recorded under different code (stale) or tampered');
     if (h.parity.ok !== true) refuse('tree-parity', 'the tree kernel ran with parity ok=' + String(h.parity.ok));
+    // release policy (maintainer decision c, 2026-10-13): the full roster, at default volume, on a clean committed tree
+    const ran = h.lanes.filter((L) => L.status === 'run').map((L) => L.name);
+    if (!isDeepStrictEqual(ran, h.laneRoster)) refuse('lane-subset', 'ran ' + (ran.length ? ran.join(',') : 'no lane') + ' of the roster ' + JSON.stringify(h.laneRoster) + ' (a release soak runs every lane)');
+    if (!isDeepStrictEqual(h.laneRoster, ROSTER.slice())) refuse('lane-subset', 'laneRoster ' + JSON.stringify(h.laneRoster) + ' is not lanes/index.mjs ROSTER ' + JSON.stringify(ROSTER));
+    const ops = val('SOAK_OPS'), done = completedCycles(ran, cycles);
+    if (!(Number.isSafeInteger(ops) && ops >= DEFAULT_OPS)) refuse('volume', 'SOAK_OPS ' + JSON.stringify(ops) + ' is not a count >= config DEFAULT_OPS ' + DEFAULT_OPS);
+    if (!(done >= DEFAULT_CYCLES)) refuse('volume', done + ' completed cycle(s) per lane < config DEFAULT_CYCLES ' + DEFAULT_CYCLES + ' (SOAK_CYCLES=' + String(val('SOAK_CYCLES')) + '; an interrupted cycle does not count, a forever run counts the cycles it ran)');
+    if (!(typeof h.gitSha === 'string' && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(h.gitSha))) refuse('provenance', 'gitSha ' + JSON.stringify(h.gitSha) + ' is not a commit sha (unknown is never release evidence)');
+    if (h.gitDirty !== false) refuse('provenance', 'gitDirty ' + String(h.gitDirty) + ': a release soak runs on a clean committed tree (null = the probe failed, unknown)');
+    if (h.gitError !== null) refuse('provenance', 'gitError ' + JSON.stringify(h.gitError));
+}
+
+/** The completed cycles per lane: cycle records with interrupted false, the minimum over `lanes` (0 for none). */
+function completedCycles(lanes, cycles) {
+    let min = -1;
+    for (const name of lanes) {
+        let n = 0;
+        for (const c of cycles) if (isObj(c) && c.lane === name && c.interrupted === false) n++;
+        if (min === -1 || n < min) min = n;
+    }
+    return min === -1 ? 0 : min;
+}
+
+/** report()'s door: reads this tree's pins (an unreadable parity.json is a corrupted checkout: CRASH) and decides. */
+function checkRelease(h, cycles) {
+    const pins = JSON.parse(readFileSync(new URL('./parity.json', import.meta.url), 'utf8')).files;
+    return releaseRefusal(h, cycles, pins);
 }
 
 /* ---- the remaining keys ---------------------------------------------------------------------------- */
@@ -512,12 +570,13 @@ export function report(path) {
         out.push('soak:report: stream records=' + recs.length + ' kernel=' + kernel + ' engine=' + cfg.engine + ' lanes=' + cfg.lanes.join(',') + ' cycles=' + st.summary.cyclesRun + ' failingWorlds=' + st.summary.totals.failingWorlds + ' reason=' + st.summary.reason);
         const gap = gapTeeth(), ids = (a) => (a.length > 0 ? a.join(',') : 'none');
         out.push('soak:report: NOTE -- teeth GAP gate=' + ids(gap.gate) + ' oracle=' + ids(gap.oracle));
+        const rel = checkRelease(st.header, st.cycles);
+        if (st.header.controls.name !== null) out.push('soak:report: NOTE -- control kernel ' + st.header.controls.name + ', not release evidence');
         out.push('soak:report: verdict ' + v.verdict + ' (consistent)');
-        checkRelease(st.header, cfg, lanes);
+        if (rel !== null) return { exitCode: 1, out, err: ['soak:report: NOT A RELEASE SOAK -- ' + rel.reason + ': ' + rel.detail] };
         return { exitCode: 0, out, err: [] };
     } catch (e) {
         if (e instanceof Integrity) return { exitCode: 1, out, err: ['soak:report: INTEGRITY -- ' + e.cls + ': ' + e.message] };
-        if (e instanceof Refusal) return { exitCode: 1, out, err: ['soak:report: NOT A RELEASE SOAK -- ' + e.reason + ': ' + e.message] };
         // a malformed value that slipped past the field checks is still a stream defect, never a pass
         if (e instanceof GateInputError || e instanceof TypeError || e instanceof RangeError) return { exitCode: 1, out, err: ['soak:report: INTEGRITY -- malformed: ' + e.message] };
         return { exitCode: 1, out, err: ['soak:report: CRASH -- ' + (e && e.stack ? e.stack : String(e))] };

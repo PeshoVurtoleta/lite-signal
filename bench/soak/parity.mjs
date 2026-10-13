@@ -41,6 +41,9 @@ export const PARITY_FILES = Object.freeze([
     // S1c B4 (pinned after review, burst 7c): replay and shrink decide which world a key plays and what the
     // emitted shrink test proves
     'bench/soak/replay.mjs', 'bench/soak/shrink.mjs',
+    // burst 12 (maintainer decision b): the constants decide the gate thresholds; SoakReport decides
+    // consistency / release eligibility
+    'bench/soak/config.mjs', 'bench/soak/SoakReport.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

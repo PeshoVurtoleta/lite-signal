@@ -20,6 +20,8 @@
     "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",
     "bench/soak/main.mjs": "a45d13a7a7310dd0dc438aaa86705a4e50741098841985ed0497360f97ecc0d7",
     "bench/soak/replay.mjs": "3e2d635c46440eda14f79afbeab6e8477c93e97e2657e3672939e50b88400171",
-    "bench/soak/shrink.mjs": "f38857d49b11544674f5e825096a9326034301c50ba8ee12e6fcbbb58d4985cc"
+    "bench/soak/shrink.mjs": "f38857d49b11544674f5e825096a9326034301c50ba8ee12e6fcbbb58d4985cc",
+    "bench/soak/config.mjs": "c166f081e76113219d25d8c31d8b19d96292cadb9498f201fe3a2047293b0acc",
+    "bench/soak/SoakReport.mjs": "4070f61d35f13b5ea90ab525919a2bd26aeba8eda5fa65ac11efb5c495b65d6e"
   }
 }
