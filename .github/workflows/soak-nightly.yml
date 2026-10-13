@@ -1,0 +1,156 @@
+# soak-nightly.yml -- lite-signal release-shaped soak + teeth tiers (SPEC-B addendum 11 = program addendum 17).
+# burn-in: the full-roster tree soak at release volume (SOAK_REQUIRE_PROVENANCE=1), then soak:report on
+# its stream (the report always gates). The soak step is report-only ONLY while bench/soak/teeth.mjs
+# GAPS lists P-TREE; the ptree probe fails closed (cannot decide -> the job is red).
+# teeth / teeth-long: every must-fail control must trip (soak:teeth exits 1 on any MISS).
+# Dispatch inputs reach the shell only through env:, never through an expression inside run:.
+
+name: soak-nightly
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: 'SOAK_CYCLES for the burn-in (nightly volume; the release floor is config DEFAULT_CYCLES)'
+        type: string
+        default: '33'
+      ops:
+        description: 'SOAK_OPS per lane per cycle for the burn-in (nightly volume; the release floor is config DEFAULT_OPS)'
+        type: string
+        default: '200000'
+  push:
+    branches:
+      - 1.6.0-dev
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PIN_NODE: '26.8.2'
+
+concurrency:
+  group: soak-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  burn-in:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SOAK_CYCLES: ${{ inputs.cycles || '33' }}
+      SOAK_OPS: ${{ inputs.ops || '200000' }}
+      SOAK_REQUIRE_PROVENANCE: '1'
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: setup node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.PIN_NODE }}
+          cache: npm
+      - name: npm ci
+        timeout-minutes: 10
+        run: npm ci
+      - name: soak parity
+        run: npm run soak:parity
+      - name: burn-in volume guard
+        id: volume
+        run: |
+          node -e 'const u=require("node:url"),p=require("node:path");import(u.pathToFileURL(p.resolve("bench/soak/config.mjs")).href).then((m)=>{const C=m.DEFAULT_CYCLES,O=m.DEFAULT_OPS;if(!Number.isSafeInteger(C)||!Number.isSafeInteger(O)||!(C>0)||!(O>0))throw new Error("config.mjs DEFAULT_CYCLES / DEFAULT_OPS are not positive integers");const ok=(s,f)=>typeof s==="string"&&/^[1-9][0-9]*$/.test(s)&&Number.isSafeInteger(Number(s))&&Number(s)>=f;const c=process.env.SOAK_CYCLES,o=process.env.SOAK_OPS;if(!ok(c,C))throw new Error("SOAK_CYCLES="+JSON.stringify(c)+" is not a decimal integer >= DEFAULT_CYCLES "+C);if(!ok(o,O))throw new Error("SOAK_OPS="+JSON.stringify(o)+" is not a decimal integer >= DEFAULT_OPS "+O);console.log("volume: SOAK_CYCLES="+c+" SOAK_OPS="+o+" (floors "+C+" / "+O+" from bench/soak/config.mjs)")}).catch((e)=>{console.error("volume: "+(e&&e.message)+"; failing closed");process.exit(1)})'
+      - name: P-TREE GAP probe
+        id: ptree
+        run: |
+          node -e 'const u=require("node:url"),fs=require("node:fs"),p=require("node:path");const o=process.env.GITHUB_OUTPUT;if(!o){console.error("ptree: GITHUB_OUTPUT is not set; failing closed");process.exit(1)}import(u.pathToFileURL(p.resolve("bench/soak/teeth.mjs")).href).then((m)=>{const G=m.GAPS;if(G===null||typeof G!=="object"||Array.isArray(G))throw new Error("teeth.mjs GAPS is not a plain object");const g=Object.prototype.hasOwnProperty.call(G,"P-TREE");fs.appendFileSync(o,"gap="+g+"\n");console.log("ptree: gap="+g+(g?" (P-TREE is a GAP: the tree soak step is report-only)":" (P-TREE is live: the tree soak step gates)"))}).catch((e)=>{console.error("ptree: cannot decide ("+(e&&e.message)+"); failing closed");process.exit(1)})'
+      - name: burn-in soak
+        id: soak
+        continue-on-error: ${{ steps.ptree.outputs.gap == 'true' }}
+        env:
+          SOAK_OUT: ${{ runner.temp }}/soak-out/burn-in.jsonl
+        run: npm run soak
+      - name: burn-in soak red (report-only while P-TREE is a GAP)
+        if: steps.soak.outcome == 'failure'
+        run: |
+          echo "::warning::burn-in soak red: the tree burn-in failed; it is report-only while the P-TREE GAP is declared (SPEC-B 10.4). The report step below still gates."
+      - name: soak report
+        if: always()
+        env:
+          SOAK_OUT: ${{ runner.temp }}/soak-out/burn-in.jsonl
+        run: npm run soak:report -- "$SOAK_OUT"
+      - name: upload burn-in stream
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-burn-in-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soak-out/
+          if-no-files-found: error
+
+  teeth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: setup node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.PIN_NODE }}
+          cache: npm
+      - name: npm ci
+        timeout-minutes: 10
+        run: npm ci
+      - name: soak parity
+        run: npm run soak:parity
+      - name: soak teeth
+        run: |
+          mkdir -p "$RUNNER_TEMP/teeth"
+          npm run soak:teeth 2>&1 | tee "$RUNNER_TEMP/teeth/soak-teeth.log"
+      - name: upload teeth log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-teeth-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/teeth/
+          if-no-files-found: error
+
+  teeth-long:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: setup node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.PIN_NODE }}
+          cache: npm
+      - name: npm ci
+        timeout-minutes: 10
+        run: npm ci
+      - name: soak parity
+        run: npm run soak:parity
+      - name: soak teeth long
+        run: |
+          mkdir -p "$RUNNER_TEMP/teeth-long"
+          npm run soak:teeth:long 2>&1 | tee "$RUNNER_TEMP/teeth-long/soak-teeth-long.log"
+      - name: upload teeth-long log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-teeth-long-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/teeth-long/
+          if-no-files-found: error

@@ -1,0 +1,127 @@
+# ci.yml -- lite-signal per-push / per-PR gate (SPEC-B addendum 11 = program addendum 17).
+# test: the unit suite + torture on every supported Node (22 / 24 / 26, macOS on 24).
+# gates: parity pins, the zero-GC perf gate, then the soak smoke on the exact PIN_NODE.
+# The soak smoke is report-only ONLY while bench/soak/teeth.mjs GAPS lists P-TREE (the tree is
+# expected red until A1-A3 land, SPEC-B 10.3/10.4). The ptree probe fails closed: if it cannot
+# decide, the job is red; continue-on-error is true only for the exact output gap=true.
+
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - 1.6.0-dev
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PIN_NODE: '26.8.2'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: '22'
+          - os: ubuntu-latest
+            node: '24'
+          - os: ubuntu-latest
+            node: '26'
+          - os: macos-latest
+            node: '24'
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: setup node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: npm ci
+        timeout-minutes: 10
+        run: npm ci
+      - name: unit tests
+        run: npm test
+      - name: semantic torture
+        run: npm run torture:semantic
+      - name: torture gate
+        run: node --expose-gc test/torture.mjs
+
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: setup node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.PIN_NODE }}
+          cache: npm
+      - name: npm ci
+        timeout-minutes: 10
+        run: npm ci
+      - name: soak parity
+        run: npm run soak:parity
+      - name: perf gate
+        run: npm run test:gate
+      - name: P-TREE GAP probe
+        id: ptree
+        run: |
+          node -e 'const u=require("node:url"),fs=require("node:fs"),p=require("node:path");const o=process.env.GITHUB_OUTPUT;if(!o){console.error("ptree: GITHUB_OUTPUT is not set; failing closed");process.exit(1)}import(u.pathToFileURL(p.resolve("bench/soak/teeth.mjs")).href).then((m)=>{const G=m.GAPS;if(G===null||typeof G!=="object"||Array.isArray(G))throw new Error("teeth.mjs GAPS is not a plain object");const g=Object.prototype.hasOwnProperty.call(G,"P-TREE");fs.appendFileSync(o,"gap="+g+"\n");console.log("ptree: gap="+g+(g?" (P-TREE is a GAP: the tree soak step is report-only)":" (P-TREE is live: the tree soak step gates)"))}).catch((e)=>{console.error("ptree: cannot decide ("+(e&&e.message)+"); failing closed");process.exit(1)})'
+      - name: soak smoke
+        id: smoke
+        continue-on-error: ${{ steps.ptree.outputs.gap == 'true' }}
+        env:
+          SOAK_SMOKE: '1'
+          SOAK_OUT: ${{ runner.temp }}/soak-out/smoke.jsonl
+        run: npm run soak
+      - name: soak smoke red (report-only while P-TREE is a GAP)
+        if: steps.smoke.outcome == 'failure'
+        run: |
+          echo "::warning::soak smoke red: the tree soak smoke failed; it is report-only while the P-TREE GAP is declared (SPEC-B 10.4). Read the uploaded stream."
+      - name: soak report (smoke stream)
+        id: smoke-report
+        if: always()
+        env:
+          SOAK_OUT: ${{ runner.temp }}/soak-out/smoke.jsonl
+        run: |
+          if out=$(npm run soak:report -- "$SOAK_OUT" 2>&1); then rc=0; else rc=$?; fi
+          printf '%s\n' "$out"
+          if [ "$rc" -eq 0 ]; then exit 0; fi
+          if [ "$rc" -eq 1 ] && grep -qE '^soak:report: NOT A RELEASE SOAK -- smoke:' <<<"$out" && ! grep -qE '^soak:report: (INTEGRITY|CRASH|CONFIG) --' <<<"$out"; then
+            echo "soak:report: consistent smoke stream; the smoke refusal is expected (a smoke run is never release evidence)"
+            exit 0
+          fi
+          echo "::error::soak:report on the smoke stream failed (exit $rc) for a reason other than the smoke refusal"
+          exit 1
+      - name: upload smoke stream
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soak-out/
+          if-no-files-found: error
