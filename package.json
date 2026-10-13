@@ -57,6 +57,7 @@
     "soak:report": "node bench/soak/SoakReport.mjs",
     "soak:teeth": "node bench/soak/_mustfail.mjs",
     "soak:teeth:long": "node bench/soak/_mustfail.mjs --long",
+    "soak:wrap": "node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 bench/soak/wrap.mjs",
     "parity": "node bench/soak/parity.mjs",
     "parity:update": "node bench/soak/parity.mjs --update",
     "soak:parity": "node bench/soak/parity.mjs",

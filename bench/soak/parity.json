@@ -13,7 +13,7 @@
     "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
     "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
     "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
-    "bench/soak/gates.mjs": "5b75bfece904601246d37e510827fb125bcd01f91458f3074a14a0051864e951",
+    "bench/soak/gates.mjs": "098cdb8d61d5b3844521ac4df3a376d8c84973645762170cc4d6af6d0a7f58e5",
     "bench/soak/boundary.mjs": "a9b1b75ca945b31f7454e5243cf1ed5ac1c12a625299c5a34d2413d02373eec7",
     "bench/soak/divergences.mjs": "df99c3adf247aeb7b5b0290ef72aeed2221aee89cd360f0340cb27efebb938a2",
     "bench/soak/divergences.json": "2a68cdf6f7a135a3cda3b74e540767033fe034907db06b36eda85cc9a4a53146",
@@ -22,6 +22,12 @@
     "bench/soak/replay.mjs": "3e2d635c46440eda14f79afbeab6e8477c93e97e2657e3672939e50b88400171",
     "bench/soak/shrink.mjs": "f38857d49b11544674f5e825096a9326034301c50ba8ee12e6fcbbb58d4985cc",
     "bench/soak/config.mjs": "0fc14327bc556b1e6e7482f00857ea921ba92f023db35f7fc962f91e1d4eb8c5",
-    "bench/soak/SoakReport.mjs": "5b022433e761c4b2f77e6b3d80539696c5f0f379eb27eea2bd1d74d9b3c95ae2"
+    "bench/soak/SoakReport.mjs": "5b022433e761c4b2f77e6b3d80539696c5f0f379eb27eea2bd1d74d9b3c95ae2",
+    "bench/soak/wrap.mjs": "ecb89238e897c690f2d0658a4860ad7a92b811d2ac2a453f9dd89ad0a6b37903",
+    "bench/soak/wrap-repr.mjs": "6e21bc5be94ef62100e5d6c021e0d2d1e10365c22b35647968623249ee9e72e6",
+    "bench/soak/wraprules.mjs": "de8293528e6535a628ef18d3ee41848b82a41562a23b2d7bf21871709c124275",
+    "bench/soak/nearwrap.mjs": "6cb1f9abbfec577bda84b1e31ad564df73093631358a3f4bd6fdae22067ada0b",
+    "bench/soak/kernel.mjs": "3bb9579913398d9c8946eef8785612647fb8838e60917181c54c0c1cfca85e75",
+    "bench/torture/helpers/spin.mjs": "5823cad2d38c2ac9831631f4d774c2ae1ca4a0b5eab78cf06885ce0e1d970c6c"
   }
 }

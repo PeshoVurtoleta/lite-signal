@@ -44,6 +44,10 @@ export const PARITY_FILES = Object.freeze([
     // burst 12 (maintainer decision b): the constants decide the gate thresholds; SoakReport decides
     // consistency / release eligibility
     'bench/soak/config.mjs', 'bench/soak/SoakReport.mjs',
+    // S2 A-B3a (burst 27, SPEC-S2-groupA DELTA 2 task 11 + MD2): the wrap job, its rules and REPR child decide the
+    // wrap verdict; nearwrap.mjs and kernel.mjs decide which kernel a run loads; spin.mjs is the W1 / W5 drive
+    'bench/soak/wrap.mjs', 'bench/soak/wrap-repr.mjs', 'bench/soak/wraprules.mjs', 'bench/soak/nearwrap.mjs',
+    'bench/soak/kernel.mjs', 'bench/torture/helpers/spin.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

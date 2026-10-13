@@ -6,8 +6,9 @@
  * Gates are DATA (amendment 9 / SPEC-B addendum 9b). GATES = [{id, kind, check, pass, mustFail, teeth}]:
  *   id        the gate name (GATE_NAMES is derived from GATES, never a second list)
  *   kind      'fail' (a red gate is a FAIL, exit 1), 'evidence' (a red gate is INCONCLUSIVE, exit 3: the
- *             run lacks the evidence to judge, and no evidence never PASSes) or 'startup' (a self-check
- *             main runs before any record; red -> exit 2)
+ *             run lacks the evidence to judge, and no evidence never PASSes), 'startup' (a self-check
+ *             main runs before any record; red -> exit 2) or 'wrap' (the S2 wrap job's gate, WRAP_GATE from
+ *             wraprules.mjs: judged by wrap.mjs over its wrap records, never per burn-in lane)
  *   check     the pure rule: check(input) -> { verdict, ... }
  *   pass      inputs the rule must PASS (the green control, so a rule that always fails is caught too)
  *   mustFail  inputs the rule must NOT pass, each with its expected verdict. A gate and its must-fail
@@ -31,6 +32,7 @@ import {
     SCEN_MIN, SCEN_MIN_SMOKE, CHECK_FLOOR, CHECK_FLOOR_SMOKE, TAINT_SKIP_MAX, VERDICT, EXIT_CODE,
 } from './config.mjs';
 import { CHECK_NAMES, SKIP_NAMES } from './exec.mjs';
+import { WRAP_GATE } from './wraprules.mjs';
 
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
@@ -350,13 +352,15 @@ export const GATES = Object.freeze([
         pass: Object.freeze([Totals]),
         mustFail: Object.freeze([Object.freeze({ input: PipeZeroTotals, expect: F, why: 'a |0 accumulator wraps at 2^31' })]),
     }),
+    // S2 (task 8): the wrap job's gate, data owned by wraprules.mjs (no back-import: see its header)
+    WRAP_GATE,
 ]);
 
 /** Every gate id, derived from GATES (never a second list). */
 export const GATE_NAMES = Object.freeze(GATES.map((g) => g.id));
 
-/** Gates evaluated per lane by LaneGates.compute (totals is the startup self-check). */
-const LANE_GATES = Object.freeze(GATES.filter((g) => g.kind !== 'startup').map((g) => g.id));
+/** Gates evaluated per lane by LaneGates.compute (totals is the startup self-check; wrap is judged by wrap.mjs). */
+const LANE_GATES = Object.freeze(GATES.filter((g) => g.kind !== 'startup' && g.kind !== 'wrap').map((g) => g.id));
 
 /**
  * Recorded but NEVER judged (SPEC-B section 8 report-only). None of them can make a run FAIL or
@@ -365,8 +369,9 @@ const LANE_GATES = Object.freeze(GATES.filter((g) => g.kind !== 'startup').map((
 export const REPORT_ONLY_GATES = Object.freeze(['throughput', 'shape', 'O3', 'gcMajor', 'gcPause']);
 
 /**
- * Why a run can be INCONCLUSIVE (exit 3), cause id -> the text after `soak: INCONCLUSIVE -- `. S2 adds
- * the wrap causes (crossing unwitnessed, W5 B/op unmeasured).
+ * Why a run can be INCONCLUSIVE (exit 3), cause id -> the text after `soak: INCONCLUSIVE -- `. The wrap
+ * causes (S2, wraprules.mjs wrapRule causes {cause, check, counter, label}): a crossing unwitnessed (W1-W4,
+ * label 'Wn') and a W5 B/op unmeasured (label 'W5[<counter>]').
  */
 export const INCONCLUSIVE_CAUSES = Object.freeze({
     'interrupted': () => 'run interrupted before its end',
@@ -377,6 +382,8 @@ export const INCONCLUSIVE_CAUSES = Object.freeze({
     'taint-skip': (a) => 'taint-skip lane=' + a.lane + ' oracle=' + a.oracle + ' ratio=' + a.ratio + ' > ' + a.max,
     // guard: a lane whose status is INCONCLUSIVE but that recorded no cause still makes the run INCONCLUSIVE
     'lane-status': (a) => 'lane ' + a.lane + ' status INCONCLUSIVE with no recorded cause',
+    'wrap-crossing': (a) => 'wrap ' + a.label + ' crossing unwitnessed',
+    'wrap-unmeasured': (a) => 'wrap ' + a.label + ' unmeasured',
 });
 
 /** The full protocol line of one INCONCLUSIVE cause. An unknown cause throws. */

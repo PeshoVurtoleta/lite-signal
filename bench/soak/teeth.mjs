@@ -22,12 +22,14 @@
  *                ceiling lives in the test, not next to GAPS. Reads only the anchor files.
  *
  * NOT in the universe (each excluded on purpose):
- *   - REPORT_ONLY_GATES (gates.mjs:365): recorded, never judged; none can make a run FAIL or INCONCLUSIVE.
- *   - REASONS (gates.mjs:524): the verdict's input vocabulary (end / signal / fatal), a run fact and not a
+ *   - REPORT_ONLY_GATES (gates.mjs:369): recorded, never judged; none can make a run FAIL or INCONCLUSIVE.
+ *   - REASONS (gates.mjs:531): the verdict's input vocabulary (end / signal / fatal), a run fact and not a
  *     judgement; its outcomes are judged through cause:interrupted and test/46's verdict rows.
- *   - WRAP_CHECKS (config.mjs:95, W1-W5): the S2 wrap gates and their causes; no wrap.mjs exists in S1. Their
- *     controls are the GAPS L-REV-AUDIT-W5 and T-A3b/T-A3c/T-A4/T-A7a/T-A7b.
- *   - MUSTFAIL_MODES (config.mjs:96, cov-off): teeth knobs, the mechanism of the T-cov-* / P-NEST-TRIGGERLESS
+ *   - WRAP_CHECKS (config.mjs:105, W1-W5): the checks of ONE judged id, gate:wrap (wraprules.mjs WRAP_GATE, S2),
+ *     not ids of their own. gate:wrap's teeth are L-REV-AUDIT-W5 (W5) and L-WRAP-TREE (W1-W4); its causes
+ *     cause:wrap-crossing / cause:wrap-unmeasured are held by test/48's quoted rows. The fix-minus-one controls
+ *     T-A3b/T-A3c/T-A4/T-A7a/T-A7b stay GAPS.
+ *   - MUSTFAIL_MODES (config.mjs:106, cov-off): teeth knobs, the mechanism of the T-cov-* / P-NEST-TRIGGERLESS
  *     controls rather than a judged id; the parser is held by T-cfg-mustfail-unknown.
  *
  * COLD module. Kernel-free.
@@ -63,6 +65,7 @@ export function universe() {
 
 const T_COV = ['T-cov-BATCH', 'T-cov-GRAPH', 'T-cov-ERROR'];
 const TEST46 = 'test/46-soak-report.test.mjs';
+const TEST48 = 'test/48-soak-wrap.test.mjs';
 
 /** id -> the must-fail controls (by NAME; _mustfail.mjs CONTROLS owns them) that turn it red. */
 export const CHECKS = deepFreeze({
@@ -102,14 +105,22 @@ export const CHECKS = deepFreeze({
     'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS']),
     'cause:check-floor': ['T-floor-BATCH'],
     'cause:taint-skip': ['P-NEST-TRIGGERLESS'],
+    // S2 wrap gate (wrap.mjs): W5 evalCount past 2^31 on headpatched; W1-W4 on the tree kernel
+    'gate:wrap': ['L-REV-AUDIT-W5', 'L-WRAP-TREE'],
+    // no frozen kernel leaves a crossing unwitnessed or a W5 side unmeasured (burst 25: 0 INCONCLUSIVE on 3 kernels),
+    // so the wrap causes' teeth are test/48 rows that drive wrapRule / inconclusiveLine to each cause by name
+    'cause:wrap-crossing': [TEST48],
+    'cause:wrap-unmeasured': [TEST48],
     'config': ['T-cfg-*'],
     'report': [TEST46],
 });
 
-/** Test-file teeth: file -> strings that must each occur (quoted, '<s>') at least once. The R-tamper classes of test/46. */
+/** Test-file teeth: file -> strings that must each occur (quoted, '<s>') at least once. The R-tamper classes of test/46; the wrap causes of test/48. */
 export const TEST_ANCHORS = deepFreeze({
     [TEST46]: ['cycle-grid', 'failure-count', 'seq-gap', 'fatal-after-summary', 'gates-block', 'verdict',
         'scenario-counts', 'summary-missing', 'overridden-kernel', 'non-lite', 'known-tag', 'malformed'],
+    // the wrap causes test/48 drives by name (CHECKS cause:wrap-*; test/45 pairs each cause with this list)
+    [TEST48]: ['wrap-crossing', 'wrap-unmeasured'],
 });
 
 const SPEC = 'audit/2026-10-07/verification/SPEC-B.md';
@@ -132,7 +143,6 @@ export const GAPS = deepFreeze({
     'T-A6': fixMinusOne(475, 'A6 + S3 REGISTRY lane'),
     'T-A7a': fixMinusOne(476, 'A7 + S2 wrap.mjs + S3 RECYCLE lane'),
     'T-A7b': fixMinusOne(477, 'A7 + S2 wrap.mjs'),
-    'L-REV-AUDIT-W5': { why: 'needs wrap.mjs SOAK_WRAP=W5; the wrap gates are S2 and GATE_NAMES has no wrap gate yet (' + SPEC + ':455)', until: 'S2', covers: [] },
     'T-d8pc-head': { why: 'the d8-pc engine lane is placed in S2 (' + S1CD + ':7, amendment 4)', until: 'S2', covers: [] },
     'T-mark': { why: 'performance-only NOTE control; the shape[GRAPH] markDedupe counter is S2 (' + SPEC + ':478)', until: 'S2', covers: [] },
     'P-INTERIM-ERROR-clean': { why: 'DIV-F21 is temporary; when A2 fixes F21 the clean ERROR pass control goes live (' + S1CD + ':12, amendment 5)', until: 'A2', covers: [] },
@@ -145,7 +155,7 @@ export const GAPS = deepFreeze({
         until: 'a pinned nested-flush control kernel (controls.json)', covers: ['oracle:OB'],
     },
     'totals-e2e': {
-        why: 'gates.mjs:349 totals has teeth null: its unit must-fail (PipeZeroTotals, gates.mjs:273) runs at startup, but an end-to-end red needs a run total past 2^31',
+        why: 'gates.mjs:351 totals has teeth null: its unit must-fail (PipeZeroTotals, gates.mjs:275) runs at startup, but an end-to-end red needs a run total past 2^31',
         until: 'S2 NEARWRAP / long soak', covers: ['gate:totals'],
     },
     'T-O1c-err': {
@@ -160,8 +170,8 @@ export const GAPS = deepFreeze({
         why: 'equals-mutated (exec.mjs:263) and escape-empty (exec.mjs:176) have no known red kernel; no census row names them',
         until: 'a mutant kernel (equals throw that still writes; an empty escape leaf list)', covers: ['sig:O6:equals-mutated', 'sig:O6:escape-empty'],
     },
-    'T-no-lane': { why: 'lite with a SKIP exits 2 (gates.mjs:553) and SOAK_LANES never parses empty (config.mjs:229), so no-lane (gates.mjs:558) needs a non-lite engine', until: 'S5 adapters', covers: ['cause:no-lane'] },
-    'T-post-cycles': { why: 'config.mjs:339 floors SOAK_CYCLES at MIN_ACTIVE_CYCLES, so post-cycles fires only on an interrupted or forever (SOAK_CYCLES=0) run stopped early; no control pins that line', until: 'a forever-run SIGINT control', covers: ['cause:post-cycles'] },
+    'T-no-lane': { why: 'lite with a SKIP exits 2 (gates.mjs:560) and SOAK_LANES never parses empty (config.mjs:242), so no-lane (gates.mjs:565) needs a non-lite engine', until: 'S5 adapters', covers: ['cause:no-lane'] },
+    'T-post-cycles': { why: 'config.mjs:364 floors SOAK_CYCLES at MIN_ACTIVE_CYCLES, so post-cycles fires only on an interrupted or forever (SOAK_CYCLES=0) run stopped early; no control pins that line', until: 'a forever-run SIGINT control', covers: ['cause:post-cycles'] },
     'R-kernel-identity': { why: 'kernel identity is self-reported: a consistent 5-field forgery of a scratch stream as a tree run exits 0 (SoakReport.mjs:70 RESIDUALS); signing is out of scope', until: 'S4 stream signing', covers: [] },
 });
 

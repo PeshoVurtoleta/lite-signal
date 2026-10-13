@@ -450,7 +450,56 @@ test('D1: breachLine names the WORST class (bop=296.48 detail=class=create+dispo
     const run = w5Run(rec);
     const b = wrapRule(run, ['W5']).breaches.find((x) => x.counter === 'evalCount');
     assert.ok(b, 'evalCount breach present');
-    const line = mod.breachLine(b, rec);
+    const line = mod.breachLine(b);
     assert.match(line, /bop=296\.48 detail=class=create\+dispose /);
     assert.doesNotMatch(line, /class=set->effect/);
+});
+
+/* ---- A-B3T (burst 27): the INCONCLUSIVE causes 'wrap-crossing' and 'wrap-unmeasured' (TEST_ANCHORS of test/45) ----
+ * Oracle: the protocol text of SPEC-B section 7 (`soak: INCONCLUSIVE -- wrap <W> crossing unwitnessed`,
+ * `soak: INCONCLUSIVE -- wrap W5[<counter>] unmeasured`) and SPEC-S2-groupA A1/A2/D5; not copied from gates.mjs. */
+
+test("cause 'wrap-crossing': gates.mjs knows it and emits the exact protocol line", async () => {
+    const G = await import('../bench/soak/gates.mjs');
+    assert.ok(Object.prototype.hasOwnProperty.call(G.INCONCLUSIVE_CAUSES, 'wrap-crossing'), "INCONCLUSIVE_CAUSES lacks 'wrap-crossing'");
+    assert.equal(G.inconclusiveLine('wrap-crossing', { label: 'W1' }), 'soak: INCONCLUSIVE -- wrap W1 crossing unwitnessed');
+    assert.equal(G.inconclusiveLine('wrap-crossing', { label: 'W4' }), 'soak: INCONCLUSIVE -- wrap W4 crossing unwitnessed');
+});
+
+test("cause 'wrap-unmeasured': gates.mjs knows it and emits the exact protocol line", async () => {
+    const G = await import('../bench/soak/gates.mjs');
+    assert.ok(Object.prototype.hasOwnProperty.call(G.INCONCLUSIVE_CAUSES, 'wrap-unmeasured'), "INCONCLUSIVE_CAUSES lacks 'wrap-unmeasured'");
+    assert.equal(G.inconclusiveLine('wrap-unmeasured', { label: 'W5[evalCount]' }), 'soak: INCONCLUSIVE -- wrap W5[evalCount] unmeasured');
+    assert.equal(G.inconclusiveLine('wrap-unmeasured', { label: 'W5[nodeSeq]' }), 'soak: INCONCLUSIVE -- wrap W5[nodeSeq] unmeasured');
+});
+
+test("cause 'wrap-crossing': a drive short of its target (ops or totalAllocations delta = target - 1) -> wrapRule cause, line, no PASS", async () => {
+    const G = await import('../bench/soak/gates.mjs');
+    // W1/W2/W3 by opsDriven < target; W4 and W5[nodeSeq] drive the same field from the totalAllocations delta (D5: delta forced to target - 1).
+    for (const [c, n, t] of [['W1', 'globalVersion', TARGETS.W1], ['W2', 'batchEpoch', TARGETS.W2], ['W3', 'gen', TARGETS.W3], ['W4', 'nodeSeq', TARGETS.W4], ['W5', 'nodeSeq', 2 ** 31]]) {
+        const r = c === 'W5' ? expand(rec(c, n, t - 1, true, 0, 0.4)) : rec(c, n, t - 1, true, null, null);
+        const j = wrapRule([r], [c]);
+        assert.equal(j.verdict, 'INCONCLUSIVE', c + '/' + n);
+        const cr = j.causes.filter((x) => x.cause === 'wrap-crossing');
+        assert.equal(cr.length >= 1, true, c + '/' + n + " has a 'wrap-crossing' cause: " + JSON.stringify(j.causes));
+        const lb = c === 'W5' ? 'W5[' + n + ']' : c;
+        assert.equal(G.inconclusiveLine(cr[0].cause, cr[0]), 'soak: INCONCLUSIVE -- wrap ' + lb + ' crossing unwitnessed', c + '/' + n);
+    }
+    // control: at the target the crossing is witnessed, no 'wrap-crossing' cause
+    assert.deepEqual(wrapRule([rec('W1', 'globalVersion', TARGETS.W1, true, null, null)], ['W1']).causes, []);
+});
+
+test("cause 'wrap-unmeasured': a W5 class with a null post (or pre) -> wrapRule cause with the W5[<counter>] label and line", async () => {
+    const G = await import('../bench/soak/gates.mjs');
+    for (const side of ['post', 'pre']) {
+        const over = { 'batch(set)': null };
+        const r = side === 'post' ? w5rec('set->effect', null, over, 'PASS') : w5rec('set->effect', over, null, 'PASS');
+        const j = wrapRule(w5Run(r), ['W5']);
+        assert.equal(j.verdict, 'INCONCLUSIVE', side + ' null');
+        const um = j.causes.filter((x) => x.cause === 'wrap-unmeasured');
+        assert.equal(um.length, 1, side + ': exactly one unmeasured counter: ' + JSON.stringify(j.causes));
+        assert.equal(G.inconclusiveLine(um[0].cause, um[0]), 'soak: INCONCLUSIVE -- wrap W5[evalCount] unmeasured', side);
+    }
+    // control: fully measured -> no cause
+    assert.deepEqual(wrapRule(w5Run(w5rec('set->effect', null, null, 'PASS')), ['W5']).causes, []);
 });

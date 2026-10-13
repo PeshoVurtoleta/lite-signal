@@ -76,6 +76,7 @@ import {
     SEMI_SPACE_MB, WRAP_CHUNK as CHUNK, NS_K_CYCLE, WRAP_MAX_NODES as MAX_NODES, W4_SAMPLE_MASK, REPR_TIMEOUT_MS, BASELINE_MAX_BYTES,
 } from './config.mjs';
 import { WRAP_TARGETS, W5_CLASSES, w5Rule, crossRule, wrapRule } from './wraprules.mjs';
+import { inconclusiveLine } from './gates.mjs';
 import { ROSTER, ALL_SCENARIOS, COV_OFF_SUPPORTED } from './lanes/index.mjs';
 import { openStream, writeRecord, protocol, stdoutLine, endLine, installFatalHandlers, defaultOutPath } from './jsonl.mjs';
 import { spinVersion } from '../torture/helpers/spin.mjs';
@@ -141,22 +142,16 @@ export function semiSpaceProblem(execArgv, capacity) {
 
 /* ---- protocol lines --------------------------------------------------------------------------------- */
 
-/** The INCONCLUSIVE line of one wrapRule cause (SPEC-B section 7 text; A-B2 task 8 moves it to gates.mjs). */
-export function wrapCauseLine(c) {
-    if (c.cause === 'wrap-crossing') return 'soak: INCONCLUSIVE -- wrap ' + c.label + ' crossing unwitnessed';
-    if (c.cause === 'wrap-unmeasured') return 'soak: INCONCLUSIVE -- wrap ' + c.label + ' unmeasured';
-    throw new TypeError('wrapCauseLine: unknown cause ' + String(c.cause));
-}
-
 /**
- * The BREACH line of one wrapRule breach; why is the check's own failure text. A W5 line prints bop= and
- * class= from the breach's WORST class (b.cls / b.post, wraprules.mjs wrapRule), never from the record's
- * binding class; rec is kept for the call shape and not read.
+ * The BREACH line of one wrapRule breach; why (a non-empty string, or absent) is the check's own failure
+ * text. A W5 line prints bop= and class= from the breach's WORST class (b.cls / b.post, wraprules.mjs
+ * wrapRule), never from the record's binding class. The INCONCLUSIVE lines come from gates.mjs
+ * inconclusiveLine (causes 'wrap-crossing' / 'wrap-unmeasured').
  */
-export function breachLine(b, rec, why) {
+export function breachLine(b, why) {
     const bop = b.check === 'W5' && typeof b.post === 'number' ? ' bop=' + b.post.toFixed(2) : '';
     const cls = b.check === 'W5' && typeof b.cls === 'string' ? 'class=' + b.cls + ' ' : '';
-    const detail = why ? why : cls + String(b.detail).replace(/^bop=\S+ /, '');   // the bop is already on the line
+    const detail = typeof why === 'string' && why.length > 0 ? why : cls + String(b.detail).replace(/^bop=\S+ /, '');   // the bop is already on the line
     return 'soak: BREACH gate=wrap check=' + b.check + ' counter=' + b.counter + bop + ' detail=' + detail;
 }
 
@@ -706,13 +701,11 @@ async function main() {
         else verdict = judged.verdict;
         const breaches = [];
         for (const b of judged.breaches) {
-            const key = b.check + '/' + b.counter;
-            const rec = records.find((x) => x.check === b.check && x.counter === b.counter);
-            const line = breachLine(b, rec, why.get(key));
+            const line = breachLine(b, why.get(b.check + '/' + b.counter));
             protocol(line);
             breaches.push({ gate: 'wrap', check: b.check, counter: b.counter, label: b.label, detail: line.slice(line.indexOf(' detail=') + 8) });
         }
-        const inconclusive = judged.causes.map(wrapCauseLine);
+        const inconclusive = judged.causes.map((c) => inconclusiveLine(c.cause, c));
         if (reason !== 'end') inconclusive.push('soak: INCONCLUSIVE -- run interrupted before its end');
         for (const line of inconclusive) protocol(line);   // printed on a FAIL too, as main.mjs does
         const exitCode = EXIT_CODE[verdict];

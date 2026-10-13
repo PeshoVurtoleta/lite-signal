@@ -36,7 +36,7 @@ test('GATES: every gate is red on each must-fail control FIRST, then green on ea
     for (const g of G.GATES) {
         assert.equal(typeof g.id, 'string', 'id');
         assert.equal(typeof g.check, 'function', g.id + ' check');
-        assert.ok(['fail', 'evidence', 'startup'].includes(g.kind), g.id + ' kind');
+        assert.ok(['fail', 'evidence', 'startup', 'wrap'].includes(g.kind), g.id + ' kind');
         assert.ok(Array.isArray(g.mustFail) && g.mustFail.length >= 1, g.id + ': a gate ships with its must-fail control (amendment 9)');
         assert.ok(Array.isArray(g.pass) && g.pass.length >= 1, g.id + ': and a green control');
         assert.ok(Object.isFrozen(g) && Object.isFrozen(g.mustFail), g.id + ' frozen');
@@ -53,13 +53,17 @@ test('GATES: every gate is red on each must-fail control FIRST, then green on ea
 test('GATE_NAMES is derived from GATES; REPORT_ONLY_GATES never overlaps it; INCONCLUSIVE causes format', () => {
     assert.deepEqual(G.GATE_NAMES, G.GATES.map((g) => g.id));
     assert.equal(new Set(G.GATE_NAMES).size, G.GATE_NAMES.length, 'unique ids');
-    assert.deepEqual(G.GATE_NAMES, ['oracle', 'heap', 'retention', 'coverage', 'check-floor', 'taint-skip', 'totals']);
+    assert.deepEqual(G.GATE_NAMES, ['oracle', 'heap', 'retention', 'coverage', 'check-floor', 'taint-skip', 'totals', 'wrap']);
     for (const r of G.REPORT_ONLY_GATES) assert.ok(!G.GATE_NAMES.includes(r), r + ' is report-only');
     assert.equal(G.inconclusiveLine('scenario', { lane: 'BATCH', scenario: 'revert-after-mid-read' }),
         'soak: INCONCLUSIVE -- scenario lane=BATCH missing=revert-after-mid-read', 'T-cov line (SPEC-B section 9)');
     assert.equal(G.inconclusiveLine('no-lane'), 'soak: INCONCLUSIVE -- no lane ran (all skipped)');
     assert.equal(G.inconclusiveLine('interrupted'), 'soak: INCONCLUSIVE -- run interrupted before its end');
     assert.equal(G.inconclusiveLine('post-cycles', { lane: 'GRAPH', post: 9, need: 10 }), 'soak: INCONCLUSIVE -- lane GRAPH ran 9 post-warm-up cycles < 10');
+    // the wrap causes (S2): byte-identical to the lines wrap.mjs printed before task 8 moved them here (SPEC-B section 7)
+    assert.equal(G.inconclusiveLine('wrap-crossing', { cause: 'wrap-crossing', check: 'W1', counter: 'globalVersion', label: 'W1' }), 'soak: INCONCLUSIVE -- wrap W1 crossing unwitnessed');
+    assert.equal(G.inconclusiveLine('wrap-crossing', { label: 'W5[gen]' }), 'soak: INCONCLUSIVE -- wrap W5[gen] crossing unwitnessed');
+    assert.equal(G.inconclusiveLine('wrap-unmeasured', { cause: 'wrap-unmeasured', check: 'W5', counter: 'evalCount', label: 'W5[evalCount]' }), 'soak: INCONCLUSIVE -- wrap W5[evalCount] unmeasured');
     assert.throws(() => G.inconclusiveLine('nope'), TypeError);
 });
 

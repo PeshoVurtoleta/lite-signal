@@ -27,6 +27,13 @@
  *   - SoakReport re-derives the stream to `soak:report: verdict <V> (consistent)` with V = the END verdict
  *     (exit 0, or exit 1 with a `NOT A RELEASE SOAK` refusal: a scratch kernel, smoke or SOAK_MUSTFAIL run is
  *     consistent but never release evidence).
+ * A wrap control (run 'wrap', S2) drives the REAL bench/soak/wrap.mjs instead, with wrap.mjs's own flag trio
+ * (--expose-gc --min-semi-space-size=4 --max-semi-space-size=4, never GC_FLAGS) and SOAK_WRAP as its only env
+ * key. It passes on the same exit / spec / line / CRASH / END checks, and wrapJudge replaces the SoakReport step
+ * (SoakReport has no wrap-stream dispatch yet): wraprules.mjs wrapStreamProblems(stream) is [], wrapRule over the
+ * stream's wrap records equals the END verdict, every wrap record's boundary reads trackerSize 0 / weakAlive 0,
+ * and no INCONCLUSIVE line appears that the control does not expect. expect.extra.boundaries (the burn-in's
+ * cycle-record count) is rejected on a wrap control.
  * A config control (run 'cfg') passes only with exit 2, exactly ONE stderr line EQUAL to its expected
  * `soak: CONFIG --` line (or starting with it, expect.configMatch 'prefix', for the two rows whose tail is not
  * spelled here: mustfail-unknown's code-derived hintOrList scenario list, provenance-no-sha's git error text), empty stdout (no heartbeat, no END) and no stream file.
@@ -41,6 +48,7 @@
  *   verifyControls  the sha256 pin check of every base
  *   BASES           base name -> { dir, pins, pinName }
  *   parseHead       one protocol line -> { kind, words, pairs } (the head hasToken matches)
+ *   wrapJudge       the wrap-control stream checks (pure: problem strings of a parsed wrap stream)
  *   runControl      run ONE control: verifies its base pins itself unless the caller passes the problems map
  *                   of a verifyControls() it already ran; removes its scratch dir (and zero-commit copy) on return
  *   LONG_RE, SHORT_RE  the ^L- / ^(?!L-) partition of the battery
@@ -54,16 +62,21 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX } from './config.mjs';
+import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB } from './config.mjs';
+import { wrapRule, wrapStreamProblems } from './wraprules.mjs';
+import { inconclusiveLine } from './gates.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const SOAK = join(ROOT, 'bench', 'soak');
 const MAIN = join(SOAK, 'main.mjs');
+const WRAP = join(SOAK, 'wrap.mjs');
 const REPORT = join(SOAK, 'SoakReport.mjs');
 const NODE = process.execPath;
 const RUN_TIMEOUT_MS = 30 * 60 * 1000;
 const REPORT_TIMEOUT_MS = 5 * 60 * 1000;
 const GC_FLAGS = Object.freeze(['--expose-gc']);
+// wrap.mjs's own flag trio (wrap.mjs semiSpaceProblem refuses any other semi-space setting, exit 2)
+const WRAP_FLAGS = Object.freeze(['--expose-gc', '--min-semi-space-size=' + SEMI_SPACE_MB, '--max-semi-space-size=' + SEMI_SPACE_MB]);
 const ARMED = 'mustfail ARMED';   // an armed scratch kernel writes this to stderr when its event fires
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
@@ -249,6 +262,10 @@ function deepFreeze(o) {
 function M(name, base, env, argv, expect, more) {
     return Object.assign({ name, run: 'main', base, env, argv, flags: GC_FLAGS.slice(), patches: [], arm: null, expect }, more || {});
 }
+/** A wrap control (S2): the real wrap.mjs, its flag trio, SOAK_WRAP the only env key, no argv / patch / arm. */
+function W(name, base, env, expect) {
+    return { name, run: 'wrap', base, env, argv: [], flags: WRAP_FLAGS.slice(), patches: [], arm: null, expect };
+}
 /** A config control: exit 2 with ONE `soak: CONFIG --` line, equal to `line` (or starting with it when more.prefix). */
 function C(slug, env, line, more) {
     const { prefix, ...rest } = more || {};   // prefix: the line's tail is not spelled here, so match its start only
@@ -317,7 +334,7 @@ export const CONTROLS = deepFreeze([
     }, { patches: [[A_RETURN, A_RETURN.replace('    return {', '    const __soakApi = {') +
         '    (globalThis.__soakRegs ||= []).push(__soakApi);   // MUSTFAIL L-T-retain\n    return __soakApi;\n']] }),
     // L-I1 / L-I2: the kernel raises SIGINT / SIGTERM at its own process mid-cycle-0 -> INCONCLUSIVE, reason signal.
-    // Lines: gates.mjs:372 (interrupted), main.mjs:340 (NOTE), the stream summary reason (main.mjs:466).
+    // Lines: gates.mjs:377 (interrupted), main.mjs:340 (NOTE), the stream summary reason (main.mjs:466).
     M('L-I1', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 3, kind: 'nobreach', specs: ['INCONCLUSIVE run interrupted before its end'],
         lines: ['soak: INCONCLUSIVE -- run interrupted before its end', 'soak: NOTE -- SIGINT received; closing the current lane-cycle, then the summary', ARMED],
@@ -328,15 +345,35 @@ export const CONTROLS = deepFreeze([
         lines: ['soak: INCONCLUSIVE -- run interrupted before its end', 'soak: NOTE -- SIGTERM received; closing the current lane-cycle, then the summary', ARMED],
         extra: { reason: 'signal', verdict: 'INCONCLUSIVE' },
     }, { arm: armAt2('process.kill(process.pid, "SIGTERM");') }),
+    // L-REV-AUDIT-W5 (S2, SPEC-S2-groupA DELTA 2 (c), MD4): headpatched W5 must breach evalCount past 2^31 (F16:
+    // burst 25 full size, `soak: BREACH gate=wrap check=W5 counter=evalCount bop=32.00 detail=class=set->computed->effect
+    // pre=0.00 (post and post-pre >= 8)`). W5 exits 1 on every kernel (W5[gen] / W5[nodeSeq] create+dispose), so the
+    // exit code has no teeth: the evalCount spec at bop>=15 does. Its absence on tree / rev152 is the one-shot base-
+    // swap must-fail of DELTA 2 (MD5; burst 27 record), not a control. ~250 s.
+    W('L-REV-AUDIT-W5', 'headpatched', { SOAK_WRAP: 'W5' }, {
+        exit: 1, kind: 'match', lines: [], specs: ['gate=wrap check=W5 counter=evalCount bop>=15'], extra: { verdict: 'FAIL' },
+    }),
+    // L-WRAP-TREE (S2): the tree kernel breaches W1-W4 in ONE spawn (burst 25 full size, every detail in .handoff/
+    // HISTORY.md "Proposed A-B3a control specs"): W1 band-observed / band-unobserved, W2 batchEpoch cycle c()=70, W3
+    // stale handle after 2^32 - 1 recycles, W4 nodeId out of [1, 2^31-1]. Matched by head only: the details flip
+    // when A4 / A7 land (then this control is re-specced). ~2 min.
+    W('L-WRAP-TREE', 'tree', { SOAK_WRAP: 'W1,W2,W3,W4' }, {
+        exit: 1, kind: 'match', lines: [], specs: [
+            'gate=wrap check=W1 counter=globalVersion',
+            'gate=wrap check=W2 counter=batchEpoch',
+            'gate=wrap check=W3 counter=gen',
+            'gate=wrap check=W4 counter=nodeSeq',
+        ],
+    }),
 
     /* ---- short (^(?!L-)) ---- */
-    // P-NEST-TRIGGERLESS: NEST without its trigger must not false-fail. Lines: gates.mjs:375 (scenario),
-    // gates.mjs:377 (taint-skip; B6: headpatched NEST cov-off O1c 0.43-0.44 > TAINT_SKIP_MAX 0.35).
+    // P-NEST-TRIGGERLESS: NEST without its trigger must not false-fail. Lines: gates.mjs:380 (scenario),
+    // gates.mjs:382 (taint-skip; B6: headpatched NEST cov-off O1c 0.43-0.44 > TAINT_SKIP_MAX 0.35).
     M('P-NEST-TRIGGERLESS', 'headpatched', { SOAK_LANES: 'NEST', SOAK_MUSTFAIL: 'cov-off:saved-cursor-hazard' }, ['--smoke'], {
         exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=NEST missing=saved-cursor-hazard'],
         specs: ['INCONCLUSIVE scenario lane=NEST missing=saved-cursor-hazard', 'INCONCLUSIVE taint-skip lane=NEST oracle=O1c'],
     }),
-    // T-cov-*: the coverage gate (gates.mjs:375), each at the smoke shape. BATCH's cov-off switch compares DECODED
+    // T-cov-*: the coverage gate (gates.mjs:380), each at the smoke shape. BATCH's cov-off switch compares DECODED
     // values with Object.is (lanes/batch.mjs put, the test scenarios.mjs:236 counts a revert by), so it leaves 0
     // revert-after-mid-read hits per smoke run (burst 13; the code compare it replaced leaked 18 through the
     // VALUE_POOL aliases 0 / -1 and 1 / -3, which forced the 11 x OPS_MIN shape this control ran at until then).
@@ -352,7 +389,7 @@ export const CONTROLS = deepFreeze([
     M('T-cov-ERROR', 'headpatched', { SOAK_LANES: 'ERROR', SOAK_MUSTFAIL: 'cov-off:throw-dep-effect-prewalk' }, ['--smoke'], {
         exit: 1, kind: 'explained', known: KNOWN_INTERIM, lines: [], specs: ['INCONCLUSIVE scenario lane=ERROR missing=throw-dep-effect-prewalk'],
     }),
-    // T-floor-BATCH: 11 x OPS_MIN performs BATCH OB 8295 < CHECK_FLOOR 10000 (config.mjs B6 note) -> gates.mjs:376.
+    // T-floor-BATCH: 11 x OPS_MIN performs BATCH OB 8295 < CHECK_FLOOR 10000 (config.mjs B6 note) -> gates.mjs:381.
     M('T-floor-BATCH', 'headpatched', { SOAK_LANES: 'BATCH', SOAK_CYCLES: CYC, SOAK_OPS: String(OPS_MIN) }, [], {
         exit: 3, kind: 'nobreach', lines: [], specs: ['INCONCLUSIVE checks lane=BATCH oracle=OB'],
     }),
@@ -364,23 +401,23 @@ export const CONTROLS = deepFreeze([
     }, { patches: [[A_SEVER, '                    /* MUSTFAIL T-sever: severTail(node) removed */\n                    node.flags &= ~FLAG_COMPUTING;\n']] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
-    C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:350
-    C('key-typo', { SOAK_LANE: 'GRAPH' }, "unknown env key 'SOAK_LANE' (did you mean SOAK_LANES?)"),                   // config.mjs:313
-    C('cycles-below-floor', { SOAK_CYCLES: '5' }, "SOAK_CYCLES='5' must be an integer >= " + MIN_ACTIVE_CYCLES + ' (or 0)'),                  // config.mjs:206-209
-    C('ops-zero', { SOAK_OPS: '0' }, "SOAK_OPS='0' must be an integer in [" + OPS_MIN + ', ' + OPS_MAX + ']'),                        // config.mjs:206-210
-    C('ops-nan', { SOAK_OPS: 'abc' }, "SOAK_OPS='abc' must be an integer in [" + OPS_MIN + ', ' + OPS_MAX + ']'),                     // config.mjs:207
-    C('seed-negative', { SOAK_SEED: '-1' }, "SOAK_SEED='-1' must be a uint32 (decimal or 0x hex)"),                   // config.mjs:216
-    C('seed-overflow', { SOAK_SEED: '4294967296' }, "SOAK_SEED='4294967296' must be a uint32 in [0, 4294967295]"),    // config.mjs:218
-    C('smoke-yes', { SOAK_SMOKE: 'yes' }, "SOAK_SMOKE='yes' must be exactly 1 (unset it to disable; 0/true/yes are rejected)"),   // config.mjs:223
+    C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375
+    C('key-typo', { SOAK_LANE: 'GRAPH' }, "unknown env key 'SOAK_LANE' (did you mean SOAK_LANES?)"),                   // config.mjs:338
+    C('cycles-below-floor', { SOAK_CYCLES: '5' }, "SOAK_CYCLES='5' must be an integer >= " + MIN_ACTIVE_CYCLES + ' (or 0)'),                  // config.mjs:218-224
+    C('ops-zero', { SOAK_OPS: '0' }, "SOAK_OPS='0' must be an integer in [" + OPS_MIN + ', ' + OPS_MAX + ']'),                        // config.mjs:218-224
+    C('ops-nan', { SOAK_OPS: 'abc' }, "SOAK_OPS='abc' must be an integer in [" + OPS_MIN + ', ' + OPS_MAX + ']'),                     // config.mjs:220
+    C('seed-negative', { SOAK_SEED: '-1' }, "SOAK_SEED='-1' must be a uint32 (decimal or 0x hex)"),                   // config.mjs:229
+    C('seed-overflow', { SOAK_SEED: '4294967296' }, "SOAK_SEED='4294967296' must be a uint32 in [0, 4294967295]"),    // config.mjs:231
+    C('smoke-yes', { SOAK_SMOKE: 'yes' }, "SOAK_SMOKE='yes' must be exactly 1 (unset it to disable; 0/true/yes are rejected)"),   // config.mjs:236
     // kernel.mjs:38 / :41 / :46 -- the path in the line is the scratch path, filled in at run time (kernelLine)
     C('kernel-missing', { SOAK_LANES: 'GRAPH' }, 'SOAK_KERNEL: kernel file not found: ', { kernel: 'missing' }),
     C('kernel-basename', { SOAK_LANES: 'GRAPH' }, 'SOAK_KERNEL: the kernel file must be named Signal.js (got Kernel.js); Watch.js imports ./Signal.js', { kernel: 'basename' }),
     C('kernel-no-watch', { SOAK_LANES: 'GRAPH' }, 'SOAK_KERNEL: sibling Watch.js missing in ', { kernel: 'nowatch' }),
-    // config.mjs:366 -- no SOAK_KERNEL (with one, config.mjs:363 the seam combination fires first)
+    // config.mjs:394 -- no SOAK_KERNEL (with one, config.mjs:388 the seam combination fires first)
     C('engine-typo', { SOAK_ENGINE: 'alein' }, "SOAK_ENGINE: unknown engine 'alein' (did you mean alien?)", { kernel: 'none' }),
-    C('replay-malformed', { SOAK_REPLAY: 'GRAPH:x:y' }, "SOAK_REPLAY='GRAPH:x:y' must match <LANE>:<cycle>:0x<seed> (for example BATCH:7:0x9a3f12c4)"),   // config.mjs:244
-    C('mustfail-unknown', { SOAK_MUSTFAIL: 'cov-off:nope' }, "SOAK_MUSTFAIL: unknown scenario 'nope'", { prefix: true }),   // + the scenario list               // config.mjs:404
-    C('no-expose-gc', { SOAK_LANES: 'GRAPH' }, '--expose-gc is required (run: node --expose-gc bench/soak/main.mjs, or npm run soak)', { flags: [] }),   // config.mjs:425
+    C('replay-malformed', { SOAK_REPLAY: 'GRAPH:x:y' }, "SOAK_REPLAY='GRAPH:x:y' must match <LANE>:<cycle>:0x<seed> (for example BATCH:7:0x9a3f12c4)"),   // config.mjs:269
+    C('mustfail-unknown', { SOAK_MUSTFAIL: 'cov-off:nope' }, "SOAK_MUSTFAIL: unknown scenario 'nope'", { prefix: true }),   // + the scenario list               // config.mjs:432
+    C('no-expose-gc', { SOAK_LANES: 'GRAPH' }, '--expose-gc is required (run: node --expose-gc bench/soak/main.mjs, or npm run soak)', { flags: [] }),   // config.mjs:454
     // provenance.mjs:126 -- a zero-commit repository copy (test/41 :269-301), never GIT_DIR (F6, amendment 14)
     C('provenance-no-sha', { SOAK_REQUIRE_PROVENANCE: '1', SOAK_LANES: 'GRAPH' }, 'SOAK_REQUIRE_PROVENANCE=1 but no git SHA is establishable (', { repo: 'zero-commit', prefix: true }),   // + git's own error text
 ]);
@@ -401,7 +438,7 @@ export function validSpec(c) {
     const p = [];
     if (c === null || typeof c !== 'object') return ['not an object'];
     if (typeof c.name !== 'string' || !/^[A-Za-z][A-Za-z0-9-]*$/.test(c.name)) p.push('name');
-    if (c.run !== 'main' && c.run !== 'cfg') p.push('run must be main | cfg');
+    if (c.run !== 'main' && c.run !== 'cfg' && c.run !== 'wrap') p.push('run must be main | cfg | wrap');
     if (!own(BASES, c.base)) p.push('base must be one of ' + Object.keys(BASES).join('|'));
     if (c.env === null || typeof c.env !== 'object') p.push('env');
     else for (const k of Object.keys(c.env)) if (k.indexOf('SOAK_') !== 0 || typeof c.env[k] !== 'string' || k === 'SOAK_KERNEL' || k === 'SOAK_OUT') p.push('env.' + k);
@@ -417,13 +454,23 @@ export function validSpec(c) {
     if (!Array.isArray(e.lines) || !e.lines.every((s) => typeof s === 'string' && s.length > 0)) p.push('expect.lines');
     if (e.kind === 'explained' && !(isStrArr(e.known) && e.known.length > 0)) p.push('expect.known (explained needs the tolerated ids)');
     if (e.kind !== 'explained' && e.known !== undefined) p.push('expect.known only belongs to kind explained');
-    if (c.run === 'main') {
+    if (c.run === 'main' || c.run === 'wrap') {
         if (e.config !== undefined || e.configMatch !== undefined) p.push('expect.config belongs to run cfg');
         if (e.kind === 'match' && e.specs.length === 0) p.push('a match control needs >= 1 spec');
         if (e.kind === 'nobreach' && e.specs.length === 0 && e.lines.length === 0 && !(e.extra && e.exit === 0)) p.push('a nobreach control needs a spec, a line or a clean exit-0 extra');
         if (e.exit === 0 && e.kind !== 'nobreach') p.push('an exit-0 control must be nobreach');
         if (e.exit === 2) p.push('exit 2 is a config control (run cfg)');
-    } else {
+    }
+    if (c.run === 'wrap') {
+        // wrap.mjs exits 2 on any burn-in key, argv or another semi-space setting: say so here, not as a MISS
+        const ek = c.env !== null && typeof c.env === 'object' ? Object.keys(c.env) : [];
+        if (!(ek.length === 1 && ek[0] === 'SOAK_WRAP')) p.push('a wrap control sets exactly one env key, SOAK_WRAP');
+        if (!(Array.isArray(c.flags) && c.flags.length === WRAP_FLAGS.length && WRAP_FLAGS.every((f, i) => c.flags[i] === f))) p.push('a wrap control runs with flags ' + WRAP_FLAGS.join(' '));
+        if (!(Array.isArray(c.argv) && c.argv.length === 0)) p.push('a wrap control takes no argv');
+        if (c.arm !== null) p.push('a wrap control has no arm');
+        if (e.kind === 'explained') p.push('a wrap control is match | nobreach (explained needs oracle BREACH lines)');
+        if (e.extra !== null && typeof e.extra === 'object' && own(e.extra, 'boundaries')) p.push('expect.extra.boundaries is a burn-in cycle-record count; a wrap control checks every wrap boundary itself');
+    } else if (c.run === 'cfg') {
         if (e.exit !== 2 || e.kind !== 'nobreach') p.push('a cfg control is exit 2, kind nobreach');
         if (typeof e.config !== 'string' || !e.config.startsWith('soak: CONFIG -- ') || e.config.length <= 'soak: CONFIG -- '.length) p.push('expect.config');
         if (e.configMatch !== 'exact' && e.configMatch !== 'prefix') p.push('expect.configMatch must be exact | prefix');
@@ -548,9 +595,9 @@ export function runControl(c, pinProblems) {
         const out = join(dir, 'run.jsonl');
         const kdir = join(dir, 'kernel');
         const keys = Object.assign({}, c.env, { SOAK_OUT: out });
-        let main = MAIN;
+        let main = c.run === 'wrap' ? WRAP : MAIN;
         let configLine = c.expect.config;
-        if (c.run === 'main' || c.kernel === 'scratch') {
+        if (c.run === 'main' || c.run === 'wrap' || c.kernel === 'scratch') {
             writeKernelDir(kdir, buildKernel(c).src, c.base);
             keys.SOAK_KERNEL = join(kdir, 'Signal.js');
         } else if (c.kernel === 'missing') {
@@ -636,6 +683,11 @@ function judgeMain(c, r, err, so, out, problems, matched) {
     const x = e.extra;
     if (x && x.reason !== undefined && !(summary && summary.reason === x.reason)) problems.push('summary reason ' + String(summary && summary.reason) + ' != ' + x.reason);
     if (x && x.verdict !== undefined && m[1] !== x.verdict) problems.push('END verdict ' + m[1] + ' != ' + x.verdict);
+    if (c.run === 'wrap') {
+        // replaces the boundaries + SoakReport steps below (SoakReport has no wrap-stream dispatch: INTEGRITY)
+        for (const q of wrapJudge(c, recs, m[1], err)) problems.push(q);
+        return;
+    }
     if (x && x.boundaries !== undefined) {
         const cyc = recs.filter((q) => q.type === 'cycle');
         if (cyc.length !== x.boundaries) problems.push('boundaries ' + cyc.length + ' != ' + x.boundaries);
@@ -648,6 +700,65 @@ function judgeMain(c, r, err, so, out, problems, matched) {
     const rout = lines(rep.stdout), rerr = lines(rep.stderr);
     if (rout.indexOf(want) === -1) problems.push('SoakReport did not print ' + JSON.stringify(want) + ': ' + (rerr[0] || rout[rout.length - 1] || '').slice(0, 160));
     else if (!(rep.status === 0 || (rep.status === 1 && rerr.length === 1 && rerr[0].startsWith('soak:report: NOT A RELEASE SOAK -- ')))) problems.push('SoakReport exit ' + rep.status + ': ' + (rerr[0] || '').slice(0, 160));
+}
+
+/**
+ * The stream checks of a wrap control (run 'wrap'). Pure (test/45 drives it on forged streams): c = the
+ * control, recs = the parsed stream records in file order, endVerdict = the END line's verdict, err = the
+ * child's stderr lines. Returns problem strings ([] = the stream backs the control). Fail closed:
+ *   - wraprules.mjs wrapStreamProblems(recs) must be [] (its own re-derivation, independent of wrap.mjs);
+ *   - the header's SOAK_WRAP selection equals the control's c.env.SOAK_WRAP (the run judged what was asked);
+ *   - the summary reason is 'end' (or the control's extra.reason), and at reason 'end' wrapRule over the wrap
+ *     records with the header's SOAK_WRAP selection equals endVerdict (a throw is a problem);
+ *   - >= 1 wrap record, and EVERY wrap record's values.boundary reads trackerSize === 0 and weakAlive === 0
+ *     (a missing or non-zero value is a problem: null is not zero);
+ *   - INCONCLUSIVE, re-derived and printed: every cause wrapRule re-derives from the records (a missing pair, an
+ *     unwitnessed crossing, an unmeasured W5 side) renders through gates.mjs inconclusiveLine and must have been
+ *     printed (stderr or summary.inconclusive); and every INCONCLUSIVE line, printed or re-derived, must be one
+ *     the control expects (an INCONCLUSIVE spec matches it, or it is in expect.lines). The oracle is the stream's
+ *     records, never only what the child chose to print: an unexpected cause never rides along under a FAIL.
+ */
+export function wrapJudge(c, recs, endVerdict, err) {
+    const p = [];
+    if (!Array.isArray(recs) || recs.length === 0) return ['wrap stream: no records'];
+    for (const q of wrapStreamProblems(recs)) p.push('wrap stream: ' + q);
+    const e = c.expect, x = e.extra;
+    const head = recs[0];
+    const sum = recs[recs.length - 1];
+    const wraps = recs.filter((r) => r !== null && typeof r === 'object' && r.type === 'wrap');
+    if (wraps.length === 0) p.push('wrap stream: no wrap record');
+    const reason = sum !== null && typeof sum === 'object' ? sum.reason : undefined;
+    const wantReason = x && x.reason !== undefined ? x.reason : 'end';
+    if (reason !== wantReason) p.push('wrap summary reason ' + String(reason) + ' != ' + wantReason);
+    const sel = head && head.config && head.config.SOAK_WRAP ? head.config.SOAK_WRAP.value : undefined;
+    const want = c.env && typeof c.env.SOAK_WRAP === 'string' ? c.env.SOAK_WRAP.split(',').map((w) => w.trim()) : null;
+    if (!(Array.isArray(sel) && want !== null && sel.length === want.length && sel.every((w, i) => w === want[i]))) {
+        p.push('header SOAK_WRAP ' + JSON.stringify(sel) + ' != control SOAK_WRAP ' + JSON.stringify(want));
+    }
+    let derived = [];
+    try {
+        const j = wrapRule(wraps, sel);
+        if (reason === 'end' && j.verdict !== endVerdict) p.push('wrapRule verdict ' + j.verdict + ' != END verdict ' + String(endVerdict));
+        derived = j.causes.map((q) => inconclusiveLine(q.cause, q));
+    } catch (z) { p.push('wrapRule: ' + z.message); }
+    for (const r of wraps) {
+        const b = r.values && r.values.boundary;
+        if (!(b && b.trackerSize === 0 && b.weakAlive === 0)) {
+            p.push('wrap ' + String(r.check) + '/' + String(r.counter) + ' boundary trackerSize=' + String(b && b.trackerSize) + ' weakAlive=' + String(b && b.weakAlive) + ' (want 0 / 0)');
+        }
+    }
+    const incSpecs = e.specs.filter((sp) => sp.split(' ')[0] === 'INCONCLUSIVE');
+    const expected = (l) => e.lines.indexOf(l) !== -1 || incSpecs.some((sp) => hasToken(l, sp));
+    const inc = (Array.isArray(err) ? err : []).filter((l) => l.startsWith(INC_PFX));
+    if (sum && Array.isArray(sum.inconclusive)) for (const l of sum.inconclusive) if (inc.indexOf(l) === -1) inc.push(l);
+    for (const l of derived) {
+        if (inc.indexOf(l) === -1) {
+            p.push('INCONCLUSIVE re-derived by wrapRule but never printed: ' + l.slice(0, 140));
+            inc.push(l);
+        }
+    }
+    for (const l of inc) if (!expected(l)) p.push('unexpected INCONCLUSIVE: ' + String(l).slice(0, 140));
+    return p;
 }
 
 function firstLine(r) {
@@ -696,7 +807,7 @@ function cli() {
         // build EVERY mutant before printing anything: a stale anchor exits 1 with no partial listing
         const built = new Map();
         for (const c of sel) {
-            if (!(c.run === 'main' || c.kernel === 'scratch')) { built.set(c.name, []); continue; }
+            if (!(c.run === 'main' || c.run === 'wrap' || c.kernel === 'scratch')) { built.set(c.name, []); continue; }
             try { built.set(c.name, buildKernel(c).anchors); } catch (e) {
                 process.stderr.write('_mustfail: ' + c.name + ': ' + e.message + '\n');
                 return 1;

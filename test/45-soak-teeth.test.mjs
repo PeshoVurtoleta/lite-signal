@@ -15,9 +15,10 @@
  * Pairing (the orchestrator's B7 review check, made a test): EVERY control a CHECKS id maps to expects the
  * protocol text that id would print. oracle:<o> / sig:<o>:<s> -> a BREACH spec `oracle=<oracleFamily(o)>` (+ the
  * sig; a renamed family is told apart by the oracle's own SIGS[o]); lane:<L> -> a BREACH spec `lane=<L>`; a fail
- * gate -> `oracle=` (gate oracle) or `gate=<id>` (main.mjs BREACH gate line); an evidence gate and cause:<c> -> an
- * INCONCLUSIVE spec or line starting with the cause's static text (INCONCLUSIVE_CAUSES, rendered); config -> a
- * cfg control expecting exit 2 and a `soak: CONFIG -- ` line; report -> a test file with TEST_ANCHORS.
+ * gate -> `oracle=` (gate oracle) or `gate=<id>` (main.mjs BREACH gate line); the wrap gate -> a BREACH spec
+ * `gate=wrap` (wrap.mjs BREACH line); an evidence gate and cause:<c> -> an INCONCLUSIVE spec or line starting with
+ * the cause's static text (INCONCLUSIVE_CAUSES, rendered), or a test file whose TEST_ANCHORS list the cause; config
+ * -> a cfg control expecting exit 2 and a `soak: CONFIG -- ` line; report -> a test file with TEST_ANCHORS.
  */
 
 import { test } from 'node:test';
@@ -26,7 +27,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { universe, CHECKS, GAPS, UNREACHABLE, TEST_ANCHORS, audit, controlMatches } from '../bench/soak/teeth.mjs';
-import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, LONG_RE, SHORT_RE } from '../bench/soak/_mustfail.mjs';
+import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, LONG_RE, SHORT_RE, wrapJudge } from '../bench/soak/_mustfail.mjs';
 import { GATES, oracleFamily, INCONCLUSIVE_CAUSES } from '../bench/soak/gates.mjs';
 import { SIGS } from '../bench/soak/oracles.mjs';
 
@@ -36,11 +37,11 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const GAPS_CEILING = [
     'P-TREE', 'P-NEST',
     'T-A1', 'T-A2', 'T-A3a', 'T-A3b', 'T-A3c', 'T-A4', 'T-A5a', 'T-A5b', 'T-A6', 'T-A7a', 'T-A7b',
-    'L-REV-AUDIT-W5', 'T-d8pc-head', 'T-mark', 'P-INTERIM-ERROR-clean',
+    'T-d8pc-head', 'T-mark', 'P-INTERIM-ERROR-clean',
     'T-OB-lying-adapter', 'T-OB-nested-close', 'totals-e2e',
     'T-O1c-err', 'T-O5-counts', 'T-O6-shape', 'T-no-lane', 'T-post-cycles', 'R-kernel-identity',
 ];
-const GAPS_MAX = 26;
+const GAPS_MAX = 25;
 // The universe ids whose only teeth are GAPS (the union of GAPS[].covers), exactly. Moving an id from CHECKS into a
 // GAP's covers (a tooth quietly turned into a gap) fails until this literal is edited.
 const GAP_COVERED = [
@@ -48,8 +49,9 @@ const GAP_COVERED = [
     'sig:O5:node-count', 'sig:O5:kind-count', 'sig:O5:teardown-residue',
     'sig:O6:equals-mutated', 'sig:O6:escape-empty', 'cause:no-lane', 'cause:post-cycles',
 ];
-// CHECKS holds at least this many ids (31 at burst 10). A dropped id is a lost tooth; raise it when one lands.
-const CHECKS_MIN = 31;
+// CHECKS holds at least this many ids (31 at burst 10; 34 at burst 27: gate:wrap, cause:wrap-crossing,
+// cause:wrap-unmeasured). A dropped id is a lost tooth; raise it when one lands.
+const CHECKS_MIN = 34;
 
 const copy = (x) => structuredClone(x);
 const live = (over) => audit(Object.assign({ controls: CONTROL_NAMES.slice(), ceiling: GAPS_CEILING.slice(), max: GAPS_MAX }, over || {}));
@@ -63,12 +65,12 @@ function hasProblem(probs, want) {
 
 const coveredBy = (gaps) => [...new Set(Object.keys(gaps).flatMap((g) => gaps[g].covers))].sort();
 
-test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 26-name GAPS ceiling and max 26 is []', () => {
+test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 25-name GAPS ceiling and max 25 is []', () => {
     assert.equal(GAPS_CEILING.length, GAPS_MAX, 'the literal ceiling and its literal size agree');
     assert.deepEqual(live(), []);
 });
 
-test('teeth a: GAPS cover exactly the literal 11 ids; CHECKS holds >= 31 ids (a tooth never quietly becomes a gap)', () => {
+test('teeth a: GAPS cover exactly the literal 11 ids; CHECKS holds >= 34 ids (a tooth never quietly becomes a gap)', () => {
     assert.equal(GAP_COVERED.length, 11);
     assert.deepEqual(coveredBy(GAPS), GAP_COVERED.slice().sort());
     assert.ok(Object.keys(CHECKS).length >= CHECKS_MIN, 'CHECKS ids ' + Object.keys(CHECKS).length + ' < ' + CHECKS_MIN);
@@ -105,8 +107,8 @@ test('teeth b: GAPS may only shrink -- a GAP outside the ceiling, a ceiling nami
     grown['T-new'] = { why: 'x', until: 'y', covers: [] };
     const pg = live({ gaps: grown });
     hasProblem(pg, 'GAP T-new is not in the ceiling (GAPS may only shrink)');
-    hasProblem(pg, 'GAPS holds 27 entries > max 26 (GAPS may only shrink)');
-    hasProblem(live({ ceiling: GAPS_CEILING.filter((n) => n !== 'T-mark'), max: 25 }), 'GAP T-mark is not in the ceiling (GAPS may only shrink)');
+    hasProblem(pg, 'GAPS holds 26 entries > max 25 (GAPS may only shrink)');
+    hasProblem(live({ ceiling: GAPS_CEILING.filter((n) => n !== 'T-mark'), max: 24 }), 'GAP T-mark is not in the ceiling (GAPS may only shrink)');
     // the ceiling with an extra name
     hasProblem(live({ ceiling: GAPS_CEILING.concat(['T-gone']) }), 'ceiling lists T-gone, which is no GAP any more: shrink the ceiling literal');
     // a deleted GAP without shrinking the literals
@@ -114,16 +116,16 @@ test('teeth b: GAPS may only shrink -- a GAP outside the ceiling, a ceiling nami
     delete shrunk['P-TREE'];
     const ps = live({ gaps: shrunk });
     hasProblem(ps, 'ceiling lists P-TREE, which is no GAP any more: shrink the ceiling literal');
-    hasProblem(ps, 'GAPS holds 25 entries < max 26: decrement the max literal');
+    hasProblem(ps, 'GAPS holds 24 entries < max 25: decrement the max literal');
     hasProblem(live({ ceiling: GAPS_CEILING.concat(['P-TREE']) }), 'ceiling lists a GAP twice');
 });
 
 test('teeth b: max must be the exact safe-integer GAPS size; NaN, a string and missing are problems, never a skip', () => {
     hasProblem(live({ max: NaN }), 'max must be a safe integer (the literal GAPS size), got NaN');
-    hasProblem(live({ max: '26' }), 'max must be a safe integer (the literal GAPS size), got 26');
+    hasProblem(live({ max: '25' }), 'max must be a safe integer (the literal GAPS size), got 25');
     hasProblem(live({ max: undefined }), 'max must be a safe integer (the literal GAPS size), got undefined');
-    hasProblem(live({ max: 27 }), 'GAPS holds 26 entries < max 27: decrement the max literal');
-    hasProblem(live({ max: 25 }), 'GAPS holds 26 entries > max 25 (GAPS may only shrink)');
+    hasProblem(live({ max: 26 }), 'GAPS holds 25 entries < max 26: decrement the max literal');
+    hasProblem(live({ max: 24 }), 'GAPS holds 25 entries > max 24 (GAPS may only shrink)');
     hasProblem(live({ ceiling: undefined }), 'ceiling must be the literal array of GAPS names (GAPS may only shrink), got undefined');
 });
 
@@ -278,6 +280,8 @@ function unbacked(id, c, gates) {
             if (cause === undefined) return 'evidence gate ' + g.id + ' resolves to no INCONCLUSIVE cause';
             return incOk(c, cause) ? null : 'no INCONCLUSIVE text starting ' + JSON.stringify(causeHead(cause));
         }
+        // the wrap gate: wrap.mjs prints `soak: BREACH gate=wrap check=<W> counter=<c> ...`
+        if (g.kind === 'wrap') return breachSpecs(c).some((t) => t.includes('gate=' + g.id)) ? null : 'no BREACH spec naming gate=' + g.id;
         return 'no pairing rule for a ' + g.kind + ' gate';
     }
     if (kind === 'cause') {
@@ -303,6 +307,14 @@ function pairing(checks, controls, gates) {
             continue;
         }
         for (const name of checks[id]) {
+            if (name.indexOf('test/') === 0) {
+                // a test file backs only a cause, and only when its TEST_ANCHORS list that cause by name (teeth h
+                // then proves the file quotes it)
+                const cause = id.indexOf('cause:') === 0 ? id.slice('cause:'.length) : null;
+                if (cause === null) probs.push(id + ': ' + name + ' -- a test file backs only report and cause ids');
+                else if (!(own(TEST_ANCHORS, name) && TEST_ANCHORS[name].includes(cause))) probs.push(id + ': ' + name + ' -- TEST_ANCHORS of ' + name + ' never lists ' + cause);
+                continue;
+            }
             const hits = controlMatches(name, names);
             if (hits.length === 0) { probs.push(id + ': ' + name + ' matches no control'); continue; }
             for (const cn of hits) {
@@ -350,6 +362,16 @@ test('teeth g: must-fail -- oracle / sig / lane / gate / cause / config remaps t
     assert.deepEqual(pairing(remap({ 'gate:fake': ['T-sever'] }), CONTROLS), ['gate:fake: T-sever -- no gate fake']);
     const gates = GATES.concat([{ id: 'novel', kind: 'evidence', teeth: null }]);
     assert.deepEqual(pairing(remap({ 'gate:novel': ['T-cov-BATCH'] }), CONTROLS, gates), ['gate:novel: T-cov-BATCH -- evidence gate novel resolves to no INCONCLUSIVE cause']);
+    // the wrap gate: a control with no `gate=wrap` BREACH spec does not back it (one rule, kind 'wrap')
+    assert.deepEqual(pairing(remap({ 'gate:wrap': ['L-WRAP-TREE', 'T-sever'] }), CONTROLS), ['gate:wrap: T-sever -- no BREACH spec naming gate=wrap']);
+    const wctl = copy(CONTROLS);
+    wctl.find((x) => x.name === 'L-REV-AUDIT-W5').expect.specs = ['oracle=O1 lane=GRAPH'];
+    assert.deepEqual(pairing(CHECKS, wctl), ['gate:wrap: L-REV-AUDIT-W5 -- no BREACH spec naming gate=wrap']);
+    // a cause backed by a test file: that file's TEST_ANCHORS must list the cause; a test file never backs a gate
+    assert.deepEqual(pairing(remap({ 'cause:wrap-crossing': ['test/46-soak-report.test.mjs'] }), CONTROLS),
+        ['cause:wrap-crossing: test/46-soak-report.test.mjs -- TEST_ANCHORS of test/46-soak-report.test.mjs never lists wrap-crossing']);
+    assert.deepEqual(pairing(remap({ 'gate:heap': ['test/48-soak-wrap.test.mjs'] }), CONTROLS),
+        ['gate:heap: test/48-soak-wrap.test.mjs -- a test file backs only report and cause ids']);
 });
 
 /* ---- h. test-file teeth ------------------------------------------------------------------------------- */
@@ -383,4 +405,98 @@ test('teeth i: every UNREACHABLE anchor occurs exactly once; a mutated anchor (0
     const w = copy(UNREACHABLE);
     delete w['report-crash'].proof;
     hasProblem(live({ unreachable: w }), 'UNREACHABLE report-crash must be {proof, anchor: {file, text}}');
+});
+
+/* ---- j. wrap controls (S2): shape and the wrap judge on forged streams ---------------------------------- */
+
+/** L-WRAP-TREE narrowed to `sel` (default W1), the selection the forged streams below record. */
+const WRAP_CTL = (sel) => { const c = copy(CONTROLS.find((x) => x.name === 'L-WRAP-TREE')); c.env.SOAK_WRAP = sel || 'W1'; return c; };
+/** A consistent wrap stream (SOAK_WRAP=W1): header, one W1 record that FAILs on its value assertion, summary. */
+function wrapStream(over) {
+    const recs = [
+        { type: 'header', seq: 0, tMs: 0, kind: 'wrap', nearwrap: null, config: { SOAK_WRAP: { value: ['W1'], source: 'env' } } },
+        { type: 'wrap', seq: 1, tMs: 1, check: 'W1', counter: 'globalVersion', opsDriven: 2147484648, crossed: true, pre: { bop: null }, post: { bop: null },
+            values: { boundary: { trackerSize: 0, trackerDelta: 0, weakAlive: 0 }, failures: ['band-observed'] }, wallMs: 1, status: 'FAIL' },
+        { type: 'summary', seq: 2, tMs: 2, reason: 'end', checks: ['W1'], records: 1, breaches: [], inconclusive: [], repr: null, verdict: 'FAIL', exitCode: 1 },
+    ];
+    if (over) over(recs);
+    return recs;
+}
+
+test('teeth j: the wrap controls are long, run wrap.mjs with its flag trio and only SOAK_WRAP; validSpec refuses a burn-in shape', () => {
+    for (const n of ['L-REV-AUDIT-W5', 'L-WRAP-TREE']) {
+        const c = CONTROLS.find((x) => x.name === n);
+        assert.ok(c && c.run === 'wrap' && LONG_RE.test(n), n);
+        assert.deepEqual(c.flags, ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4'], n);
+        assert.deepEqual(validSpec(c), [], n);
+    }
+    const a = WRAP_CTL();
+    a.flags = ['--expose-gc'];
+    assert.ok(validSpec(a).includes('a wrap control runs with flags --expose-gc --min-semi-space-size=4 --max-semi-space-size=4'), JSON.stringify(validSpec(a)));
+    const b = WRAP_CTL();
+    b.expect.extra = { boundaries: 22 };
+    assert.ok(validSpec(b).includes('expect.extra.boundaries is a burn-in cycle-record count; a wrap control checks every wrap boundary itself'), JSON.stringify(validSpec(b)));
+    const e = WRAP_CTL();
+    e.env = { SOAK_WRAP: 'W1', SOAK_LANES: 'GRAPH' };
+    assert.ok(validSpec(e).includes('a wrap control sets exactly one env key, SOAK_WRAP'), JSON.stringify(validSpec(e)));
+    const v = WRAP_CTL();
+    v.argv = ['--smoke'];
+    assert.ok(validSpec(v).includes('a wrap control takes no argv'), JSON.stringify(validSpec(v)));
+    const m = WRAP_CTL();
+    m.arm = '\n;process.kill(process.pid, "SIGINT");\n';
+    assert.ok(validSpec(m).includes('a wrap control has no arm'), JSON.stringify(validSpec(m)));
+    const k = WRAP_CTL();
+    k.expect.kind = 'explained';
+    k.expect.known = ['DIV-F21'];
+    assert.ok(validSpec(k).includes('a wrap control is match | nobreach (explained needs oracle BREACH lines)'), JSON.stringify(validSpec(k)));
+});
+
+test('teeth j: wrapJudge is [] on a consistent stream; a forged trackerSize 1 / weakAlive null, a lying END, an unexpected INCONCLUSIVE each MISS', () => {
+    assert.deepEqual(wrapJudge(WRAP_CTL(), wrapStream(), 'FAIL', []), []);
+    // G4: one retained registry at a wrap boundary
+    assert.deepEqual(wrapJudge(WRAP_CTL(), wrapStream((r) => { r[1].values.boundary.trackerSize = 1; }), 'FAIL', []),
+        ['wrap W1/globalVersion boundary trackerSize=1 weakAlive=0 (want 0 / 0)']);
+    assert.deepEqual(wrapJudge(WRAP_CTL(), wrapStream((r) => { r[1].values.boundary.weakAlive = null; }), 'FAIL', []),
+        ['wrap W1/globalVersion boundary trackerSize=0 weakAlive=null (want 0 / 0)']);
+    assert.deepEqual(wrapJudge(WRAP_CTL(), wrapStream((r) => { delete r[1].values.boundary; }), 'FAIL', []),
+        ['wrap W1/globalVersion boundary trackerSize=undefined weakAlive=undefined (want 0 / 0)']);
+    // the END line disagrees with wrapRule over the records
+    assert.deepEqual(wrapJudge(WRAP_CTL(), wrapStream(), 'PASS', []), ['wrapRule verdict FAIL != END verdict PASS']);
+    // an INCONCLUSIVE the control does not expect (stderr, or only in the summary)
+    const inc = 'soak: INCONCLUSIVE -- wrap W1 crossing unwitnessed';
+    assert.deepEqual(wrapJudge(WRAP_CTL(), wrapStream(), 'FAIL', [inc]), ['unexpected INCONCLUSIVE: ' + inc]);
+    assert.deepEqual(wrapJudge(WRAP_CTL(), wrapStream((r) => { r[2].inconclusive = [inc]; }), 'FAIL', []), ['unexpected INCONCLUSIVE: ' + inc]);
+    const ok = WRAP_CTL();
+    ok.expect.specs = ok.expect.specs.concat(['INCONCLUSIVE wrap W1 crossing unwitnessed']);
+    assert.deepEqual(wrapJudge(ok, wrapStream(), 'FAIL', [inc]), []);
+    // the stream's own consistency (wraprules.mjs wrapStreamProblems) and the run's end
+    const lie = wrapJudge(WRAP_CTL(), wrapStream((r) => { r[2].verdict = 'PASS'; r[2].exitCode = 0; }), 'FAIL', []);
+    assert.ok(lie.some((p) => p.indexOf('wrap stream: ') === 0), JSON.stringify(lie));
+    assert.ok(wrapJudge(WRAP_CTL(), wrapStream((r) => { r[2].reason = 'signal'; }), 'FAIL', []).includes('wrap summary reason signal != end'));
+    assert.ok(wrapJudge(WRAP_CTL(), wrapStream((r) => { r.splice(1, 1); r[1].seq = 1; }), 'INCONCLUSIVE', []).includes('wrap stream: no wrap record'));
+});
+
+test('teeth j: the wrap control specs are pinned (MD4: W5 evalCount at bop>=15; W1-W4 each by its counter)', () => {
+    const w5 = CONTROLS.find((c) => c.name === 'L-REV-AUDIT-W5');
+    assert.deepEqual([w5.base, w5.env, w5.expect.exit, w5.expect.kind, w5.expect.specs, w5.expect.extra],
+        ['headpatched', { SOAK_WRAP: 'W5' }, 1, 'match', ['gate=wrap check=W5 counter=evalCount bop>=15'], { verdict: 'FAIL' }]);
+    const tree = CONTROLS.find((c) => c.name === 'L-WRAP-TREE');
+    assert.deepEqual([tree.base, tree.env, tree.expect.exit, tree.expect.kind, tree.expect.specs],
+        ['tree', { SOAK_WRAP: 'W1,W2,W3,W4' }, 1, 'match', ['gate=wrap check=W1 counter=globalVersion', 'gate=wrap check=W2 counter=batchEpoch',
+            'gate=wrap check=W3 counter=gen', 'gate=wrap check=W4 counter=nodeSeq']]);
+});
+
+test('teeth j: wrapJudge re-derives the INCONCLUSIVE causes from the records (never only what the child printed); the header selection is the control\'s', () => {
+    // SOAK_WRAP W1,W4 with no W4 record and nothing printed: wrapRule re-derives `wrap W4 crossing unwitnessed`
+    const forged = wrapStream((r) => { r[0].config.SOAK_WRAP.value = ['W1', 'W4']; r[2].checks = ['W1', 'W4']; });
+    const line = 'soak: INCONCLUSIVE -- wrap W4 crossing unwitnessed';
+    assert.deepEqual(wrapJudge(WRAP_CTL('W1,W4'), forged, 'FAIL', []),
+        ['INCONCLUSIVE re-derived by wrapRule but never printed: ' + line, 'unexpected INCONCLUSIVE: ' + line]);
+    // printed but not expected: still a MISS; printed and expected: clean
+    assert.deepEqual(wrapJudge(WRAP_CTL('W1,W4'), forged, 'FAIL', [line]), ['unexpected INCONCLUSIVE: ' + line]);
+    const ok = WRAP_CTL('W1,W4');
+    ok.expect.specs = ok.expect.specs.concat(['INCONCLUSIVE wrap W4 crossing unwitnessed']);
+    assert.deepEqual(wrapJudge(ok, forged, 'FAIL', [line]), []);
+    // the stream ran another selection than the control asked for
+    assert.deepEqual(wrapJudge(WRAP_CTL('W1,W2'), wrapStream(), 'FAIL', []), ['header SOAK_WRAP ["W1"] != control SOAK_WRAP ["W1","W2"]']);
 });
