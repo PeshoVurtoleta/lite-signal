@@ -29,6 +29,16 @@
 //     maxMajor 0; 1e3 dead-owner cycles (a child created under a parent disposed
 //     mid-run, then the parent's slot recycled) -> the child is never adopted by
 //     the stranger in that slot
+//   * QS (F21, LEDGER #35): 1e5 s.set with one sync-scheduled effect (the
+//     scheduler calls run() immediately) + one plain effect -> 0 B/op, maxMajor 0;
+//     the same step in the pinned child -> <= 0.05 B/op steady state; every step
+//     must run both bodies and the scheduler (else the lane is blind). Both halves
+//     gate, but only the child lane caught the QS-teeth control (one run, burst 38:
+//     child 135.975 B/op FAIL; in-process still 0 B/op with gc minor=2)
+//   * F21 retention: 1e3 x {createRegistry({maxFlushPasses: 8}), the P3 shape
+//     (creation-time CycleError caught, then a new effect in a recycled slot),
+//     destroy()} -> lite-leak tracker.size() === 0 (a cycle's marker is released
+//     only when the shape behaved and destroy() returned)
 //
 // The untrack path is the LEDGER #30 keystone: untrack() nulls currentObserver
 // for its window and restores it gen-safely (only if the observer survived the
@@ -97,18 +107,30 @@ if (process.argv.includes('--nest-lane')) {
   const watchBody = (next, prev, st) => { KEEPW[0] = st; sinkW = (sinkW + next - prev) & 0x3FFFFFFF; firesW++; };
   const stopW = watch(sW, watchBody);
   const watchStep = (i) => { stepsW++; sW.set(i & 0xFFFF); };
+  // QS lane (F21): one sync-scheduled effect + one plain effect on the same signal.
+  // The counter is a Smi below 2^30: a step never repeats a value (equal set = no-op).
+  const sQ = signal(0);
+  let qN = 0, qRuns = 0, qPlain = 0, qSched = 0;
+  const qScheduler = (run) => { qSched++; run(); };
+  const stopQ1 = effect(() => { sQ(); qRuns++; }, { scheduler: qScheduler });
+  const stopQ2 = effect(() => { sQ(); qPlain++; });
+  const qsStep = (i) => { qN = (qN + 1) & 0x3FFFFFFF; sQ.set(qN); };
   const BOX = ['tagged'];   // PACKED_ELEMENTS: a double stored here is a fresh HeapNumber
   const boxStep = (i) => { BOX[0] = i + 0.5; };   // control: one 16 B HeapNumber per op
-  for (let i = 0; i < 50000; i++) { nestStep(i); emptyStep(i); boxStep(i); watchStep(i); }   // warm up
+  for (let i = 0; i < 50000; i++) { nestStep(i); emptyStep(i); boxStep(i); watchStep(i); qsStep(i); }   // warm up
   const base = laneBytesPerOp(emptyStep);
   const nest = laneBytesPerOp(nestStep);
   const wat = laneBytesPerOp(watchStep);
   const ctl = laneBytesPerOp(boxStep);
+  const qs = laneBytesPerOp(qsStep);
   stopN();
   stopW();
+  stopQ1();
+  stopQ2();
   console.log(JSON.stringify({ pinned, nest: steadyMin(nest, base), watch: steadyMin(wat, base),
     control: steadyMin(ctl, base), window0: nest[0], watchWindow0: wat[0],
-    watchFires: firesW, watchSteps: stepsW, sink: sinkN + sinkW }));
+    watchFires: firesW, watchSteps: stepsW, sink: sinkN + sinkW,
+    qs: steadyMin(qs, base), qsWindow0: qs[0], qsSteps: qN, qsRuns: qRuns, qsPlain: qPlain, qsSched: qSched }));
   process.exit(0);
 }
 
@@ -272,6 +294,12 @@ const watchOk = nestOk && watchFired &&
 const nestLabel = nestLane === null || nestLane.nest === null ? 'unmeasured' : nestLane.nest.toFixed(3);
 const watchLabel = nestLane === null || typeof nestLane.watch !== 'number' ? 'unmeasured' : nestLane.watch.toFixed(3);
 const ctlLabel = nestLane === null || nestLane.control === null ? 'unmeasured' : nestLane.control.toFixed(2);
+// QS rides the same child (phase 6 reads it). Blind unless every step ran the scheduler and both
+// bodies (+1: each effect's creation run).
+const qsChildFired = nestLane !== null && nestLane.qsSteps > 0 && nestLane.qsRuns === nestLane.qsSteps + 1 &&
+  nestLane.qsPlain === nestLane.qsSteps + 1 && nestLane.qsSched === nestLane.qsSteps + 1;
+const qsChildOk = nestOk && qsChildFired && typeof nestLane.qs === 'number' && nestLane.qs <= NEST_BUDGET;
+const qsChildLabel = nestLane === null || typeof nestLane.qs !== 'number' ? 'unmeasured' : nestLane.qs.toFixed(3);
 
 // 4c: retention -- 1e4 cycles of the P10 (child effect's nested first run disposes
 // a dep the parent reads later) and F8 (onDisconnect disposes the next dep during
@@ -415,8 +443,76 @@ for (let i = 0; i < 1000; i++) {
 const pinOk = pinThrew === null && pinPoolDelta === 0 && pinGcReport.ok && deadOwnerFail === 0 &&
   pinAfter.activeNodes === pinBase.activeNodes;
 
+// ---- phase 6: QS (F21, LEDGER #35) ----------------------------------------
+// The flush loop runs an entry only while its node is still QUEUED. Hot shape: one
+// effect whose scheduler calls run() synchronously + one plain effect, both on qS.
+// Scheduler, bodies and step are hoisted; the step counter is a Smi below 2^30, so
+// no value repeats (an equal set would be a no-op and the lane would measure nothing).
+const qS = signal(0);
+let qsN = 0, qsRuns = 0, qsPlain = 0, qsSched = 0;
+const qsScheduler = (run) => { qsSched++; run(); };
+const qsStop1 = effect(() => { qS(); qsRuns++; }, { scheduler: qsScheduler });
+const qsStop2 = effect(() => { qS(); qsPlain++; });
+const qsStep = () => { qsN = (qsN + 1) & 0x3FFFFFFF; qS.set(qsN); };
+const qgc = new GcProfiler().start();
+for (let i = 0; i < HOT; i++) {
+  qsStep();
+  if ((i & 8191) === 0) qgc.sampleHeap(performance.now(), process.memoryUsage().heapUsed);
+}
+await new Promise((r) => setTimeout(r, 50));
+const qs = qgc.summary();
+const qsGcReport = checkNoGc(qs, { maxMajor: 0, maxPauseMs: 4 });
+qgc.stop();
+const allocQs = measureAllocs(qsStep, { iterations: 20000, batches: 8, warmup: 20000 });
+const allocQsReport = checkAllocs(allocQs, { maxBytesPerCall: 0 });
+// Blind unless every step ran the scheduler and both bodies (+1: each creation run).
+const qsFired = qsN >= HOT && qsRuns === qsN + 1 && qsPlain === qsN + 1 && qsSched === qsN + 1;
+const qsBpcLabel = allocQs.bytesPerCall === null ? 'unmeasured' : String(Math.max(allocQs.bytesPerCall, 0));
+const qsOk = qsFired && qsGcReport.ok && allocQs.bytesPerCall !== null && allocQsReport.verdict === 'pass' && qsChildOk;
+qsStop1();
+qsStop2();
+dispose(qS);
+
+// ---- phase 7: F21 retention ---------------------------------------------------
+// 1e3 cycles of the P3 shape (vectors/probes2.mjs): a creation-time CycleError leaves
+// stale queue entries; the next effect() recycles a slot and must neither throw nor
+// be killed by a stale entry. Each cycle tracks a marker (held until size() is read)
+// and releases it only if the shape behaved AND destroy() returned, so size() counts
+// the failed cycles. Held-value contract: tag is a number, cleanup is null.
+const F21_CYCLES = 1000;
+const f21Markers = new Array(F21_CYCLES).fill(null);
+let f21Fail = 0;
+function f21Cycle(i) {
+  const marker = { i };
+  f21Markers[i] = marker;
+  const handle = tracker.track(marker, null, 200000 + i, { audit: true });
+  let clean = false;
+  try {
+    const r = createRegistry({ maxFlushPasses: 8 });
+    const s1 = r.signal(1), w = r.signal(0), q = r.signal(0);
+    const go = r.signal(false), a = r.signal(0), b = r.signal(0);
+    const e1 = r.effect(() => { if (go()) b.set(a() + 1); });
+    const e3 = r.effect(() => { if (go()) a.set(b() + 1); });
+    let cyc = null;
+    try { r.effect(() => { go.set(true); }); } catch (e) { cyc = String(e && e.message); }
+    e1(); e3();
+    let runs = 0;
+    r.effect(() => { runs++; w.set(s1() + 1); });   // F21: a stale entry must not throw here
+    q.set(1);
+    clean = cyc !== null && cyc.startsWith('CycleError') && runs === 1 && r.stats().effects === 1;
+    r.destroy();
+  } catch {
+    clean = false;
+  }
+  if (clean) tracker.untrack(handle); else f21Fail++;
+}
+for (let i = 0; i < F21_CYCLES; i++) f21Cycle(i);
+const f21Live = tracker.size();
+f21Markers.fill(null);
+const f21Ok = f21Live === 0 && f21Fail === 0;
+
 // ---- verdict --------------------------------------------------------------
-const ok = gcReport.ok && allocOk && selfOk && nestGcReport.ok && nestOk && watchOk && nestRetOk && pinOk &&
+const ok = gcReport.ok && allocOk && selfOk && nestGcReport.ok && nestOk && watchOk && nestRetOk && pinOk && qsOk && f21Ok &&
   live === 0 && findings.length === 0 && leaks.length === 0 && warns.length === 0 &&
   nodesBaseline && linksBaseline;
 
@@ -429,6 +525,8 @@ console.log(
   ' | nest gc major=' + ns.gc.major + ' minor=' + ns.gc.minor + ' alloc=' + nestLabel + ' B/op' +
   ' watch=' + watchLabel + ' B/op control=' + ctlLabel + ' B/op retention=' + nestAlive + '/' + nestRefs.length + ' res=' + nestResKB.toFixed(1) + 'KB' +
   ' | pin pool=+' + pinPoolDelta + ' major=' + ps.gc.major + ' deadOwner=' + deadOwnerFail + '/1000' +
+  ' | qs gc major=' + qs.gc.major + ' minor=' + qs.gc.minor + ' alloc=' + qsBpcLabel + ' B/op child=' + qsChildLabel + ' B/op' +
+  ' | f21 size=' + f21Live + '/0 fail=' + f21Fail + '/' + F21_CYCLES +
   ' | ' + (ok ? 'ok' : 'FAIL')
 );
 
@@ -450,6 +548,10 @@ if (!ok) {
   if (!pinOk) console.error('  pin: threw=' + pinThrew + ' poolDelta=' + pinPoolDelta + ' deadOwnerFail=' + deadOwnerFail +
     ' nodes ' + pinBase.activeNodes + '->' + pinAfter.activeNodes +
     (pinGcReport.ok ? '' : ' gc ' + pinGcReport.violations.map((v) => v.metric + '=' + v.actual).join(',')));
+  if (!qsOk) console.error('  qs: fired=' + qsFired + ' steps=' + qsN + ' runs=' + qsRuns + ' plain=' + qsPlain + ' sched=' + qsSched +
+    ' alloc=' + qsBpcLabel + ' (' + allocQsReport.verdict + ') child=' + qsChildLabel + ' childFired=' + qsChildFired +
+    (qsGcReport.ok ? '' : ' gc ' + qsGcReport.violations.map((v) => v.metric + '=' + v.actual).join(',')));
+  if (!f21Ok) console.error('  f21 retention: size=' + f21Live + ' fail=' + f21Fail + '/' + F21_CYCLES);
   for (const v of gcReport.violations) console.error('  gc violation ' + v.metric + ' limit=' + v.limit + ' actual=' + v.actual);
   if (allocSetReport.verdict !== 'pass') console.error('  set alloc ' + allocSetReport.verdict + ' bytesPerCall=' + allocSet.bytesPerCall);
   if (allocUnReport.verdict !== 'pass') console.error('  untrack alloc ' + allocUnReport.verdict + ' bytesPerCall=' + allocUn.bytesPerCall);

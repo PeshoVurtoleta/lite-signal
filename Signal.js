@@ -1083,6 +1083,10 @@ export function createRegistry(config) {
      * are caught and buffered; at end-of-flush a single throw is rethrown directly,
      * multiple throws are aggregated into an `AggregateError` (1.2.0). Exceeds
      * `maxFlushPasses` (default 100) -> Error prefixed `"CycleError:"`.
+     * F21 (LEDGER #35): an entry runs only while its node is still QUEUED.
+     * A scheduled effect keeps QUEUED until its thunk runs (one scheduler call per pending
+     * period); a stale entry whose slot holds a legitimately QUEUED resident serves it early (KNOWN,
+     * HEAD-equal); a deferred-scheduler resident then gets a second call at its own entry (R1).
      * @private
      */
     function flushEffects() {
@@ -1104,11 +1108,15 @@ export function createRegistry(config) {
                 for (let i = 0; i < toRun; i++) {
                     const node = currentQueue[i];
                     try {
-                        const scheduler = node.scheduler;
-                        if (scheduler) {
-                            scheduler(node.schedulerThunk);  // reuse cached thunk
-                        } else {
-                            if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);
+                        // F21: run only while QUEUED; a stale entry (disposed, recycled into an
+                        // un-queued resident, or period already served) -> skip
+                        if ((node.flags & FLAG_QUEUED) !== 0) {
+                            const scheduler = node.scheduler;
+                            if (scheduler) {
+                                scheduler(node.schedulerThunk);  // reuse cached thunk
+                            } else {
+                                executeEffect(node);
+                            }
                         }
                     } catch (err) {
                         flushErrorBuffer[flushErrorCount++] = err;
