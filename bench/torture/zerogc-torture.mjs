@@ -36,6 +36,13 @@
  *      whole un-recycled wrapper, >=16 B/call -- two to three orders of magnitude
  *      above the floor -- and it would ALSO move the exact counters in witness 3,
  *      which is the deterministic proof the byte witness only corroborates.
+ *      When EVERY batch bracket inverts, gc-profiler has no floor at all
+ *      (bytesPerCall null, verdict inconclusive): that is the host's GC timing,
+ *      so the witness re-measures, up to ALLOC_ATTEMPTS (3) in total
+ *      (helpers/alloc-verdict.mjs). A measured fail is never retried; any other
+ *      inconclusive (unsettled, no memory channel) is a broken harness and FAILs
+ *      (UNVERIFIABLE). Still inverted after 3 attempts: a NOTE, not a FAIL --
+ *      the scenario stands on witness 3 (and witness 4 for steady scenarios).
  *   2. major GC count and longest pause over a measured window (`measureOps` +
  *      `checkNoGc`, `maxMajor: 0` / `maxPauseMs: 2`) -- a zero-alloc window
  *      forces no major collection regardless of how long it runs, so a nonzero
@@ -79,7 +86,10 @@
  *
  * Exit code: 0 iff every steady-state write retained 0 bytes, forced 0 major
  * collections, forced 0 scavenges, and moved no counter it must not; and node
- * churn leaked nothing.
+ * churn leaked nothing. A byte witness left INCONCLUSIVE (every bracket inverted
+ * on all 3 attempts) does not fail the run: the PASS line then ends with
+ * "(byte witness INCONCLUSIVE on N scenario(s))", so a run whose retained-bytes
+ * claim went unmeasured never prints that claim unqualified.
  *
  * Usage: node --expose-gc bench/torture/zerogc-torture.mjs
  *        ZEROGC_BREAK=1 node --expose-gc bench/torture/zerogc-torture.mjs
@@ -90,6 +100,7 @@ import { PerformanceObserver, constants as perfConstants } from "node:perf_hooks
 import v8 from "node:v8";
 import { measureAllocs, checkAllocs, measureOps, checkNoGc } from "@zakkster/lite-gc-profiler";
 import { createReport, mulberry32, flushAll } from "./helpers/index.mjs";
+import { ALLOC_ATTEMPTS, bytesWitness, byteWitnessLabel, churnNote, inconclusiveSuffix } from "./helpers/alloc-verdict.mjs";
 
 import { createRegistry } from "../../Signal.js";
 
@@ -341,16 +352,27 @@ async function countGcOverWindow(fn, ops) {
     return seen;
 }
 
-/** Signals 1 and 2, shared by every scenario: retained bytes, then major/pause. */
-function gateAllocAndGc(name, st, maxBytesPerCall) {
+// Scenarios whose byte witness stayed INCONCLUSIVE (every batch bracket inverted on every attempt); a
+// nonzero count suffixes the PASS line, so the "retained 0 bytes" claim is never printed unqualified.
+let bytesInconclusive = 0;
+
+/** Signals 1 and 2, shared by every scenario: retained bytes, then major/pause.
+ *  Returns the counter snapshots and the byte witness outcome ('pass' | 'fail' | 'inconclusive'). */
+function gateAllocAndGc(name, st, maxBytesPerCall, steady) {
     const fn = st.hot;
 
-    const alloc = measureAllocs(fn, { iterations: ITER, warmup: WARMUP });
-    const aRep = checkAllocs(alloc, { maxBytesPerCall });
-    R.ok(name, aRep.verdict === "pass",
-        `retained ${alloc.bytesPerCall} B/call vs floor ${maxBytesPerCall} ` +
-        `(verdict ${aRep.verdict}${alloc.settled ? "" : ", UNSETTLED"}` +
-        `${alloc.invertedBatches ? `, ${alloc.invertedBatches} inverted batch(es)` : ""})`);
+    // Witness 1 through bytesWitness (helpers/alloc-verdict.mjs): only an inverted-bracket inconclusive is
+    // re-measured (ALLOC_ATTEMPTS); a measured fail is never retried; any other inconclusive is a FAIL.
+    const w = bytesWitness(
+        () => measureAllocs(fn, { iterations: ITER, warmup: WARMUP }),
+        (alloc) => checkAllocs(alloc, { maxBytesPerCall }),
+        ALLOC_ATTEMPTS);
+    // The outcome's report text (helpers/alloc-verdict.mjs): an inconclusive is a NOTE and counts toward the
+    // PASS-line suffix, never an R.ok; a pass or fail is an R.ok.
+    const lab = byteWitnessLabel(name, w, steady, maxBytesPerCall);
+    bytesInconclusive += lab.inconclusive;
+    if (lab.ok !== null) R.ok(name, lab.ok, lab.detail);
+    if (lab.note !== null) R.note(lab.note);
 
     const s0 = st.statsOf();
     const ops = measureOps(fn, { ops: OPS, warmup: WARMUP, stabilize: "deep" });
@@ -360,14 +382,14 @@ function gateAllocAndGc(name, st, maxBytesPerCall) {
     R.ok(name, gRep.ok,
         `major=${ops.summary.gc.major} maxMs=${ops.summary.gc.maxMs.toFixed(2)} (verdict ${gRep.verdict})`);
 
-    return { s0, s1 };
+    return { s0, s1, bytes: w.outcome };
 }
 
 /** Steady scenarios: no node was acquired, the pool never grew, and the whole
  *  scavenge window forced zero collections of either generation. */
 async function gateSteady(name, build) {
     const st = build();
-    const { s0, s1 } = gateAllocAndGc(name, st, RULES.maxBytesPerCall);
+    const { s0, s1 } = gateAllocAndGc(name, st, RULES.maxBytesPerCall, true);
     R.eq(name, s1.poolGrowths - s0.poolGrowths, 0, "the pool grew during steady-state writes");
     R.eq(name, s1.totalAllocations - s0.totalAllocations, 0, "a node was acquired during steady-state writes");
 
@@ -393,14 +415,15 @@ async function gateSteady(name, build) {
 function gateChurn(name, build) {
     const st = build();
     if (st === null) { R.note(`${name} -- SKIP: signalBox requires 1.5.0+`); return; }
-    const { s0, s1 } = gateAllocAndGc(name, st, CHURN_BYTES_FLOOR);
+    const { s0, s1, bytes } = gateAllocAndGc(name, st, CHURN_BYTES_FLOOR, false);
     R.eq(name, s1.poolGrowths - s0.poolGrowths, 0, "the pool grew under create+dispose churn");
     R.eq(name, s1.activeNodes - s0.activeNodes, 0, "activeNodes did not return to baseline -- a churned node leaked");
     // Visible positive verdict so a RUNNING churn gate is legible in the output --
     // R.eq is silent on success, and on 1.5.0 churn-box ACTIVATES (signalBox is a
     // function, buildChurnBox no longer returns null), so without this line its
     // first-time activation would be invisible and indistinguishable from a SKIP.
-    R.note(`${name} -- ok: retained < ${CHURN_BYTES_FLOOR} B/call (sub-object floor), poolGrowths delta 0, activeNodes returned to baseline`);
+    // The retained-bytes claim is printed only when the byte witness PASSED (churnNote).
+    R.note(churnNote(name, bytes, CHURN_BYTES_FLOOR));
 }
 
 /* -- run -------------------------------------------------------------------- */
@@ -476,4 +499,5 @@ R.note(`seed 0x${(SEED >>> 0).toString(16)}; ` +
     `${BREAK ? `BREAK=${process.env.ZEROGC_BREAK} armed (${BREAK_TRANSIENT ? "transient" : "retained"} allocation expected)` : "steady mode"}; ` +
     `measureAllocs ${ITER}/batch, measureOps ${OPS} ops, scavenge window ${SCAVENGE_OPS.toLocaleString()} ops, stabilize=deep`);
 
-process.exit(R.finish("the steady-state hot path retained 0 bytes and forced 0 major GCs; node churn leaked nothing"));
+process.exit(R.finish("the steady-state hot path retained 0 bytes and forced 0 major GCs; node churn leaked nothing" +
+    inconclusiveSuffix(bytesInconclusive)));

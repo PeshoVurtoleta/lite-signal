@@ -1013,7 +1013,70 @@ test('D4 the wrap job refuses a NEARWRAP kernel: wrap.mjs with SOAK_NEARWRAP=zer
     const w = spawnSync(process.execPath, ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4', NW_WRAP], { cwd: ROOT, env, encoding: 'utf8', timeout: 60000 });
     assert.equal(w.status, 2, w.stderr);
     assert.match(w.stderr, /^soak: CONFIG -- the wrap job drives the real kernel; a NEARWRAP kernel is refused$/m);
+    assert.doesNotMatch(w.stderr, /semi-space/, 'the pure-config NEARWRAP refusal fires before the semi-space probe');
     assert.equal(existsSync(out), false, 'no stream');
     assert.equal(existsSync(nwDir), false, 'no derived kernel written: ' + nwDir);
     assert.deepEqual(derivedDirs(), [], 'no derived kernel written under any name');
+});
+
+/* ---- 0b TASK 6 (assertions 1 + 2): refusal order, and a version-independent semi-space band ------------ */
+
+// wrap.mjs refuses pure-config faults (burn-in keys, SOAK_NEARWRAP) BEFORE it probes the environment: a NEARWRAP
+// run on a host without the semi-space trio (node 22 CI, `node --expose-gc wrap.mjs`) must see the NEARWRAP line,
+// never the semi-space one. The band is (4 MB - 4 MB/16, 4 MB]: node 24/26 read 4 MB - 256 B, node 22 reads
+// 4 MB - 70,656 B (4123648), and the nearest wrong pin (--max-semi-space-size=3 or 5) is a whole MB away.
+const wrapEnv = (caseEnv) => {
+    const env = {};
+    for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_OPTIONS' && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
+    return Object.assign(env, caseEnv);
+};
+
+test('0b semiSpaceProblem: the 4 MB band is (4194304 - 262144, 4194304] on every node major; every flag-vector reason is unchanged', async () => {
+    const { semiSpaceProblem } = await import(pathToFileURL(NW_WRAP).href);
+    const F = ['--min-semi-space-size=4', '--max-semi-space-size=4'];
+    const capLine = (c) => 'new_space capacity ' + c + ' B is not the pinned 4 MB semi-space';
+    // in band: the node 22 reading (4123648 = 4 MB - 70,656 B), the node 24/26 reading (4194048), both edges
+    for (const c of [3932161, 4123648, 4128768, 4128769, 4194048, 4194304]) assert.equal(semiSpaceProblem(F, c), null, 'cap ' + c);
+    for (const c of [1048512, 2097152, 3932160, 4194305, 8388608]) assert.equal(semiSpaceProblem(F, c), capLine(c), 'cap ' + c);
+    assert.equal(semiSpaceProblem(F, -1), 'v8.getHeapSpaceStatistics() reports no new_space');
+    // the flag parse is unchanged: every reason byte-identical to HEAD cf956bd (an in-band capacity never rescues a bad flag)
+    const flagVectors = [
+        [[], '--min-semi-space-size=4 is not in execArgv'],
+        [['--min-semi-space-size=4'], '--max-semi-space-size=4 is not in execArgv'],
+        [['--max-semi-space-size=4'], '--min-semi-space-size=4 is not in execArgv'],
+        [['--min-semi-space-size=4', '--max-semi-space-size=8'], '--max-semi-space-size=8 is not 4'],
+        [['--min_semi_space_size=4', '--max_semi_space_size=4'], null],
+        [['--min-semi-space-size=4', '--max-semi-space-size'], '--max-semi-space-size= is not 4'],
+        [['--min-semi-space-size=04', '--max-semi-space-size=4'], '--min-semi-space-size=04 is not 4'],
+    ];
+    for (const [flags, want] of flagVectors) {
+        assert.equal(semiSpaceProblem(flags, 4194048), want, JSON.stringify(flags));
+        assert.equal(semiSpaceProblem(flags, 4123648), want, JSON.stringify(flags) + ' at the node 22 capacity');
+    }
+});
+
+test('0b the wrap job refuses SOAK_NEARWRAP before the semi-space probe: NEARWRAP + --expose-gc only exits 2 on the NEARWRAP line', () => {
+    const src = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
+    const d = nwDerive(src, { phase: 'zero', k: 63 });
+    const NWROOT = join(SOAK, 'out', 'nearwrap');
+    const derivedDirs = () => (existsSync(NWROOT) ? readdirSync(NWROOT) : []).filter((n) => n.indexOf(d.derivedSha256.slice(0, 7)) === 0);
+    for (const n of derivedDirs()) rmSync(join(NWROOT, n), { recursive: true, force: true });
+    const out = join(TMP, 'nw-wrap-gconly.jsonl');
+    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP], { cwd: ROOT, env: wrapEnv({ SOAK_NEARWRAP: 'zero:63', SOAK_WRAP: 'W1', SOAK_OUT: out }), encoding: 'utf8', timeout: 60000 });
+    assert.equal(w.status, 2, w.stderr);
+    assert.equal(w.stderr, 'soak: CONFIG -- the wrap job drives the real kernel; a NEARWRAP kernel is refused\n');
+    assert.equal((w.stderr.match(/semi-space/g) || []).length, 0, 'no semi-space line');
+    assert.equal(w.stdout, '');
+    assert.equal(existsSync(out), false, 'no stream');
+    assert.deepEqual(derivedDirs(), [], 'no derived kernel written under any name');
+});
+
+// --expose-gc stays on: without it readConfig refuses first ('--expose-gc is required'), which would not reach the probe
+test('0b control: without SOAK_NEARWRAP and without the semi-space flags the wrap job still exits 2 on the semi-space probe', () => {
+    const out = join(TMP, 'wrap-noflags.jsonl');
+    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP], { cwd: ROOT, env: wrapEnv({ SOAK_WRAP: 'W1', SOAK_OUT: out }), encoding: 'utf8', timeout: 60000 });
+    assert.equal(w.status, 2, w.stderr);
+    assert.equal(w.stderr, 'soak: CONFIG -- the wrap job needs the pinned semi-space: --min-semi-space-size=4 is not in execArgv (run: npm run soak:wrap)\n');
+    assert.equal(w.stdout, '');
+    assert.equal(existsSync(out), false, 'no stream');
 });

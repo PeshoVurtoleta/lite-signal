@@ -61,6 +61,9 @@
  * Config: SOAK_WRAP (check subset), SOAK_REPR (=1: wrap-repr.mjs child, NOTE only), SOAK_KERNEL, SOAK_OUT,
  * SOAK_REQUIRE_PROVENANCE. A burn-in key (SOAK_CYCLES, SOAK_OPS, SOAK_SEED, SOAK_LANES, SOAK_SMOKE / --smoke,
  * SOAK_REPLAY, SOAK_SHRINK, SOAK_MUSTFAIL) would be silently ignored here, so it exits 2.
+ * Refusal order (each exits 2 with one CONFIG line): pure config first (readConfig, a burn-in key, SOAK_NEARWRAP),
+ * then the environment (the pinned semi-space, semiSpaceProblem), then the kernel (import, KERNEL_NEARWRAP, API),
+ * then provenance (buildHeader; SOAK_REQUIRE_PROVENANCE).
  *
  * COLD orchestration; the hot bodies are the drive chunks and the W5 steps.
  */
@@ -91,7 +94,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export { SEMI_SPACE_MB };   // defined in config.mjs; re-exported here
 const SEMI_BYTES = SEMI_SPACE_MB * 1048576;
-const SEMI_TOL = 65536;            // new_space used + available reads 4 MB - 256 B with the pinned flags
+// new_space used + available with the pinned flags reads 4 MB - 256 B on node 24 / 26 and 4 MB - 70,656 B
+// (4123648) on node 22. The band (4 MB - 4 MB/16, 4 MB] admits both with 3.7x headroom over node 22 and no
+// per-major table; the flags take whole MB, so the nearest wrong pin (3 MB, 5 MB) is 1 MB away.
+const SEMI_TOL = SEMI_BYTES / 16;
 const HEARTBEAT_MS = 5000;
 const NS_K_SET = W5_ITER;          // transient window, set / batch classes: <= 32 B/op x 20000 = 640 KB << 4 MB
 const NS_WINDOWS = W5_BATCHES;     // windows per lane; steady state = min over windows 1..n-1
@@ -121,7 +127,8 @@ function newSpaceCapacity() {
 /**
  * null when the pinned 4 MB semi-space is in force, else the reason. BOTH flags must be on the command line
  * with value 4 and no other value for either (a later flag wins in V8), AND v8.getHeapSpaceStatistics()
- * must show a 4 MB new space: --min alone starts at 4 MB but grows, --max alone starts at 1 MB.
+ * must show a 4 MB new space: --min alone starts at 4 MB but grows, --max alone starts at 1 MB. "4 MB" is the
+ * band (SEMI_BYTES - SEMI_TOL, SEMI_BYTES] = (3932160, 4194304] B, the same on every node major.
  */
 export function semiSpaceProblem(execArgv, capacity) {
     const seen = { min: [], max: [] };
@@ -653,11 +660,12 @@ async function main() {
     for (const k of BURN_IN_KEYS) {
         if (cfg.record[k].source !== 'default') configExit((k === 'SOAK_SMOKE' && cfg.record[k].source === 'argv' ? '--smoke' : k) + ' is a burn-in key (main.mjs); the wrap job would ignore it -- unset it (select checks with SOAK_WRAP)');
     }
+    // refused BEFORE the kernel loads: kernel.mjs would derive and write a NEARWRAP kernel at import. A pure-config
+    // refusal, so it also fires before the semi-space probe: the env fault is named on any host and any flag set.
+    if (cfg.nearwrap !== null) configExit('the wrap job drives the real kernel; a NEARWRAP kernel is refused');
     const semi = semiSpaceProblem(process.execArgv, newSpaceCapacity());
     if (semi !== null) configExit('the wrap job needs the pinned semi-space: ' + semi + ' (run: npm run soak:wrap)');
 
-    // refused BEFORE the kernel loads: kernel.mjs would derive and write a NEARWRAP kernel at import
-    if (cfg.nearwrap !== null) configExit('the wrap job drives the real kernel; a NEARWRAP kernel is refused');
     const KM = await import('./kernel.mjs');   // the kernel loads HERE, through the SOAK_KERNEL seam
     if (KM.KERNEL_NEARWRAP !== undefined && KM.KERNEL_NEARWRAP !== null) configExit('the wrap job drives the real kernel; a NEARWRAP kernel is refused');
     const probe = KM.K.createRegistry({ maxNodes: MAX_NODES });

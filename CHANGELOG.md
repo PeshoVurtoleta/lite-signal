@@ -107,6 +107,31 @@ ACCEPT, PRELIMINARY -- 0 / 45 sweep rows and 0 / 6 microscope scenarios beyond t
 KAIROS and BROADCAST are bimodal and their fast-mode ratios are 0.984 and 0.994. The full
 BENCH-CAMPAIGN runs before release.
 
+### Fixed -- soak wrap job: `soak:wrap` refuses a NEARWRAP config first; semi-space probe tolerance (dev-only, not shipped)
+
+`npm run soak:wrap` (bench/soak/wrap.mjs) now refuses a `SOAK_NEARWRAP` config before it probes the
+pinned semi-space. Refusal order: burn-in keys, `SOAK_NEARWRAP`, semi-space pin, kernel import,
+`KERNEL_NEARWRAP`, then provenance. The semi-space probe accepts a `new_space` capacity in
+(4 MB - 256 KB, 4 MB] on every node major (`SEMI_TOL = SEMI_BYTES / 16`; node 24 / 26 read
+4 MB - 256 B, node 22 reads 4 MB - 70,656 B), so the wrap job runs on node 22 and CI's node 22 job
+sees the NEARWRAP CONFIG line (test/41 "the wrap job refuses a NEARWRAP kernel" was red on ubuntu
+node 22 since f64e05c). The flag parse is unchanged: unpinned, only `--min-...`, only `--max-...` and any
+value other than 4 are still refused. Gates: test/41 (`semiSpaceProblem` band + flag vectors,
+NEARWRAP with `--expose-gc` only).
+
+### Fixed -- zerogc torture: an all-inverted retained-bytes witness is re-measured, then reported INCONCLUSIVE (dev-only, not shipped)
+
+The retained-bytes witness in `bench/torture/zerogc-torture.mjs` (new helper
+`bench/torture/helpers/alloc-verdict.mjs`) re-measures a run whose every batch bracket inverted
+(gc-profiler 1.16.0 verdict `inconclusive`, `bytesPerCall` null, settled) up to 3 attempts
+(`ALLOC_ATTEMPTS`). A measured fail and an unsettled run are never retried (an unsettled run FAILs as
+UNVERIFIABLE). A witness still unmeasured after 3 attempts is a labelled INCONCLUSIVE note, not a
+FAIL: the scenario stands on its exact counters (`poolGrowths` / `totalAllocations` / `activeNodes`)
+and, for steady scenarios, the scavenge + nursery window, and the PASS line says so ("(byte witness
+INCONCLUSIVE on N scenario(s))"). Previously an inconclusive verdict failed the `semantic torture` CI
+step (seen once: churn-plain, 8 inverted batches, ubuntu node 22). Gates: new
+`test/55-zerogc-alloc-verdict.test.mjs` (17 tests).
+
 ### Added -- soak stream schemaVersion 2, `SOAK_NEARWRAP` (dev-only, not shipped)
 
 The soak stream `SCHEMA_VERSION` is 2: the header carries `nearwrap` (null, or `{phase, k, rewrites, baseSha256,
