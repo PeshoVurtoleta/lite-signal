@@ -11,7 +11,7 @@ closed after the link-SoA fork (LEDGER #27) passed the gates while costing +10-3
 shapes, a gate-1 conformance runner, and the `bench/soak/` randomized soak harness. `Watch.js`
 changes `watch()`'s fire order and `stop()` ("### Fixed -- `watch()`" below) and `when()`'s cancel
 handle ("### Fixed -- `when()`" below; `Signal.d.ts` gains doc comments only); `Signal.js` changes the tracking-flag fold described below (no
-API, no behavior change), the F29 version-counter fix ("### Fixed" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
+API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F21 flushEffects fix ("### Fixed -- engine: stale effect-queue entries skip a node that is no longer QUEUED" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
@@ -106,6 +106,48 @@ M4 Pro, Node 26.8.2, quiet-lock, load 1.05-2.91; Chrome busy during part of the 
 ACCEPT, PRELIMINARY -- 0 / 45 sweep rows and 0 / 6 microscope scenarios beyond the A/A noise;
 KAIROS and BROADCAST are bimodal and their fast-mode ratios are 0.984 and 0.994. The full
 BENCH-CAMPAIGN runs before release.
+
+### Fixed -- engine: stale effect-queue entries skip a node that is no longer QUEUED (F21, LEDGER #35)
+
+A `CycleError: flush passes exceeded` abort, or a dispose in the same pass, left stale entries in the
+effect queue. A later flush then ran whatever node had recycled the slot: a spurious body run, a second
+scheduler call, or a bogus creation-time `CycleError` ("Infinite effect loop detected") from an unrelated
+`effect()`. Shipped in 1.5.2. Fix "qskip2" (c2f123c, one code hunk in `flushEffects`): the flush loop runs a
+queue entry only while `(node.flags & FLAG_QUEUED) !== 0` (it tested `FLAG_EFFECT`), and the test now
+guards the scheduler branch too. Only effects are ever QUEUED; QUEUED is set only in `markDownstream`
+together with its one push, and cleared by `executeEffect` (dispose and destroy zero every flag), so every QUEUED period owns one entry (a
+scheduled effect keeps QUEUED until its thunk runs). 0 B. Bytecode length and frame size equal the pre-fix
+tree in all 9 tracked functions (disposeNode 667, nodeMiss 295, releasePinned 45, createNode 229,
+flushEffects 440, executeEffect 448, markDownstream 173, pullComputed 797, destroy 619); no new flag bit, no
+capacity change. The rejected alternative (fix3, slot pinning) threw `CapacityError` at N=520 under the
+default registry.
+
+KNOWN residuals (maintainer ruling D5, "Document as KNOWN"), both equal to the pre-fix engine and pinned as
+KNOWN rows in test/58: R1: a recycled scheduled resident that is legitimately queued in the window gets 3
+scheduler calls (ideal 2) and 2 body runs. R2: a recycled unscheduled resident that is legitimately queued
+runs early at the stale entry's position (preservation row 3 pins the order "C0,C,M"); when a later write
+in the same pass re-queues it (KNOWN R2), 3 body runs (ideal 2), last value 2 (correct).
+
+New `test/58-f21-stale-queue.test.mjs` (21 rows, 22 tests with the kernel diagnostic; 9 are red on the pre-fix engine: probe-f21, P2_Afirst, P3,
+P8, d, D1, rows 7 / 8, PX3; preservation rows P5, P7, P2_Bfirst, row 3, C1 (N=1000, default registry), C3,
+U1, R2-ABA, self-dispose and keep-QUEUED; KNOWN rows R1, R2). Mutants Q1-Q5, each caught on its named rows
+(Q1 no QUEUED test: 9 red; Q2 test on the executeEffect branch only: 6; Q3 on the scheduler branch only: 3;
+Q4 EFFECT|COMPUTING: 6; Q5 inverted polarity: 19). `test/torture.mjs` gains phase QS (1e5 `s.set` with one
+sync-scheduled and one plain effect: 0 B/op in-process and in the pinned semi-space child lane, maxMajor 0)
+and phase F21 retention (1e3 x {`createRegistry({maxFlushPasses: 8})`, the P3 shape, `destroy()`} -> lite-leak
+tracker size 0); the pre-fix engine gives size 1000 there, and a QS-teeth control gives 135.975 B/op in the
+child lane. `npm test` at be0fe70: 1372 tests / 1356 pass / 0 fail / 7 skip / 9 todo.
+
+Soak wiring (dev-only, not shipped; be0fe70): `divergences.json` DIV-F21 `fixedIn` null -> "A2-F21"
+(ruling D2), so it explains a failure only on a pre-fix `controls.json` kernel; `main.mjs` and
+`SoakReport.mjs` classify with `includeFixed` = the kernel is a known control (the header's `controls.name` identity; SoakReport tests `controls.name !== null`); DIV-F22 stays temporary. The GAP
+P-INTERIM-ERROR-clean is deleted (GAPS 25 -> 24) and becomes a short-battery `_mustfail.mjs` control on
+headpatched + the qskip2 hunk (ERROR lane, 11 x DEFAULT_OPS, expects exit 1 explained by DIV-F22 only).
+Decision B39-D1 is PENDING maintainer confirmation: the control uses headpatched + the hunk, not the tree
+base, because the tree ERROR lane fails 17039 of 17050 worlds (DIV-F5 / F6 / F22 plus 3 known=none
+recovery-after-throw BREACHes (the 3 known=none breaches also appear on the pre-F21 740edfc kernel); P-TREE is still a GAP), while headpatched + hunk
+gives 4077 worlds, 3020 failing, 1 BREACH (DIV-F22). Until the tree base can host it, the proof that the
+shipped tree's ERROR lane is clean of F21 rests on test/58. Wiring gate: test/46 "fixed-entry wiring".
 
 ### Fixed -- soak wrap job: `soak:wrap` refuses a NEARWRAP config first; semi-space probe tolerance (dev-only, not shipped)
 
@@ -217,8 +259,8 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
   BATCH, ERROR and NEST lanes (tests 40, 41 and 43). Against the published 1.5.2 the lanes find F5, F6, F7 and F15;
   the ERROR lane found F21 and F22.
 - S1c: `gates.mjs` (verdict ladder; check-floor, taint-skip and coverage evidence gates that go INCONCLUSIVE, never
-  PASS), `boundary.mjs` (forced-GC drain, tracker and WeakRef witness), `divergences.json` (DIV-F21 and DIV-F22 are
-  temporary), `main.mjs` (`npm run soak`, `soak:smoke`), `replay.mjs` and `shrink.mjs` (`soak:replay`, `soak:shrink`).
+  PASS), `boundary.mjs` (forced-GC drain, tracker and WeakRef witness), `divergences.json` (DIV-F22 is temporary;
+  DIV-F21 is fixed, fixedIn "A2-F21"), `main.mjs` (`npm run soak`, `soak:smoke`), `replay.mjs` and `shrink.mjs` (`soak:replay`, `soak:shrink`).
 - soak: new hard oracle OB (batch-early-run, QA F5): an effect that already ran must not re-run inside an open batch;
   cycle `checks` gain OB.
 - soak: provenance `gitInfo` scrubs GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR / GIT_OBJECT_DIRECTORY
@@ -265,9 +307,9 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
 is survival, not allocation), section G (#27 / #28 and the independent re-measure), section
 H (the 2026-09 weak-point analysis of Andrii's harness: #29 rejected, #30 candidate, #31
 null), and the new gate rules. README's VersionMatrix section lists all seven workloads.
-`LEDGER.md` section J records two open engine defects found by the 1.6.0 soak work: #34 (F20,
-int32 closure counters allocate on pointer-compressed V8) and #35 (F21, stale queue after a
-CycleError). New `decisions/0001-soak-design.md` (dev-only ADR) records the soak design, the
+`LEDGER.md` section J records two engine defects found by the 1.6.0 soak work: #34 (F20,
+int32 closure counters allocate on pointer-compressed V8; open) and #35 (F21, stale queue after a
+CycleError; fixed in this cycle, with KNOWN residuals R1 / R2). New `decisions/0001-soak-design.md` (dev-only ADR) records the soak design, the
 F5 / F6 decisions and their rejected alternatives.
 
 ## [1.5.2] -- 2026-09-19

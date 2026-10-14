@@ -73,11 +73,28 @@ Matching is all-of on engine, lane, oracle, sig, op, step/world/prior scenario a
 Entries are `fix` (an audit finding the engine fix will close), `contract` (a deliberate divergence from the naive
 model) or `engine`. A tolerated failure is still a FAIL: it is tagged, never forgiven.
 
-DIV-F21 (CycleError surfaces from a stale queue entry; divergences.json:145) and DIV-F22 (batch body error replaced by
-the close-flush error; :156) are TEMPORARY: both `fixedIn: null, fixBy: A2`. When A2 lands the entry flips to fixedIn,
-the GAP `P-INTERIM-ERROR-clean` becomes an active control, and a fixed entry explains a failure only for a pre-fix
-control kernel (classify opts.includeFixed). F22 is tagged F6+F22 when DIV-F6 itself explains the replacing token, F22
+DIV-F21 (CycleError from a stale queue entry) is FIXED: fixedIn A2-F21 (c2f123c, qskip2; ruling D2 2026-10-14).
+It explains a failure only on a pre-fix controls.json kernel: main.mjs failureRecord and SoakReport checkCycles
+both pass includeFixed (main.mjs: the kernel is a known control, the header's controls.name identity; SoakReport: controls.name !== null). The GAP P-INTERIM-ERROR-clean is now an active short-battery
+control: headpatched + the A2-F21 hunk, ERROR at 11 x DEFAULT_OPS, 'explained' by DIV-F22 only (the tree's ERROR
+lane still fails on F5 / F6 + 3 known=none recovery-after-throw, so the control cannot use the tree base before
+A1-A3). DIV-F22 (batch body error replaced by the close-flush error) stays TEMPORARY (fixedIn null, fixBy A2).
+F22 is tagged F6+F22 when DIV-F6 itself explains the replacing token, F22
 when it was a predicted effect-body escape (the census corrected 17 -> 16 + 1, f21-census.json "correction").
+
+Amendment 2026-10-14 (burst 39, F21 B3, be0fe70):
+- B39-D1, PENDING maintainer confirmation (reviewer: "acceptable for now"): the control P-INTERIM-ERROR-clean runs on
+  base headpatched + the qskip2 hunk, NOT on the base 'tree'. The tree ERROR lane (11 x 100000) fails 17039 of 17050
+  worlds with BREACHes DIV-F5 / F6 / F22 plus 3 known=none recovery-after-throw (the 3 known=none breaches also appear on the pre-F21 740edfc
+  kernel; P-TREE is still a GAP); headpatched + hunk: 4077 worlds, 3020 failing, 1 BREACH (DIV-F22). Cost: no
+  _mustfail control runs the SHIPPED tree's ERROR lane clean of F21; that proof rests on test/58 until the tree base
+  can be used (test/45 teeth k pins the control's flush loop == the live Signal.js). Options: (a) keep [recommended];
+  (b) move it back to a GAP until A1-A3.
+- Reviewer NIT: includeFixed is "any control" (controls.name !== null), not "a control older than fixedIn". Safe
+  while controls.json holds only rev152 / headpatched; a post-fix control added later would fail open.
+- Reviewer NIT: replay.mjs / shrink.mjs classify with includeFixed false (fails closed: a replayed F21 world on
+  headpatched prints known=none where the main run printed known=DIV-F21).
+- The wiring gate is test/46 "fixed-entry wiring".
 
 ### 6. Oracle OB (F5, QA finding 5): batch-early-run -- adopted
 
@@ -166,23 +183,23 @@ Release eligibility reads no verdict: a consistent release-size tree stream exit
 ### 10. The teeth registry (a gate that cannot fail is not a gate)
 
 bench/soak/teeth.mjs holds, by import and never by copy:
-- `universe()` (43 ids at HEAD): lane:, gate:, oracle:, sig:<oracle>:<sig>, cause: ids plus `config` and `report`.
+- `universe()` (46 ids at be0fe70): lane:, gate:, oracle:, sig:<oracle>:<sig>, cause: ids plus `config` and `report`.
   Excluded on purpose (teeth.mjs:24-31): REPORT_ONLY_GATES, REASONS, WRAP_CHECKS, MUSTFAIL_MODES.
-- `CHECKS` (31 ids): id -> controls that turn it red. `T-cfg-*` must resolve every config control (>= 16);
+- `CHECKS` (34 ids at be0fe70): id -> controls that turn it red. `T-cfg-*` must resolve every config control (>= 16);
   `report` maps to test/46's TEST_ANCHORS.
-- `GAPS` (26 at HEAD): controls the SPEC asks for that cannot exist yet, each with why (file:line), until, and `covers`
+- `GAPS` (24 at be0fe70): controls the SPEC asks for that cannot exist yet, each with why (file:line), until, and `covers`
   (the universe ids it stands in for). GAPS may only shrink.
 - `UNREACHABLE` (4): cause:lane-status, replay-ops-guard, report-crash, report-registry-config, each with a proof and
   an anchor that must occur EXACTLY once. The last two are "unreachable from argv or a stream; reachable only from a
   corrupted checkout (untested)".
 - `audit({controls, ceiling, max})` REQUIRES all three (never defaulted); returns the problem list.
-test/45 (17 tests, no child process) holds the shrink-only literals: the 26-name GAPS ceiling and max 26, the 11
-GAP-covered universe ids (exact set equality), CHECKS_MIN 31 (an exact floor), EVIDENCE_CAUSE {coverage: 'scenario'}
+test/45 (22 tests at be0fe70, no child process) holds the shrink-only literals: the 24-name GAPS ceiling and max 24, the 11
+GAP-covered universe ids (exact set equality), CHECKS_MIN 34 (an exact floor), EVIDENCE_CAUSE {coverage: 'scenario'}
 (interim: the coverage cause is still built inside LaneGates), and a pairing check: EVERY mapped control must expect
 the text its id would print (oracle=/sig= via oracleFamily, lane=, gate=, the INCONCLUSIVE head, a CONFIG line, test
 anchors). It also checks the ^L- / ^(?!L-) partition, validSpec for all controls, staleAnchors and a 1-byte anchor
 mutant ("2 matches" for the severTail anchor), and must-fail copies of every audit problem class.
-`_mustfail.mjs` (30 controls: 14 non-config + 16 T-cfg) runs each through the REAL main.mjs on a scratch kernel
+`_mustfail.mjs` (33 controls at be0fe70: 17 non-config + 16 T-cfg) runs each through the REAL main.mjs on a scratch kernel
 directory: exactly-once anchors, exact exit, every spec on ONE BREACH/INCONCLUSIVE head, no CRASH, END sentinel last,
 and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short (^(?!L-)); `npm run soak:teeth:long` = ^L-;
 MUSTFAIL_LIST=1 builds all and runs none; MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=1 prints matched heads.
@@ -192,7 +209,8 @@ MUSTFAIL_LIST=1 builds all and runs none; MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=
 - L-REV-152 has 9 specs: the 4 SPEC ones plus O1 computed-mismatch, O1 effect-stale, O2 glitch (BATCH), O4 effect-dead
   and O6 expected-escape-missing (ERROR); each is a unique tooth (_mustfail.mjs:265-291).
 - L-P-INTERIM = GRAPH,BATCH at 11 x DEFAULT_OPS, exit 0, 22 clean boundaries; L-P-INTERIM-ERROR is kind `explained`
-  (exit 1, every BREACH known in {DIV-F21, DIV-F22}). Amendment 13.
+  (exit 1, every BREACH known in {DIV-F21, DIV-F22}; still true because headpatched is a pre-fix control kernel, so
+  includeFixed is true there). Amendment 13.
 - T-cov-BATCH runs --smoke like T-cov-GRAPH (_mustfail.mjs:346); T-cov-ERROR is `explained` at exit 1
   because a headpatched ERROR run always shows F21/F22 BREACHes, and FAIL outranks INCONCLUSIVE.
 - T-cfg is 16 rows (the S5 polyfill row is deferred); the provenance row uses a zero-commit repo copy under
