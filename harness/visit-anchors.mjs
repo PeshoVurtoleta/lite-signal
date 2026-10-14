@@ -11,8 +11,9 @@
 // may survive -- otherwise instrument() throws and the caller refuses to run
 // (visit-anatomy exits 2). A drift Error carries `.drift`, one
 // "<anchor>..." found Nx, expected Mx line per drifted anchor, in the format
-// the tool prints (CR / LF inside the 48-char label are escaped as \r / \n,
-// so every drift line is ONE line).
+// the tool prints (CR / LF / U+2028 / U+2029 inside the 48-char label are
+// escaped as \r / \n / \u2028 / \u2029, so every drift line is ONE line;
+// the module-reference refusal escapes its quoted match the same way).
 //
 // Every exported table is frozen (NAMES, I, IDX, EDITS and each EDITS entry):
 // an importer cannot retarget an anchor or a counter index for the next call.
@@ -120,7 +121,13 @@ export const EDITS = Object.freeze([
 // Not after `from`: a backtick. A static specifier cannot be a template, and
 // the engine's JSDoc says "from `x`" in prose (Signal.js:468, :628).
 // NOT caught: code built at run time (eval / new Function over concatenated
-// strings) and process.getBuiltinModule(...).
+// strings), process.getBuiltinModule(...), and realm patches to intrinsics
+// (RegExp.prototype.exec, String.prototype.split / join,
+// Function.prototype.call). NOTE (burst 33 ruling): instrument() calls the
+// live RegExp.prototype.exec, split and join. Capturing exec at import would
+// still leave split / join / call and anything patched BEFORE this module is
+// imported open, so nothing is captured: an importer that patches the realm
+// owns what instrument() returns.
 // A future engine COMMENT that quotes an import (`import {x} from "y"`) is
 // refused too -- intended: the fix is an EDITS strip, never a weaker pattern.
 // instrument() uses MODULE_REF_RE, which is never exported. MODULE_REF is a
@@ -129,6 +136,12 @@ export const EDITS = Object.freeze([
 // RegExp.prototype.compile(), which is why no check reads it.
 const MODULE_REF_RE = /\bimport\s*(?:\/\*[\s\S]*?\*\/\s*|\/\/[^\n\r\u2028\u2029]*[\n\r\u2028\u2029]\s*)*[("'`.{*]|\bfrom\s*(?:\/\*[\s\S]*?\*\/\s*|\/\/[^\n\r\u2028\u2029]*[\n\r\u2028\u2029]\s*)*["']/;
 export const MODULE_REF = Object.freeze(new RegExp(MODULE_REF_RE));
+
+// Every line this module emits stays ONE line: CR, LF and the two JS-only
+// line terminators U+2028 / U+2029 (which JSON.stringify leaves raw) are
+// escaped. Text without them is returned unchanged.
+const oneLine = (t) => t.replace(/\r/g, "\\r").replace(/\n/g, "\\n")
+    .replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 
 // PURE: engine source in, instrumented source out. Throws (never returns a
 // half-instrumented string) on a non-string, on an already-instrumented
@@ -146,9 +159,9 @@ export function instrument(src) {
     for (const [anchor, replacement, expected] of EDITS) {
         const n = out.split(anchor).length - 1;
         if (n !== expected) {
-            // Escape CR / LF so a multi-line anchor (linkAlloc) still prints as
-            // ONE drift line; single-line anchors print byte-identical to 2026-10-13.
-            const label = anchor.slice(0, 48).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+            // oneLine() so a multi-line anchor (linkAlloc) still prints as ONE
+            // drift line; single-line anchors print byte-identical to 2026-10-13.
+            const label = oneLine(anchor.slice(0, 48));
             drift.push(`"${label}..." found ${n}x, expected ${expected}x`);
             continue;
         }
@@ -161,7 +174,7 @@ export function instrument(src) {
     }
     const ref = MODULE_REF_RE.exec(out);
     if (ref) {
-        throw new Error(`visit-anatomy: module reference ${JSON.stringify(ref[0])} survives instrumentation -- the engine is single-file and zero-dependency, so any import / export-from / import() / import.meta left after the Watch.js strip is drift; refusing rather than load an uncounted module`);
+        throw new Error(`visit-anatomy: module reference ${oneLine(JSON.stringify(ref[0]))} survives instrumentation -- the engine is single-file and zero-dependency, so any import / export-from / import() / import.meta left after the Watch.js strip is drift; refusing rather than load an uncounted module`);
     }
     return out;
 }

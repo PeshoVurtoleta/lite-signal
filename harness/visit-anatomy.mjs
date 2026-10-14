@@ -21,20 +21,51 @@
 // (a pre-walk pull that frees the link the walk stands on: the A1.9
 // LINK-FREED guards -- the `link.source !== dep || link.target !== node`
 // checks in pullComputed's pre-walk and in pullMoved -- plus a dep-walk count
-// and a zero-retention witness) -- 16 more pins (37), each red on a named
-// mutant. NOT covered: the A1.9 disposed-READER guards (`node.gen !==
-// savedGen` after each pre-walk); no shape disposes the reader itself.
+// and a zero-retention witness) -- 16 more pins (37), then a19-pull-aba,
+// a19-effect-aba, a19-effect-relink and a19-pull-relink (a pre-walk pull that
+// disposes the READER itself, whose slot and link are recycled at once: the
+// A1.9 disposed-reader guards -- `node.gen !== savedGen` after each pre-walk
+// -- and each of the four halves of the two link checks alone: a recycled
+// reader slot keeps the link's target (pcTargetOnly -> a19-pull-aba,
+// pmTargetOnly -> a19-effect-aba), a same-source relink keeps its source
+// (pcSourceOnly -> a19-pull-relink, pmSourceOnly -> a19-effect-relink)) --
+// 24 more pins (61), each red on a named mutant or an integrity witness
+// (aba: the slot really was recycled; zRuns: the stranger's body runs
+// exactly twice per op -- genNoBump runs it a third time; linkGrowth: no
+// link constructed after op 1 -- linkNoReuse; linkSame: the freed link is
+// the one re-wired -- linkSecond; liveDelta).
+// NOT pinned: eeNoStamp (executeEffect's no-run evalVersion stamp dropped)
+// is equivalent on a correct engine except across the 2^31 band; current
+// witness = F-b33-1 (a pre-walk pull that writes an earlier-checked signal
+// dep is absorbed by that stamp -- a lost update on every engine since wt0;
+// eeNoStamp shows the write one queueing late). A pin there would bless the
+// bug.
 //
 // ERA NOTE: the a19-* pins describe the A1.9+ engine. An engine without the
-// A1.9 link-freed guards MAY fail exactly a19-pull-freed.extra:fresh and
-// a19-effect-freed.extra:reruns; whether it does depends on what else it
-// lacks. wt0 (7f707ccd) passes all 37: it also lacks A1 r4's gen check
-// before the value write, so the self-disposed X still bumps its version and
-// that moved version re-runs the reader before the walk reaches the freed
-// link (wt0 with only that check added fails exactly those two pins). The
-// tool does not check the engine's era: the expected-red set per kernel lives
-// in bench/soak/calibration/golden/visit-anatomy.golden.json. Any other red
-// pin, or a liveDelta != 0, is an engine finding.
+// A1.9 guards MAY fail exactly a19-pull-freed.extra:fresh and
+// a19-effect-freed.extra:reruns (ruling R1) plus any of the 24 pins of the
+// four reader-disposed shapes (R1 extended, burst 33); whether it does
+// depends on what else it lacks. wt0 (7f707ccd) passes the first 37: it also
+// lacks A1 r4's gen check before the value write, so the self-disposed X
+// still bumps its version and that moved version re-runs the reader before
+// the walk reaches the freed link (wt0 with only that check added fails
+// exactly those two pins). Of the 24 it fails exactly the four depWalk pins
+// (no link-moved check: each reader walks one edge into its recycled
+// successor's list). The tool does not check the engine's era: the
+// expected-red set per kernel lives in
+// bench/soak/calibration/golden/visit-anatomy.golden.json. Any other red pin,
+// a SHAPE CRASH, or a liveDelta != 0, is an engine finding.
+//
+// LINK REUSE AND IDENTITY: the four link-check halves are only reachable
+// because the link the reader's dispose frees is the very next link wired
+// (the engine's link free list is LIFO), so it comes back with the same
+// target or the same source. Both facts are witnessed, not assumed:
+// linkGrowth 0 (no link constructed after op 1: every link came off the free
+// list; linkNoReuse reads 39,936) and linkSame == OPS (the successor's first
+// dep link IS the reader's freed link, compared as engine objects through
+// node_ptr -> headDep; a free list that pushes the freed link second reads
+// 0). If either goes red the half-check pins may have lost their teeth:
+// re-run pcTargetOnly, pcSourceOnly, pmTargetOnly and pmSourceOnly.
 //
 // INSTRUMENTATION IS FAIL-CLOSED: each counter is injected at an exact anchor
 // string with an expected occurrence count. If the engine's source drifts and
@@ -134,6 +165,11 @@ function lcg(seed) {
     return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return (s >>> 8) / 16777216; };
 }
 const SIZES = { maxNodes: 1 << 14, maxLinks: 1 << 16, prealloc: "eager", onCapacityExceeded: "grow" };
+// The reader-disposed shapes build their pools LAZILY (1024-link chunks on a
+// free-list miss), so linkPoolPopulation is a link-reuse witness: after op 1
+// every link they wire must come off the free list (linkGrowth 0). An eager
+// pool hides a free list that never refills behind its 65,536 prebuilt links.
+const LAZY = { maxNodes: 1 << 14, maxLinks: 1 << 16, prealloc: "lazy", onCapacityExceeded: "grow" };
 // Retention witness for the create / dispose shapes: the five live gauges
 // disposeNode / freeLink decrement (activeLinks, activeNodes, signals,
 // computeds, effects), after minus before, summed as ABSOLUTE deltas so a
@@ -141,6 +177,22 @@ const SIZES = { maxNodes: 1 << 14, maxLinks: 1 << 16, prealloc: "eager", onCapac
 // loop made was released.
 const LIVE = ["activeLinks", "activeNodes", "signals", "computeds", "effects"];
 const liveDelta = (a, b) => LIVE.reduce((t, k) => t + Math.abs(b[k] - a[k]), 0);
+// ABA witness for the *-aba / relink shapes: the node a handle points at, via
+// the engine's own `node_ptr` symbol (an own property on every signal,
+// computed and effect handle). Fails closed: a handle without it throws (a
+// SHAPE CRASH), never compares undefined === undefined.
+const ptr = (h) => {
+    const k = Object.getOwnPropertySymbols(h).find((y) => y.description === "node_ptr");
+    if (k === undefined) throw new Error("handle carries no node_ptr symbol");
+    return h[k];
+};
+// Link-identity witness (linkSame): the first dep link of the node behind a
+// handle -- the engine's own link object. Fails closed to undefined (never
+// throws): a missing handle, node_ptr or headDep makes linkSame count 0.
+const headDepOf = (h) => {
+    try { const n = ptr(h); return n !== null && typeof n === "object" ? n.headDep : undefined; } catch { return undefined; }
+};
+const sameLink = (L, h) => typeof L === "object" && L !== null && headDepOf(h) === L;
 
 const SHAPES = {
     // Stable steady-state: deep chain x16 + tail effect, 10k writes. The
@@ -362,12 +414,207 @@ const SHAPES = {
         const d = diff(t0, snap());
         report(OPS, d, { reruns, liveDelta: liveDelta(st0, r.stats()) });
     },
+    // A1.9 READER DISPOSED (AND RECYCLED) INSIDE pullComputed's PRE-WALK (ABA):
+    // Y reads X; once s moves, X's body disposes Y, creates Z (t1 + t2) and
+    // reads it untracked. Y is in its pre-walk, not COMPUTING, so disposeNode
+    // puts its slot straight on the LIFO free list: Z takes Y's node (aba) and
+    // Z's first read reuses the freed X->Y link as t1->Z. Y's walk must see the
+    // moved link, then the gen check must return before anything touches the
+    // node -- now Z's. Witness: t1.set(2) and Z must read 2 (strangerOk), and
+    // Z's body runs exactly twice per op (zRuns: its first eval + the witness
+    // read). pcGenDrop runs the recycled node instead: Z is left COMPUTING and
+    // its next read throws CycleError (counted in `cycle`, never strangerOk).
+    // pcTargetOnly keeps walking Z's list (target is still the same node).
+    // A pre-walk that never re-runs X (Z === null) is "not reached": no read,
+    // no ptr(), so strangerOk / aba go red instead of the shape crashing.
+    "a19-pull-aba": (report) => {
+        const r = E.createRegistry(LAZY);
+        const OPS = 10_000;
+        let strangerOk = 0, cycle = 0, aba = 0, zRuns = 0, pop1 = 0, linkSame = 0;
+        const st0 = r.stats();
+        zero(); const t0 = snap();
+        for (let i = 1; i <= OPS; i++) {
+            const s = r.signal(0), t1 = r.signal(0), t2 = r.signal(0);
+            let Y = null, Z = null;
+            const X = r.computed(() => {
+                if (s() !== 0) {
+                    r.dispose(Y);
+                    Z = r.computed(() => { zRuns++; return t1() + t2(); });
+                    r.untrack(() => Z());
+                }
+                return 0;
+            });
+            Y = r.computed(() => X() + 1);
+            Y();                                                   // prime: X -> Y wired, both clean
+            const L = headDepOf(Y);                                // the X->Y link the dispose frees
+            s.set(1);
+            Y();                                                   // the pre-walk pull disposes Y, recycles it as Z
+            if (sameLink(L, Z)) linkSame++;                        // ...and Z's first dep IS that link (t1 -> Z)
+            t1.set(2);
+            if (Z !== null) {
+                try { if (r.untrack(() => Z()) === 2) strangerOk++; } catch (e) {
+                    if (!(e instanceof Error && e.message.startsWith("CycleError:"))) throw e;
+                    cycle++;
+                }
+                if (ptr(Z) === ptr(Y)) aba++;
+            }
+            r.dispose(X); r.dispose(s); r.dispose(t1); r.dispose(t2);
+            if (i === 1) pop1 = r.stats().linkPoolPopulation;
+        }
+        const d = diff(t0, snap());
+        const st1 = r.stats();
+        report(OPS, d, { strangerOk, cycle, aba, zRuns, linkSame, linkGrowth: st1.linkPoolPopulation - pop1, liveDelta: liveDelta(st0, st1) });
+    },
+    // A1.9 READER DISPOSED (AND RECYCLED) INSIDE executeEffect's PRE-WALK: the
+    // same, with an effect as the reader; X's body calls the effect's own stop
+    // handle. eeGenDrop runs the recycled node (Z left COMPUTING -> CycleError).
+    "a19-effect-aba": (report) => {
+        const r = E.createRegistry(LAZY);
+        const OPS = 10_000;
+        let strangerOk = 0, cycle = 0, aba = 0, zRuns = 0, pop1 = 0, linkSame = 0;
+        const st0 = r.stats();
+        zero(); const t0 = snap();
+        for (let i = 1; i <= OPS; i++) {
+            const s = r.signal(0), t1 = r.signal(0), t2 = r.signal(0);
+            let stopE = null, Z = null;
+            const X = r.computed(() => {
+                if (s() !== 0) {
+                    stopE();
+                    Z = r.computed(() => { zRuns++; return t1() + t2(); });
+                    r.untrack(() => Z());
+                }
+                return 0;
+            });
+            stopE = r.effect(() => { X(); });
+            const L = headDepOf(stopE);                            // the X->E link the stop frees
+            s.set(1);                                              // the pre-walk pull stops E, recycles it as Z
+            if (sameLink(L, Z)) linkSame++;                        // ...and Z's first dep IS that link (t1 -> Z)
+            t1.set(2);
+            if (Z !== null) {
+                try { if (r.untrack(() => Z()) === 2) strangerOk++; } catch (e) {
+                    if (!(e instanceof Error && e.message.startsWith("CycleError:"))) throw e;
+                    cycle++;
+                }
+                if (ptr(Z) === ptr(stopE)) aba++;
+            }
+            r.dispose(X); r.dispose(s); r.dispose(t1); r.dispose(t2);
+            if (i === 1) pop1 = r.stats().linkPoolPopulation;
+        }
+        const d = diff(t0, snap());
+        const st1 = r.stats();
+        report(OPS, d, { strangerOk, cycle, aba, zRuns, linkSame, linkGrowth: st1.linkPoolPopulation - pop1, liveDelta: liveDelta(st0, st1) });
+    },
+    // A1.9 LINK RECYCLED WITH THE SAME SOURCE (pullMoved's TARGET half): E reads
+    // X; once s moves, X's body stops E, makes pad (takes E's slot: aba) and C2,
+    // and creates an effect whose X() read reuses the freed X->E link L as
+    // X -> T (same source, new target); its C2() read makes L.nextDep non-null.
+    // X is COMPUTING, so that X() read throws CycleError inside T (caught). E's
+    // pre-walk must see L's target moved and stop; pmSourceOnly (source-only
+    // check) walks on into T's list (one more edge per op). pad is a computed,
+    // so an engine that runs the recycled node runs a callable computeFn.
+    "a19-effect-relink": (report) => {
+        const r = E.createRegistry(LAZY);
+        const OPS = 10_000;
+        let aba = 0, pop1 = 0, linkSame = 0;
+        const st0 = r.stats();
+        zero(); const t0 = snap();
+        for (let i = 1; i <= OPS; i++) {
+            const s = r.signal(0);
+            let stopE = null, pad = null, C2 = null, stopT = null;
+            const X = r.computed(() => {
+                if (s() !== 0) {
+                    stopE();
+                    pad = r.computed(() => 0);
+                    C2 = r.computed(() => 7);
+                    stopT = r.effect(() => {
+                        try { X(); } catch (e) {
+                            if (!(e instanceof Error && e.message.startsWith("CycleError:"))) throw e;
+                        }
+                        C2();
+                    });
+                }
+                return 0;
+            });
+            stopE = r.effect(() => { X(); });
+            const L = headDepOf(stopE);                            // the X->E link the stop frees
+            s.set(1);                                              // the pre-walk pull stops E, relinks L as X -> T
+            if (sameLink(L, stopT)) linkSame++;                    // ...and T's first dep IS that link (X -> T)
+            if (pad !== null && ptr(pad) === ptr(stopE)) aba++;
+            r.dispose(X); r.dispose(s);
+            if (stopT !== null) stopT();
+            r.dispose(pad); r.dispose(C2);
+            if (i === 1) pop1 = r.stats().linkPoolPopulation;
+        }
+        const d = diff(t0, snap());
+        const st1 = r.stats();
+        report(OPS, d, { aba, linkSame, linkGrowth: st1.linkPoolPopulation - pop1, liveDelta: liveDelta(st0, st1) });
+    },
+    // A1.9 LINK RECYCLED WITH THE SAME SOURCE inside pullComputed's PRE-WALK
+    // (the inline check's TARGET half): the effect-relink shape with a computed
+    // reader. Y reads X; X's body disposes Y, makes pad (takes Y's slot) and
+    // C2, and creates a computed T read untracked, whose X() read reuses the
+    // freed X->Y link as X -> T and whose C2() read makes its nextDep non-null.
+    // Y's walk must see the target moved; pcSourceOnly walks on into T's list.
+    "a19-pull-relink": (report) => {
+        const r = E.createRegistry(LAZY);
+        const OPS = 10_000;
+        let aba = 0, pop1 = 0, linkSame = 0;
+        const st0 = r.stats();
+        zero(); const t0 = snap();
+        for (let i = 1; i <= OPS; i++) {
+            const s = r.signal(0);
+            let Y = null, pad = null, C2 = null, T = null;
+            const X = r.computed(() => {
+                if (s() !== 0) {
+                    r.dispose(Y);
+                    pad = r.computed(() => 0);
+                    C2 = r.computed(() => 7);
+                    T = r.computed(() => {
+                        try { X(); } catch (e) {
+                            if (!(e instanceof Error && e.message.startsWith("CycleError:"))) throw e;
+                        }
+                        return C2();
+                    });
+                    r.untrack(() => T());
+                }
+                return 0;
+            });
+            Y = r.computed(() => X() + 1);
+            Y();                                                   // prime: X -> Y wired, both clean
+            const L = headDepOf(Y);                                // the X->Y link the dispose frees
+            s.set(1);
+            Y();                                                   // the pre-walk pull disposes Y, relinks L as X -> T
+            if (sameLink(L, T)) linkSame++;                        // ...and T's first dep IS that link (X -> T)
+            if (pad !== null && ptr(pad) === ptr(Y)) aba++;
+            r.dispose(T); r.dispose(X); r.dispose(s); r.dispose(pad); r.dispose(C2);
+            if (i === 1) pop1 = r.stats().linkPoolPopulation;
+        }
+        const d = diff(t0, snap());
+        const st1 = r.stats();
+        report(OPS, d, { aba, linkSame, linkGrowth: st1.linkPoolPopulation - pop1, liveDelta: liveDelta(st0, st1) });
+    },
 };
 
 /* -- report + verify ----------------------------------------------------------- */
 const results = {};
+// A shape that throws (a mutant engine, a broken shape) ends the run with ONE
+// named stderr line and exit 1 -- never a raw stack, never a partial report.
+// process.exit runs the exit hook above, so the temp dir is removed. The
+// message stays on that one line: CR / LF / U+2028 / U+2029 are escaped. A
+// thrown value that cannot be turned into text (a throwing toString / message
+// getter, a null-prototype object, a hostile Proxy) still yields ONE line.
+const oneLineMsg = (e) => {
+    let t;
+    try { t = String(e instanceof Error ? e.message : e); } catch { t = "<thrown value cannot be converted to a string>"; }
+    return t.replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+};
 for (const [name, run] of Object.entries(SHAPES)) {
-    run((ops, d, extra) => { results[name] = { ops, d, extra }; });
+    try {
+        run((ops, d, extra) => { results[name] = { ops, d, extra }; });
+    } catch (e) {
+        console.error(`visit-anatomy: SHAPE CRASH ${name}: ${oneLineMsg(e)}`);
+        process.exit(1);
+    }
 }
 
 console.log("visit anatomy -- exact structural counters per shape (instrumented engine, LCG-deterministic)");
@@ -470,6 +717,48 @@ if (VERIFY) {
         // (or never reaches the freed link) walks a different count.
         ["a19-pull-freed", "depWalk", 2 * OPS],
         ["a19-effect-freed", "depWalk", 2 * OPS],
+        // --- B-B2d (2026-10-14): 24 pins, the A1.9 disposed-READER guards
+        // (`node.gen !== savedGen` after each pre-walk) and all four halves of
+        // the two link-moved checks. The reader's slot and link are recycled
+        // inside its own pre-walk (aba == OPS: the shape really reached the
+        // ABA; linkGrowth 0 / linkSame: the freed link itself was re-wired,
+        // see LINK REUSE AND IDENTITY above).
+        // pcGenDrop -> pull-aba strangerOk 0; eeGenDrop -> effect-aba
+        // strangerOk 0; genNoBump -> both zRuns 3x; depWalk 4x: pcTargetOnly
+        // -> pull-aba, pmTargetOnly -> effect-aba, pmSourceOnly ->
+        // effect-relink, pcSourceOnly -> pull-relink. Three dep edges per op
+        // in each shape.
+        ["a19-pull-aba", "depWalk", 3 * OPS],
+        ["a19-pull-aba", "extra:strangerOk", OPS],
+        ["a19-pull-aba", "extra:aba", OPS],
+        ["a19-pull-aba", "extra:liveDelta", 0],
+        ["a19-effect-aba", "depWalk", 3 * OPS],
+        ["a19-effect-aba", "extra:strangerOk", OPS],
+        ["a19-effect-aba", "extra:aba", OPS],
+        ["a19-effect-aba", "extra:liveDelta", 0],
+        ["a19-effect-relink", "depWalk", 3 * OPS],
+        ["a19-effect-relink", "extra:aba", OPS],
+        ["a19-effect-relink", "extra:liveDelta", 0],
+        // Fix round 1b (burst 33): the pull-side same-source relink
+        // (pcSourceOnly), the stranger's body-run count (genNoBump; unchanged
+        // by the F-b33-1 fix prototype, so it blesses no lost update) and
+        // the link-reuse witness on every reader-disposed shape.
+        ["a19-pull-relink", "depWalk", 3 * OPS],
+        ["a19-pull-relink", "extra:aba", OPS],
+        ["a19-pull-relink", "extra:liveDelta", 0],
+        ["a19-pull-aba", "extra:zRuns", 2 * OPS],
+        ["a19-effect-aba", "extra:zRuns", 2 * OPS],
+        ["a19-pull-aba", "extra:linkGrowth", 0],
+        ["a19-effect-aba", "extra:linkGrowth", 0],
+        ["a19-effect-relink", "extra:linkGrowth", 0],
+        ["a19-pull-relink", "extra:linkGrowth", 0],
+        // Fix round 2b (burst 33): link IDENTITY -- the link the reader's
+        // dispose freed is the very link its successor wired first (linkSame;
+        // linkSecond, a free list that pushes the freed link second, reads 0).
+        ["a19-pull-aba", "extra:linkSame", OPS],
+        ["a19-effect-aba", "extra:linkSame", OPS],
+        ["a19-effect-relink", "extra:linkSame", OPS],
+        ["a19-pull-relink", "extra:linkSame", OPS],
     ];
     let bad = 0;
     console.log();

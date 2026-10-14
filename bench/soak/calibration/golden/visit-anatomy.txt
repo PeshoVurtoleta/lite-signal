@@ -13,6 +13,10 @@ engine: Signal.js sha256 0ed7c8e2611786de3840aa61428d701acdd6ab2cc76740c70eb26da
   sc-reread                   0            0            0            0            0        80000       160000        80000            0        10000            0            0
   a19-pull-freed          10000        20000        10000        20000        20000            0        40000            0        40000        40000            0        20000
   a19-effect-freed        10000        20000        10000        20000        20000            0        20000            0        20000        20000        20000        20000
+  a19-pull-aba            30000        40000        40000        30000        30000            0        60000            0        50000        70000            0        30000
+  a19-effect-aba          30000        40000        40000        30000        30000            0        40000            0        40000        60000        20000        30000
+  a19-effect-relink        10000        40000        40000        20000        20000            0        40000            0        30000        40000        30000        30000
+  a19-pull-relink         10000        40000        40000        20000        20000            0        70000            0        50000        60000            0        30000
 
 per-op rates (counter / ops):
   stable-deep             17.00         0.00         0.00        17.00        17.00         0.00        32.00        16.00        16.00        17.00         1.00        17.00
@@ -26,6 +30,10 @@ per-op rates (counter / ops):
   sc-reread                0.00         0.00         0.00         0.00         0.00         8.00        16.00         8.00         0.00         1.00         0.00         0.00
   a19-pull-freed           1.00         2.00         1.00         2.00         2.00         0.00         4.00         0.00         4.00         4.00         0.00         2.00
   a19-effect-freed         1.00         2.00         1.00         2.00         2.00         0.00         2.00         0.00         2.00         2.00         2.00         2.00
+  a19-pull-aba             3.00         4.00         4.00         3.00         3.00         0.00         6.00         0.00         5.00         7.00         0.00         3.00
+  a19-effect-aba           3.00         4.00         4.00         3.00         3.00         0.00         4.00         0.00         4.00         6.00         2.00         3.00
+  a19-effect-relink         1.00         4.00         4.00         2.00         2.00         0.00         4.00         0.00         3.00         4.00         3.00         3.00
+  a19-pull-relink          1.00         4.00         4.00         2.00         2.00         0.00         7.00         0.00         5.00         6.00         0.00         3.00
 
   stable-deep      cursor-hit rate  100.0%   short-circuit 0 of 320000 pulls   marks/edges 170000/170000
   broadcast        cursor-hit rate  100.0%   short-circuit 0 of 2560000 pulls   marks/edges 2560000/2560000
@@ -38,4 +46,8 @@ per-op rates (counter / ops):
   sc-reread        cursor-hit rate    n/a%   short-circuit 80000 of 160000 pulls   marks/edges 0/0
   a19-pull-freed   cursor-hit rate   33.3%   short-circuit 0 of 40000 pulls   marks/edges 20000/20000
   a19-effect-freed cursor-hit rate   33.3%   short-circuit 0 of 20000 pulls   marks/edges 20000/20000
+  a19-pull-aba     cursor-hit rate   42.9%   short-circuit 0 of 60000 pulls   marks/edges 30000/30000
+  a19-effect-aba   cursor-hit rate   42.9%   short-circuit 0 of 40000 pulls   marks/edges 30000/30000
+  a19-effect-relink cursor-hit rate   20.0%   short-circuit 0 of 40000 pulls   marks/edges 20000/20000
+  a19-pull-relink  cursor-hit rate   20.0%   short-circuit 0 of 70000 pulls   marks/edges 20000/20000
 exit=0

@@ -1,159 +1,372 @@
 {
   "schema": 1,
-  "about": "Burst 32 (group B, B-B2b) golden for harness/visit-anatomy.mjs: 5 shapes (cutoff-chain, effect-fanin, sc-reread, a19-pull-freed, a19-effect-freed) and 16 pins (21 -> 37) appended so the 7 mutants that survived the 21 pins go red (14 in review round 1, + the 2 a19 depWalk pins in fix round 1b); visit-anchors.mjs tables frozen, drift labels CR/LF-escaped, RELATIVE_IMPORT replaced by MODULE_REF (refuse any module reference; fix round 1b: a // comment ends at any JS line terminator LF / CR / U+2028 / U+2029, and MODULE_REF is frozen). The anchor table is unchanged, so the instrumented sha256 equals the burst-31 one. Commands: node harness/visit-anatomy.mjs (-> visit-anatomy.txt) and node harness/visit-anatomy.mjs --verify (-> visit-anatomy-verify.txt), run from the repo root with the live Signal.js (== f29k3); capture rule: `node T args > f 2>&1; echo \"exit=$?\" >> f` (stdout+stderr merged into a file, never a pipe, then an exit=<n> line). Nothing is stripped: the tool is untimed and line 2 carries only content hashes. Golden cut from the live tree, two runs per mode, cmp-identical. The burst-31 round is kept under rounds.b31.",
+  "about": "Burst 33 (group B, B-B2d) golden for harness/visit-anatomy.mjs, fix round 2b: 4 shapes (a19-pull-aba, a19-effect-aba, a19-effect-relink, a19-pull-relink: a pre-walk pull that disposes the READER, whose slot and link are recycled at once; lazy pools) and 24 pins (37 -> 61) appended so pcGenDrop, eeGenDrop, all four link-check halves (pcTargetOnly, pcSourceOnly, pmTargetOnly, pmSourceOnly), genNoBump (zRuns), pinAlways / nodeSecond (aba), linkNoReuse (linkGrowth) and linkSecond (linkSame) go red; a throwing shape ends the run with one stderr line `visit-anatomy: SHAPE CRASH <name>: <msg>` and exit 1 (an unprintable thrown value included); visit-anchors.mjs oneLine() escapes CR / LF / U+2028 / U+2029 in drift labels and in the module-reference refusal; realm patches to intrinsics listed as NOT caught (ruling: exec not captured). Link reuse AND identity are witnessed in the harness, with no new anchor: linkGrowth (no link constructed after op 1) and linkSame (the successor's first dep link is the very link object the reader's dispose freed, via node_ptr -> headDep). The anchor table is unchanged, so the instrumented sha256 equals the burst-31 / 32 one. eeNoStamp stays unpinned: see findings.F-b33-1. Commands: node harness/visit-anatomy.mjs (-> visit-anatomy.txt) and node harness/visit-anatomy.mjs --verify (-> visit-anatomy-verify.txt), run from the repo root with the live Signal.js (== f29k3); capture rule: `node T args > f 2>&1; echo \"exit=$?\" >> f`. Golden cut from the live tree, two runs per mode, cmp-identical; the 11 pre-existing diag rows (and their rate / summary lines) are byte-identical to the b32 golden, the 3 round-1 rows byte-identical to the round-1 cut (the lazy pools change no counter); the diag golden is byte-identical to the round-1b cut. The burst-31 and burst-32 rounds are kept under rounds.",
   "goldenFiles": {
-    "visit-anatomy.txt": "591006d0a805b087e9c28772da593e8e76c7b2bc0672ec92e767bff5c513937d",
-    "visit-anatomy-verify.txt": "c3f9cfa6fee09f7e6a6c32817c5f4b6890714a738799a641e4471d04edbce208"
+    "visit-anatomy.txt": "f416bbf3b4113ddd2098a78b005fc2cb2a63b18dfdc1aa6db428854b29eb0818",
+    "visit-anatomy-verify.txt": "85638a35c2c8cfe8d16063ed93753eb10e1718a485470bee476f9acf6c872306"
   },
   "header": {
     "engineSha256": "0ed7c8e2611786de3840aa61428d701acdd6ab2cc76740c70eb26da88c1ff412",
     "instrumentedSha256": "817e044ae6268acee0952c10d1e3b88d8ea14d614f26860aa1e3ac3efe3000ec"
   },
-  "pins": 37,
+  "pins": 61,
   "kernels": {
     "wt0": "7f707ccdd5302d1ab18d4178d7e21219f5491524dca9e380f8576c1ac36f0275",
     "a1r4": "bfd063e5773c550887535059bbf6934f8058d0f60337de0686b89e156a678b1a",
     "f29k3": "0ed7c8e2611786de3840aa61428d701acdd6ab2cc76740c70eb26da88c1ff412",
-    "f29k3Note": "f29k3 == live Signal.js == git show HEAD:Signal.js (HEAD 652faea); Watch.js 065f21bd unchanged"
+    "f29k3Note": "f29k3 == live Signal.js == git show HEAD:Signal.js (HEAD 9228154); Watch.js 065f21bd unchanged"
   },
   "tools": {
     "head": {
-      "visit-anatomy.mjs": "e62b72e0442dba1d580c6ac39070ff0650462d2460c0ce300e436d8168bdddd5",
-      "visit-anchors.mjs": "39f1b64e3568c7a885628bdc38e788fa18f1cf45335c0cfeae83744c041f27ab",
-      "note": "git show HEAD: (652faea) == burst-31 fixRound1"
-    },
-    "b32r1": {
-      "visit-anatomy.mjs": "4b75af9b4262f65a6506397e8a84584106c3088ad1bb52124b0f10ea12ef6266",
-      "visit-anchors.mjs": "28853f2b4e01e30bd942b2c5b3909844609c01727899e1aeb1e4ce70fe46223d",
-      "note": "review round 1: REJECTED (MODULE_REF // branch LF-only; a19 depWalk unpinned; 2 comment-truth items; MODULE_REF not frozen)"
-    },
-    "b32r1b": {
-      "visit-anatomy.mjs": "b55b95e56d1e1dc92c26080db703d2413ee9a26daf5e7c034d50c9899d868503",
-      "visit-anchors.mjs": "039cb3c13d99e7e398cf8d0a0b9d6492bc022cf04b1df7c15ba84c2bbed1798d",
-      "note": "fix round 1b: review round 2 REJECTED (LOW): the exported frozen MODULE_REF was also the RegExp instrument() used, and RegExp.prototype.compile() re-points a frozen RegExp before its lastIndex TypeError, so `MODULE_REF.compile(\"a^\")` made the next instrument() accept f29k3 + `export * from \"./x\"`"
-    },
-    "b32": {
       "visit-anatomy.mjs": "b55b95e56d1e1dc92c26080db703d2413ee9a26daf5e7c034d50c9899d868503",
       "visit-anchors.mjs": "bd035a6fd46de001ce7ef8436c5112cfa9b0349f28b0ee6ff823fe8d4f7c4cf5",
-      "note": "fix round 2b (final): instrument() reads a module-private MODULE_REF_RE; the exported MODULE_REF is a frozen informational copy (new RegExp(MODULE_REF_RE)). The compile() attack on the copy no longer changes instrument(); round-1b anchors accept the attacked input (must-fail control). visit-anatomy.mjs unchanged since fix round 1b"
+      "note": "git show HEAD: (9228154) == burst-32 final"
+    },
+    "b33r1": {
+      "visit-anatomy.mjs": "682ec1fb30f59cceeee455efdd4efb813271afd250984d6d5164e532b7775249",
+      "visit-anchors.mjs": "4858e8b931566d3ff15b4279a8cee19756d64318d4f208dbc4f5fe011b15213a",
+      "note": "review round 1: REJECTED (HIGH pullComputed target half unpinned: pcSourceOnly passed 48; MED eeSkipPull SHAPE CRASH masked pin evidence; MED link LIFO reuse assumed, not witnessed; LOW genNoBump caught only by an old pin; LOW oneLineMsg could throw on a hostile toString)"
+    },
+    "b33r1b": {
+      "visit-anatomy.mjs": "6346e89285b24cfd476409f67f301ecb19f5aaa0352e173604226751d476cf14",
+      "visit-anchors.mjs": "4858e8b931566d3ff15b4279a8cee19756d64318d4f208dbc4f5fe011b15213a",
+      "note": "review round 2: REJECTED (MED: the 'LIFO identity needs a new EDITS anchor' claim was false -- ptr() reaches the node and node.headDep is the link object; reviewer mutant linkSecond and linkSecond + each half mutant passed all 57)"
+    },
+    "b33": {
+      "visit-anatomy.mjs": "56e06dc7fd09121e71057a524e895ee285cc2e7b2405763df9f35e17b9b25588",
+      "visit-anchors.mjs": "4858e8b931566d3ff15b4279a8cee19756d64318d4f208dbc4f5fe011b15213a",
+      "note": "fix round 2b (pre-review): extra:linkSame on the 4 reader-disposed shapes (fail-closed headDepOf / sameLink) + 4 pins (57 -> 61); header LINK REUSE AND IDENTITY replaces the LIFO-assumption text. visit-anchors.mjs unchanged since round 1"
     }
   },
   "verifyByKernel": {
     "wt0": {
-      "exit": 0,
-      "result": "VERIFY PASSED: 37",
-      "redLines": [],
+      "exit": 1,
+      "result": "VERIFY FAILED: 4",
+      "redLines": [
+        "a19-pull-aba.depWalk = 40,000, pinned 30,000",
+        "a19-effect-aba.depWalk = 40,000, pinned 30,000",
+        "a19-effect-relink.depWalk = 40,000, pinned 30,000",
+        "a19-pull-relink.depWalk = 40,000, pinned 30,000"
+      ],
       "expectedRedNominal": [
         "a19-pull-freed.extra:fresh",
-        "a19-effect-freed.extra:reruns"
+        "a19-effect-freed.extra:reruns",
+        "+ any of the 24 b33 pins (R1 extended)"
       ],
-      "why": "Ruling R1 allows wt0 to fail at most these two a19 pins; it fails neither. wt0 lacks the A1.9 guards AND A1 r4's gen check before pullComputed's value write: the self-disposed X falls through to `node.version = globalVersion` (its equals is undefined after disposeNode), so the reader's pre-walk sees X's version moved and re-runs before it follows the freed link's nulled nextDep. Control: wt0 with only that gen check added (wt0-genGuard, sha256 f2c43ca2...) exits 1 with exactly the two R1 lines.",
-      "liveDelta": "0 on both a19 shapes (pins green); depWalk 20,000 on both a19 shapes (== a1r4, f29k3)"
+      "why": "R1 extended (burst 33): wt0 may fail R1's 2 a19 pins plus any of the 24 reader-disposed pins. It fails exactly the four depWalk pins and none of the first 37: wt0 has no link-moved check, so each reader's pre-walk follows the recycled link into its successor's dep list (one more edge per op, the count the half-check mutants give a1r4 / f29k3). No SHAPE CRASH; strangerOk 10,000, aba 10,000, zRuns 20,000, linkSame 10,000, linkGrowth 0, liveDelta 0 on all reader-disposed shapes (S/b1/logs/probe-r2b.txt)."
     },
     "a1r4": {
       "exit": 0,
-      "result": "VERIFY PASSED: 37",
+      "result": "VERIFY PASSED: 61",
       "redLines": []
     },
     "f29k3": {
       "exit": 0,
-      "result": "VERIFY PASSED: 37",
+      "result": "VERIFY PASSED: 61",
       "redLines": [],
-      "outputSha256": "c3f9cfa6fee09f7e6a6c32817c5f4b6890714a738799a641e4471d04edbce208 (== golden)"
+      "outputSha256": "85638a35c2c8cfe8d16063ed93753eb10e1718a485470bee476f9acf6c872306 (== golden)"
     }
   },
   "catchTable": {
-    "generator": "b31-visit-anatomy-mkmut.mjs <kernel> <outDir> <tag> (scratch, not in the repo)",
+    "generators": "b31: S/mk-b31.mjs <kernel> <outDir> <tag>; reviewer: S/mk-reviewer.mjs <kernel> <outDir> (scratch, not in the repo); runner S/b1/matrix.mjs (spawnSync, 120 s timeout)",
     "rows": {
       "a19True": {
+        "source": "b31 generator (S/mk-b31.mjs)",
         "a1r4": "exit 1: cutoff-chain.recompute",
         "f29k3": "exit 1: cutoff-chain.recompute",
-        "headTool": "exit 0 (survivor)"
+        "headToolA1r4": "exit 1: cutoff-chain.recompute",
+        "headToolF29k3": "exit 1: cutoff-chain.recompute"
       },
       "pmTrue": {
+        "source": "b31 generator (S/mk-b31.mjs)",
         "a1r4": "exit 1: cutoff-chain.extra:effectBody",
         "f29k3": "exit 1: cutoff-chain.extra:effectBody",
-        "headTool": "exit 0 (survivor)"
+        "headToolA1r4": "exit 1: cutoff-chain.extra:effectBody",
+        "headToolF29k3": "exit 1: cutoff-chain.extra:effectBody"
       },
       "a19False": {
-        "a1r4": "exit 1: a19-pull-freed.extra:fresh",
-        "f29k3": "exit 1: a19-pull-freed.extra:fresh",
-        "headTool": "exit 0 (survivor)"
+        "source": "b31 generator (S/mk-b31.mjs)",
+        "a1r4": "exit 1: a19-pull-freed.extra:fresh, a19-pull-aba.depWalk, a19-pull-relink.depWalk",
+        "f29k3": "exit 1: a19-pull-freed.extra:fresh, a19-pull-aba.depWalk, a19-pull-relink.depWalk",
+        "headToolA1r4": "exit 1: a19-pull-freed.extra:fresh",
+        "headToolF29k3": "exit 1: a19-pull-freed.extra:fresh"
       },
       "pmFalse": {
-        "a1r4": "exit 1: a19-effect-freed.extra:reruns",
-        "f29k3": "exit 1: a19-effect-freed.extra:reruns",
-        "headTool": "exit 0 (survivor)"
+        "source": "b31 generator (S/mk-b31.mjs)",
+        "a1r4": "exit 1: a19-effect-freed.extra:reruns, a19-effect-aba.depWalk, a19-effect-relink.depWalk",
+        "f29k3": "exit 1: a19-effect-freed.extra:reruns, a19-effect-aba.depWalk, a19-effect-relink.depWalk",
+        "headToolA1r4": "exit 1: a19-effect-freed.extra:reruns",
+        "headToolF29k3": "exit 1: a19-effect-freed.extra:reruns"
       },
       "eeNoBreak": {
+        "source": "b31 generator (S/mk-b31.mjs)",
         "a1r4": "exit 1: effect-fanin.depWalk",
         "f29k3": "exit 1: effect-fanin.depWalk",
-        "headTool": "exit 0 (survivor)"
+        "headToolA1r4": "exit 1: effect-fanin.depWalk",
+        "headToolF29k3": "exit 1: effect-fanin.depWalk"
       },
       "pcNoBreak": {
-        "a1r4": "exit 1: diamond.depWalk, branch-flip.depWalk",
-        "f29k3": "exit 1: diamond.depWalk, branch-flip.depWalk",
-        "headTool": "exit 0 (survivor)"
+        "source": "b31 generator (S/mk-b31.mjs)",
+        "a1r4": "exit 1: diamond.depWalk, branch-flip.depWalk, a19-pull-aba.depWalk, a19-effect-aba.depWalk",
+        "f29k3": "exit 1: diamond.depWalk, branch-flip.depWalk, a19-pull-aba.depWalk, a19-effect-aba.depWalk",
+        "headToolA1r4": "exit 1: diamond.depWalk, branch-flip.depWalk",
+        "headToolF29k3": "exit 1: diamond.depWalk, branch-flip.depWalk"
       },
       "scNoStamp": {
+        "source": "b31 generator (S/mk-b31.mjs)",
         "a1r4": "exit 1: sc-reread.scHit, sc-reread.pullCacheHit",
         "f29k3": "exit 1: sc-reread.scHit, sc-reread.pullCacheHit",
-        "headTool": "exit 0 (survivor)"
+        "headToolA1r4": "exit 1: sc-reread.scHit, sc-reread.pullCacheHit",
+        "headToolF29k3": "exit 1: sc-reread.scHit, sc-reread.pullCacheHit"
       },
       "sc": {
+        "source": "b31 generator (S/mk-b31.mjs)",
         "a1r4": "exit 1: unrelated-read.depWalk",
         "f29k3": "exit 1: unrelated-read.depWalk",
-        "headTool": "exit 1 (sc: unrelated-read.depWalk; eeSkipPull: 4 pins)"
+        "headToolA1r4": "exit 1: unrelated-read.depWalk",
+        "headToolF29k3": "exit 1: unrelated-read.depWalk"
       },
       "eeSkipPull": {
-        "a1r4": "exit 1: diamond.recompute, branch-flip.linkAlloc, branch-flip.linkFree, branch-flip.recompute, diamond.depWalk, branch-flip.depWalk, cutoff-chain.recompute, cutoff-chain.depWalk, a19-effect-freed.extra:reruns, a19-effect-freed.extra:liveDelta, a19-effect-freed.depWalk",
-        "f29k3": "exit 1: diamond.recompute, branch-flip.linkAlloc, branch-flip.linkFree, branch-flip.recompute, diamond.depWalk, branch-flip.depWalk, cutoff-chain.recompute, cutoff-chain.depWalk, a19-effect-freed.extra:reruns, a19-effect-freed.extra:liveDelta, a19-effect-freed.depWalk",
-        "headTool": "exit 1 (sc: unrelated-read.depWalk; eeSkipPull: 4 pins)"
+        "source": "b31 generator (S/mk-b31.mjs)",
+        "a1r4": "exit 1: diamond.recompute, branch-flip.linkAlloc, branch-flip.linkFree, branch-flip.recompute, diamond.depWalk, branch-flip.depWalk, cutoff-chain.recompute, cutoff-chain.depWalk, a19-effect-freed.extra:reruns, a19-effect-freed.extra:liveDelta, a19-effect-freed.depWalk, a19-effect-aba.depWalk, a19-effect-aba.extra:strangerOk, a19-effect-aba.extra:aba, a19-effect-aba.extra:liveDelta, a19-effect-relink.depWalk, a19-effect-relink.extra:aba, a19-effect-relink.extra:liveDelta, a19-effect-aba.extra:zRuns, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame",
+        "f29k3": "exit 1: diamond.recompute, branch-flip.linkAlloc, branch-flip.linkFree, branch-flip.recompute, diamond.depWalk, branch-flip.depWalk, cutoff-chain.recompute, cutoff-chain.depWalk, a19-effect-freed.extra:reruns, a19-effect-freed.extra:liveDelta, a19-effect-freed.depWalk, a19-effect-aba.depWalk, a19-effect-aba.extra:strangerOk, a19-effect-aba.extra:aba, a19-effect-aba.extra:liveDelta, a19-effect-relink.depWalk, a19-effect-relink.extra:aba, a19-effect-relink.extra:liveDelta, a19-effect-aba.extra:zRuns, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame",
+        "headToolA1r4": "exit 1: diamond.recompute, branch-flip.linkAlloc, branch-flip.linkFree, branch-flip.recompute, diamond.depWalk, branch-flip.depWalk, cutoff-chain.recompute, cutoff-chain.depWalk, a19-effect-freed.extra:reruns, a19-effect-freed.extra:liveDelta, a19-effect-freed.depWalk",
+        "headToolF29k3": "exit 1: diamond.recompute, branch-flip.linkAlloc, branch-flip.linkFree, branch-flip.recompute, diamond.depWalk, branch-flip.depWalk, cutoff-chain.recompute, cutoff-chain.depWalk, a19-effect-freed.extra:reruns, a19-effect-freed.extra:liveDelta, a19-effect-freed.depWalk",
+        "note": "fix round 1b: Z === null / pad === null is \"not reached\" (no read, no ptr()), so it ends as FAIL lines again (round 1: SHAPE CRASH a19-effect-aba)"
+      },
+      "pcGenDrop": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 1: a19-pull-aba.extra:strangerOk, a19-pull-aba.extra:zRuns",
+        "f29k3": "exit 1: a19-pull-aba.extra:strangerOk, a19-pull-aba.extra:zRuns",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37"
+      },
+      "pcTargetOnly": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 1: a19-pull-aba.depWalk",
+        "f29k3": "exit 1: a19-pull-aba.depWalk",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37"
+      },
+      "eeGenDrop": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 1: a19-effect-aba.extra:strangerOk, a19-effect-aba.extra:zRuns",
+        "f29k3": "exit 1: a19-effect-aba.extra:strangerOk, a19-effect-aba.extra:zRuns",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37"
+      },
+      "pmSourceOnly": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 1: a19-effect-relink.depWalk",
+        "f29k3": "exit 1: a19-effect-relink.depWalk",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37"
+      },
+      "eeNoStamp": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 0: VERIFY PASSED: 61",
+        "f29k3": "exit 0: VERIFY PASSED: 61",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "survivor by ruling: equivalent on a correct engine except across the 2^31 band; current witness = F-b33-1 (lost update, pre-existing since wt0); a pin would bless the bug"
+      },
+      "pcFreedNoRun": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 1: a19-pull-freed.extra:fresh",
+        "f29k3": "exit 1: a19-pull-freed.extra:fresh",
+        "headToolA1r4": "exit 1: a19-pull-freed.extra:fresh",
+        "headToolF29k3": "exit 1: a19-pull-freed.extra:fresh"
+      },
+      "eeFreedNoRun": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 1: a19-effect-freed.extra:reruns",
+        "f29k3": "exit 1: a19-effect-freed.extra:reruns",
+        "headToolA1r4": "exit 1: a19-effect-freed.extra:reruns",
+        "headToolF29k3": "exit 1: a19-effect-freed.extra:reruns"
+      },
+      "pcVerGE": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 1: cutoff-chain.recompute",
+        "f29k3": "exit 1: cutoff-chain.recompute",
+        "headToolA1r4": "exit 1: cutoff-chain.recompute",
+        "headToolF29k3": "exit 1: cutoff-chain.recompute"
+      },
+      "eeVerGE": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 1: cutoff-chain.extra:effectBody",
+        "f29k3": "exit 1: cutoff-chain.extra:effectBody",
+        "headToolA1r4": "exit 1: cutoff-chain.extra:effectBody",
+        "headToolF29k3": "exit 1: cutoff-chain.extra:effectBody"
+      },
+      "pcEqAlways": {
+        "source": "reviewer generator (S/mk-reviewer.mjs)",
+        "a1r4": "exit 1: cutoff-chain.recompute, cutoff-chain.extra:effectBody",
+        "f29k3": "exit 1: cutoff-chain.recompute, cutoff-chain.extra:effectBody",
+        "headToolA1r4": "exit 1: cutoff-chain.recompute, cutoff-chain.extra:effectBody",
+        "headToolF29k3": "exit 1: cutoff-chain.recompute, cutoff-chain.extra:effectBody"
+      },
+      "pcSourceOnly": {
+        "source": "review round 1 generator (S/rv/mk.mjs)",
+        "a1r4": "exit 1: a19-pull-relink.depWalk",
+        "f29k3": "exit 1: a19-pull-relink.depWalk",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37"
+      },
+      "pmTargetOnly": {
+        "source": "review round 1 generator (S/rv/mk.mjs)",
+        "a1r4": "exit 1: a19-effect-aba.depWalk",
+        "f29k3": "exit 1: a19-effect-aba.depWalk",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37"
+      },
+      "pinAlways": {
+        "source": "review round 1 generator (S/rv/mk.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:aba, a19-effect-aba.extra:aba, a19-effect-relink.extra:aba, a19-pull-relink.extra:aba",
+        "f29k3": "exit 1: a19-pull-aba.extra:aba, a19-effect-aba.extra:aba, a19-effect-relink.extra:aba, a19-pull-relink.extra:aba",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37"
+      },
+      "genNoBump": {
+        "source": "review round 1 generator (S/rv/mk.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-freed.extra:fresh, a19-pull-aba.extra:zRuns, a19-effect-aba.extra:zRuns",
+        "f29k3": "exit 1: a19-pull-freed.extra:fresh, a19-pull-aba.extra:zRuns, a19-effect-aba.extra:zRuns",
+        "headToolA1r4": "exit 1: a19-pull-freed.extra:fresh",
+        "headToolF29k3": "exit 1: a19-pull-freed.extra:fresh"
+      },
+      "linkNoReuse": {
+        "source": "review round 1 generator (S/rv/mk.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:linkGrowth, a19-effect-aba.extra:linkGrowth, a19-effect-relink.extra:linkGrowth, a19-pull-relink.extra:linkGrowth, a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "f29k3": "exit 1: a19-pull-aba.extra:linkGrowth, a19-effect-aba.extra:linkGrowth, a19-effect-relink.extra:linkGrowth, a19-pull-relink.extra:linkGrowth, a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "caught by linkGrowth (39,936) and linkSame (0)"
+      },
+      "linkNoReuse+pcTargetOnly": {
+        "source": "review round 1 generator (S/rv/mk.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:linkGrowth, a19-effect-aba.extra:linkGrowth, a19-effect-relink.extra:linkGrowth, a19-pull-relink.extra:linkGrowth, a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "f29k3": "exit 1: a19-pull-aba.extra:linkGrowth, a19-effect-aba.extra:linkGrowth, a19-effect-relink.extra:linkGrowth, a19-pull-relink.extra:linkGrowth, a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "without reuse a freed link keeps target null, so target-only is sufficient there; caught by linkGrowth and linkSame only"
+      },
+      "linkNoReuse+pmSourceOnly": {
+        "source": "review round 1 generator (S/rv/mk.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:linkGrowth, a19-effect-aba.extra:linkGrowth, a19-effect-relink.extra:linkGrowth, a19-pull-relink.extra:linkGrowth, a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "f29k3": "exit 1: a19-pull-aba.extra:linkGrowth, a19-effect-aba.extra:linkGrowth, a19-effect-relink.extra:linkGrowth, a19-pull-relink.extra:linkGrowth, a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "as above (source null on a freed, never reused link); caught by linkGrowth and linkSame only"
+      },
+      "fixF1": {
+        "source": "review round 1 generator (S/rv/mk.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 0: VERIFY PASSED: 61",
+        "f29k3": "exit 0: VERIFY PASSED: 61",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "reviewer F-b33-1 fix prototype (stamp check against the walk-start globalVersion): passes every pin, so no pin blesses the lost update; S/f1.mjs reports OK on both lanes"
+      },
+      "linkSecond": {
+        "source": "review round 2 generator (S/rv/mk2.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "f29k3": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "freeLink pushes the freed link SECOND: reuse intact (linkGrowth 0), identity lost -> linkSame 0 on all 4 shapes (the round-1b tool passed 57)"
+      },
+      "linkSecond+pcTargetOnly": {
+        "source": "review round 2 generator (S/rv/mk2.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "f29k3": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "the half mutant loses its teeth without LIFO identity (depWalk 30,000); caught by linkSame"
+      },
+      "linkSecond+pcSourceOnly": {
+        "source": "review round 2 generator (S/rv/mk2.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "f29k3": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "the half mutant loses its teeth without LIFO identity (depWalk 30,000); caught by linkSame"
+      },
+      "linkSecond+pmTargetOnly": {
+        "source": "review round 2 generator (S/rv/mk2.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "f29k3": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "the half mutant loses its teeth without LIFO identity (depWalk 30,000); caught by linkSame"
+      },
+      "linkSecond+pmSourceOnly": {
+        "source": "review round 2 generator (S/rv/mk2.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "f29k3": "exit 1: a19-pull-aba.extra:linkSame, a19-effect-aba.extra:linkSame, a19-effect-relink.extra:linkSame, a19-pull-relink.extra:linkSame",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "the half mutant loses its teeth without LIFO identity (depWalk 30,000); caught by linkSame"
+      },
+      "nodeSecond": {
+        "source": "review round 2 generator (S/rv/mk2.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 1: a19-pull-aba.extra:aba, a19-effect-aba.extra:aba, a19-effect-relink.extra:aba, a19-pull-relink.extra:aba",
+        "f29k3": "exit 1: a19-pull-aba.extra:aba, a19-effect-aba.extra:aba, a19-effect-relink.extra:aba, a19-pull-relink.extra:aba",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "node free list pushes the freed node second: aba 0 on all 4 shapes"
+      },
+      "allocNoPop": {
+        "source": "review round 2 generator (S/rv/mk2.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 2: visit-anatomy: INSTRUMENTATION ANCHORS DRIFTED -- refusing to run half-instrumented:",
+        "f29k3": "exit 2: visit-anatomy: INSTRUMENTATION ANCHORS DRIFTED -- refusing to run half-instrumented:",
+        "headToolA1r4": "exit 2: visit-anatomy: INSTRUMENTATION ANCHORS DRIFTED -- refusing to run half-instrumented:",
+        "headToolF29k3": "exit 2: visit-anatomy: INSTRUMENTATION ANCHORS DRIFTED -- refusing to run half-instrumented:",
+        "note": "refused before any run: the linkAlloc anchor drifts (exit 2)"
+      },
+      "fixF1b": {
+        "source": "review round 2 generator (S/rv/mk2.mjs)",
+        "tier": "REPORTED",
+        "a1r4": "exit 0: VERIFY PASSED: 61",
+        "f29k3": "exit 0: VERIFY PASSED: 61",
+        "headToolA1r4": "exit 0: VERIFY PASSED: 37",
+        "headToolF29k3": "exit 0: VERIFY PASSED: 37",
+        "note": "second F-b33-1 fix prototype (stamp the walk-start version): passes all 61, so no pin blesses the lost update"
       }
     },
-    "note": "identical FAIL sets on a1r4 and f29k3 for every mutant; every new pin is red on its named mutant on both kernels; the 7 survivors exit 0 under the HEAD tool (revert check). Fix round 1b: the 2 a19 depWalk pins change no survivor's red set; eeSkipPull (not a survivor) additionally fails a19-effect-freed.depWalk"
+    "note": "35 mutants x {a1r4, f29k3}: identical FAIL sets on both kernels for every mutant. Each half-check mutant is red on exactly its named depWalk pin (pcTargetOnly -> a19-pull-aba, pcSourceOnly -> a19-pull-relink, pmTargetOnly -> a19-effect-aba, pmSourceOnly -> a19-effect-relink); pcGenDrop / eeGenDrop on strangerOk (+ zRuns 10,000); genNoBump on both zRuns (30,000) + the old a19-pull-freed.extra:fresh; pinAlways and nodeSecond on all 4 aba; linkNoReuse (+ both combos) on all 4 linkGrowth (39,936) and all 4 linkSame (0); linkSecond and linkSecond + each half on all 4 linkSame (0). The 7 b31 and 4 b33 named catches are unchanged from round 1b; the only round-2b additions to the old 27 rows are linkSame lines on eeSkipPull and the linkNoReuse family. eeNoStamp, fixF1, fixF1b exit 0; allocNoPop exit 2 (anchor drift). Revert: the HEAD tool (S/before = git archive 9228154) exits 0 on all survivors incl. linkSecond and its 4 combos and nodeSecond."
   },
-  "retention": "b32: 35 runs (exit 0 x10, exit 1 x10, exit 2 x15: drift engine, unreadable engine, --VERIFY): tmpdir visit-anatomy-* count 0 -> 0, delta 0; fix round 1b: 35 runs (exit 0 x10, 1 x10, 2 x15: drift engine, CR module-reference engine, --VERIFY), 0 -> 0, delta 0",
+  "harnessMutants": {
+    "tier": "REPORTED (scratch S/b1/logs/harness-mutants.txt)",
+    "hA": "a19-pull-aba without r.dispose(t2) -> exit 1: a19-pull-aba.extra:liveDelta = 20,000 (a1r4, f29k3)",
+    "hB": "a19-effect-relink with an extra computed before pad -> exit 1: a19-effect-relink.extra:aba = 0 (a1r4, f29k3)",
+    "hC": "a19-effect-aba with an extra computed before Z -> exit 1: a19-effect-aba.extra:aba = 0 (a1r4, f29k3)",
+    "hD": "a19-effect-relink without the C2() read -> exit 0, and pmSourceOnly then exits 0 too on a1r4 and f29k3: the C2 read (L.nextDep != null) is load-bearing",
+    "shapeCrash": "round 1 (S/b1/logs/hm.err) and fix round 1b (S/b1/logs/shape-crash.txt): a19-pull-aba throws at op 7 -> exit 1, stdout empty, stderr exactly 1 line, TMPDIR empty, for: an Error with LF + U+2028 in its message (`hm-boom line1\\nline2\\u2028line3`), an object whose toString throws, Object.create(null), an Error whose message getter throws (the last three print `<thrown value cannot be converted to a string>`). Control: the round-1 tool prints a raw 10-12 line stack for the last three. Round 2b: the same 4 re-cut on the 2b tool, same result (S/b1/logs/shape-crash-r2b.txt)."
+  },
+  "instrumentDrift": "instrument(\"\") -> 13 drift lines, all 13 byte-identical to HEAD (no anchor contains U+2028 / U+2029), none with a raw CR / LF / U+2028 / U+2029; module-reference refusal of `import //c<T>(\"./x.mjs\")`, T in {LF, CR, U+2028, U+2029, CRLF}: one line on the b33 anchors, raw U+2028 / U+2029 in the HEAD message (control); instrument(f29k3) byte-identical to HEAD's",
+  "retention": "b33 round 1: 32 runs (exit 0 x10, 1 x16, 2 x6), 0 left. Fix round 1b and fix round 2b (each): 34 runs with TMPDIR / TMP / TEMP pointed at a fresh dir (exit 0 x10: verify x8, diag x2; exit 1 x18: pcGenDrop x4, wt0 x4, SHAPE CRASH harness mutants x6 (LF / U+2028 message x4, throwing toString x2), eeSkipPull FAIL lines x4; exit 2 x6: --VERIFY x3, unreadable engine x3): 0 entries left. liveDelta 0 on all 6 create/dispose shapes on wt0, a1r4, f29k3.",
+  "findings": {
+    "F-b33-1": "ENGINE, pre-existing (reproduces on wt0 7f707ccd, a1r4, f29k3 == live): a pre-walk pull of a computed that writes an EARLIER-checked signal dep is absorbed by the no-run evalVersion stamp (executeEffect Signal.js:1195, pullComputed :1348; the effect is still QUEUED so markDownstream :1065 does not re-queue it). Repro + per-kernel output: burst-33 scratch S/f1.mjs, S/b1/F-b33-1.md. Not fixed (hot body), not pinned. eeNoStamp shows the write one queueing late; a pullComputed no-stamp mutant shows it on the next read. Reviewer fix prototype fixF1 passes all 57 pins (no pin blesses the bug) and fixes both repro lanes. fixF1b (walk-start stamp prototype) also passes all 61."
+  },
   "provenance": {
-    "date": "2026-10-14T00:00:56Z",
+    "date": "2026-10-14T01:19:29Z",
     "node": "v26.8.2",
     "uname": "Darwin 27.0.0",
-    "load": "2.10 2.45 2.57",
-    "otherNodeProcesses": "none found by pgrep (Claude helper only)",
+    "load": "2.78 3.57 3.56",
+    "otherNodeProcesses": "none from this suite (WebStorm language service, Claude helpers)",
     "timed": false,
-    "runCount": "golden: 2 per mode live, cmp-identical (diag byte-identical to the round-1 cut; verify differs on the pin-count line only); matrix: 3 kernels + 18 mutant runs on the final tool; reviewer mutants 21 runs; fix round 2b: golden 2 per mode, both == the 1b golden bytes; matrix (3 kernels + 18 mutant runs) byte-identical to round 1b"
-  },
-  "reviewerMutants": {
-    "tier": "REPORTED",
-    "source": "review round 1 (S/rv/mk.mjs, S/rv/mut, S/rv/o; scratch, not in the repo)",
-    "result35": "as recorded by the reviewer on the round-1 tool",
-    "result37": "re-run on the final tool: identical exit codes and FAIL sets",
-    "rows": {
-      "eeFreedNoRun": "exit 1 on a1r4 and f29k3: a19-effect-freed.extra:reruns",
-      "eeVerGE": "exit 1 on a1r4 and f29k3: cutoff-chain.extra:effectBody",
-      "pcEqAlways": "exit 1 on a1r4 and f29k3: cutoff-chain.recompute, cutoff-chain.extra:effectBody",
-      "pcFreedNoRun": "exit 1 on a1r4 and f29k3: a19-pull-freed.extra:fresh",
-      "pcVerGE": "exit 1 on a1r4 and f29k3: cutoff-chain.recompute",
-      "eeGenDrop": "exit 0 on a1r4 and f29k3 (survives; follow-up: a disposed-reader shape)",
-      "pcGenDrop": "exit 0 on a1r4 and f29k3 (survives; follow-up: a disposed-reader shape)",
-      "pcTargetOnly": "exit 0 on a1r4 and f29k3 (survives; follow-up: a recycled-link shape)",
-      "pmSourceOnly": "exit 0 on a1r4 and f29k3 (survives; follow-up: a recycled-link shape)",
-      "eeNoStamp": "exit 0 on a1r4 and f29k3 (survives; follow-up: a recycled-link shape)",
-      "retNoDec": "f29k3 only: exit 1: a19-pull-freed.extra:liveDelta, a19-effect-freed.extra:liveDelta",
-      "crash": "f29k3 only: exit 1"
-    },
-    "harnessMutants": {
-      "h1": "a19-pull-freed prime `Y();` removed -> exit 1: a19-pull-freed.depWalk = 0 (f29k3; red only since fix round 1b)",
-      "h2": "an extra `X();` prime before the effect in a19-effect-freed -> exit 0 (survives: same walks, same counts)",
-      "h3": "liveDelta summed without Math.abs -> exit 0 (survives: the abs form only differs on opposite-sign gauge deltas; no current mutant produces them)"
-    }
-  },
-  "moduleRefLineTerminators": {
-    "tier": "DETERMINISTIC (scratch proof; the B2 test ports it)",
-    "forms": "`import //c<T>(\"./x.mjs\")`, `export * from //c<T>\"./x.mjs\"`, two-comment and `await import` variants, T in {LF, CR, U+2028, U+2029, CRLF}: 20/20 refused",
-    "control": "round-1 anchors (28853f2b): LF refused, CR / U+2028 / U+2029 ESCAPED (the reviewer's CR engine loaded evil.mjs and passed --verify 35); final anchors: all refused, the CR engine exits 2 before any import",
-    "census": "1 raw hit (the Watch.js re-export) / 0 instrumented on wt0, a1r4, f29k3; instrument(f29k3) byte-identical to HEAD's",
-    "compileAttack": "fix round 2b: MODULE_REF.compile(\"a^\") on the exported copy, then instrument(f29k3 + `export * from \"./x\"`) still refuses and instrument(f29k3) stays byte-identical to HEAD's; MODULE_REF.source === the MODULE_REF_RE literal (fresh import); the 20 line-terminator forms still refuse; census 1 / 0 on wt0, a1r4, f29k3"
+    "runCount": "fix round 2b: golden 2 per mode live, cmp-identical (diag == round-1b bytes); matrix 3 kernels + 70 mutant runs on the 2b tool and the same 73 on the HEAD tool; probe 5 engines; 4 linkSame fail-closed harness runs; 4 SHAPE CRASH harness runs; 34 retention runs. Earlier rounds: see tools.b33r1 / b33r1b notes"
   },
   "rounds": {
     "b31": {
@@ -344,6 +557,170 @@
         "timed": false,
         "runCount": "golden: 2 per mode on g1, 2 per mode on g4, 1 per mode live"
       }
+    },
+    "b32": {
+      "about": "Burst 32 (group B, B-B2b) golden for harness/visit-anatomy.mjs: 5 shapes (cutoff-chain, effect-fanin, sc-reread, a19-pull-freed, a19-effect-freed) and 16 pins (21 -> 37) appended so the 7 mutants that survived the 21 pins go red (14 in review round 1, + the 2 a19 depWalk pins in fix round 1b); visit-anchors.mjs tables frozen, drift labels CR/LF-escaped, RELATIVE_IMPORT replaced by MODULE_REF (refuse any module reference; fix round 1b: a // comment ends at any JS line terminator LF / CR / U+2028 / U+2029, and MODULE_REF is frozen). The anchor table is unchanged, so the instrumented sha256 equals the burst-31 one. Commands: node harness/visit-anatomy.mjs (-> visit-anatomy.txt) and node harness/visit-anatomy.mjs --verify (-> visit-anatomy-verify.txt), run from the repo root with the live Signal.js (== f29k3); capture rule: `node T args > f 2>&1; echo \"exit=$?\" >> f` (stdout+stderr merged into a file, never a pipe, then an exit=<n> line). Nothing is stripped: the tool is untimed and line 2 carries only content hashes. Golden cut from the live tree, two runs per mode, cmp-identical. The burst-31 round is kept under rounds.b31.",
+      "goldenFiles": {
+        "visit-anatomy.txt": "591006d0a805b087e9c28772da593e8e76c7b2bc0672ec92e767bff5c513937d",
+        "visit-anatomy-verify.txt": "c3f9cfa6fee09f7e6a6c32817c5f4b6890714a738799a641e4471d04edbce208"
+      },
+      "header": {
+        "engineSha256": "0ed7c8e2611786de3840aa61428d701acdd6ab2cc76740c70eb26da88c1ff412",
+        "instrumentedSha256": "817e044ae6268acee0952c10d1e3b88d8ea14d614f26860aa1e3ac3efe3000ec"
+      },
+      "pins": 37,
+      "kernels": {
+        "wt0": "7f707ccdd5302d1ab18d4178d7e21219f5491524dca9e380f8576c1ac36f0275",
+        "a1r4": "bfd063e5773c550887535059bbf6934f8058d0f60337de0686b89e156a678b1a",
+        "f29k3": "0ed7c8e2611786de3840aa61428d701acdd6ab2cc76740c70eb26da88c1ff412",
+        "f29k3Note": "f29k3 == live Signal.js == git show HEAD:Signal.js (HEAD 652faea); Watch.js 065f21bd unchanged"
+      },
+      "tools": {
+        "head": {
+          "visit-anatomy.mjs": "e62b72e0442dba1d580c6ac39070ff0650462d2460c0ce300e436d8168bdddd5",
+          "visit-anchors.mjs": "39f1b64e3568c7a885628bdc38e788fa18f1cf45335c0cfeae83744c041f27ab",
+          "note": "git show HEAD: (652faea) == burst-31 fixRound1"
+        },
+        "b32r1": {
+          "visit-anatomy.mjs": "4b75af9b4262f65a6506397e8a84584106c3088ad1bb52124b0f10ea12ef6266",
+          "visit-anchors.mjs": "28853f2b4e01e30bd942b2c5b3909844609c01727899e1aeb1e4ce70fe46223d",
+          "note": "review round 1: REJECTED (MODULE_REF // branch LF-only; a19 depWalk unpinned; 2 comment-truth items; MODULE_REF not frozen)"
+        },
+        "b32r1b": {
+          "visit-anatomy.mjs": "b55b95e56d1e1dc92c26080db703d2413ee9a26daf5e7c034d50c9899d868503",
+          "visit-anchors.mjs": "039cb3c13d99e7e398cf8d0a0b9d6492bc022cf04b1df7c15ba84c2bbed1798d",
+          "note": "fix round 1b: review round 2 REJECTED (LOW): the exported frozen MODULE_REF was also the RegExp instrument() used, and RegExp.prototype.compile() re-points a frozen RegExp before its lastIndex TypeError, so `MODULE_REF.compile(\"a^\")` made the next instrument() accept f29k3 + `export * from \"./x\"`"
+        },
+        "b32": {
+          "visit-anatomy.mjs": "b55b95e56d1e1dc92c26080db703d2413ee9a26daf5e7c034d50c9899d868503",
+          "visit-anchors.mjs": "bd035a6fd46de001ce7ef8436c5112cfa9b0349f28b0ee6ff823fe8d4f7c4cf5",
+          "note": "fix round 2b (final): instrument() reads a module-private MODULE_REF_RE; the exported MODULE_REF is a frozen informational copy (new RegExp(MODULE_REF_RE)). The compile() attack on the copy no longer changes instrument(); round-1b anchors accept the attacked input (must-fail control). visit-anatomy.mjs unchanged since fix round 1b"
+        }
+      },
+      "verifyByKernel": {
+        "wt0": {
+          "exit": 0,
+          "result": "VERIFY PASSED: 37",
+          "redLines": [],
+          "expectedRedNominal": [
+            "a19-pull-freed.extra:fresh",
+            "a19-effect-freed.extra:reruns"
+          ],
+          "why": "Ruling R1 allows wt0 to fail at most these two a19 pins; it fails neither. wt0 lacks the A1.9 guards AND A1 r4's gen check before pullComputed's value write: the self-disposed X falls through to `node.version = globalVersion` (its equals is undefined after disposeNode), so the reader's pre-walk sees X's version moved and re-runs before it follows the freed link's nulled nextDep. Control: wt0 with only that gen check added (wt0-genGuard, sha256 f2c43ca2...) exits 1 with exactly the two R1 lines.",
+          "liveDelta": "0 on both a19 shapes (pins green); depWalk 20,000 on both a19 shapes (== a1r4, f29k3)"
+        },
+        "a1r4": {
+          "exit": 0,
+          "result": "VERIFY PASSED: 37",
+          "redLines": []
+        },
+        "f29k3": {
+          "exit": 0,
+          "result": "VERIFY PASSED: 37",
+          "redLines": [],
+          "outputSha256": "c3f9cfa6fee09f7e6a6c32817c5f4b6890714a738799a641e4471d04edbce208 (== golden)"
+        }
+      },
+      "catchTable": {
+        "generator": "b31-visit-anatomy-mkmut.mjs <kernel> <outDir> <tag> (scratch, not in the repo)",
+        "rows": {
+          "a19True": {
+            "a1r4": "exit 1: cutoff-chain.recompute",
+            "f29k3": "exit 1: cutoff-chain.recompute",
+            "headTool": "exit 0 (survivor)"
+          },
+          "pmTrue": {
+            "a1r4": "exit 1: cutoff-chain.extra:effectBody",
+            "f29k3": "exit 1: cutoff-chain.extra:effectBody",
+            "headTool": "exit 0 (survivor)"
+          },
+          "a19False": {
+            "a1r4": "exit 1: a19-pull-freed.extra:fresh",
+            "f29k3": "exit 1: a19-pull-freed.extra:fresh",
+            "headTool": "exit 0 (survivor)"
+          },
+          "pmFalse": {
+            "a1r4": "exit 1: a19-effect-freed.extra:reruns",
+            "f29k3": "exit 1: a19-effect-freed.extra:reruns",
+            "headTool": "exit 0 (survivor)"
+          },
+          "eeNoBreak": {
+            "a1r4": "exit 1: effect-fanin.depWalk",
+            "f29k3": "exit 1: effect-fanin.depWalk",
+            "headTool": "exit 0 (survivor)"
+          },
+          "pcNoBreak": {
+            "a1r4": "exit 1: diamond.depWalk, branch-flip.depWalk",
+            "f29k3": "exit 1: diamond.depWalk, branch-flip.depWalk",
+            "headTool": "exit 0 (survivor)"
+          },
+          "scNoStamp": {
+            "a1r4": "exit 1: sc-reread.scHit, sc-reread.pullCacheHit",
+            "f29k3": "exit 1: sc-reread.scHit, sc-reread.pullCacheHit",
+            "headTool": "exit 0 (survivor)"
+          },
+          "sc": {
+            "a1r4": "exit 1: unrelated-read.depWalk",
+            "f29k3": "exit 1: unrelated-read.depWalk",
+            "headTool": "exit 1 (sc: unrelated-read.depWalk; eeSkipPull: 4 pins)"
+          },
+          "eeSkipPull": {
+            "a1r4": "exit 1: diamond.recompute, branch-flip.linkAlloc, branch-flip.linkFree, branch-flip.recompute, diamond.depWalk, branch-flip.depWalk, cutoff-chain.recompute, cutoff-chain.depWalk, a19-effect-freed.extra:reruns, a19-effect-freed.extra:liveDelta, a19-effect-freed.depWalk",
+            "f29k3": "exit 1: diamond.recompute, branch-flip.linkAlloc, branch-flip.linkFree, branch-flip.recompute, diamond.depWalk, branch-flip.depWalk, cutoff-chain.recompute, cutoff-chain.depWalk, a19-effect-freed.extra:reruns, a19-effect-freed.extra:liveDelta, a19-effect-freed.depWalk",
+            "headTool": "exit 1 (sc: unrelated-read.depWalk; eeSkipPull: 4 pins)"
+          }
+        },
+        "note": "identical FAIL sets on a1r4 and f29k3 for every mutant; every new pin is red on its named mutant on both kernels; the 7 survivors exit 0 under the HEAD tool (revert check). Fix round 1b: the 2 a19 depWalk pins change no survivor's red set; eeSkipPull (not a survivor) additionally fails a19-effect-freed.depWalk"
+      },
+      "retention": "b32: 35 runs (exit 0 x10, exit 1 x10, exit 2 x15: drift engine, unreadable engine, --VERIFY): tmpdir visit-anatomy-* count 0 -> 0, delta 0; fix round 1b: 35 runs (exit 0 x10, 1 x10, 2 x15: drift engine, CR module-reference engine, --VERIFY), 0 -> 0, delta 0",
+      "provenance": {
+        "date": "2026-10-14T00:00:56Z",
+        "node": "v26.8.2",
+        "uname": "Darwin 27.0.0",
+        "load": "2.10 2.45 2.57",
+        "otherNodeProcesses": "none found by pgrep (Claude helper only)",
+        "timed": false,
+        "runCount": "golden: 2 per mode live, cmp-identical (diag byte-identical to the round-1 cut; verify differs on the pin-count line only); matrix: 3 kernels + 18 mutant runs on the final tool; reviewer mutants 21 runs; fix round 2b: golden 2 per mode, both == the 1b golden bytes; matrix (3 kernels + 18 mutant runs) byte-identical to round 1b"
+      },
+      "reviewerMutants": {
+        "tier": "REPORTED",
+        "source": "review round 1 (S/rv/mk.mjs, S/rv/mut, S/rv/o; scratch, not in the repo)",
+        "result35": "as recorded by the reviewer on the round-1 tool",
+        "result37": "re-run on the final tool: identical exit codes and FAIL sets",
+        "rows": {
+          "eeFreedNoRun": "exit 1 on a1r4 and f29k3: a19-effect-freed.extra:reruns",
+          "eeVerGE": "exit 1 on a1r4 and f29k3: cutoff-chain.extra:effectBody",
+          "pcEqAlways": "exit 1 on a1r4 and f29k3: cutoff-chain.recompute, cutoff-chain.extra:effectBody",
+          "pcFreedNoRun": "exit 1 on a1r4 and f29k3: a19-pull-freed.extra:fresh",
+          "pcVerGE": "exit 1 on a1r4 and f29k3: cutoff-chain.recompute",
+          "eeGenDrop": "exit 0 on a1r4 and f29k3 (survives; follow-up: a disposed-reader shape)",
+          "pcGenDrop": "exit 0 on a1r4 and f29k3 (survives; follow-up: a disposed-reader shape)",
+          "pcTargetOnly": "exit 0 on a1r4 and f29k3 (survives; follow-up: a recycled-link shape)",
+          "pmSourceOnly": "exit 0 on a1r4 and f29k3 (survives; follow-up: a recycled-link shape)",
+          "eeNoStamp": "exit 0 on a1r4 and f29k3 (survives; follow-up: a recycled-link shape)",
+          "retNoDec": "f29k3 only: exit 1: a19-pull-freed.extra:liveDelta, a19-effect-freed.extra:liveDelta",
+          "crash": "f29k3 only: exit 1"
+        },
+        "harnessMutants": {
+          "h1": "a19-pull-freed prime `Y();` removed -> exit 1: a19-pull-freed.depWalk = 0 (f29k3; red only since fix round 1b)",
+          "h2": "an extra `X();` prime before the effect in a19-effect-freed -> exit 0 (survives: same walks, same counts)",
+          "h3": "liveDelta summed without Math.abs -> exit 0 (survives: the abs form only differs on opposite-sign gauge deltas; no current mutant produces them)"
+        }
+      },
+      "moduleRefLineTerminators": {
+        "tier": "DETERMINISTIC (scratch proof; the B2 test ports it)",
+        "forms": "`import //c<T>(\"./x.mjs\")`, `export * from //c<T>\"./x.mjs\"`, two-comment and `await import` variants, T in {LF, CR, U+2028, U+2029, CRLF}: 20/20 refused",
+        "control": "round-1 anchors (28853f2b): LF refused, CR / U+2028 / U+2029 ESCAPED (the reviewer's CR engine loaded evil.mjs and passed --verify 35); final anchors: all refused, the CR engine exits 2 before any import",
+        "census": "1 raw hit (the Watch.js re-export) / 0 instrumented on wt0, a1r4, f29k3; instrument(f29k3) byte-identical to HEAD's",
+        "compileAttack": "fix round 2b: MODULE_REF.compile(\"a^\") on the exported copy, then instrument(f29k3 + `export * from \"./x\"`) still refuses and instrument(f29k3) stays byte-identical to HEAD's; MODULE_REF.source === the MODULE_REF_RE literal (fresh import); the 20 line-terminator forms still refuse; census 1 / 0 on wt0, a1r4, f29k3"
+      }
     }
+  },
+  "linkReuse": {
+    "path": "witnessed in the harness, no new anchor / counter column / diag-row change",
+    "reuse": "extra:linkGrowth = linkPoolPopulation after the loop minus after op 1 (lazy pools): 0 on wt0, a1r4, f29k3; 39,936 under linkNoReuse and both combos",
+    "identity": "extra:linkSame = per op, the reader's headDep after the prime === the successor's headDep after the recycle (Z for the aba shapes, T / stopT for the relink shapes), compared as engine objects via node_ptr: 10,000 on wt0, a1r4, f29k3 on all 4 shapes; 0 under linkSecond, linkSecond + each of the 4 half mutants, and linkNoReuse",
+    "failClosed": "headDepOf() returns undefined on any throw, so a missing node_ptr or headDep counts 0 (harness mutants lsNoField: 4 linkSame FAIL lines, lsNoPtr: 2; exit 1, no SHAPE CRASH; S/b1/logs/linksame-failclosed.txt)",
+    "history": "round 1b stated LIFO order as an unwitnessed assumption needing a new EDITS anchor; review round 2 showed that false; replaced in round 2b"
   }
 }
