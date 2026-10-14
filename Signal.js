@@ -69,18 +69,18 @@
  * -- WRITE DURING AN EVALUATION (F-b33-1) --
  *   A write made while some body is mid-run (cursorDepth !== 0, untrack included)
  *   goes through markDownstreamInEval: the same marking, plus FLAG_STALE_READ on
- *   every reader that is itself mid-run (COMPUTING) and is not the writer
- *   (writer = currentObserver, else currentOwner: an untrack-wrapped or watch-
- *   callback self-write stays absorbed). KNOWN (D-M2): an onConnect write, or
- *   one from an onDisconnect fired by severTail, runs under the reading node's
- *   owner (fireConnect / Disconnect null only the observer), so it is absorbed
- *   as that reader's self-write: not flagged, that run keeps the value it read.
- *   A write made before a body's first
- *   read -- by its own cleanups or its owned children's (runCleanup) -- is seen,
- *   not stale: disposeOwned / runOwnCleanup clear the node's own flag (gen-
- *   guarded). After its run a stale effect is
- *   re-queued with evalVersion 0 (requeueStaleEffect) and runs again in the same
- *   flush; a stale computed is re-pulled in the same read (computedRunTail).
+ *   every mid-run (COMPUTING) reader that is reached through no mid-run computed
+ *   and is not the writer (writer = currentObserver, else currentOwner: an
+ *   untrack-wrapped or watch-callback self-write stays absorbed). KNOWN (D-M2):
+ *   an onConnect write, or one from an onDisconnect fired by severTail, runs with
+ *   currentOwner = the reading node (fireConnect / Disconnect null only the
+ *   observer), so it is absorbed as that reader's self-write: not flagged, that
+ *   run keeps the value it read. A write made before a body's first read -- by
+ *   its own cleanups or its owned children's (runCleanup) -- is seen, not stale:
+ *   disposeOwned / runOwnCleanup clear the node's own flag (gen-guarded). After
+ *   its run a stale effect is re-queued with evalVersion 0 (requeueStaleEffect)
+ *   and runs again in the same flush; a stale computed is re-pulled in the same
+ *   read (computedRunTail).
  *   A write that lands during the dependency pre-walk moves this node's
  *   markEpoch: pullMoved / pullComputed compare it across the walk and run the
  *   body. A never-settling loop throws "CycleError:" where it forms -- effects
@@ -1067,32 +1067,45 @@ export function createRegistry(config) {
 
     // --- F-b33-1: WRITE DURING AN EVALUATION (cold) ---------------
     // markDownstream hands a write made while a body is mid-run (cursorDepth !== 0) to
-    // this twin. Marking is identical to markDownstream's loop; in addition a target that
-    // is mid-run (COMPUTING), is not the writer and is not already flagged gets
-    // FLAG_STALE_READ: its run read a value this write changed. The writer is the
-    // observer, else the owner (untrack nulls currentObserver; Watch.js runs callbacks as
-    // untrack(cb) inside its effect), so self-writes stay absorbed. No evalVersion write
-    // here: the S9 stamp in the run's `finally` would overwrite it.
+    // this twin. Marking and queueing are identical to markDownstream's loop; in addition
+    // a target that is mid-run (COMPUTING), is not the writer, is not already flagged and
+    // is reached through no mid-run computed gets FLAG_STALE_READ: its run read a value
+    // this write changed. A COMPUTING node has not handed out its value yet: it absorbs
+    // the write or is flagged itself and re-pulled (computedRunTail) before it returns,
+    // so nothing below it is flagged. nc is set when a COMPUTING node pops; floor is the
+    // stack entry under it, so nc clears when floor pops (LIFO: all pushed in between
+    // descend from that node). The flag test runs on every edge, ahead of the markEpoch
+    // dedup: a direct edge still flags a target an absorbed path stamped first. The
+    // writer is the observer, else the owner (untrack nulls currentObserver; Watch.js
+    // runs callbacks as untrack(cb) inside its effect), so self-writes stay absorbed. No
+    // evalVersion write here: the S9 stamp in the run's `finally` would overwrite it.
     function markDownstreamInEval(startNode) {
         const gv = globalVersion;
         const writer = currentObserver !== null ? currentObserver : currentOwner;
         let markHead = startNode;
         startNode.nextMark = null;
+        let nc = false;
+        let floor = null;
 
         while (markHead !== null) {
             const n = markHead;
             markHead = n.nextMark;
             n.nextMark = null;
+            if (n === floor) nc = false;
+            if (!nc && (n.flags & FLAG_COMPUTING) !== 0) {
+                nc = true;
+                floor = markHead;
+            }
 
             let link = n.headSub;
             while (link !== null) {
                 const t = link.target;
+                const flags = t.flags;
+                if (!nc && (flags & (FLAG_COMPUTING | FLAG_STALE_READ)) === FLAG_COMPUTING && t !== writer) {
+                    t.flags = flags | FLAG_STALE_READ;
+                }
                 if (t.markEpoch !== gv) {
                     t.markEpoch = gv;
-                    const flags = t.flags;
-                    if ((flags & (FLAG_COMPUTING | FLAG_STALE_READ)) === FLAG_COMPUTING && t !== writer) {
-                        t.flags = flags | FLAG_STALE_READ;
-                    }
 
                     if ((flags & FLAG_EFFECT) !== 0) {
                         if ((flags & (FLAG_QUEUED | FLAG_COMPUTING)) === 0) {

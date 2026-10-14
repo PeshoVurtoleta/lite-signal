@@ -119,7 +119,7 @@ export const EDITS = Object.freeze([
 //       export {a} / export * from "x" (escapes inside the specifier such as
 //       ".\/x", "\x2e/x", "\u002e/x" do not matter: it is never read)
 // Not after `from`: a backtick. A static specifier cannot be a template, and
-// the engine's JSDoc says "from `x`" in prose (Signal.js:468, :628).
+// the engine's JSDoc says "from `x`" in prose (Signal.js:494, :654).
 // NOT caught: code built at run time (eval / new Function over concatenated
 // strings), process.getBuiltinModule(...), and realm patches to intrinsics
 // (RegExp.prototype.exec, String.prototype.split / join,

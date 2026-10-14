@@ -10,15 +10,19 @@
 // TS, S-*, b33-cleanup, nested-batch) are derived by hand in the comment on the row.
 // Engine: F_B33_ENGINE (absolute path or file: URL), default ../Signal.js.
 //
-// RED on frozen head-7c65afd (a5c64df9), measured: V1, V3, V6, V7, X1, X2, b33-effect, b33-computed, b33-cleanup,
-// nested-batch, S-dispose, CAP, BW, DR, X2R, F6K, F6K-after, KNOWN EQ, KNOWN ANC, KNOWN P2-eRuns. GREEN on it: V2, V5,
-// V8, V9, NR, TS, S-recycle, RF, P2, P2c, P4, PC, W0, KNOWN P1, KNOWN P1b (log: .handoff/b44-evidence/helper-56-b45-frozen.txt).
+// RED on frozen head-7c65afd (a5c64df9), measured (burst 46): V1, V3, V6, V7, X1, X2, b33-effect, b33-computed,
+// b33-cleanup, nested-batch, S-dispose, CAP, BW, DR, X2R, F6K, F6K-after, KNOWN EQ, DD, IF, NC2 (21). GREEN on it: V2, V5,
+// V8, V9, NR, TS, S-recycle, RF, P2, P2c, P4, PC, W0, ANC, ANC-2, P2-eRuns, ANC2H, NEST, KNOWN P1, KNOWN P1b, KNOWN KC
+// (log: .handoff/b46-evidence/helper-56-a5c64df9.tap.txt).
+// RED on 400a655e (b46-before, the D-R3 defect): ANC, ANC-2, P2-eRuns, ANC2H, IF, NC2, NEST, KNOWN KC (8) (KC re-runs F there; PLAN A1
+// predates the D4-1 (a) ruling and lists only the first five).
 // X2R is red there because the 2nd effect does not throw at creation.
 // X2R's qskip2 teeth are proven by mutant M12 (qskip2 stripped), not by a5c64df9.
-// RED on the B1 engine f2dd6edc (R1-REJECTED: false STALE from the node's own cleanups): P2, P2c, P4, PC, W0, DR, KNOWN P2-eRuns.
+// RED on the B1 engine f2dd6edc (R1-REJECTED: false STALE from the node's own cleanups): P2, P2c, P4, PC, W0, DR, ANC, ANC-2, ANC2H, P2-eRuns, IF, KNOWN KC, NC2, NEST (14).
 // F6K is a KNOWN pin (DIV-F6, open, fixBy A2): it asserts the CURRENT value (runs 1); the ideal is 2.
-// KNOWN (N8) pins (maintainer 2026-10-14 "accept all three"): EQ (D-M1), P1 / P1b (D-M2), ANC + P2-eRuns (D-R3).
-// Each asserts CURRENT behaviour. ANC + P2-eRuns are temporary tripwires that DELTA 4 flips (1.6.0 release blocker).
+// KNOWN (N8) pins (maintainer 2026-10-14 "accept all three"): EQ (D-M1), P1 / P1b (D-M2). Each asserts CURRENT behaviour.
+// ANC + P2-eRuns (D-R3) are FIXED by DELTA 4a and assert the fixed value (= a5c64df9's). KC is a KNOWN pin (D4-1 (a),
+// N10, = a5c64df9; HEAD 400a655e re-runs F).
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
@@ -511,21 +515,50 @@ describe('F-b33-1 write during evaluation', () => {
         assert.strictEqual(a.peek(), 10);
     }));
 
-    // KNOWN (N8) ANC (D-R3): TEMPORARY TRIPWIRE that DELTA 4 will flip ("no STALE through an absorbing / COMPUTING
-    // node"); a 1.6.0 RELEASE BLOCKER, never a shipped exception. E writes t then pulls Y; Y reads t and k and
-    // self-writes k. Head flags E STALE through the absorbing Y and loops: effect() creation throws
-    // /^CycleError: flush passes exceeded/ (a5c64df9: 1 run, no throw). Ideal: no throw, 1 run.
-    it('KNOWN (N8) ANC effect creation throws CycleError through an absorbing computed (TRIPWIRE, DELTA 4 flips)', () => withReg((r) => {
+    // ANC (D-R3, fixed by DELTA 4a): E writes t then pulls Y; Y reads t and k and self-writes k. A COMPUTING
+    // computed (Y) absorbs the write, so E is not flagged STALE through it: no throw, 1 run of each, t 1, k 1.
+    // Values = a5c64df9's (pre-b33 engine). Red on 400a655e (CycleError: flush passes exceeded at creation).
+    it('ANC effect creation through an absorbing computed: no throw, one run', () => withReg((r) => {
         const t = r.signal(0), k = r.signal(0);
-        const Y = r.computed(() => { t(); const v = k(); k.set(v + 1); return v; });
-        assert.throws(
-            () => r.effect(() => { t.set(t.peek() + 1); Y(); }),
-            (e) => /^CycleError: flush passes exceeded/.test(e.message));
+        let runs = 0, yruns = 0;
+        const Y = r.computed(() => { yruns++; t(); const v = k(); k.set(v + 1); return v; });
+        r.effect(() => { runs++; t.set(t.peek() + 1); Y(); });
+        assert.strictEqual(runs, 1);
+        assert.strictEqual(yruns, 1);
+        assert.strictEqual(t.peek(), 1);
+        assert.strictEqual(k.peek(), 1);
     }));
 
-    // KNOWN (N8) P2-eRuns (D-R3, same tripwire family): computed Y's own cleanup writes its own dep k, Y pulled in E's
-    // body; t.set(1) re-runs Y once (yruns 1, out 1, k 1) but E twice (eRunsAfter 2). Ideal 1; a5c64df9 gives 1.
-    it('KNOWN (N8) P2-eRuns computed own cleanup write re-runs the reader effect twice (eRuns 2, ideal 1)', () => withReg((r) => {
+    // ANC-2: ANC, then a plain t.set(t.peek() + 1) from outside. Hand-derived (= a5c64df9 values): t=2 stales Y and
+    // queues E (runs 2); E's pre-walk re-runs Y (yruns 2, k 2); E's body t.set(3) dirties Y again and the Y() read
+    // re-runs it (yruns 3, k 3). No throw, runs 2, yruns 3, t 3, k 3. Red on 400a655e (throws at creation).
+    it('ANC-2 ANC then an outside t.set: no throw, runs 2', () => withReg((r) => {
+        const t = r.signal(0), k = r.signal(0);
+        let runs = 0, yruns = 0;
+        const Y = r.computed(() => { yruns++; t(); const v = k(); k.set(v + 1); return v; });
+        r.effect(() => { runs++; t.set(t.peek() + 1); Y(); });
+        t.set(t.peek() + 1);
+        assert.strictEqual(runs, 2);
+        assert.strictEqual(yruns, 3);
+        assert.strictEqual(t.peek(), 3);
+        assert.strictEqual(k.peek(), 3);
+    }));
+
+    // ANC2H: ANC through a hop: E pulls Z = computed(() => Y()). Creation must not throw; a later t set re-runs E
+    // once more (runs 2). Green on a5c64df9; red on 400a655e (CycleError at creation).
+    it('ANC2H ANC through a computed hop (Z over Y): no throw, runs 2 after a t set', () => withReg((r) => {
+        const t = r.signal(0), k = r.signal(0);
+        let runs = 0;
+        const Y = r.computed(() => { t(); const v = k(); k.set(v + 1); return v; });
+        const Z = r.computed(() => Y());
+        r.effect(() => { runs++; t.set(t.peek() + 1); Z(); });
+        t.set(t.peek() + 1);
+        assert.strictEqual(runs, 2);
+    }));
+
+    // P2-eRuns (D-R3, fixed by DELTA 4a): computed Y's own cleanup writes its own dep k, Y pulled in E's body;
+    // t.set(1) re-runs Y once (yruns 1, out 1, k 1) and E once (eRunsAfter 1; a5c64df9 value). Red on 400a655e (2).
+    it('P2-eRuns computed own cleanup write re-runs the reader effect once', () => withReg((r) => {
         const k = r.signal(0), t = r.signal(0);
         let yruns = 0, eruns = 0, out = -1;
         const Y = r.computed(() => { yruns++; t(); const v = k(); r.onCleanup(() => k.set(k.peek() + 1)); return v; });
@@ -535,6 +568,76 @@ describe('F-b33-1 write during evaluation', () => {
         assert.strictEqual(out, 1);
         assert.strictEqual(yruns - y0, 1);
         assert.strictEqual(k.peek(), 1);
-        assert.strictEqual(eruns - e0, 2); // KNOWN (N8) D-R3: ideal 1
+        assert.strictEqual(eruns - e0, 1);
+    }));
+
+    // DD: Z = computed(s) is read first, then X reads s and writes s itself (absorbed by the COMPUTING X). The effect
+    // read Z before X's write, so Z is stale and E re-runs once: runs 2, seen 1, s 1. Red on a5c64df9 (runs 1,
+    // seen 0: no mechanism). Teeth: MD-DEDUP, MD-FLOOR.
+    it('DD effect reads Z(s) then X which writes s: re-runs once, sees 1', () => withReg((r) => {
+        const s = r.signal(0);
+        let runs = 0, seen = -1;
+        const Z = r.computed(() => s());
+        const X = r.computed(() => { const v = s(); if (v < 1) s.set(v + 1); return v; });
+        r.effect(() => { runs++; seen = Z(); X(); });
+        assert.strictEqual(runs, 2);
+        assert.strictEqual(seen, 1);
+        assert.strictEqual(s.peek(), 1);
+    }));
+
+    // IF: effect reads D (the V7 D / C pair: D reads a, then pulls writer C). The stale value must not be cached
+    // through the effect: runs 1, out 10 (spec: V7 D() = 10). Red on 400a655e (runs 2) and a5c64df9 (out 0).
+    it('IF effect over the V7 D / C pair: one run, out 10', () => withReg((r) => {
+        const a = r.signal(0);
+        let runs = 0, out = -1;
+        const C = r.computed(() => { a.set(10); return 1; });
+        const D = r.computed(() => { const x = a(); C(); return x; });
+        r.effect(() => { runs++; out = D(); });
+        assert.strictEqual(runs, 1);
+        assert.strictEqual(out, 10);
+    }));
+
+    // KC KNOWN (D4-1 (a), N10, maintainer 2026-10-15): F reads X, then writes X's input s itself (absorbed), then reads
+    // X again; X re-runs and during that re-run X writes u, an input it already read. Asserts a5c64df9's behaviour:
+    // F runs 1, X runs 2, s 1, u 1. The ideal (exact, DELTA 5) is not pinned; HEAD 400a655e re-runs F (fr 2).
+    it('KNOWN (D4-1 a) KC reader self-write then re-read of X whose re-run writes its input (F runs 1)', () => withReg((r) => {
+        const s = r.signal(0), u = r.signal(0);
+        let xr = 0, fr = 0;
+        const X = r.computed(() => { xr++; const a = s(); const b = u(); if (xr === 2) u.set(b + 1); return a + b; });
+        r.effect(() => { fr++; X(); s.set(s.peek() + 1); X(); });
+        assert.strictEqual(fr, 1); // KNOWN D4-1 (a): = a5c64df9
+        assert.strictEqual(xr, 2);
+        assert.strictEqual(s.peek(), 1);
+        assert.strictEqual(u.peek(), 1);
+    }));
+
+    // NC2: the floor entry is itself mid-run. E pulls X2; X2 reads s, then pulls X1, which reads s and writes s
+    // (absorbed by X1). X2 is flagged by its direct s edge and re-pulled before it returns; E is not flagged
+    // through X2: runs 1, seen 1, s 1. Red on 400a655e (runs 2) and a5c64df9 (seen 0). Teeth: R-SWAP.
+    it('NC2 floor entry itself mid-run: effect runs once, sees 1', () => withReg((r) => {
+        const s = r.signal(0);
+        let runs = 0, seen = -1;
+        const X1 = r.computed(() => { const v = s(); if (v < 1) s.set(v + 1); return v; });
+        const X2 = r.computed(() => { const v = s(); X1(); return v; });
+        r.effect(() => { runs++; seen = X2(); });
+        assert.strictEqual(runs, 1);
+        assert.strictEqual(seen, 1);
+        assert.strictEqual(s.peek(), 1);
+    }));
+    // NEST: inner mid-run Xi inside outer absorbing Xo's region; Xo's sub A (linked first by a side effect) sits under
+    // Xi on the walk stack and reaches E through E's previous-run link. E reads Xi before A, so nothing is stale:
+    // one run per q set, no throw. Red on 400a655e (CycleError at q.set); green on a5c64df9. Teeth: R-NEST.
+    it('NEST inner mid-run computed inside an absorbing one: one run per set', () => withReg((r) => {
+        const q = r.signal(0), u = r.signal(0), p = r.signal(0), s = r.signal(0);
+        let runs = 0;
+        const Xo = r.computed(() => { u(); const v = s(); s.set(v + 1); return v; });
+        const A = r.computed(() => Xo());
+        const Xi = r.computed(() => { p(); return Xo(); });
+        r.effect(() => { A(); });
+        r.effect(() => { runs++; q(); u.set(u.peek() + 1); p.set(p.peek() + 1); Xi(); A(); });
+        q.set(1);
+        assert.strictEqual(runs, 2);
+        q.set(2);
+        assert.strictEqual(runs, 3);
     }));
 });
