@@ -7,14 +7,21 @@
 //
 // FAIL-CLOSED CONTRACT (unchanged by the split): every anchor must occur
 // exactly its expected number of times, the source must not already carry
-// the counters, and no quoted relative import (see RELATIVE_IMPORT for the
-// exact forms) may survive -- otherwise instrument() throws and the caller
-// refuses to run (visit-anatomy exits 2). A drift
-// Error carries `.drift`, one "<anchor>..." found Nx, expected Mx line per
-// drifted anchor, in the format the tool prints.
+// the counters, and no module reference (see MODULE_REF for the exact forms)
+// may survive -- otherwise instrument() throws and the caller refuses to run
+// (visit-anatomy exits 2). A drift Error carries `.drift`, one
+// "<anchor>..." found Nx, expected Mx line per drifted anchor, in the format
+// the tool prints (CR / LF inside the 48-char label are escaped as \r / \n,
+// so every drift line is ONE line).
+//
+// Every exported table is frozen (NAMES, I, IDX, EDITS and each EDITS entry):
+// an importer cannot retarget an anchor or a counter index for the next call.
+// The module-reference check runs on a module-private RegExp (MODULE_REF_RE);
+// the exported MODULE_REF is an informational frozen COPY, so mutating it
+// (compile(), etc.) cannot change what instrument() refuses.
 
 /* -- counter map -------------------------------------------------------------- */
-export const NAMES = [
+export const NAMES = Object.freeze([
     "cursorHit",      // 0  read fast path: cursor reused the existing link (x4 sites)
     "linkAlloc",      // 1  link actually WIRED (past allocateLink's abort + same-pass dedup)
     "linkFree",       // 2  freeLink entry (sever)
@@ -27,15 +34,15 @@ export const NAMES = [
     "eqDispatch",     // 9  `const eq = node.equals` dispatch sites (x3)
     "effectExec",     // 10 executeEffect entries
     "depWalk",        // 11 dep-validation edges walked (pullComputed + executeEffect needsRun loops)
-];
-export const IDX = Object.fromEntries(NAMES.map((n, i) => [i, n]));
-export const I = Object.fromEntries(NAMES.map((n, i) => [n, i]));
+]);
+export const IDX = Object.freeze(Object.fromEntries(NAMES.map((n, i) => [i, n])));
+export const I = Object.freeze(Object.fromEntries(NAMES.map((n, i) => [n, i])));
 
 /* -- injection ---------------------------------------------------------------- */
 // [anchor, replacement, expectedOccurrences]. Replacement PREPENDS the count
 // so the anchor's own semantics are untouched.
 const bump = (i) => `__VC[${i}]++; `;
-export const EDITS = [
+export const EDITS = Object.freeze([
     [`const FLAG_COMPUTED = 1 << 0;`,
         `const __VC = new Int32Array(16);\nglobalThis.__VISIT__ = __VC;\nconst FLAG_COMPUTED = 1 << 0;`, 1],
     [`activeObserverCurrentDep = expected.nextDep;`,
@@ -87,28 +94,46 @@ export const EDITS = [
         `${bump(I.eqDispatch)}const eq = node.equals;`, 3],
     [`function executeEffect(node) {`,
         `function executeEffect(node) { ${bump(I.effectExec)}`, 1],
-];
+].map((e) => Object.freeze(e)));
 
 // markEdge counts EDGES WALKED, but the anchor sits inside the epoch check --
 // correction: it must count every loop iteration. The anchor above prepends
 // the edge bump BEFORE `if (t.markEpoch ...)`, which executes once per edge
 // walked: correct.
 
-// A relative specifier left after the edits would resolve against the temp
-// dir (a crash) or, rewritten back into a tree, bind a SECOND engine the
-// counters cannot see. The only one the engine has (./Watch.js) is stripped
-// above; a new one is drift, so refuse instead of rewriting it. Caught:
-// `from "./`, `import("./` and bare `import "./` (either quote, ./ or ../).
-// NOT caught: a template-literal import(`./x`) or new URL("./x",
-// import.meta.url). Like any unrewritten specifier they resolve against the
-// copy's dir: they fail when reached in visit-anatomy's empty temp dir, and
-// would bind a sibling only in a caller dir that holds one.
-export const RELATIVE_IMPORT = /\bfrom\s*["']\.{1,2}\/|\bimport\s*\(\s*["']\.{1,2}\/|\bimport\s*["']\.{1,2}\//;
+// The engine is single-file and zero-dependency: its one module reference
+// (the ./Watch.js re-export) is stripped above, so ANY module reference left
+// in the instrumented copy is drift. The specifier is never parsed (a relative
+// one resolves against the copy's dir -- a crash in an empty temp dir, an
+// uninstrumented sibling engine in a dir that holds one; a bare or absolute
+// one loads a module the counters cannot see), so refuse on the keyword
+// instead. Caught, with any run of whitespace, /* */ or // comments between
+// the keyword and the next token (a // comment ends at ANY JS line
+// terminator: LF, CR, U+2028 or U+2029 -- an LF-only pattern let
+// `import //c<CR>("x")` load an uncounted module):
+//   `import` followed by ( " ' ` . { or *   -- dynamic import(), bare
+//       import "x", template import(`x`), import.meta (so new URL("x",
+//       import.meta.url) too), import {a} / import * as ns
+//   `from` followed by " or '               -- import a from "x",
+//       export {a} / export * from "x" (escapes inside the specifier such as
+//       ".\/x", "\x2e/x", "\u002e/x" do not matter: it is never read)
+// Not after `from`: a backtick. A static specifier cannot be a template, and
+// the engine's JSDoc says "from `x`" in prose (Signal.js:468, :628).
+// NOT caught: code built at run time (eval / new Function over concatenated
+// strings) and process.getBuiltinModule(...).
+// A future engine COMMENT that quotes an import (`import {x} from "y"`) is
+// refused too -- intended: the fix is an EDITS strip, never a weaker pattern.
+// instrument() uses MODULE_REF_RE, which is never exported. MODULE_REF is a
+// frozen copy (same source and flags) for tests and tooling: it is
+// informational only -- a frozen RegExp can still be re-pointed by
+// RegExp.prototype.compile(), which is why no check reads it.
+const MODULE_REF_RE = /\bimport\s*(?:\/\*[\s\S]*?\*\/\s*|\/\/[^\n\r\u2028\u2029]*[\n\r\u2028\u2029]\s*)*[("'`.{*]|\bfrom\s*(?:\/\*[\s\S]*?\*\/\s*|\/\/[^\n\r\u2028\u2029]*[\n\r\u2028\u2029]\s*)*["']/;
+export const MODULE_REF = Object.freeze(new RegExp(MODULE_REF_RE));
 
 // PURE: engine source in, instrumented source out. Throws (never returns a
 // half-instrumented string) on a non-string, on an already-instrumented
 // source (every counter would double), on anchor drift (Error .drift = one
-// line per drifted anchor) and on a surviving relative import.
+// line per drifted anchor) and on a surviving module reference (MODULE_REF_RE).
 export function instrument(src) {
     if (typeof src !== "string") {
         throw new TypeError(`visit-anatomy: instrument(src) needs the engine source as a string, got ${src === null ? "null" : typeof src}`);
@@ -120,7 +145,13 @@ export function instrument(src) {
     const drift = [];
     for (const [anchor, replacement, expected] of EDITS) {
         const n = out.split(anchor).length - 1;
-        if (n !== expected) { drift.push(`"${anchor.slice(0, 48)}..." found ${n}x, expected ${expected}x`); continue; }
+        if (n !== expected) {
+            // Escape CR / LF so a multi-line anchor (linkAlloc) still prints as
+            // ONE drift line; single-line anchors print byte-identical to 2026-10-13.
+            const label = anchor.slice(0, 48).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+            drift.push(`"${label}..." found ${n}x, expected ${expected}x`);
+            continue;
+        }
         out = out.split(anchor).join(replacement);
     }
     if (drift.length) {
@@ -128,9 +159,9 @@ export function instrument(src) {
         e.drift = drift;
         throw e;
     }
-    const rel = RELATIVE_IMPORT.exec(out);
-    if (rel) {
-        throw new Error(`visit-anatomy: relative import ${JSON.stringify(rel[0])} survives instrumentation -- unrewritten, it resolves against the copy's dir: a crash in an empty temp dir, an uninstrumented sibling module if that dir has one`);
+    const ref = MODULE_REF_RE.exec(out);
+    if (ref) {
+        throw new Error(`visit-anatomy: module reference ${JSON.stringify(ref[0])} survives instrumentation -- the engine is single-file and zero-dependency, so any import / export-from / import() / import.meta left after the Watch.js strip is drift; refusing rather than load an uncounted module`);
     }
     return out;
 }

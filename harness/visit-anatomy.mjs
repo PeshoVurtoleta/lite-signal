@@ -14,6 +14,28 @@
 // short-circuit ships green through every timing gate on a quiet host. Here
 // it collapses an EXACT counter.
 //
+// SHAPES: stable-deep, broadcast, branch-flip, unrelated-read,
+// error-transparency, diamond (the 21 original pins), then cutoff-chain
+// (equality cut-off), effect-fanin (effect pre-walk break), sc-reread (the
+// short-circuit's evalVersion re-stamp), a19-pull-freed and a19-effect-freed
+// (a pre-walk pull that frees the link the walk stands on: the A1.9
+// LINK-FREED guards -- the `link.source !== dep || link.target !== node`
+// checks in pullComputed's pre-walk and in pullMoved -- plus a dep-walk count
+// and a zero-retention witness) -- 16 more pins (37), each red on a named
+// mutant. NOT covered: the A1.9 disposed-READER guards (`node.gen !==
+// savedGen` after each pre-walk); no shape disposes the reader itself.
+//
+// ERA NOTE: the a19-* pins describe the A1.9+ engine. An engine without the
+// A1.9 link-freed guards MAY fail exactly a19-pull-freed.extra:fresh and
+// a19-effect-freed.extra:reruns; whether it does depends on what else it
+// lacks. wt0 (7f707ccd) passes all 37: it also lacks A1 r4's gen check
+// before the value write, so the self-disposed X still bumps its version and
+// that moved version re-runs the reader before the walk reaches the freed
+// link (wt0 with only that check added fails exactly those two pins). The
+// tool does not check the engine's era: the expected-red set per kernel lives
+// in bench/soak/calibration/golden/visit-anatomy.golden.json. Any other red
+// pin, or a liveDelta != 0, is an engine finding.
+//
 // INSTRUMENTATION IS FAIL-CLOSED: each counter is injected at an exact anchor
 // string with an expected occurrence count. If the engine's source drifts and
 // an anchor vanishes (or multiplies), the tool refuses to run rather than
@@ -60,7 +82,12 @@ for (let ai = 2; ai < process.argv.length; ai++) {
         if (typeof v !== "string" || v === "" || v.startsWith("--")) argFail("--engine needs a Signal.js path");
         ENGINE_ARG = v;
     } else {
-        argFail(`unknown argument ${JSON.stringify(a)} (did you mean ${a.startsWith("--v") ? "--verify" : "--engine <path>"}?)`);
+        // The HINT is case- and dash-insensitive (`--VERIFY`, `-v`, `verify`
+        // -> --verify; `--Engine`, `-e` -> --engine <path>); ACCEPTANCE stays
+        // exact and case-sensitive -- every one of these still exits 2.
+        const h = a.toLowerCase().replace(/^-+/, "");
+        const hint = h.startsWith("v") ? "--verify" : h.startsWith("e") ? "--engine <path>" : "--verify or --engine <path>";
+        argFail(`unknown argument ${JSON.stringify(a)} (did you mean ${hint}?)`);
     }
 }
 
@@ -107,6 +134,13 @@ function lcg(seed) {
     return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return (s >>> 8) / 16777216; };
 }
 const SIZES = { maxNodes: 1 << 14, maxLinks: 1 << 16, prealloc: "eager", onCapacityExceeded: "grow" };
+// Retention witness for the create / dispose shapes: the five live gauges
+// disposeNode / freeLink decrement (activeLinks, activeNodes, signals,
+// computeds, effects), after minus before, summed as ABSOLUTE deltas so a
+// leaked link cannot cancel a double-freed node. 0 = every node and link the
+// loop made was released.
+const LIVE = ["activeLinks", "activeNodes", "signals", "computeds", "effects"];
+const liveDelta = (a, b) => LIVE.reduce((t, k) => t + Math.abs(b[k] - a[k]), 0);
 
 const SHAPES = {
     // Stable steady-state: deep chain x16 + tail effect, 10k writes. The
@@ -218,6 +252,116 @@ const SHAPES = {
         for (let i = 1; i <= OPS; i++) src2.set(i);
         report(OPS, diff(t0, snap()), { sink });
     },
+    // EQUALITY CUT-OFF: s -> X = s() & 0 -> Y = X() + 1 -> effect. Every write
+    // recomputes X, whose value never changes, so the `equals` cut-off keeps
+    // X.version still: Y's pre-walk pulls X and stops (no Y recompute), and
+    // the effect's pre-walk pulls Y and stops (no body run). Per write: one
+    // recompute and three dep edges (E->Y, Y->X, X->s). A pullComputed
+    // pre-walk that re-runs after every computed pull recomputes Y too (2x);
+    // an effect pre-walk that runs after every computed pull runs the body.
+    "cutoff-chain": (report) => {
+        const r = E.createRegistry(SIZES);
+        const s = r.signal(0);
+        const X = r.computed(() => s() & 0);
+        const Y = r.computed(() => X() + 1);
+        let effectBody = 0, sink = 0;
+        r.effect(() => { effectBody++; sink = Y(); });
+        effectBody = 0;                                            // count runs after creation only
+        const OPS = 10_000;
+        zero(); const t0 = snap();
+        for (let i = 1; i <= OPS; i++) s.set(i);
+        report(OPS, diff(t0, snap()), { effectBody, sink });
+    },
+    // EFFECT FAN-IN: one effect over four signals a, b, c, d (read in that
+    // order); each write moves a, the FIRST dep. executeEffect's pre-walk
+    // must stop at the first moved dep: one edge walked per write, not four.
+    "effect-fanin": (report) => {
+        const r = E.createRegistry(SIZES);
+        const a = r.signal(0), b = r.signal(1), c = r.signal(2), d = r.signal(3);
+        let effectBody = 0, sink = 0;
+        r.effect(() => { effectBody++; sink = a() + b() + c() + d(); });
+        effectBody = 0;
+        const OPS = 10_000;
+        zero(); const t0 = snap();
+        for (let i = 1; i <= OPS; i++) a.set(i);
+        report(OPS, diff(t0, snap()), { effectBody, sink });
+    },
+    // SHORT-CIRCUIT RE-STAMP: 8 primed computeds over 8 signals; each round
+    // writes an UNRELATED signal, then reads every computed TWICE. The first
+    // read takes the clean short-circuit, which re-stamps evalVersion to the
+    // current globalVersion, so the second read is a same-version cache hit.
+    // Without the re-stamp both reads take the short-circuit.
+    "sc-reread": (report) => {
+        const r = E.createRegistry(SIZES);
+        const srcs = [];
+        for (let i = 0; i < 8; i++) srcs.push(r.signal(i));
+        const comps = [];
+        for (let i = 0; i < 8; i++) { const s = srcs[i]; comps.push(r.computed(() => s() + i)); }
+        const unrelated = r.signal(0);
+        let acc = 0;
+        for (let i = 0; i < 8; i++) acc += comps[i]();            // prime: first eval
+        const OPS = 10_000;
+        zero(); const t0 = snap();
+        for (let i = 1; i <= OPS; i++) {
+            unrelated.set(i);
+            for (let j = 0; j < 8; j++) { acc += comps[j](); acc += comps[j](); }
+        }
+        report(OPS, diff(t0, snap()), { sink: acc });
+    },
+    // A1.9 LINK FREED INSIDE pullComputed's PRE-WALK: X disposes ITSELF from
+    // its own body once s moves; Y reads X. Per op: fresh s / X / Y, prime Y,
+    // write s, read Y. Y's pre-walk pulls X, X's recompute frees the X->Y
+    // link the walk stands on, and the A1.9 guard must re-run Y (which now
+    // reads the disposed X as undefined -> 1). Without the guard the walk
+    // follows the freed link's nulled nextDep, ends "clean" and returns the
+    // stale 0. liveDelta: every registry gauge (links, nodes, per kind) after
+    // OPS create / dispose cycles minus before, summed as absolute values.
+    "a19-pull-freed": (report) => {
+        const r = E.createRegistry(SIZES);
+        const OPS = 10_000;
+        let fresh = 0;
+        const st0 = r.stats();
+        zero(); const t0 = snap();
+        for (let i = 1; i <= OPS; i++) {
+            const s = r.signal(0);
+            let X = null;
+            X = r.computed(() => { if (s() !== 0) r.dispose(X); return 0; });
+            const Y = r.computed(() => (X() === undefined ? 1 : 0));
+            Y();                                                   // prime: X -> Y wired, both clean
+            s.set(1);
+            fresh += Y();
+            r.dispose(Y);
+            r.dispose(s);
+        }
+        const d = diff(t0, snap());
+        report(OPS, d, { fresh, liveDelta: liveDelta(st0, r.stats()) });
+    },
+    // A1.9 LINK FREED INSIDE executeEffect's PRE-WALK: the same self-disposing
+    // X, read by an effect. The write queues the effect; its pre-walk pulls X
+    // (pullMoved), X's recompute frees the X->E link, and the effect must run
+    // (reruns counts body runs after creation). Without the guard the walk
+    // ends "clean" on the nulled nextDep and the effect never re-runs.
+    "a19-effect-freed": (report) => {
+        const r = E.createRegistry(SIZES);
+        const OPS = 10_000;
+        let reruns = 0;
+        const st0 = r.stats();
+        zero(); const t0 = snap();
+        for (let i = 1; i <= OPS; i++) {
+            const s = r.signal(0);
+            let X = null;
+            X = r.computed(() => { if (s() !== 0) r.dispose(X); return 0; });
+            let runs = 0;
+            const stop = r.effect(() => { runs++; X(); });
+            runs = 0;                                              // count runs after creation only
+            s.set(1);
+            reruns += runs;
+            stop();
+            r.dispose(s);
+        }
+        const d = diff(t0, snap());
+        report(OPS, d, { reruns, liveDelta: liveDelta(st0, r.stats()) });
+    },
 };
 
 /* -- report + verify ----------------------------------------------------------- */
@@ -296,6 +440,36 @@ if (VERIFY) {
         ["broadcast", "markStamp", 256 * OPS],
         ["broadcast", "markEdge", 256 * OPS],
         ["broadcast", "effectExec", 128 * OPS],
+        // --- B-B2b (2026-10-14): 16 pins, witnesses for the mutants that
+        // survived the 21 above (S2 group B review). Each names its mutant.
+        // Dep-validation walks stop at the first moved dep (pcNoBreak): the
+        // diamond's join walks m1 only, branch-flip's computed walks sel only.
+        ["diamond", "depWalk", 4 * OPS],
+        ["branch-flip", "depWalk", 2 * OPS],
+        // Equality cut-off: only X recomputes (a19True re-runs Y too), three
+        // edges per write, and the effect body never runs (pmTrue runs it).
+        ["cutoff-chain", "recompute", OPS],
+        ["cutoff-chain", "depWalk", 3 * OPS],
+        ["cutoff-chain", "extra:effectBody", 0],
+        // Effect pre-walk stops at the first moved dep (eeNoBreak walks 4).
+        ["effect-fanin", "depWalk", OPS],
+        ["effect-fanin", "extra:effectBody", OPS],
+        // The SC re-stamp: first read short-circuits, second is a cache hit
+        // (scNoStamp: both short-circuit, zero cache hits).
+        ["sc-reread", "scHit", 8 * OPS],
+        ["sc-reread", "pullCacheHit", 8 * OPS],
+        ["sc-reread", "recompute", 0],
+        // A1.9 link-freed guards (a19False / pmFalse); a pre-A1.9 engine MAY
+        // go red here (wt0 does not; see the header). Zero retention.
+        ["a19-pull-freed", "extra:fresh", OPS],
+        ["a19-pull-freed", "extra:liveDelta", 0],
+        ["a19-effect-freed", "extra:reruns", OPS],
+        ["a19-effect-freed", "extra:liveDelta", 0],
+        // Fix round 1b (2026-10-14): the a19 shapes walk exactly two dep edges
+        // per op (reader -> X, X -> s). A shape that never primes the reader
+        // (or never reaches the freed link) walks a different count.
+        ["a19-pull-freed", "depWalk", 2 * OPS],
+        ["a19-effect-freed", "depWalk", 2 * OPS],
     ];
     let bad = 0;
     console.log();
