@@ -142,8 +142,8 @@
       "description": "The audit patch's float64 evalCount closure counter allocates on every body run after 2^31 runs."
     },
     {
-      "id": "DIV-F21", "kind": "engine", "finding": "F21", "since": "1.5.2", "fixedIn": null, "fixBy": "A2",
-      "decision": "temporary (amendment 5): flips to fixedIn A2, and P-INTERIM-ERROR-clean moves from GAPS to an active control",
+      "id": "DIV-F21", "kind": "engine", "finding": "F21", "since": "1.5.2", "fixedIn": "A2-F21", "fixBy": "A2",
+      "decision": "fixed (amendment 5; maintainer ruling D2, 2026-10-14): fixedIn A2-F21 (c2f123c, qskip2: flushEffects runs an entry only while its node is QUEUED). Explains only on a pre-fix controls.json kernel (main / SoakReport classify includeFixed = controls.name !== null); P-INTERIM-ERROR-clean is now an active _mustfail control",
       "engines": ["lite"], "lanes": ["ERROR"], "oracles": ["O6"], "sigs": ["escape-CycleError"],
       "ops": ["seq"], "scen": ["cycle-error-surfaces"], "worldScen": ["cycle-error-surfaces"], "priorScen": ["cycle-error-surfaces"],
       "shapes": [

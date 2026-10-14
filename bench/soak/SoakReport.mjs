@@ -304,7 +304,7 @@ function checkHeader(h, cfg, registryText) {
 
 /* ---- cycles ---------------------------------------------------------------------------------------- */
 
-function checkCycles(cycles, cfg, lanes, summary) {
+function checkCycles(cycles, cfg, lanes, summary, controlsName) {
     const n = lanes.run.length;
     const limit = cfg.forever ? CYCLES_MAX : cfg.cycles;
     if (cycles.length > limit * n) bad('cycle-grid', cycles.length + ' cycle records > ' + limit + ' cycles x ' + n + ' running lanes');
@@ -400,7 +400,8 @@ function checkCycles(cycles, cfg, lanes, summary) {
             const crec = { engine: cfg.engine, lane: c.lane, step: f.step, op: f.op, fails: f.fails, scen: f.scen, worldScen: f.worldScen, worldScenCounts: f.worldScenCounts };
             if (f.escape !== null) crec.escape = f.escape;
             let cls;
-            try { cls = classify(crec); } catch (e) { bad('known-tag', 'seq ' + c.seq + ' world ' + f.world + ': classify refused the record (' + e.message + ')'); }
+            // includeFixed from the same identity main used (header controls.name = kernel.mjs KERNEL_KNOWN_AS)
+            try { cls = classify(crec, { includeFixed: controlsName !== null }); } catch (e) { bad('known-tag', 'seq ' + c.seq + ' world ' + f.world + ': classify refused the record (' + e.message + ')'); }
             const want = { known: cls === null ? null : cls.known, tag: cls === null ? null : cls.tag, failKnown: f.fails.map((x, i) => (cls === null ? null : cls.perFail[i].join('+'))) };
             for (const k of Object.keys(want)) if (!isDeepStrictEqual(f[k], want[k])) bad('known-tag', 'seq ' + c.seq + ' world ' + f.world + ': ' + k + ' ' + JSON.stringify(f[k]) + ' re-derives as ' + JSON.stringify(want[k]));
         }
@@ -579,7 +580,7 @@ export function report(path) {
         const st = checkStructure(recs);
         const cfg = readHeader(st.header);
         const lanes = checkHeader(st.header, cfg, registryText);
-        checkCycles(st.cycles, cfg, lanes, st.summary);
+        checkCycles(st.cycles, cfg, lanes, st.summary, st.header.controls.name);
         const v = checkSummary(st.summary, st.cycles, cfg, lanes, st.fatal, registry);
         checkMissingKeys(recs);
         const kernel = st.header.controls.name !== null ? 'control:' + st.header.controls.name : (st.header.kernel.override ? 'override' : 'tree');

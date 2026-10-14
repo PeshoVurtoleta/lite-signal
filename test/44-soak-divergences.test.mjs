@@ -144,6 +144,9 @@ const REC = {
 const rec = (k, patch) => Object.assign(clone(REC[k]), patch || {});
 const without = (a, x) => a.filter((s) => s !== x);
 const known = (r, o) => { const c = classify(r, o); return c === null ? null : c.known; };
+// DIV-F21 is FIXED (fixedIn 'A2-F21'): its matcher rows run as a pre-fix control kernel does (main / SoakReport pass
+// includeFixed = controls.name !== null), so a near-miss null is the matcher's, never the fixedIn skip's
+const FX = () => ({ includeFixed: true });
 
 // ---- 1. the shipped registry ---------------------------------------------------------------------------
 test('the shipped registry validates against the imported vocabulary', () => {
@@ -165,13 +168,13 @@ test('digest is the sha256 of divergences.json and moves with one byte', () => {
     assert.throws(() => digest(42), TypeError);
 });
 
-test('DIV-F21 and DIV-F22 are temporary engine entries (amendments 5, 8)', () => {
+test('DIV-F21 is fixed in A2-F21 (ruling D2); DIV-F22 stays a temporary engine entry (amendments 5, 8)', () => {
     const by = new Map(fresh().entries.map((e) => [e.id, e]));
-    for (const id of ['DIV-F21', 'DIV-F22']) {
+    for (const [id, fixedIn] of [['DIV-F21', 'A2-F21'], ['DIV-F22', null]]) {
         const e = by.get(id);
         assert.equal(e.kind, 'engine');
         assert.deepEqual(e.lanes, ['ERROR']);
-        assert.equal(e.fixedIn, null);
+        assert.equal(e.fixedIn, fixedIn, id);
         assert.equal(e.fixBy, 'A2');
     }
     assert.deepEqual(by.get('DIV-F21').worldScen, ['cycle-error-surfaces']);
@@ -186,33 +189,34 @@ test('DIV-F21 and DIV-F22 are temporary engine entries (amendments 5, 8)', () =>
 
 // ---- 2. classify ----------------------------------------------------------------------------------------
 test('B2 assertion: an F21-shaped ERROR failure -> DIV-F21; without worldScen -> null; on BATCH -> null', () => {
-    const c = classify(rec('F21'));
+    const c = classify(rec('F21'), FX());
     assert.equal(c.known, 'DIV-F21');
     assert.equal(c.tag, 'F21');
     const noWorld = rec('F21');
     noWorld.worldScen = without(noWorld.worldScen, 'cycle-error-surfaces');
-    assert.equal(classify(noWorld), null);
-    assert.equal(classify(rec('F21', { lane: 'BATCH' })), null);
+    assert.equal(classify(noWorld, FX()), null);
+    assert.equal(classify(rec('F21', { lane: 'BATCH' }), FX()), null);
 });
 
 test('DIV-F21 near-misses classify null', () => {
     // no EARLIER surface: the only cycle-error-surfaces count is the failing step's own
-    assert.equal(classify(rec('F21', { worldScenCounts: { 'cycle-error-surfaces': 1 } })), null);
+    assert.equal(classify(rec('F21', { worldScenCounts: { 'cycle-error-surfaces': 1 } }), FX()), null);
     // no counts at all: priorScen cannot be proven
     const nc = rec('F21'); delete nc.worldScenCounts;
-    assert.equal(classify(nc), null);
+    assert.equal(classify(nc, FX()), null);
     // the step itself did not surface the bomb's CycleError
-    assert.equal(classify(rec('F21', { scen: [] })), null);
+    assert.equal(classify(rec('F21', { scen: [] }), FX()), null);
     // a different CycleError message, a different sig, a different op, a different engine
     const msg = rec('F21'); msg.fails[0].detail = 'engine error escaped: Error: CycleError: flush passes exceeded';
-    assert.equal(classify(msg), null);
+    assert.equal(classify(msg, FX()), null);
     const sig = rec('F21'); sig.fails[0].sig = 'escape-TypeError';
-    assert.equal(classify(sig), null);
-    assert.equal(classify(rec('F21', { op: 'eff' })), null);
-    assert.equal(classify(rec('F21', { engine: 'alien' })), null);
+    assert.equal(classify(sig, FX()), null);
+    assert.equal(classify(rec('F21', { op: 'eff' }), FX()), null);
+    assert.equal(classify(rec('F21', { engine: 'alien' }), FX()), null);
     // a second, unexplained fail in the same step makes the world unknown
     const extra = rec('F21'); extra.fails.push({ oracle: 'O5', sig: 'node-count', detail: 'activeNodes engine=9 model=8' });
-    assert.equal(classify(extra), null);
+    assert.equal(classify(extra, FX()), null);
+    assert.equal(known(rec('F21'), FX()), 'DIV-F21', 'positive control: the unchanged record matches');
 });
 
 test('DIV-F6: escape-computed (+ its O4) -> DIV-F6; near-misses -> null', () => {
@@ -308,11 +312,24 @@ test('DIV-F22 must-fail controls (amendment 8)', () => {
 // ---- 4. fixedIn ----------------------------------------------------------------------------------------
 test('a fixed entry explains only a pre-fix control kernel (includeFixed)', () => {
     const r = fresh();
-    for (const e of r.entries) if (e.id === 'DIV-F21') e.fixedIn = 'A2';
+    for (const e of r.entries) if (e.id === 'DIV-F21') e.fixedIn = 'A2-F21';
     assert.deepEqual(validate(r), []);
     assert.equal(classify(rec('F21'), { registry: r }), null);
     assert.equal(known(rec('F21'), { registry: r, includeFixed: true }), 'DIV-F21');
-    assert.equal(known(rec('F21'), { registry: fresh() }), 'DIV-F21');
+    // an unfixed copy (fixedIn null, the pre-A2-F21 registry) explains without includeFixed
+    const u = fresh();
+    for (const e of u.entries) if (e.id === 'DIV-F21') e.fixedIn = null;
+    assert.equal(known(rec('F21'), { registry: u }), 'DIV-F21');
+    // the REGISTRY side of the rule, on the REAL registry file (fixedIn A2-F21): these rows restate the rule
+    // includeFixed = (controls.name !== null) themselves; a tree / scratch kernel (name null) -> null (a fixed finding
+    // is a regression there), a pre-fix control kernel (headpatched, rev152) -> DIV-F21. The wiring itself (main.mjs
+    // failureRecord, SoakReport checkCycles) is gated by test/46 'fixed-entry wiring: a NON-control headpatched copy'.
+    assert.equal(classify(rec('F21')), null, 'the default registry with no opts');
+    for (const [name, want] of [[null, null], ['headpatched', 'DIV-F21'], ['rev152', 'DIV-F21']]) {
+        assert.equal(known(rec('F21'), { includeFixed: name !== null }), want, 'controls.name ' + String(name));
+    }
+    // DIV-F22 (fixedIn null) explains on every kernel
+    for (const inc of [false, true]) assert.equal(known(rec('F22'), { includeFixed: inc }), 'DIV-F22');
     assert.throws(() => classify(rec('F21'), { includeFixed: 'yes' }), TypeError);
     assert.throws(() => classify(rec('F21'), { includefixed: true }), TypeError);
     const bad = fresh(); bad.entries.push(clone(bad.entries[0]));
@@ -327,7 +344,7 @@ test('classify: a wrong container TYPE throws, an unknown value is null', () => 
     assert.throws(() => classify(rec('F21', { worldScen: 'cycle-error-surfaces' })), TypeError);
     assert.throws(() => classify(rec('F21', { escape: 'computed:1' })), TypeError);
     assert.throws(() => classify(rec('F21'), 1), TypeError);
-    assert.equal(classify(rec('F21', { lane: 'NOPE' })), null);
+    assert.equal(classify(rec('F21', { lane: 'NOPE' }), FX()), null);
 });
 
 // ---- 5. validate must-fails ----------------------------------------------------------------------------
@@ -445,7 +462,7 @@ test('a detail regex must match the WHOLE detail: lexical-only anchors are rejec
 
 test('classify options and records are read from OWN data properties only (inherited -> TypeError)', () => {
     const r = fresh();
-    for (const e of r.entries) if (e.id === 'DIV-F21') e.fixedIn = 'A2';
+    for (const e of r.entries) if (e.id === 'DIV-F21') e.fixedIn = 'A2-F21';
     // chosen behaviour: an inherited option THROWS (never honoured, never silently ignored)
     assert.throws(() => classify(rec('F21'), Object.create({ includeFixed: true })), TypeError);
     assert.throws(() => classify(rec('F21'), Object.create({ registry: r })), TypeError);
@@ -500,16 +517,16 @@ test('ONCE_PER_STEP pin: the generator puts at most one cycle trigger (cyc:1 set
 test('QA adversarial: priorScen reads OWN counts only -- a polluted Object.prototype never proves an earlier surface', () => {
     // kills the "drop !own(c, s)" mutant of prior(): isPlain admits Object.prototype, whose inherited keys are not counts
     const r = rec('F21', { worldScenCounts: {} });
-    assert.equal(classify(r), null, 'control: no own count -> null');
+    assert.equal(classify(r, FX()), null, 'control: no own count -> null');
     Object.prototype['cycle-error-surfaces'] = 2;
     let got;
-    try { got = classify(rec('F21', { worldScenCounts: {} })); } finally { delete Object.prototype['cycle-error-surfaces']; }
+    try { got = classify(rec('F21', { worldScenCounts: {} }), FX()); } finally { delete Object.prototype['cycle-error-surfaces']; }
     assert.equal(got, null, 'an inherited count proved priorScen (fail open)');
-    assert.equal(known(rec('F21')), 'DIV-F21', 'positive control after cleanup');
+    assert.equal(known(rec('F21'), FX()), 'DIV-F21', 'positive control after cleanup');
 });
 
 test('QA boundary DIV-F21 priorScen counts: 1 (own step only), 2, 2^31, 2^53 - 1 vs 0, -0, -1, NaN, 1.5, Infinity, "2", null', () => {
-    const k = (c) => known(rec('F21', { worldScenCounts: { 'cycle-error-surfaces': c } }));
+    const k = (c) => known(rec('F21', { worldScenCounts: { 'cycle-error-surfaces': c } }), FX());
     for (const c of [2, 3, 2 ** 30, 2 ** 31, 2 ** 32, 2 ** 53 - 1]) assert.equal(k(c), 'DIV-F21', 'count ' + c);
     for (const c of [1, 0, -0, -1, NaN, 1.5, Infinity, '2', null, undefined]) assert.equal(k(c), null, 'count ' + String(c));
 });
@@ -535,7 +552,8 @@ test('QA boundary classify: empty / null / undefined inputs throw; a repeated ca
         assert.throws(() => classify(bad), TypeError);
     }
     assert.throws(() => classify(rec('F21'), null), TypeError);
-    assert.equal(known(rec('F21'), {}), 'DIV-F21', 'an empty opts object is the default');
+    assert.equal(known(rec('F21'), {}), null, 'an empty opts object is the default (includeFixed false: DIV-F21 is fixed)');
+    assert.equal(known(rec('F22'), {}), 'DIV-F22', 'an empty opts object is the default');
     const r = rec('F22');
     const a = classify(r), b = classify(r);
     assert.deepEqual(a, b);

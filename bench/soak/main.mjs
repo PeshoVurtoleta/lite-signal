@@ -113,6 +113,9 @@ export function tapAdapter(adapter, tap) {
 /* ---- failure records ------------------------------------------------------------------------------ */
 
 const uniq = (arr) => { const out = []; for (const x of arr) if (out.indexOf(x) === -1) out.push(x); return out; };
+// kernel.mjs KERNEL_KNOWN_AS (the header's controls.name), set by main() once the kernel has loaded; null until
+// then and on every other path (replay / shrink / a test import): main.mjs stays kernel-free on import.
+let kernelKnownAs = null;
 
 /**
  * Build one failing world's record and classify it. r: runWorld() result with r.failure !== null.
@@ -128,7 +131,9 @@ export function failureRecord(r, ctx) {
     const escape = f.op === 'batch' && Array.isArray(ctx.escape) ? ctx.escape.map((l) => Object.assign({}, l)) : null;
     const crec = { engine: ctx.engine, lane: ctx.lane, step: f.step, op: f.op, fails, scen: f.scen.slice(), worldScen, worldScenCounts };
     if (escape !== null) crec.escape = escape;
-    const cls = classify(crec);
+    // a fixed registry entry (fixedIn set) explains only on a pre-fix controls.json kernel; on the tree or a scratch
+    // kernel it is a regression. Same identity as the header's controls.name (provenance.mjs) and SoakReport.
+    const cls = classify(crec, { includeFixed: kernelKnownAs !== null });
     return {
         oracles: uniq(fails.map((x) => x.oracle)),
         sigs: uniq(fails.map((x) => x.sig)),
@@ -273,6 +278,9 @@ async function main() {
     }
 
     const { buildHeader } = await import('./provenance.mjs');
+    // provenance.mjs imports kernel.mjs statically, so this import loads nothing new: the same KERNEL_KNOWN_AS
+    // the header records as controls.name decides classify's includeFixed (failureRecord)
+    ({ KERNEL_KNOWN_AS: kernelKnownAs } = await import('./kernel.mjs'));
     const { createLeakTracker } = await import('@zakkster/lite-leak');
     const { GcProfiler } = await import('@zakkster/lite-gc-profiler');
     const { closeBoundary } = await import('./boundary.mjs');

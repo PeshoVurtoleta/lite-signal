@@ -27,7 +27,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { universe, CHECKS, GAPS, UNREACHABLE, TEST_ANCHORS, audit, controlMatches } from '../bench/soak/teeth.mjs';
-import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, LONG_RE, SHORT_RE, wrapJudge } from '../bench/soak/_mustfail.mjs';
+import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, LONG_RE, SHORT_RE, wrapJudge } from '../bench/soak/_mustfail.mjs';
 import { GATES, oracleFamily, INCONCLUSIVE_CAUSES } from '../bench/soak/gates.mjs';
 import { SIGS } from '../bench/soak/oracles.mjs';
 
@@ -37,11 +37,11 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const GAPS_CEILING = [
     'P-TREE', 'P-NEST',
     'T-A1', 'T-A2', 'T-A3a', 'T-A3b', 'T-A3c', 'T-A4', 'T-A5a', 'T-A5b', 'T-A6', 'T-A7a', 'T-A7b',
-    'T-d8pc-head', 'T-mark', 'P-INTERIM-ERROR-clean',
+    'T-d8pc-head', 'T-mark',
     'T-OB-lying-adapter', 'T-OB-nested-close', 'totals-e2e',
     'T-O1c-err', 'T-O5-counts', 'T-O6-shape', 'T-no-lane', 'T-post-cycles', 'R-kernel-identity',
 ];
-const GAPS_MAX = 25;
+const GAPS_MAX = 24;   // 25 -> 24 at burst 39: P-INTERIM-ERROR-clean landed as a _mustfail control (A2-F21)
 // The universe ids whose only teeth are GAPS (the union of GAPS[].covers), exactly. Moving an id from CHECKS into a
 // GAP's covers (a tooth quietly turned into a gap) fails until this literal is edited.
 const GAP_COVERED = [
@@ -65,7 +65,7 @@ function hasProblem(probs, want) {
 
 const coveredBy = (gaps) => [...new Set(Object.keys(gaps).flatMap((g) => gaps[g].covers))].sort();
 
-test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 25-name GAPS ceiling and max 25 is []', () => {
+test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 24-name GAPS ceiling and max 24 is []', () => {
     assert.equal(GAPS_CEILING.length, GAPS_MAX, 'the literal ceiling and its literal size agree');
     assert.deepEqual(live(), []);
 });
@@ -107,8 +107,8 @@ test('teeth b: GAPS may only shrink -- a GAP outside the ceiling, a ceiling nami
     grown['T-new'] = { why: 'x', until: 'y', covers: [] };
     const pg = live({ gaps: grown });
     hasProblem(pg, 'GAP T-new is not in the ceiling (GAPS may only shrink)');
-    hasProblem(pg, 'GAPS holds 26 entries > max 25 (GAPS may only shrink)');
-    hasProblem(live({ ceiling: GAPS_CEILING.filter((n) => n !== 'T-mark'), max: 24 }), 'GAP T-mark is not in the ceiling (GAPS may only shrink)');
+    hasProblem(pg, 'GAPS holds 25 entries > max 24 (GAPS may only shrink)');
+    hasProblem(live({ ceiling: GAPS_CEILING.filter((n) => n !== 'T-mark'), max: 23 }), 'GAP T-mark is not in the ceiling (GAPS may only shrink)');
     // the ceiling with an extra name
     hasProblem(live({ ceiling: GAPS_CEILING.concat(['T-gone']) }), 'ceiling lists T-gone, which is no GAP any more: shrink the ceiling literal');
     // a deleted GAP without shrinking the literals
@@ -116,16 +116,16 @@ test('teeth b: GAPS may only shrink -- a GAP outside the ceiling, a ceiling nami
     delete shrunk['P-TREE'];
     const ps = live({ gaps: shrunk });
     hasProblem(ps, 'ceiling lists P-TREE, which is no GAP any more: shrink the ceiling literal');
-    hasProblem(ps, 'GAPS holds 24 entries < max 25: decrement the max literal');
+    hasProblem(ps, 'GAPS holds 23 entries < max 24: decrement the max literal');
     hasProblem(live({ ceiling: GAPS_CEILING.concat(['P-TREE']) }), 'ceiling lists a GAP twice');
 });
 
 test('teeth b: max must be the exact safe-integer GAPS size; NaN, a string and missing are problems, never a skip', () => {
     hasProblem(live({ max: NaN }), 'max must be a safe integer (the literal GAPS size), got NaN');
-    hasProblem(live({ max: '25' }), 'max must be a safe integer (the literal GAPS size), got 25');
+    hasProblem(live({ max: '24' }), 'max must be a safe integer (the literal GAPS size), got 24');
     hasProblem(live({ max: undefined }), 'max must be a safe integer (the literal GAPS size), got undefined');
-    hasProblem(live({ max: 26 }), 'GAPS holds 25 entries < max 26: decrement the max literal');
-    hasProblem(live({ max: 24 }), 'GAPS holds 25 entries > max 24 (GAPS may only shrink)');
+    hasProblem(live({ max: 25 }), 'GAPS holds 24 entries < max 25: decrement the max literal');
+    hasProblem(live({ max: 23 }), 'GAPS holds 24 entries > max 23 (GAPS may only shrink)');
     hasProblem(live({ ceiling: undefined }), 'ceiling must be the literal array of GAPS names (GAPS may only shrink), got undefined');
 });
 
@@ -484,6 +484,35 @@ test('teeth j: the wrap control specs are pinned (MD4: W5 evalCount at bop>=15; 
     assert.deepEqual([tree.base, tree.env, tree.expect.exit, tree.expect.kind, tree.expect.specs],
         ['tree', { SOAK_WRAP: 'W1,W2,W3,W4' }, 1, 'match', ['gate=wrap check=W1 counter=globalVersion', 'gate=wrap check=W2 counter=batchEpoch',
             'gate=wrap check=W3 counter=gen', 'gate=wrap check=W4 counter=nodeSeq']]);
+});
+
+test('teeth k: P-INTERIM-ERROR-clean (A2-F21) is pinned: headpatched + the qskip2 hunk, ERROR at the control budget, explained by DIV-F22 only, short battery', () => {
+    const c = CONTROLS.find((x) => x.name === 'P-INTERIM-ERROR-clean');
+    assert.ok(c, 'the GAP landed as a _mustfail control');
+    assert.ok(SHORT_RE.test(c.name) && !LONG_RE.test(c.name), 'short battery');
+    const hp = CONTROLS.find((x) => x.name === 'L-P-INTERIM-ERROR');
+    assert.deepEqual([c.run, c.base, c.env, c.argv, c.expect.exit, c.expect.kind, c.expect.specs, c.expect.lines, c.expect.known],
+        ['main', 'headpatched', hp.env, [], 1, 'explained', [], [], ['DIV-F22']]);
+    assert.deepEqual(hp.expect.known, ['DIV-F21', 'DIV-F22'], 'the unpatched pre-fix control still tolerates F21 (includeFixed)');
+    assert.equal(c.patches.length, 1);
+    const src = buildKernel(c).src;
+    assert.equal(src.split('if ((node.flags & FLAG_QUEUED) !== 0) {   // MUSTFAIL P-INTERIM-ERROR-clean').length, 2, 'the QUEUED test lands once');
+    assert.equal(src.indexOf('if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n                        }\n'), -1, 'the pre-fix flush run is gone');
+    // the patched flush loop must BE the shipped A2-F21 fix, not only match QSKIP2's own strings: the whole
+    // flushEffects `for (let i = 0; i < toRun; i++)` body of the live Signal.js and of the built kernel, comments and
+    // whitespace stripped, are equal (a QUEUED test on one branch only, or any drift from the tree, is red)
+    const H = 'for (let i = 0; i < toRun; i++) {';
+    const loopBody = (text, who) => {
+        assert.equal(text.split(H).length, 2, who + ' holds the flush loop header exactly once');
+        const a = text.indexOf(H) + H.length;
+        let d = 1, i = a;
+        for (; d > 0 && i < text.length; i++) { if (text[i] === '{') d++; else if (text[i] === '}') d--; }
+        assert.equal(d, 0, who + ': unbalanced flush loop');
+        return text.slice(a, i - 1).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').replace(/\s+/g, '');
+    };
+    const tree = loopBody(readFileSync(join(ROOT, 'Signal.js'), 'utf8'), 'Signal.js');
+    assert.ok(tree.indexOf('if((node.flags&FLAG_QUEUED)!==0){') !== -1, 'the tree carries the A2-F21 QUEUED test');
+    assert.equal(loopBody(src, 'P-INTERIM-ERROR-clean kernel'), tree);
 });
 
 test('teeth j: wrapJudge re-derives the INCONCLUSIVE causes from the records (never only what the child printed); the header selection is the control\'s', () => {

@@ -85,7 +85,10 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 /**
  * Every base a control can start from. A base is a Signal.js + Watch.js directory with sha256 pins:
  * headpatched and rev152 are pinned by controls.json (by control name), tree by parity.json (red while the
- * live Signal.js is mid-edit, amendment 10 -- no control uses tree until A1-A3 land, SPEC-B section 10.3).
+ * live Signal.js is mid-edit, amendment 10). Only the wrap control L-WRAP-TREE (S2) uses tree; no main-run control
+ * does until A1-A3 land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS, default
+ * seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on unexplained (known=none) recovery-after-throw BREACHes, so the
+ * first A2 pass control, P-INTERIM-ERROR-clean, patches the A2-F21 hunk onto headpatched instead.
  */
 export const BASES = Object.freeze({
     headpatched: Object.freeze({ dir: join(SOAK, 'controls', 'headpatched'), pins: 'controls.json', pinName: 'headpatched' }),
@@ -248,7 +251,22 @@ const A_SEVER = '                    severTail(node);\n                    node.
 // :1975 the createRegistry return (the public api object main tracks as world.registry).
 const A_RETURN = '    return {getOwner, runWithOwner, signal, computed, effect, signalBox, computedBox, dispose, batch, untrack, createRoot, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};\n';
 
-const KNOWN_INTERIM = Object.freeze(['DIV-F21', 'DIV-F22']);   // amendment 13 (TASK 10 amended)
+// :1022-1027 the flushEffects run of one queue entry (24-space indent). P-INTERIM-ERROR-clean replaces it with the
+// A2-F21 fix (Signal.js c2f123c, "qskip2"): run the entry only while its node is still QUEUED.
+const A_FLUSH_RUN = '                        const scheduler = node.scheduler;\n                        if (scheduler) {\n' +
+    '                            scheduler(node.schedulerThunk);  // reuse cached thunk\n                        } else {\n' +
+    '                            if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n                        }\n';
+const QSKIP2 = '                        if ((node.flags & FLAG_QUEUED) !== 0) {   // MUSTFAIL P-INTERIM-ERROR-clean: the A2-F21 hunk\n' +
+    '                            const scheduler = node.scheduler;\n                            if (scheduler) {\n' +
+    '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n                            } else {\n' +
+    '                                executeEffect(node);\n                            }\n                        }\n';
+
+// amendment 13 (TASK 10 amended). headpatched is a PRE-fix controls.json kernel: DIV-F21 (fixedIn A2-F21) still
+// explains there, because main / SoakReport classify with includeFixed = (controls.name !== null).
+const KNOWN_INTERIM = Object.freeze(['DIV-F21', 'DIV-F22']);
+// P-INTERIM-ERROR-clean: the patched scratch kernel is no controls.json kernel (includeFixed false), so only the
+// still-open DIV-F22 may explain a BREACH; an F21 BREACH there reads known=none -> unexplained -> MISS.
+const KNOWN_INTERIM_CLEAN = Object.freeze(['DIV-F22']);
 
 function deepFreeze(o) {
     if (o !== null && typeof o === 'object' && !Object.isFrozen(o)) {
@@ -367,6 +385,16 @@ export const CONTROLS = deepFreeze([
     }),
 
     /* ---- short (^(?!L-)) ---- */
+    // P-INTERIM-ERROR-clean (amendment 5, A2-F21): L-P-INTERIM-ERROR's run on headpatched + the A2-F21 hunk. With
+    // F21 fixed the interim ERROR lane fails ONLY on DIV-F22 (still open, fixBy A2). Burst 39 run (11 x DEFAULT_OPS,
+    // default seed): 4077 worlds, 3020 failing (every stored record DIV-F22), one BREACH head
+    // `oracle=O6 lane=ERROR sig=expected-escape-missing known=DIV-F22`, exit 1, ~25 s. Its stochastic teeth: the
+    // same run on headpatched WITHOUT the hunk under a non-control sha adds an
+    // `oracle=O6 lane=ERROR sig=escape-CycleError known=none` BREACH (F21, includeFixed false) -> MISS. The
+    // deterministic F21 teeth are test/58. 'explained', not 'nobreach', until A2 fixes F22 (then exit 0, no BREACH).
+    M('P-INTERIM-ERROR-clean', 'headpatched', { SOAK_LANES: 'ERROR', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 1, kind: 'explained', lines: [], specs: [], known: KNOWN_INTERIM_CLEAN,
+    }, { patches: [[A_FLUSH_RUN, QSKIP2]] }),
     // P-NEST-TRIGGERLESS: NEST without its trigger must not false-fail. Lines: gates.mjs:380 (scenario),
     // gates.mjs:382 (taint-skip; B6: headpatched NEST cov-off O1c 0.43-0.44 > TAINT_SKIP_MAX 0.35).
     M('P-NEST-TRIGGERLESS', 'headpatched', { SOAK_LANES: 'NEST', SOAK_MUSTFAIL: 'cov-off:saved-cursor-hazard' }, ['--smoke'], {
@@ -377,7 +405,7 @@ export const CONTROLS = deepFreeze([
     // values with Object.is (lanes/batch.mjs put, the test scenarios.mjs:236 counts a revert by), so it leaves 0
     // revert-after-mid-read hits per smoke run (burst 13; the code compare it replaced leaked 18 through the
     // VALUE_POOL aliases 0 / -1 and 1 / -3, which forced the 11 x OPS_MIN shape this control ran at until then).
-    // ERROR on headpatched also carries the tolerated F21 / F22
+    // ERROR on headpatched also carries the tolerated F21 / F22 (F21 through includeFixed: a pre-fix control kernel)
     // BREACHes (FAIL outranks INCONCLUSIVE, gates.mjs verdict), so T-cov-ERROR is 'explained' at exit 1 and still
     // needs its scenario line (amendment 13 deviation from the SPEC 9 row "exit 3, no BREACH").
     M('T-cov-BATCH', 'headpatched', { SOAK_LANES: 'BATCH', SOAK_MUSTFAIL: 'cov-off:revert-after-mid-read' }, ['--smoke'], {

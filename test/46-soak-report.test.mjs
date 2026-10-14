@@ -161,6 +161,8 @@ before(async () => {
         gen('scratch', Object.assign({ SOAK_KERNEL: join(TMP, 'kscratch', 'Signal.js'), SOAK_LANES: 'GRAPH' }, SMALL)),
         gen('mustfail', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH', SOAK_MUSTFAIL: 'cov-off:' + COV_OFF_SUPPORTED.GRAPH[0] }, SMALL)),
         gen('smoke', { SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' }, ['--smoke']),
+        // the fixed-entry wiring row: headpatched + one comment line is NO controls.json kernel (includeFixed false)
+        gen('scratcherr', { SOAK_KERNEL: join(TMP, 'kscratch', 'Signal.js'), SOAK_LANES: 'ERROR' }, ['--smoke']),
         gen('fatal', Object.assign({ SOAK_KERNEL: join(TMP, 'kfatal', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
         gen('sigint', Object.assign({ SOAK_KERNEL: join(TMP, 'ksigint', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
     ]);
@@ -193,6 +195,22 @@ test('B5: a clean headpatched GRAPH stream -> exit 0, its own verdict re-derived
 test('honest headpatched ERROR stream (DIV-F21/F22 failures, no capped cycle) -> exit 0, consistent', () => {
     assert.ok(summaryOf(S.hperr.recs).totals.failingWorlds > 0, 'the interim kernel still fails ERROR');
     expectConsistent('hperr');
+});
+test('fixed-entry wiring: a NON-control headpatched copy, ERROR smoke -> the F21 BREACH reads known=none, no DIV-F21 record, report consistent', () => {
+    // DIV-F21 is fixedIn A2-F21: main.mjs failureRecord and SoakReport checkCycles classify with includeFixed =
+    // (controls.name !== null), so on a kernel that is not a controls.json pin an F21 world is a regression (known
+    // null) and the report re-derives the same tag. Red on: main forced true, report inverted or forced true,
+    // DIV-F21 fixedIn null.
+    const s = S.scratcherr;
+    assert.equal(s.status, 1, s.stderr.slice(0, 400));
+    assert.equal(s.recs[0].controls.name, null, 'the scratch copy is no controls.json kernel');
+    const breach = s.stderr.split('\n').filter((l) => l.indexOf('soak: BREACH oracle=') === 0);
+    assert.equal(breach.filter((l) => / sig=escape-CycleError known=none /.test(l)).length, 1, breach.join('\n'));
+    const fails = cyclesOf(s.recs).flatMap((c) => c.failures);
+    assert.ok(fails.length > 0);
+    assert.ok(!fails.some((f) => f.known === 'DIV-F21'), 'a failure record carries the fixed DIV-F21');
+    const r = expectRefusal(s.path, 'smoke');
+    assert.equal(r.out[r.out.length - 1], 'soak:report: verdict FAIL (consistent)');
 });
 test('honest FATAL stream (scratch kernel, uncaught throw armed mid-cycle) -> consistent, then NOT A RELEASE SOAK -- overridden-kernel', () => {
     const recs = S.fatal.recs;
