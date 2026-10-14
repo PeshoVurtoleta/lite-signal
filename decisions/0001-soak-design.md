@@ -83,7 +83,7 @@ F22 is tagged F6+F22 when DIV-F6 itself explains the replacing token, F22
 when it was a predicted effect-body escape (the census corrected 17 -> 16 + 1, f21-census.json "correction").
 
 Amendment 2026-10-14 (burst 39, F21 B3, be0fe70):
-- B39-D1, PENDING maintainer confirmation (reviewer: "acceptable for now"): the control P-INTERIM-ERROR-clean runs on
+- B39-D1, RULED 2026-10-14: (a) keep (reviewer: "acceptable for now"): the control P-INTERIM-ERROR-clean runs on
   base headpatched + the qskip2 hunk, NOT on the base 'tree'. The tree ERROR lane (11 x 100000) fails 17039 of 17050
   worlds with BREACHes DIV-F5 / F6 / F22 plus 3 known=none recovery-after-throw (the 3 known=none breaches also appear on the pre-F21 740edfc
   kernel; P-TREE is still a GAP); headpatched + hunk: 4077 worlds, 3020 failing, 1 BREACH (DIV-F22). Cost: no

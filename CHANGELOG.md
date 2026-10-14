@@ -143,7 +143,7 @@ Soak wiring (dev-only, not shipped; be0fe70): `divergences.json` DIV-F21 `fixedI
 `SoakReport.mjs` classify with `includeFixed` = the kernel is a known control (the header's `controls.name` identity; SoakReport tests `controls.name !== null`); DIV-F22 stays temporary. The GAP
 P-INTERIM-ERROR-clean is deleted (GAPS 25 -> 24) and becomes a short-battery `_mustfail.mjs` control on
 headpatched + the qskip2 hunk (ERROR lane, 11 x DEFAULT_OPS, expects exit 1 explained by DIV-F22 only).
-Decision B39-D1 is PENDING maintainer confirmation: the control uses headpatched + the hunk, not the tree
+Decision B39-D1 is RULED 2026-10-14: (a) keep -- the control uses headpatched + the hunk, not the tree
 base, because the tree ERROR lane fails 17039 of 17050 worlds (DIV-F5 / F6 / F22 plus 3 known=none
 recovery-after-throw BREACHes (the 3 known=none breaches also appear on the pre-F21 740edfc kernel); P-TREE is still a GAP), while headpatched + hunk
 gives 4077 worlds, 3020 failing, 1 BREACH (DIV-F22). Until the tree base can host it, the proof that the
