@@ -71,7 +71,11 @@
  *   goes through markDownstreamInEval: the same marking, plus FLAG_STALE_READ on
  *   every reader that is itself mid-run (COMPUTING) and is not the writer
  *   (writer = currentObserver, else currentOwner: an untrack-wrapped or watch-
- *   callback self-write stays absorbed). A write made before a body's first
+ *   callback self-write stays absorbed). KNOWN (D-M2): an onConnect write, or
+ *   one from an onDisconnect fired by severTail, runs under the reading node's
+ *   owner (fireConnect / Disconnect null only the observer), so it is absorbed
+ *   as that reader's self-write: not flagged, that run keeps the value it read.
+ *   A write made before a body's first
  *   read -- by its own cleanups or its owned children's (runCleanup) -- is seen,
  *   not stale: disposeOwned / runOwnCleanup clear the node's own flag (gen-
  *   guarded). After its run a stale effect is
