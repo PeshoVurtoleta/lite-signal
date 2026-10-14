@@ -65,6 +65,23 @@
  *   node.gen and disposeNode already nulls currentObserver), the observer is NOT
  *   put back -- restore is `(po !== null && po.gen === pg) ? po : null`, mirroring
  *   disposeNode's own self-dispose guard so a recycled slot is never re-entered.
+ *
+ * -- WRITE DURING AN EVALUATION (F-b33-1) --
+ *   A write made while some body is mid-run (cursorDepth !== 0, untrack included)
+ *   goes through markDownstreamInEval: the same marking, plus FLAG_STALE_READ on
+ *   every reader that is itself mid-run (COMPUTING) and is not the writer
+ *   (writer = currentObserver, else currentOwner: an untrack-wrapped or watch-
+ *   callback self-write stays absorbed). A write made before a body's first
+ *   read -- by its own cleanups or its owned children's (runCleanup) -- is seen,
+ *   not stale: disposeOwned / runOwnCleanup clear the node's own flag (gen-
+ *   guarded). After its run a stale effect is
+ *   re-queued with evalVersion 0 (requeueStaleEffect) and runs again in the same
+ *   flush; a stale computed is re-pulled in the same read (computedRunTail).
+ *   A write that lands during the dependency pre-walk moves this node's
+ *   markEpoch: pullMoved / pullComputed compare it across the walk and run the
+ *   body. A never-settling loop throws "CycleError:" where it forms -- effects
+ *   through flushEffects' maxFlushPasses, computeds when the nested re-pull
+ *   count reaches maxFlushPasses -- including from effect() creation and reads.
  */
 
 const FLAG_COMPUTED = 1 << 0;
@@ -78,6 +95,11 @@ const FLAG_HAS_ERROR = 1 << 4;
 // signal() and computed() construction.
 const OBJECT_IS = Object.is;
 const FLAG_SIGNAL = 1 << 5;
+// F-b33-1: set only by markDownstreamInEval on a mid-run (COMPUTING) reader that is not the writer:
+// the run read a value a later write in the same evaluation changed. Internal, transient.
+const FLAG_STALE_READ = 1 << 6;
+const FLAG_QUEUED_STALE = FLAG_QUEUED | FLAG_STALE_READ;
+const FLAG_ERR_OR_STALE = FLAG_HAS_ERROR | FLAG_STALE_READ;
 
 /**
  * Internal: a reactive node (signal, computed, or effect).
@@ -992,6 +1014,7 @@ export function createRegistry(config) {
         // Pop from the front (A1.10, S4): the owned list stays consistent at every user-code
         // point and is re-read after each disposal, so a cleanup that disposes a later sibling
         // (which unlinks itself from this list) cannot end the cascade early.
+        const g = node.gen;
         let child;
         while ((child = node.firstOwned) !== null) {
             const next = child.nextOwned;
@@ -1003,6 +1026,8 @@ export function createRegistry(config) {
             child.nextOwned = null;
             disposeNode(child);
         }
+        // F-b33-1: the body has read nothing yet and will read these writes -> not stale.
+        if (node.gen === g) node.flags &= ~FLAG_STALE_READ;
     }
     /** Run this node's own cleanup(s) (cold half of runCleanup). @private */
     function runOwnCleanup(node) {
@@ -1014,6 +1039,7 @@ export function createRegistry(config) {
         // (whose slot may already be recycled) must not re-seat it.
         const po = currentObserver, pg = po !== null ? po.gen : 0;
         const pw = currentOwner, pwg = pw !== null ? pw.gen : 0;
+        const g = node.gen;
         currentObserver = null;
         currentOwner = null;
         try {
@@ -1023,6 +1049,8 @@ export function createRegistry(config) {
             currentObserver = (po !== null && po.gen === pg) ? po : null;
             currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
         }
+        // F-b33-1: the body has read nothing yet and will read these writes -> not stale.
+        if (node.gen === g) node.flags &= ~FLAG_STALE_READ;
     }
 
     // === L3 * PROPAGATION / EXECUTION =============================
@@ -1032,6 +1060,95 @@ export function createRegistry(config) {
     // cascade-dispose owned children. Sanctioned upward call -> L2: runCleanup.
 
     // --- EXECUTION ENGINE -----------------------------------------
+
+    // --- F-b33-1: WRITE DURING AN EVALUATION (cold) ---------------
+    // markDownstream hands a write made while a body is mid-run (cursorDepth !== 0) to
+    // this twin. Marking is identical to markDownstream's loop; in addition a target that
+    // is mid-run (COMPUTING), is not the writer and is not already flagged gets
+    // FLAG_STALE_READ: its run read a value this write changed. The writer is the
+    // observer, else the owner (untrack nulls currentObserver; Watch.js runs callbacks as
+    // untrack(cb) inside its effect), so self-writes stay absorbed. No evalVersion write
+    // here: the S9 stamp in the run's `finally` would overwrite it.
+    function markDownstreamInEval(startNode) {
+        const gv = globalVersion;
+        const writer = currentObserver !== null ? currentObserver : currentOwner;
+        let markHead = startNode;
+        startNode.nextMark = null;
+
+        while (markHead !== null) {
+            const n = markHead;
+            markHead = n.nextMark;
+            n.nextMark = null;
+
+            let link = n.headSub;
+            while (link !== null) {
+                const t = link.target;
+                if (t.markEpoch !== gv) {
+                    t.markEpoch = gv;
+                    const flags = t.flags;
+                    if ((flags & (FLAG_COMPUTING | FLAG_STALE_READ)) === FLAG_COMPUTING && t !== writer) {
+                        t.flags = flags | FLAG_STALE_READ;
+                    }
+
+                    if ((flags & FLAG_EFFECT) !== 0) {
+                        if ((flags & (FLAG_QUEUED | FLAG_COMPUTING)) === 0) {
+                            t.flags = flags | FLAG_QUEUED;
+                            activeQueue[activeQueueLen++] = t;
+                        }
+                    } else {
+                        t.nextMark = markHead;
+                        markHead = t;
+                    }
+                }
+                link = link.nextSub;
+            }
+        }
+    }
+
+    /**
+     * F-b33-1: re-queue an effect whose run read a value a write in the same evaluation
+     * changed. Called by effectTail only after the run start cleared QUEUED and
+     * executeEffect's `finally` cleared COMPUTING, with no user code in between. evalVersion = 0
+     * makes the next run skip the pre-walk. Inside a flush the nested flushEffects()
+     * returns at once and the entry runs in the next pass of the same flush (counted
+     * against maxFlushPasses -> "CycleError: flush passes exceeded"); outside a flush
+     * (effect() creation, a scheduler thunk) it drains now. Inside a batch it waits for
+     * the batch close.
+     * @private
+     */
+    function requeueStaleEffect(node) {
+        node.flags &= ~FLAG_STALE_READ;
+        node.evalVersion = 0;
+        if ((node.flags & FLAG_QUEUED) === 0) {
+            node.flags |= FLAG_QUEUED;
+            activeQueue[activeQueueLen++] = node;
+        }
+        if (batchDepth === 0) flushEffects();
+    }
+
+    // Nested stale re-pulls in flight (computedRunTail). Smi, capped at maxFlushPasses.
+    let staleRepulls = 0;
+
+    /**
+     * F-b33-1: the post-run tail of a computed whose flags carry FLAG_HAS_ERROR or
+     * FLAG_STALE_READ. Not stale -> rethrow the cached error (the old inline throw).
+     * Stale -> clear the flag, set a far evalVersion floor (below any write made in
+     * this run; never 0, so the equality cutoff is kept and neither the same-version
+     * cache nor the clean short-circuit can re-absorb it), then re-pull in the same
+     * read. The floor is set BEFORE the cap check, so a throw leaves the node dirty,
+     * not cached. More than maxFlushPasses nested re-pulls -> Error
+     * "CycleError: computed keeps invalidating its own reads".
+     * @private
+     */
+    function computedRunTail(node) {
+        if ((node.flags & FLAG_STALE_READ) === 0) throw node.value;
+        node.flags &= ~FLAG_STALE_READ;
+        const f = (globalVersion - 0x3FFFFFFF) | 0;
+        node.evalVersion = f === 0 ? -1 : f;
+        if (staleRepulls >= maxFlushPasses) throw new Error("CycleError: computed keeps invalidating its own reads");
+        staleRepulls++;
+        try { return pullComputed(node); } finally { staleRepulls--; }
+    }
 
     /**
      * Mark all transitive subscribers of `startNode` dirty.
@@ -1045,6 +1162,7 @@ export function createRegistry(config) {
      * @private
      */
     function markDownstream(startNode) {
+        if (cursorDepth !== 0) { markDownstreamInEval(startNode); return; }
         const gv = globalVersion;   // hoist invariant module-scope read into a local
         let markHead = startNode;
         startNode.nextMark = null;
@@ -1154,13 +1272,22 @@ export function createRegistry(config) {
     // which freed or recycled the walk's link (both ends compared). Small, so it inlines;
     // out of line only for executeEffect's inlining budget. pullComputed keeps the check
     // inline: routing its own pre-walk through this helper measured slower (r2, mux).
+    // F-b33-1: also true if node's markEpoch moved across the pull (a write reached this
+    // effect while the walk ran user code). `e !== 0`: createNode's recycle reset must not
+    // mask the link compare.
     function pullMoved(link, dep, node) {
+        const m = node.markEpoch;
         pullComputed(dep);
-        return link.source !== dep || link.target !== node;
+        const e = node.markEpoch;
+        return (e !== m && e !== 0) || link.source !== dep || link.target !== node;
     }
     // Op 5 (recompute), out of line for the frames' inlining budget (small: TurboFan inlines
     // it back, so the no-hook path is still one compare).
     function fireRecompute(node) { if (mutationHook !== null) mutationHook(5, node.id, 0); }
+    // F-b33-1: executeEffect's post-run tail, out of line for its inlining budget (small: inlines back).
+    // Truthiness test, not `!== 0` (D4): 25 B vs 31 keeps it under the small-function inline caps
+    // (Maglev 27 B, TurboFan 30 B); flags is a Smi bit set, so the two forms are the same test.
+    function effectTail(node) { if (node.flags & FLAG_STALE_READ) requeueStaleEffect(node); }
     function throwEffectCycle() { throw new Error("CycleError: Infinite effect loop detected."); }
     function throwComputedCycle() { throw new Error("CycleError: Circular dependency detected."); }
 
@@ -1199,13 +1326,13 @@ export function createRegistry(config) {
             if (node.gen !== savedGen) return;   // A1.9: disposed (maybe recycled) during the pre-walk
 
             if (!needsRun) {
-                node.flags &= ~FLAG_QUEUED;
+                node.flags &= ~FLAG_QUEUED_STALE;
                 node.evalVersion = globalVersion;
                 return;
             }
         }
 
-        node.flags = (node.flags & ~FLAG_QUEUED) | FLAG_COMPUTING;
+        node.flags = (node.flags & ~FLAG_QUEUED_STALE) | FLAG_COMPUTING;
         runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before re-run
         if (node.gen !== savedGen) return;   // B1 (r3): a cleanup disposed it; never run a stranger
 
@@ -1241,6 +1368,7 @@ export function createRegistry(config) {
             cursorDepth = d;
             activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
         }
+        effectTail(node);
     }
 
     /**
@@ -1275,6 +1403,7 @@ export function createRegistry(config) {
         const savedGen = node.gen;   // once, before any user code (see executeEffect)
         let shouldRun = node.evalVersion === 0;
         if (!shouldRun) {
+            const markAtWalk = node.markEpoch;   // F-b33-1: a write during the walk moves it
             let link = node.headDep;
             const evalVer = node.evalVersion | 0;
             while (link !== null) {
@@ -1290,6 +1419,7 @@ export function createRegistry(config) {
                 link = link.nextDep;
             }
             if (node.gen !== savedGen) return undefined;   // A1.9: disposed during the pre-walk
+            if (markAtWalk !== node.markEpoch) shouldRun = true;
         }
 
         if (shouldRun) {
@@ -1348,7 +1478,7 @@ export function createRegistry(config) {
                 activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
             }
             if (node.flags === 0) return undefined;   // disposed during body
-            if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;
+            if ((node.flags & FLAG_ERR_OR_STALE) !== 0) return computedRunTail(node);
             return node.value;
         }
 
@@ -1674,6 +1804,10 @@ export function createRegistry(config) {
      * to the scheduler trampoline). The effect's dependency state is fully
      * restored before the error propagates. Multiple throws in the same flush
      * pass aggregate into an `AggregateError` at the trigger.
+     *
+     * A run that reads a value a later write in the same evaluation changes runs
+     * again (F-b33-1); a body that never settles throws an Error prefixed
+     * `"CycleError:"` -- from this call itself when the loop forms on the first run.
      *
      * @param {() => void} fn        Effect body.
      * @param {object} [opts]

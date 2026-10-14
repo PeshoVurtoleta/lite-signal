@@ -8,6 +8,9 @@
 //
 // Oracle: .handoff/PLAN-F21.md PLANNER DELTA 2 (items 3-4, ASSERTION 2-3, O16-O19) + vectors; no expected value
 // is copied from a kernel run except the KNOWN rows (measured HEAD numbers, D5) and the HEAD poolGrowths delta.
+// ARM-AFTER-CREATION latch (N6 D1): rows (a) probe-f21, P8, P5, P7 create a 2-effect cycle; F-b33-1 makes a creation-time
+// self-write throw at creation, so the 2nd effect reads b() unconditionally and writes a only once `armed` (a plain
+// non-reactive let) is set immediately before the arming write. Expected values are unchanged.
 // Kernel: LITE_SIGNAL_KERNEL (absolute path to a Signal.js with a sibling Watch.js), default ../Signal.js.
 //
 // RED-FIRST on HEAD 740edfc (proven): probe-f21 (a), P2_Afirst (b), P3 (c), P8 (c), d, D1 (f), rows 7 and 8 (e), PX3.
@@ -75,9 +78,10 @@ describe("F21 red-first", () => {
     it("(a) probe-f21: stale entry after a cycle abort does not break the next effect", () => {
         const r = createRegistry({ maxFlushPasses: 8 });
         const a = r.signal(0), b = r.signal(0);
+        let armed = false;
         const e1 = r.effect(() => { b.set(a() + 1); });
-        const e2 = r.effect(() => { a.set(b() + 1); });
-        let cyc = null; try { a.set(500); } catch (e) { cyc = e.message; }
+        const e2 = r.effect(() => { const v = b(); if (armed) a.set(v + 1); });
+        let cyc = null; armed = true; try { a.set(500); } catch (e) { cyc = e.message; }
         e2(); e1(); r.dispose(a); r.dispose(b);
         const s1 = r.signal(1), w = r.signal(0);
         let runs = 0, err = null;
@@ -97,8 +101,9 @@ describe("F21 red-first", () => {
         const r = createRegistry();
         const a = r.signal(0), b = r.signal(0);
         const sA = r.effect(() => { const v = a(); if (v < 500) b.set(v + 1); });
-        const sB = r.effect(() => { const v = b(); if (v < 500) a.set(v + 1); });
-        let cyc = null; try { a.set(1); } catch (e) { cyc = e.message; }
+        let armed = false;
+        const sB = r.effect(() => { const v = b(); if (armed && v < 500) a.set(v + 1); });
+        let cyc = null; armed = true; try { a.set(1); } catch (e) { cyc = e.message; }
         sB(); sA(); r.dispose(a); r.dispose(b);
         const s1 = r.signal(1), w = r.signal(0); let runs = 0, err = null;
         try { r.effect(() => { runs++; w.set(s1() + 1); }); } catch (e) { err = e.message; }
@@ -240,7 +245,9 @@ describe("F21 preservation and mutant rows", () => {
     it("P5: a live cycle re-raises 'flush passes exceeded' on every later write", () => {
         const r = createRegistry({ maxFlushPasses: 8 });
         const a = r.signal(0), b = r.signal(0), q = r.signal(0);
-        r.effect(() => { b.set(a() + 1); }); r.effect(() => { a.set(b() + 1); });
+        let armed = false;
+        r.effect(() => { b.set(a() + 1); }); r.effect(() => { const v = b(); if (armed) a.set(v + 1); });
+        armed = true;
         assert.match(tryMsg(() => a.set(500)), /flush passes exceeded/);
         assert.match(tryMsg(() => q.set(1)), /flush passes exceeded/);
         assert.match(tryMsg(() => q.set(2)), /flush passes exceeded/);
@@ -250,8 +257,10 @@ describe("F21 preservation and mutant rows", () => {
     it("P7: a bystander queued at the abort runs exactly once on the next write, then 0", () => {
         const r = createRegistry({ maxFlushPasses: 8 });
         const a = r.signal(0), b = r.signal(0), q = r.signal(0); let lr = 0;
-        const x1 = r.effect(() => { b.set(a() + 1); }); const x2 = r.effect(() => { a.set(b() + 1); });
+        const x1 = r.effect(() => { b.set(a() + 1); }); let armed = false;
+        const x2 = r.effect(() => { const v = b(); if (armed) a.set(v + 1); });
         r.effect(() => { a(); lr++; });
+        armed = true;
         assert.match(tryMsg(() => a.set(500)), /flush passes exceeded/);
         x1(); x2(); const at = lr; q.set(1); const n1 = lr - at; q.set(2);
         assert.equal(n1, 1);

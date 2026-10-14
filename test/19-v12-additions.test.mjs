@@ -238,27 +238,30 @@ describe("flush error aggregation (v1.2.0)", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("CycleError detection (v1.2.0)", () => {
     it("default maxFlushPasses (100) catches a real ping-pong cycle", () => {
-        const a = r.signal(0), b = r.signal(0);
-        // Each effect updates the OTHER; the self-trigger guard does not stop
-        // cross-effect feedback, only same-effect feedback.
-        const stopA = r.effect(() => { const v = a(); if (v < 500) b.set(v + 1); });
-        const stopB = r.effect(() => { const v = b(); if (v < 500) a.set(v + 1); });
-        let caught;
-        try { a.set(1); } catch (e) { caught = e; }
-        assert.ok(caught, "must throw");
-        assert.match(caught.message, /^CycleError:/);
-        stopA(); stopB();
+        // Fixed engine (F-b33-1): the cycle forms at the SECOND effect() call, which throws CycleError.
+        const r1 = createRegistry();
+        try {
+            const a = r1.signal(0), b = r1.signal(0);
+            // Each effect updates the OTHER; the self-trigger guard does not stop
+            // cross-effect feedback, only same-effect feedback.
+            r1.effect(() => { const v = a(); if (v < 500) b.set(v + 1); });
+            let caught;
+            try { r1.effect(() => { const v = b(); if (v < 500) a.set(v + 1); }); } catch (e) { caught = e; }
+            assert.ok(caught, "must throw");
+            assert.match(caught.message, /^CycleError:/);
+        } finally { r1.destroy(); }
     });
 
     it("a custom maxFlushPasses can be set per registry", () => {
         const r2 = createRegistry({maxFlushPasses: 5});
-        const a = r2.signal(0), b = r2.signal(0);
-        const stopA = r2.effect(() => { const v = a(); if (v < 50) b.set(v + 1); });
-        const stopB = r2.effect(() => { const v = b(); if (v < 50) a.set(v + 1); });
-        let caught;
-        try { a.set(1); } catch (e) { caught = e; }
-        assert.match(caught.message, /^CycleError:/);
-        stopA(); stopB(); r2.destroy();
+        try {
+            const a = r2.signal(0), b = r2.signal(0);
+            r2.effect(() => { const v = a(); if (v < 50) b.set(v + 1); });
+            let caught;
+            try { r2.effect(() => { const v = b(); if (v < 50) a.set(v + 1); }); } catch (e) { caught = e; }
+            assert.ok(caught, "must throw");
+            assert.match(caught.message, /^CycleError:/);
+        } finally { r2.destroy(); }
     });
 });
 

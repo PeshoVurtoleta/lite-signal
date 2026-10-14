@@ -82,7 +82,7 @@ export const EDITS = Object.freeze([
     [`function freeLink(link, target, source) {`,
         `function freeLink(link, target, source) { ${bump(I.linkFree)}`, 1],
     [`                if (t.markEpoch !== gv) {`,
-        `                ${bump(I.markEdge)}if (t.markEpoch !== gv) { ${bump(I.markStamp)}`, 1],
+        `                ${bump(I.markEdge)}if (t.markEpoch !== gv) { ${bump(I.markStamp)}`, 2],   // F-b33-1: markDownstream + its markDownstreamInEval twin
     [`if (node.evalVersion !== 0 && ((node.markEpoch - node.evalVersion) | 0) <= 0) {`,
         `if (node.evalVersion !== 0 && ((node.markEpoch - node.evalVersion) | 0) <= 0) { ${bump(I.scHit)}`, 1],
     [`function pullComputed(node) {`,
