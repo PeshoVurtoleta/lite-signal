@@ -69,9 +69,10 @@
  * -- WRITE DURING AN EVALUATION (F-b33-1) --
  *   A write made while some body is mid-run (cursorDepth !== 0, untrack included)
  *   goes through markDownstreamInEval: the same marking, plus FLAG_STALE_READ on
- *   every mid-run (COMPUTING) reader that is reached through no mid-run computed
- *   and is not the writer (writer = currentObserver, else currentOwner: an
- *   untrack-wrapped or watch-callback self-write stays absorbed). KNOWN (D-M2):
+ *   every mid-run (COMPUTING) reader that is reachable from the written signal
+ *   along some path through no mid-run computed (order-independent) and is not
+ *   the writer (writer = currentObserver, else currentOwner: an untrack-wrapped
+ *   or watch-callback self-write stays absorbed). KNOWN (D-M2):
  *   an onConnect write, or one from an onDisconnect fired by severTail, runs with
  *   currentOwner = the reading node (fireConnect / Disconnect null only the
  *   observer), so it is absorbed as that reader's self-write: not flagged, that
@@ -1069,10 +1070,11 @@ export function createRegistry(config) {
     // markDownstream hands a write made while a body is mid-run (cursorDepth !== 0) to
     // this twin. Marking and queueing are identical to markDownstream's loop; in addition
     // a target that is mid-run (COMPUTING), is not the writer, is not already flagged and
-    // is reached through no mid-run computed gets FLAG_STALE_READ: its run read a value
-    // this write changed. A COMPUTING node has not handed out its value yet: it absorbs
-    // the write or is flagged itself and re-pulled (computedRunTail) before it returns,
-    // so nothing below it is flagged. nc is set when a COMPUTING node pops; floor is the
+    // is reachable from the written signal along some path through no mid-run computed
+    // (order-independent) gets FLAG_STALE_READ: its run read a value this write changed.
+    // A COMPUTING node has not handed out its value yet: it absorbs the write or is
+    // flagged itself and re-pulled (computedRunTail) before it returns, so nothing below
+    // it is flagged through it. nc is set when a COMPUTING node pops; floor is the
     // stack entry under it, so nc clears when floor pops (LIFO: all pushed in between
     // descend from that node). The flag test runs on every edge, ahead of the markEpoch
     // dedup: a direct edge still flags a target an absorbed path stamped first. The
@@ -1090,8 +1092,16 @@ export function createRegistry(config) {
         while (markHead !== null) {
             const n = markHead;
             markHead = n.nextMark;
-            n.nextMark = null;
             if (n === floor) nc = false;
+            // Shadow mark: a node first popped inside an absorbed (nc) region keeps
+            // nextMark = startNode; one later clean (!nc) edge to it re-pushes it (the
+            // else-if below) so its edges get the flag test too. Each node pops at most
+            // twice: O(V+E), no allocation. A shadow mark can outlive the walk, harmlessly:
+            // startNode is a signal (never a link target, never pushed), a push always
+            // overwrites nextMark, the re-push test only fires on a node stamped in this
+            // walk, disposeNode clears nextMark, and the node already reaches startNode
+            // through its own source links (no extra retention).
+            n.nextMark = nc ? startNode : null;
             if (!nc && (n.flags & FLAG_COMPUTING) !== 0) {
                 nc = true;
                 floor = markHead;
@@ -1116,6 +1126,9 @@ export function createRegistry(config) {
                         t.nextMark = markHead;
                         markHead = t;
                     }
+                } else if (!nc && t.nextMark === startNode) {
+                    t.nextMark = markHead;
+                    markHead = t;
                 }
                 link = link.nextSub;
             }

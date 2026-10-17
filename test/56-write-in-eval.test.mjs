@@ -12,17 +12,18 @@
 //
 // RED on frozen head-7c65afd (a5c64df9), measured (burst 46): V1, V3, V6, V7, X1, X2, b33-effect, b33-computed,
 // b33-cleanup, nested-batch, S-dispose, CAP, BW, DR, X2R, F6K, F6K-after, KNOWN EQ, DD, IF, NC2 (21). GREEN on it: V2, V5,
-// V8, V9, NR, TS, S-recycle, RF, P2, P2c, P4, PC, W0, ANC, ANC-2, P2-eRuns, ANC2H, NEST, KNOWN P1, KNOWN P1b, KNOWN KC
+// V8, V9, NR, TS, S-recycle, RF, P2, P2c, P4, PC, W0, ANC, ANC-2, P2-eRuns, ANC2H, NEST, KNOWN P1, KNOWN P1b, KC
 // (log: .handoff/b46-evidence/helper-56-a5c64df9.tap.txt).
-// RED on 400a655e (b46-before, the D-R3 defect): ANC, ANC-2, P2-eRuns, ANC2H, IF, NC2, NEST, KNOWN KC (8) (KC re-runs F there; PLAN A1
-// predates the D4-1 (a) ruling and lists only the first five).
+// RED on 400a655e (b46-before, the D-R3 defect): ANC, ANC-2, P2-eRuns, ANC2H, IF, NC2, NEST, KC, KC-NEST0 (9) (KC re-runs F there).
 // X2R is red there because the 2nd effect does not throw at creation.
 // X2R's qskip2 teeth are proven by mutant M12 (qskip2 stripped), not by a5c64df9.
-// RED on the B1 engine f2dd6edc (R1-REJECTED: false STALE from the node's own cleanups): P2, P2c, P4, PC, W0, DR, ANC, ANC-2, ANC2H, P2-eRuns, IF, KNOWN KC, NC2, NEST (14).
+// RED on b47-before (51530b36, DELTA 4a engine): KC-PX, KC-NEST (the KC order-B lost update, DELTA 5 T6); GREEN on the DELTA 5 engine (0).
+// RED on a5c64df9 also includes KC-XP, KC-PX, KC-NEST, KC-NEST0 (added rows; see helper-56-redsets.txt for the measured set).
+// RED on the B1 engine f2dd6edc (R1-REJECTED: false STALE from the node's own cleanups): P2, P2c, P4, PC, W0, DR, ANC, ANC-2, ANC2H, P2-eRuns, IF, KC, NC2, NEST (14).
 // F6K is a KNOWN pin (DIV-F6, open, fixBy A2): it asserts the CURRENT value (runs 1); the ideal is 2.
 // KNOWN (N8) pins (maintainer 2026-10-14 "accept all three"): EQ (D-M1), P1 / P1b (D-M2). Each asserts CURRENT behaviour.
-// ANC + P2-eRuns (D-R3) are FIXED by DELTA 4a and assert the fixed value (= a5c64df9's). KC is a KNOWN pin (D4-1 (a),
-// N10, = a5c64df9; HEAD 400a655e re-runs F).
+// ANC + P2-eRuns (D-R3) are FIXED by DELTA 4a and assert the fixed value (= a5c64df9's). KC is exact (D5-2 (a), N13.1:
+// fr 1; 400a655e re-runs F). KC-NEST0 is a KNOWN residual pin (N13.2, accepted for 1.6.0).
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
@@ -573,7 +574,8 @@ describe('F-b33-1 write during evaluation', () => {
 
     // DD: Z = computed(s) is read first, then X reads s and writes s itself (absorbed by the COMPUTING X). The effect
     // read Z before X's write, so Z is stale and E re-runs once: runs 2, seen 1, s 1. Red on a5c64df9 (runs 1,
-    // seen 0: no mechanism). Teeth: MD-DEDUP, MD-FLOOR.
+    // seen 0: no mechanism). Teeth: MD-DEDUP, MD-FLOOR (MS-NOREPUSH and MS-NOSHADOW are behaviourally the same -- no
+    // shadow, so no re-push -- and both kill KC-PX + KC-NEST; RM1-ORDER -> SHADOW-STALE, RM4-REPUSH-NONNULL -> ON-STACK).
     it('DD effect reads Z(s) then X which writes s: re-runs once, sees 1', () => withReg((r) => {
         const s = r.signal(0);
         let runs = 0, seen = -1;
@@ -597,18 +599,115 @@ describe('F-b33-1 write during evaluation', () => {
         assert.strictEqual(out, 10);
     }));
 
-    // KC KNOWN (D4-1 (a), N10, maintainer 2026-10-15): F reads X, then writes X's input s itself (absorbed), then reads
-    // X again; X re-runs and during that re-run X writes u, an input it already read. Asserts a5c64df9's behaviour:
-    // F runs 1, X runs 2, s 1, u 1. The ideal (exact, DELTA 5) is not pinned; HEAD 400a655e re-runs F (fr 2).
-    it('KNOWN (D4-1 a) KC reader self-write then re-read of X whose re-run writes its input (F runs 1)', () => withReg((r) => {
+    // KC (D5-2 (a), N13.1, maintainer 2026-10-15): F reads X, then writes X's input s itself (absorbed), then reads
+    // X again; X re-runs and during that re-run X writes u, an input it already read. X is u's writer and absorbs
+    // that write, so F is not flagged: exact value fr 1, X runs 2, s 1, u 1 (= a5c64df9). Red on 400a655e (fr 2,
+    // the ANC over-flag). Regression pin on the fixed engine.
+    it('KC reader self-write then re-read of X whose re-run writes its input (F runs 1)', () => withReg((r) => {
         const s = r.signal(0), u = r.signal(0);
         let xr = 0, fr = 0;
         const X = r.computed(() => { xr++; const a = s(); const b = u(); if (xr === 2) u.set(b + 1); return a + b; });
         r.effect(() => { fr++; X(); s.set(s.peek() + 1); X(); });
-        assert.strictEqual(fr, 1); // KNOWN D4-1 (a): = a5c64df9
+        assert.strictEqual(fr, 1);
         assert.strictEqual(xr, 2);
         assert.strictEqual(s.peek(), 1);
         assert.strictEqual(u.peek(), 1);
+    }));
+
+    // KC-XP / KC-PX (DELTA 5 T6; shapes = .handoff/b47-evidence/t0-probe-kcp.mjs): F reads T = X + P (XP) or P + X (PX),
+    // writes X's input q itself, re-reads X. X's re-run (xr 2) writes s, which X and P both read; s -> P -> T -> F is a
+    // path through no mid-run computed, so F must be flagged and re-run once and must see the write.
+    // Expected values = PLAN DELTA 5 T6 (hand-traced there: the lost update makes F re-run once, fr 2); they equal the
+    // 400a655e column of t0-probe-kcp.txt (checked, no mismatch): fr 2, xr 3, s 1, tseen 100, T.peek 101.
+    // KC-XP is red only on a5c64df9 (no mechanism); KC-PX is also red on b47-before (T first reached below COMPUTING X).
+    function kcp(r, order) {
+        const q = r.signal(0), s = r.signal(0);
+        let fr = 0, xr = 0, tseen = -1;
+        const X = r.computed(() => { xr++; q(); const v = s(); if (xr === 2) s.set(v + 1); return v; });
+        const P = r.computed(() => s() * 100);
+        const T = order === 'A' ? r.computed(() => X() + P()) : r.computed(() => P() + X());
+        r.effect(() => { fr++; tseen = T(); q.set(q.peek() + 1); X(); });
+        assert.strictEqual(fr, 2);
+        assert.strictEqual(xr, 3);
+        assert.strictEqual(s.peek(), 1);
+        assert.strictEqual(tseen, 100);
+        assert.strictEqual(T.peek(), 101);
+    }
+    it('KC-XP second path T = X + P: lost update reaches F (fr 2, tseen 100)', () => withReg((r) => kcp(r, 'A')));
+    it('KC-PX second path T = P + X, T first reached below COMPUTING X: fr 2, tseen 100', () => withReg((r) => kcp(r, 'B')));
+
+    // KC-NEST (DELTA 5 T6; shape = t0-probe-kcn.mjs nest(true)): T = P() + X(); X = { xr++; q(); v = s(); W(); return v };
+    // W = { wr++; q(); if (wr === 2) s.set(s.peek() + 1); return 0 }; P = s() * 100; F = { fr++; tseen = T();
+    // q.set(q.peek() + 1); X() }. W writes s while X (which already read s) is mid-run, T is reached via P -> T clean.
+    // Values = the 400a655e column (t0-probe-kcn.txt): fr 2, xr 4, wr 3, s 1, tseen 101, T.peek 101.
+    // Red on b47-before (fr 1, lost update) and a5c64df9.
+    it('KC-NEST writer W nested under X, T = P + X: lost update reaches F (fr 2, tseen 101)', () => withReg((r) => {
+        const q = r.signal(0), s = r.signal(0);
+        let fr = 0, xr = 0, wr = 0, tseen = -1;
+        const W = r.computed(() => { wr++; q(); if (wr === 2) s.set(s.peek() + 1); return 0; });
+        const X = r.computed(() => { xr++; q(); const v = s(); W(); return v; });
+        const P = r.computed(() => s() * 100);
+        const T = r.computed(() => P() + X());
+        r.effect(() => { fr++; tseen = T(); q.set(q.peek() + 1); X(); });
+        assert.strictEqual(fr, 2);
+        assert.strictEqual(xr, 4);
+        assert.strictEqual(wr, 3);
+        assert.strictEqual(s.peek(), 1);
+        assert.strictEqual(tseen, 101);
+        assert.strictEqual(T.peek(), 101);
+    }));
+
+    // KC-NEST0 KNOWN residual (N13.2, accepted for 1.6.0): KC-NEST without P, T = X(). The write by W is absorbed by
+    // the nested X chain; F is not flagged: fr 1 and F's second X read is 1 (probe nest(false)). Red on 400a655e
+    // (fr 2) and a5c64df9 (second read 0). Asserts the CURRENT fixed-engine value.
+    it('KC-NEST0 KNOWN residual: KC-NEST without P, T = X(): fr 1, second X read 1', () => withReg((r) => {
+        const q = r.signal(0), s = r.signal(0);
+        let fr = 0, wr = 0, xr = 0, x2 = -1;
+        const W = r.computed(() => { wr++; q(); if (wr === 2) s.set(s.peek() + 1); return 0; });
+        const X = r.computed(() => { xr++; q(); const v = s(); W(); return v; });
+        const T = r.computed(() => X());
+        r.effect(() => { fr++; T(); q.set(q.peek() + 1); x2 = X(); });
+        assert.strictEqual(fr, 1); // KNOWN N13.2: ideal is a re-run
+        assert.strictEqual(x2, 1);
+        assert.strictEqual(s.peek(), 1);
+    }));
+
+    // SHADOW-STALE (review R4 gap G1): walk 1 (C self-writes s mid-run) leaves T shadow-marked (popped below the
+    // COMPUTING C). Walk 2 (an unrelated effect writes s) reaches T fresh through the now-clean C and T must be stamped
+    // dirty. Hand trace: s 0 -> C self-write -> 1; T = C*10; go.set(1) writes s=2 -> C=2 -> T=20, seen 20.
+    // Pins "re-push only fires on a node stamped in this walk". Teeth: mutant RM1-ORDER (shadow test ahead of the epoch
+    // test re-pushes a node without stamping it, so a stale shadow leaves T serving 0). er is not asserted (400a655e: 3).
+    // Green on all four engines.
+    it('SHADOW-STALE stale shadow from C self-write does not hide a later walk', () => withReg((r) => {
+        const s = r.signal(0), go = r.signal(0);
+        let cr = 0, seen = -1;
+        const C = r.computed(() => { cr++; const v = s(); if (cr === 1) s.set(v + 1); return v; });
+        const T = r.computed(() => C() * 10);
+        r.effect(() => { seen = T(); });
+        r.effect(() => { if (go() !== 0) s.set(s.peek() + 1); });
+        go.set(1);
+        assert.strictEqual(seen, 20);
+        assert.strictEqual(T.peek(), 20);
+        assert.strictEqual(s.peek(), 2);
+    }));
+
+    // ON-STACK (review R4 gap G2): an in-eval walk from s pushes Z, T, A (A on top); A -> T re-meets T while T is still
+    // on the mark stack with Z under it. Z must still be popped: EZ re-runs (zr 2, zseen 2).
+    // Hand trace: go writes s 0 -> 1; Z = s + 1 = 2. Teeth: mutant RM4-REPUSH-NONNULL (re-push test `t.nextMark !== null`
+    // makes a node met again while still on the stack a self-loop and drops the entries under it: Z never re-runs, zr 1).
+    // Green on all four engines.
+    it('ON-STACK node met again while on the mark stack keeps the entries under it', () => withReg((r) => {
+        const s = r.signal(0), go = r.signal(0);
+        let zr = 0, zseen = -1;
+        const Z = r.computed(() => s() + 1);
+        r.effect(() => { zr++; zseen = Z(); });
+        const A = r.computed(() => s() * 2);
+        const T = r.computed(() => s() + A());
+        r.effect(() => { T(); });
+        r.effect(() => { if (go() !== 0) s.set(s.peek() + 1); });
+        go.set(1);
+        assert.strictEqual(zr, 2);
+        assert.strictEqual(zseen, 2);
     }));
 
     // NC2: the floor entry is itself mid-run. E pulls X2; X2 reads s, then pulls X1, which reads s and writes s
