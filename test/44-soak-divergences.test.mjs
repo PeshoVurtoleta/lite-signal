@@ -7,7 +7,7 @@
 //   1. the shipped registry validates; digest is the file's sha256
 //   2. classify: each captured class -> its entry; near-misses -> null
 //   3. DIV-F22 attribution: F6 pre-walk token -> F6+F22, effect-body escape -> F22
-//   4. fixedIn: a fixed entry explains only with includeFixed (pre-fix control kernels)
+//   4. fixedIn: a fixed entry explains only with includeFixed (named control kernels)
 //   5. validate: orphan entry, orphan allowance, broad matcher and schema must-fails
 //   6. evidence files: conformance cases exist, the census parses and its F21 worlds carry a prior surface
 //   7. round 2: whole-string detail regexes, prototype-free opts/records, the ONCE_PER_STEP generator pin
@@ -144,7 +144,7 @@ const REC = {
 const rec = (k, patch) => Object.assign(clone(REC[k]), patch || {});
 const without = (a, x) => a.filter((s) => s !== x);
 const known = (r, o) => { const c = classify(r, o); return c === null ? null : c.known; };
-// DIV-F21 is FIXED (fixedIn 'A2-F21'): its matcher rows run as a pre-fix control kernel does (main / SoakReport pass
+// DIV-F21 is FIXED (fixedIn 'A2-F21'): its matcher rows run as a named control kernel does (main / SoakReport pass
 // includeFixed = controls.name !== null), so a near-miss null is the matcher's, never the fixedIn skip's
 const FX = () => ({ includeFixed: true });
 
@@ -309,7 +309,7 @@ test('DIV-F22 must-fail controls (amendment 8)', () => {
 });
 
 // ---- 4. fixedIn ----------------------------------------------------------------------------------------
-test('a fixed entry explains only a pre-fix control kernel (includeFixed)', () => {
+test('a fixed entry explains only with a named control kernel (includeFixed)', () => {
     const r = fresh();
     for (const e of r.entries) if (e.id === 'DIV-F21') e.fixedIn = 'A2-F21';
     assert.deepEqual(validate(r), []);

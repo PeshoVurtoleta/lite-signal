@@ -34,7 +34,7 @@
 //     0 B/op retention SLOPE; the same step in the pinned child -> <= 0.05 B/op
 //     steady state; every step must run both bodies and the scheduler (else the
 //     lane is blind). Both halves gate, but only the child lane caught the
-//     QS-teeth control (one run, burst 38: child 135.975 B/op FAIL; in-process
+//     QS-teeth control (one run, burst 38: child 135.972 B/op FAIL; in-process
 //     still 0 B/op with gc minor=2).
 //     Slope (PLAN-0c addendum 1): ONE measureAllocs call per attempt over a
 //     wrapper that alternates pseudo-batches of 2e4 calls at 1 qsStep per call

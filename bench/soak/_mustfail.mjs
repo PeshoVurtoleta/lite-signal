@@ -407,7 +407,7 @@ export const CONTROLS = deepFreeze([
     // values with Object.is (lanes/batch.mjs put, the test scenarios.mjs:236 counts a revert by), so it leaves 0
     // revert-after-mid-read hits per smoke run (burst 13; the code compare it replaced leaked 18 through the
     // VALUE_POOL aliases 0 / -1 and 1 / -3, which forced the 11 x OPS_MIN shape this control ran at until then).
-    // ERROR on headpatched also carries the tolerated F21 / F22 (F21 through includeFixed: a pre-fix control kernel)
+    // ERROR on headpatched also carries the tolerated F21 / F22 (F21 through includeFixed: any named control kernel)
     // BREACHes (FAIL outranks INCONCLUSIVE, gates.mjs verdict), so T-cov-ERROR is 'explained' at exit 1 and still
     // needs its scenario line (amendment 13 deviation from the SPEC 9 row "exit 3, no BREACH").
     M('T-cov-BATCH', 'headpatched', { SOAK_LANES: 'BATCH', SOAK_MUSTFAIL: 'cov-off:revert-after-mid-read' }, ['--smoke'], {

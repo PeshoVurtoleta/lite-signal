@@ -16,7 +16,7 @@
  *   worldScenCounts  optional: runWorld().scen itself. An entry with priorScen needs it (absent -> no match)
  *   escape           optional: normalizeEscape(<the error the failing op's top-level call threw>), [] when it
  *                    returned. DIV-F22 needs it (absent -> no match): main captures it in its adapter wrapper.
- * opts.includeFixed  true only for a pre-fix control kernel (header.controls.name !== null): entries whose
+ * opts.includeFixed  true for any named control kernel (header.controls.name !== null, pre- or post-fix): entries whose
  *                    fixedIn is set then explain too. Default false: on the tree a fixed finding is a regression.
  * opts.registry      optional registry object to classify against instead of divergences.json (tests, and an
  *                    engine rung's dv-proposed.json before it is merged). It is validated first; invalid throws.

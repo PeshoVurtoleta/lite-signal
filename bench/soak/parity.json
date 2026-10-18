@@ -15,10 +15,10 @@
     "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
     "bench/soak/gates.mjs": "098cdb8d61d5b3844521ac4df3a376d8c84973645762170cc4d6af6d0a7f58e5",
     "bench/soak/boundary.mjs": "a9b1b75ca945b31f7454e5243cf1ed5ac1c12a625299c5a34d2413d02373eec7",
-    "bench/soak/divergences.mjs": "2dc1ec5f5361d57d7cd01cfcb1b2e0814ad4464277506fb4d3b7bc9c62b0f56b",
-    "bench/soak/divergences.json": "0c3120298e61714f8de0e7fcae83ccb3a327e0c11130f03ac9d56c37964846f8",
+    "bench/soak/divergences.mjs": "d8ff6bb9d8682960199ce534b5562aba3d8b2578a8f50497a7224c3856fb521a",
+    "bench/soak/divergences.json": "b23b127303aaf10f2483b3ecc3928d60ef463f16ea848e15ba0bdcab88a1c39a",
     "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",
-    "bench/soak/main.mjs": "b601419011e792884d95cbef693e5fa2951e611c1765bffd380421693cb43765",
+    "bench/soak/main.mjs": "10ab1b9eff41c5e0174e66cef96126f75c5977a6335301ae77652f09860ce933",
     "bench/soak/replay.mjs": "3e2d635c46440eda14f79afbeab6e8477c93e97e2657e3672939e50b88400171",
     "bench/soak/shrink.mjs": "f38857d49b11544674f5e825096a9326034301c50ba8ee12e6fcbbb58d4985cc",
     "bench/soak/config.mjs": "0fc14327bc556b1e6e7482f00857ea921ba92f023db35f7fc962f91e1d4eb8c5",
@@ -30,7 +30,7 @@
     "bench/soak/kernel.mjs": "3bb9579913398d9c8946eef8785612647fb8838e60917181c54c0c1cfca85e75",
     "bench/torture/helpers/spin.mjs": "5823cad2d38c2ac9831631f4d774c2ae1ca4a0b5eab78cf06885ce0e1d970c6c",
     "bench/soak/adapters/lite.mjs": "1aa463afac307918b424f6eb406ba2d950f763e1943c516def9e40428359db0f",
-    "bench/soak/controls.json": "4d8ab729a6546b5657338f2f9a8d0faba1c6bf5fd98de15baa754e1d9d9bac0e",
+    "bench/soak/controls.json": "e86eb71f9e32557be84cbc85e67cd71ff0be6f96df35cf1298b37577e4f6e627",
     "bench/soak/controls/preb33/Signal.js": "a5c64df91928e9b71bc519e8be4c77861c0abe590ad845c22e28419a8b03fa73",
     "bench/soak/controls/preb33/Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80"
   }

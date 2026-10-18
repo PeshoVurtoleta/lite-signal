@@ -198,7 +198,7 @@ test('honest headpatched ERROR stream (DIV-F21/F22 failures, no capped cycle) ->
 });
 /* ---- fixed-entry wiring (DIV-F21 fixedIn A2-F21): unit rows, no kernel run (N18.1) ---------------------------------
  * main.mjs failureRecord and SoakReport checkCycles classify with includeFixed = (controls.name !== null): on a
- * kernel that is no controls.json pin an F21 world is a regression (known null); on a pre-fix control it reads
+ * kernel that is no controls.json pin an F21 world is a regression (known null); on a named control kernel it reads
  * DIV-F21; and the report re-derives the same tag. The F21 shape is the DIV-F21 entry of divergences.json: engine
  * lite, lane ERROR, op seq, step+world scen cycle-error-surfaces, an EARLIER such step (count >= 2), O6
  * escape-CycleError with the 'Infinite effect loop detected.' detail. Red on: main includeFixed forced true,

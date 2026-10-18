@@ -131,7 +131,7 @@ export function failureRecord(r, ctx) {
     const escape = f.op === 'batch' && Array.isArray(ctx.escape) ? ctx.escape.map((l) => Object.assign({}, l)) : null;
     const crec = { engine: ctx.engine, lane: ctx.lane, step: f.step, op: f.op, fails, scen: f.scen.slice(), worldScen, worldScenCounts };
     if (escape !== null) crec.escape = escape;
-    // a fixed registry entry (fixedIn set) explains only on a pre-fix controls.json kernel; on the tree or a scratch
+    // a fixed registry entry (fixedIn set) explains only when includeFixed is true (any named controls.json kernel); on the tree or a scratch
     // kernel it is a regression. Same identity as the header's controls.name (provenance.mjs) and SoakReport.
     const cls = classify(crec, { includeFixed: kernelKnownAs !== null });
     return {
