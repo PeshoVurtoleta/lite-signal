@@ -12,18 +12,24 @@
  *
  *   node bench/soak/calibration/calibrate.mjs --write <out.json> [--timed] [--import-throughput <earlier.json>]
  *        the evidence file (soak-calibration.json):
- *          kernels      the BINDING cut: headpatched + 1.5.2 at DEFAULT_SEED, DEFAULT_CYCLES x DEFAULT_OPS, with
- *                       the smoke prefix; sequential children (the only timed part, REPORTED tier)
- *          mainCrossCheck  main.mjs --smoke AND the default main.mjs run, on BOTH kernels, fold
- *                       (foldMainRecords) to exactly kernels.<k>.smoke / .full; --write dies on any difference.
+ *          kernels      the cut, one child per kernel over the lanes it is BOUND to (LANE_KERNELS): the binding
+ *                       kernels headpatched + 1.5.2 on every unlisted lane, a lane-only kernel on its lanes only;
+ *                       DEFAULT_SEED, DEFAULT_CYCLES x DEFAULT_OPS, with the smoke prefix; sequential children (the
+ *                       only timed part, REPORTED tier)
+ *          mainCrossCheck  main.mjs --smoke AND the default main.mjs run, on EVERY kernel (SOAK_LANES = its bound
+ *                       lanes), fold (foldMainRecords) to exactly kernels.<k>.smoke / .full; --write dies on any difference.
  *                       test/41 repeats the smoke half live.
  *          probe        PROBE (headpatched GRAPH, 11 x PROBE_OPS): the calibration child and main.mjs both run it;
  *                       --write dies unless the folds and largeWorldsPerCycle are equal and every cycle ran a
  *                       LARGE world. test/41 re-runs main.mjs on it live (main's large-world choice is gated live).
- *          hollowVolume DEFAULT_CYCLES x OPS_MIN, both kernels (the smallest gated volume config accepts)
- *          covOff       every supported cov-off at the smoke shape on headpatched (hollow-evidence controls)
- *          seedSweep    SWEEP_SEEDS at the smoke shape, both kernels (REPORTED seed spread; binds nothing)
- *          covOffSweep  every cov-off at the smoke shape over COVOFF_SEEDS, both kernels (taint separation)
+ *          hollowVolume DEFAULT_CYCLES x OPS_MIN, every kernel over its bound lanes (the smallest gated volume config
+ *                       accepts)
+ *          covOff       every supported cov-off at the smoke shape on the lane's first kernel (kernelsFor(lane)[0]:
+ *                       headpatched for every unlisted lane) (hollow-evidence controls)
+ *          seedSweep    SWEEP_SEEDS at the smoke shape, every kernel over its bound lanes (REPORTED seed spread;
+ *                       binds nothing)
+ *          covOffSweep  every cov-off at the smoke shape over COVOFF_SEEDS, every kernel bound to the lane (taint
+ *                       separation)
  *   node bench/soak/calibration/calibrate.mjs --child <kernel> --cycles C --ops O [--lanes L,..] [--cov-off s] [--timed]
  *        one kernel per process (kernel.mjs reads SOAK_KERNEL once, at import); one JSON line on stdout
  * The drift guard (test/41) re-measures the SMOKE cells and the PROBE through the real main.mjs; the full-shape
@@ -32,6 +38,11 @@
  * this tool are NOT pinned (burst 13, SPEC-B-S1cd addendum 16): the live smoke + probe folds gate main's loop,
  * and pinning them made every edit of either a ~13-min recut. Residual: a main.mjs drift outside the smoke and
  * probe shapes is caught only at the next recut (its full-run cross-check).
+ * Per-lane kernel map (b67 B2a, D7): a lane listed in LANE_KERNELS is cut ONLY on its kernels (WIE -> tree, the
+ * working-tree engine: 1.5.2 predates the b33 fix and BREACHes WIE by design, DIV-B33); an unlisted lane runs on
+ * every KERNELS id. A lane-only kernel is never a binding kernel (cut.bindingKernels stays KERNELS); --write dies
+ * unless its files' sha256 equal parity.json, and test/41 re-checks that pin. A lane's own descriptor file joins
+ * the pinned list only while the lane is rostered (LANE_PINS, pinnedFor).
  */
 
 import { spawnSync } from 'node:child_process';
@@ -49,6 +60,25 @@ export const KERNELS = Object.freeze({
     headpatched: 'bench/soak/controls/headpatched/Signal.js',
     'lite-1.5.2': 'node_modules/lite-signal-1.5.2/Signal.js',
 });
+// Lane-only kernels (b67 B2a, D7): cut only on the lanes LANE_KERNELS binds them to, never a binding kernel (not in
+// KERNELS, so cut.bindingKernels is unchanged). tree = the working-tree engine; --write dies unless its files'
+// sha256 equal parity.json.
+export const LANE_ONLY_KERNELS = Object.freeze({ tree: 'Signal.js' });
+// lane -> the kernels that cut it; an unlisted lane runs on every KERNELS id (never on a lane-only kernel).
+export const LANE_KERNELS = Object.freeze({ WIE: Object.freeze(['tree']) });
+/** The kernel ids that cut `lane` (a fresh array). */
+export const kernelsFor = (lane) => (own(LANE_KERNELS, lane) ? LANE_KERNELS[lane].slice() : Object.keys(KERNELS));
+/** The ROOT-relative path of kernel id `k`; an unknown id throws (fail closed). */
+export function kernelPath(k) {
+    if (own(KERNELS, k)) return KERNELS[k];
+    if (own(LANE_ONLY_KERNELS, k)) return LANE_ONLY_KERNELS[k];
+    throw new Error('calibrate: unknown kernel ' + k);
+}
+/** The lanes of `roster` (roster order) that kernel `k` cuts. */
+export const lanesFor = (k, roster) => roster.filter((l) => kernelsFor(l).indexOf(k) !== -1);
+/** The kernels some lane of `roster` binds: KERNELS ids first, then lane-only ids (stable order). */
+export const kernelsOf = (roster) => Object.keys(KERNELS).concat(Object.keys(LANE_ONLY_KERNELS))
+    .filter((k) => lanesFor(k, roster).length > 0);
 // The file hashes that pin "the generator and checker that cut this evidence" (provenance; the live
 // re-measure in test/41 is the gate, a hash change alone is not). kinds.mjs (the op-kind codes) and the torture
 // helpers (VALUE_POOL: the value each code decodes to) shape every script; main.mjs and this tool are gated by
@@ -60,6 +90,11 @@ const PINNED = Object.freeze([
     'bench/soak/kinds.mjs', 'bench/torture/helpers/index.mjs',
 ]);
 export { PINNED };
+// A lane's own descriptor file is pinned only while the lane is rostered (b67 B2a Q2): pinning lanes/wie.mjs before
+// the roster flip would turn (p) red with no cut to clear it.
+export const LANE_PINS = Object.freeze({ WIE: 'bench/soak/lanes/wie.mjs' });
+/** PINNED + the pins of the rostered lanes (roster order). */
+export const pinnedFor = (roster) => PINNED.concat(roster.filter((l) => own(LANE_PINS, l)).map((l) => LANE_PINS[l]));
 
 // The large-world probe (addendum 16): a GRAPH smoke cycle never reaches its first LARGE world (index 63), so the
 // smoke fold cannot see main's large-world choice. 11 cycles: main REJECTS SOAK_CYCLES below MIN_ACTIVE_CYCLES
@@ -201,10 +236,11 @@ export function foldMainRecords(lane, recs, skipNames) {
 
 /**
  * Spawn `main.mjs --smoke` on one kernel (async), into a fresh temp SOAK_OUT. Resolves { status, recs, stderr }
- * with every JSONL record (recs null when none). Inherited SOAK_* keys are dropped: the run is the default smoke.
+ * with every JSONL record (recs null when none). Inherited SOAK_* keys are dropped: the run is the default smoke,
+ * on SOAK_LANES = lanes.join(',') when `lanes` is given (a kernel's bound lanes, lanesFor).
  */
-export function runMainSmoke(kernelAbs) {
-    return runMain(kernelAbs, true);
+export function runMainSmoke(kernelAbs, lanes) {
+    return runMain(kernelAbs, true, lanes === undefined ? undefined : { SOAK_LANES: lanes.join(',') });
 }
 
 /**
@@ -347,21 +383,36 @@ async function write(outPath, timed, importFrom) {
     const CFG = await import('../config.mjs');
     const { SKIP_NAMES } = await import('../exec.mjs');
     const { GEN_VERSION, GEN_RULES } = await import('../gen.mjs');
-    const { COV_OFF_SUPPORTED } = await import('../lanes/index.mjs');
+    const { COV_OFF_SUPPORTED, ROSTER } = await import('../lanes/index.mjs');
+    // every step runs kernel-major over kernelsOf(ROSTER), each kernel on its bound lanes only (header)
+    const KS = kernelsOf(ROSTER);
+    const bound = (k) => lanesFor(k, ROSTER);
+    const lanesArg = (k) => ['--lanes', bound(k).join(',')];
+    const parityFiles = JSON.parse(readFileSync(join(ROOT, 'bench/soak/parity.json'), 'utf8')).files;
     const load0 = loadavg().map((x) => Math.round(x * 100) / 100);
     const busy0 = busyNode();
     const t0 = Date.now();
     const note = (m) => process.stderr.write('calibrate: ' + m + ' (' + Math.round((Date.now() - t0) / 1000) + ' s)\n');
     const base = ['--cycles', String(CFG.DEFAULT_CYCLES), '--ops', String(CFG.DEFAULT_OPS)].concat(timed ? ['--timed'] : []);
-    // 1) the binding cut: both frozen kernels, DEFAULT_SEED, DEFAULT_CYCLES x DEFAULT_OPS, smoke prefix (sequential: timed)
+    // 1) the cut: every kernel over its bound lanes, DEFAULT_SEED, DEFAULT_CYCLES x DEFAULT_OPS, smoke prefix
+    // (sequential: timed)
     const kernels = {};
-    const laneMeta = {};
-    for (const k of Object.keys(KERNELS)) {
-        const res = runChild(['--kernel', KERNELS[k]].concat(base));
+    const meta = {};
+    for (const k of KS) {
+        const res = runChild(['--kernel', kernelPath(k)].concat(lanesArg(k), base));
+        // D7: a lane-only kernel's cells are evidence only for the parity-pinned engine
+        if (own(LANE_ONLY_KERNELS, k)) {
+            if (res.files.length === 0) die('kernel ' + k + ' lists no files; nothing to check against parity.json');
+            for (const f of res.files) {
+                const want = parityFiles[f.path];
+                if (f.sha256 !== want) die('kernel ' + k + ' ' + f.path + ' sha ' + f.sha256 + ' != parity.json ' + want);
+            }
+        }
         const s = summarize(res, SKIP_NAMES);
         const tp = {};
         for (const name of Object.keys(res.lanes)) {
-            laneMeta[name] = { index: res.lanes[name].index, required: res.lanes[name].required, optional: res.lanes[name].optional, oracles: res.lanes[name].oracles };
+            const L = res.lanes[name];
+            meta[name] = { index: L.index, required: L.required, optional: L.optional, oracles: L.oracles };
             if (!timed) { tp[name] = 'PENDING'; continue; }
             const cyc = res.lanes[name].perCycle.map((c) => Math.round(c.ops / (c.wallMs / 1000)));
             const sorted = cyc.slice().sort((a, b) => a - b);
@@ -370,36 +421,44 @@ async function write(outPath, timed, importFrom) {
         kernels[k] = { kernel: res.kernel, knownAs: res.knownAs, files: res.files, full: s.full, smoke: s.smoke, throughput: tp };
         note(k + ' done');
     }
+    // doc.lanes in roster order, whichever kernel cut the lane
+    const laneMeta = {};
+    for (const name of ROSTER) {
+        if (!own(meta, name)) die('lane ' + name + ' was cut on no kernel');
+        laneMeta[name] = meta[name];
+    }
     const loadAfterTimed = loadavg().map((x) => Math.round(x * 100) / 100);
-    // 2) main.mjs --smoke on headpatched: the calibration loop must equal main's loop, field for field
-    // smoke AND the default full run, both kernels, concurrently (untimed). The full fold is the only check of
-    // main's loop past the smoke prefix (a GRAPH smoke cycle never reaches its first LARGE world).
+    // 2) main.mjs: the calibration loop must equal main's loop, field for field
+    // smoke AND the default full run, every kernel on SOAK_LANES = its bound lanes, concurrently (untimed). The full
+    // fold is the only check of main's loop past the smoke prefix (a GRAPH smoke cycle never reaches its first LARGE world).
     const mainCheck = {};
     for (const sh of ['smoke', 'full']) {
-        const mainRuns = await Promise.all(Object.keys(KERNELS).map((k) => runMain(join(ROOT, KERNELS[k]), sh === 'smoke')));
+        const lanesEnv = (k) => ({ SOAK_LANES: bound(k).join(',') });
+        const mainRuns = await Promise.all(KS.map((k) => runMain(join(ROOT, kernelPath(k)), sh === 'smoke', lanesEnv(k))));
         mainCheck[sh] = {};
-        Object.keys(KERNELS).forEach((k, i) => {
+        KS.forEach((k, i) => {
             const m = mainRuns[i];
             if (m.recs === null) die('main.mjs ' + sh + ' on ' + k + ' wrote no records (exit ' + m.status + '): ' + m.stderr.slice(0, 400));
             if (m.recs.some((r) => r.type === 'fatal')) die('main.mjs ' + sh + ' on ' + k + ' crashed');
             const cyc = m.recs.filter((r) => r.type === 'cycle');
             const lanes = [];
-            for (const name of Object.keys(laneMeta)) {
+            for (const name of bound(k)) {
                 const f = foldMainRecords(laneMeta[name], cyc.filter((r) => r.lane === name), SKIP_NAMES);
                 if (JSON.stringify(f) !== JSON.stringify(kernels[k][sh][name])) die('main.mjs ' + sh + ' on ' + k + ' disagrees with the calibration loop on lane ' + name);
                 lanes.push(name);
             }
             mainCheck[sh][k] = { mainExit: m.status, lanesEqual: lanes };
         });
-        note('main ' + sh + ' cross-check equal on ' + Object.keys(KERNELS).join(', '));
+        note('main ' + sh + ' cross-check equal on ' + KS.join(', '));
     }
     // 2b) the large-world probe: main's loop past world 63 (the smoke never gets there), equal to the calibration loop
     const probe = await probeStep(SKIP_NAMES);
     note('probe equal: largeWorldsPerCycle ' + JSON.stringify(probe.largeWorldsPerCycle));
-    // 3) hollow volume: DEFAULT_CYCLES x OPS_MIN (the smallest gated volume config accepts), both kernels
+    // 3) hollow volume: DEFAULT_CYCLES x OPS_MIN (the smallest gated volume config accepts), every kernel, bound lanes
     const hollowVolume = {};
-    const hv = await runChildren(Object.keys(KERNELS).map((k) => ['--kernel', KERNELS[k], '--cycles', String(CFG.DEFAULT_CYCLES), '--ops', String(CFG.OPS_MIN)]), 2);
-    Object.keys(KERNELS).forEach((k, i) => {
+    const hvArgs = ['--cycles', String(CFG.DEFAULT_CYCLES), '--ops', String(CFG.OPS_MIN)];
+    const hv = await runChildren(KS.map((k) => ['--kernel', kernelPath(k)].concat(lanesArg(k), hvArgs)), 2);
+    KS.forEach((k, i) => {
         hollowVolume[k] = {};
         for (const name of Object.keys(hv[i].lanes)) {
             const L = hv[i].lanes[name];
@@ -408,21 +467,27 @@ async function write(outPath, timed, importFrom) {
         }
     });
     note('hollow volume done');
-    // 4) hollow-evidence controls: every supported cov-off, smoke shape, headpatched
+    // 4) hollow-evidence controls: every supported cov-off, smoke shape, the lane's first kernel (headpatched if unlisted)
     const covList = [];
     for (const lane of Object.keys(COV_OFF_SUPPORTED)) for (const scen of COV_OFF_SUPPORTED[lane]) covList.push([lane, scen]);
-    const cv = await runChildren(covList.map(([lane, scen]) => ['--kernel', KERNELS.headpatched, '--lanes', lane, '--cycles', String(CFG.SMOKE_CYCLES), '--ops', String(CFG.SMOKE_OPS), '--cov-off', scen]), 4);
+    const smokeArgs = ['--cycles', String(CFG.SMOKE_CYCLES), '--ops', String(CFG.SMOKE_OPS)];
+    const cv = await runChildren(covList.map(([lane, scen]) => ['--kernel', kernelPath(kernelsFor(lane)[0]), '--lanes', lane]
+        .concat(smokeArgs, ['--cov-off', scen])), 4);
     const covOff = {};
     covList.forEach(([lane, scen], i) => {
         const L = cv[i].lanes[lane];
         const f = foldLane(L, L.perCycle, SKIP_NAMES);
-        covOff[lane + ':' + scen] = { lane, scenario: scen, kernel: 'headpatched', hits: f.scenarios[scen], ops: f.ops, worlds: f.worlds, performed: f.performed, skipTainted: f.skipTainted, taintRatio: f.taintRatio, worst: worstCells(L, f) };
+        covOff[lane + ':' + scen] = {
+            lane, scenario: scen, kernel: kernelsFor(lane)[0], hits: f.scenarios[scen], ops: f.ops, worlds: f.worlds,
+            performed: f.performed, skipTainted: f.skipTainted, taintRatio: f.taintRatio, worst: worstCells(L, f),
+        };
     });
     note('cov-off controls done');
-    // 5) seed sweep: smoke shape, SWEEP_SEEDS, both kernels (REPORTED: the binding cut is DEFAULT_SEED)
+    // 5) seed sweep: smoke shape, SWEEP_SEEDS, every kernel over its bound lanes (REPORTED: the binding cut is DEFAULT_SEED)
     const swList = [];
-    for (const k of Object.keys(KERNELS)) for (const sd of SWEEP_SEEDS) swList.push([k, sd]);
-    const sw = await runChildren(swList.map(([k, sd]) => ['--kernel', KERNELS[k], '--seed', String(sd), '--cycles', String(CFG.SMOKE_CYCLES), '--ops', String(CFG.SMOKE_OPS)]), 4);
+    for (const k of KS) for (const sd of SWEEP_SEEDS) swList.push([k, sd]);
+    const sw = await runChildren(swList.map(([k, sd]) => ['--kernel', kernelPath(k)]
+        .concat(lanesArg(k), ['--seed', String(sd)], smokeArgs)), 4);
     const seedSweep = { shape: CFG.SMOKE_CYCLES + ' x ' + CFG.SMOKE_OPS, seeds: SWEEP_SEEDS.slice(), cells: {} };
     swList.forEach(([k, sd], i) => {
         for (const name of Object.keys(sw[i].lanes)) {
@@ -434,10 +499,13 @@ async function write(outPath, timed, importFrom) {
         }
     });
     note('seed sweep done');
-    // 5b) cov-off seed sweep: every cov-off, smoke shape, COVOFF_SEEDS, both kernels (taint separation evidence)
+    // 5b) cov-off seed sweep: every cov-off, smoke shape, COVOFF_SEEDS, every kernel bound to the lane (taint separation)
     const coList = [];
-    for (const k of Object.keys(KERNELS)) for (const [lane, scen] of covList) for (const sd of COVOFF_SEEDS) coList.push([k, lane, scen, sd]);
-    const co = await runChildren(coList.map(([k, lane, scen, sd]) => ['--kernel', KERNELS[k], '--lanes', lane, '--seed', String(sd), '--cycles', String(CFG.SMOKE_CYCLES), '--ops', String(CFG.SMOKE_OPS), '--cov-off', scen]), 4);
+    for (const k of KS) for (const [lane, scen] of covList) {
+        if (bound(k).indexOf(lane) !== -1) for (const sd of COVOFF_SEEDS) coList.push([k, lane, scen, sd]);
+    }
+    const co = await runChildren(coList.map(([k, lane, scen, sd]) => ['--kernel', kernelPath(k), '--lanes', lane]
+        .concat(['--seed', String(sd)], smokeArgs, ['--cov-off', scen])), 4);
     const covOffSweep = {
         shape: CFG.SMOKE_CYCLES + ' x ' + CFG.SMOKE_OPS, seeds: COVOFF_SEEDS.slice(),
         note: 'lite-1.5.2 NEST cov-off reads O1c ~0.25 (inside the clean band): the taint gate cannot separate it there; the coverage gate does (hits 0 < SCEN_MIN_SMOKE)',
@@ -451,15 +519,17 @@ async function write(outPath, timed, importFrom) {
         covOffSweep.cells[key].push({ seed: sd, hits: f.scenarios[scen], maxTaint: worstCells(L, f).maxTaint });
     });
     note('cov-off sweep done');
-    // 6) worst cells of the binding cut
+    // 6) worst cells of the cut, every kernel over its bound lanes
     const worst = {};
     for (const k of Object.keys(kernels)) {
         worst[k] = { full: {}, smoke: {} };
-        for (const sh of ['full', 'smoke']) for (const name of Object.keys(laneMeta)) worst[k][sh][name] = worstCells(laneMeta[name], kernels[k][sh][name]);
+        for (const sh of ['full', 'smoke']) for (const name of bound(k)) {
+            worst[k][sh][name] = worstCells(laneMeta[name], kernels[k][sh][name]);
+        }
     }
     const git = gitHead();
     const pinned = {};
-    for (const p of PINNED) pinned[p] = sha256File(join(ROOT, p));
+    for (const p of pinnedFor(ROSTER)) pinned[p] = sha256File(join(ROOT, p));
     const doc = {
         schema: 1,
         task: 'SPEC-B-S1cd TASK 11 (burst 8 B6): soak calibration -- DEFAULT_OPS, SCEN_MIN(_SMOKE), CHECK_FLOOR(_SMOKE), TAINT_SKIP_MAX',

@@ -588,6 +588,10 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
 //       switch that leaks hits lets the hollow run clear coverage)
 //   (q) doc.probe is the calibrate.mjs PROBE (lane, kernel, cycles, ops); PROBE.cycles === MIN_ACTIVE_CYCLES (main
 //       rejects SOAK_CYCLES below it); every one of the probe's cycles ran >= 1 LARGE world
+// Per-lane kernel map (b67 B2a, D7): every kernel x lane check runs kernel-major over calibrate.mjs kernelsOf(roster),
+// each kernel on the lanes it is bound to (lanesFor); doc.kernels keys == kernelsOf (a); a cell on a lane its kernel
+// does not cut is red (a); a lane-only kernel (tree: WIE) must carry parity.json's shas (p) and gets (a) (p) (b)-(d)
+// and the clean-sweep taint check, never the (e) hollow-volume / smoke-floor checks (binding kernels only).
 // The live check spawns the REAL main.mjs --smoke on both binding kernels and main.mjs on PROBE (all three
 // concurrently) and folds their cycle records, which must equal kernels.<k>.smoke and probe.fold exactly: the
 // JSON was not hand-edited and neither main nor gen / exec / oracles drifted. Only the smoke cells and the
@@ -599,9 +603,16 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
 import { LANES as B6_LANES, ROSTER as B6_ROSTER } from '../bench/soak/lanes/index.mjs';
 import { SKIP_NAMES as B6_SKIP_NAMES } from '../bench/soak/exec.mjs';
 import { KERNELS as B6_KERNELS, PINNED as B6_PINNED, PROBE as B6_PROBE, COVOFF_SEEDS as B6_COVOFF_SEEDS, sha256File as b6Sha, foldMainRecords, runMainSmoke, runMainProbe } from '../bench/soak/calibration/calibrate.mjs';
+import {
+    LANE_ONLY_KERNELS as B6_LANE_ONLY, kernelsFor as b6KernelsFor, kernelsOf as b6KernelsOf, lanesFor as b6LanesFor,
+    kernelPath as b6KernelPath, pinnedFor as b6PinnedFor,
+} from '../bench/soak/calibration/calibrate.mjs';
+import { WIE as B6_WIE } from '../bench/soak/lanes/wie.mjs';
 
 const B6_JSON = join(SOAK, 'calibration', 'soak-calibration.json');
 const B6_DOC = JSON.parse(readFileSync(B6_JSON, 'utf8'));
+// parity.json files: a lane-only kernel's evidence must be this engine (D7: tree's Signal.js / Watch.js shas)
+const B6_PARITY_FILES = JSON.parse(readFileSync(join(SOAK, 'parity.json'), 'utf8')).files;
 const B6_RECUT = 'recut: node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json (~13 min, untimed), then review the JSON diff';
 const b6Copy = (x) => JSON.parse(JSON.stringify(x));
 const b6Has = (o, k) => o !== null && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
@@ -613,8 +624,10 @@ const b6Count = (n) => Number.isSafeInteger(n) && n >= 0;   // null / undefined 
 // a cov-off sweep cell list must hold exactly COVOFF_SEEDS, in order (no duplicate, missing or extra seed)
 const b6SeedsOk = (cells) => JSON.stringify(cells.map((c) => (c || {}).seed)) === JSON.stringify(B6_COVOFF_SEEDS);
 
-function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE) {
+function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = B6_LANES, parity = B6_PARITY_FILES) {
     const p = [];
+    const names = lanes.map((d) => d.name);
+    const ks = b6KernelsOf(names);   // kernel-major: binding kernels, then lane-only kernels some lane binds
     const cut = doc.cut || {};
     for (const [k, want] of [['seed', C.DEFAULT_SEED], ['cycles', C.DEFAULT_CYCLES], ['ops', C.DEFAULT_OPS], ['smokeCycles', C.SMOKE_CYCLES],
         ['smokeOps', C.SMOKE_OPS], ['opsMin', C.OPS_MIN], ['genVersion', C.GEN_VERSION], ['checkP', C.CHECK_P], ['worldSteps', C.WORLD_STEPS],
@@ -626,21 +639,49 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE) {
         if (got !== C[k]) p.push('(a) constants.' + k + '=' + got + ' != config ' + C[k] + ' (a constant moved without a recut); ' + B6_RECUT);
     }
     if (JSON.stringify(cut.bindingKernels) !== JSON.stringify(Object.keys(B6_KERNELS))) p.push('(a) cut.bindingKernels ' + JSON.stringify(cut.bindingKernels) + ' != calibrate.mjs KERNELS ' + JSON.stringify(Object.keys(B6_KERNELS)));
-    if (JSON.stringify(Object.keys(doc.lanes || {})) !== JSON.stringify(B6_ROSTER)) p.push('(a) lanes ' + Object.keys(doc.lanes || {}) + ' != roster ' + B6_ROSTER);
-    for (const d of B6_LANES) {
+    const dk = Object.keys(doc.kernels || {});
+    if (JSON.stringify(dk) !== JSON.stringify(ks)) {
+        p.push('(a) doc.kernels ' + JSON.stringify(dk) + ' != calibrate.mjs kernels ' + JSON.stringify(ks) + '; ' + B6_RECUT);
+    }
+    const dl = Object.keys(doc.lanes || {});
+    if (JSON.stringify(dl) !== JSON.stringify(names)) p.push('(a) lanes ' + dl + ' != roster ' + names);
+    for (const d of lanes) {
         const L = (doc.lanes || {})[d.name];
         if (!L) continue;
         if (JSON.stringify(L.required) !== JSON.stringify(d.required)) p.push('(a) ' + d.name + ' required scenarios changed since the cut; ' + B6_RECUT);
         if (JSON.stringify(L.oracles) !== JSON.stringify(d.hardOracles)) p.push('(a) ' + d.name + ' hard oracles changed since the cut; ' + B6_RECUT);
     }
     const pins = (doc.provenance || {}).pinnedSha256 || {};
-    if (JSON.stringify(Object.keys(pins)) !== JSON.stringify(B6_PINNED)) p.push('(p) the pinned file list changed since the cut; ' + B6_RECUT);
+    if (JSON.stringify(Object.keys(pins)) !== JSON.stringify(b6PinnedFor(names))) {
+        p.push('(p) the pinned file list changed since the cut; ' + B6_RECUT);
+    }
     for (const f of Object.keys(pins)) if (shaOf(f) !== pins[f]) p.push('(p) ' + f + ' moved since the cut; ' + B6_RECUT);
-    for (const k of Object.keys(B6_KERNELS)) {
+    for (const k of ks) {
+        const bound = b6LanesFor(k, names);
         const K = (doc.kernels || {})[k];
         if (!K) { p.push('(a) kernel ' + k + ' has no evidence'); continue; }
-        for (const f of K.files || []) if (shaOf(f.path) !== f.sha256) p.push('(p) kernel file ' + f.path + ' moved since the cut; ' + B6_RECUT);
-        for (const d of B6_LANES) {
+        for (const f of Array.isArray(K.files) ? K.files : []) {
+            if (shaOf(f.path) !== f.sha256) p.push('(p) kernel file ' + f.path + ' moved since the cut; ' + B6_RECUT);
+        }
+        if (!(Array.isArray(K.files) && K.files.length > 0)) p.push('(p) kernel ' + k + ' lists no files; ' + B6_RECUT);
+        // D7: a lane-only kernel's evidence is the parity-pinned engine (null is not a sha: an unlisted file is red)
+        if (b6Has(B6_LANE_ONLY, k)) {
+            const kp = b6KernelPath(k), wantFiles = [kp, kp.replace(/Signal\.js$/, 'Watch.js')];
+            const got = Array.isArray(K.files)
+                ? K.files.map((f) => (f !== null && typeof f === 'object' ? f.path : null)) : null;
+            if (K.kernel !== kp || JSON.stringify(got) !== JSON.stringify(wantFiles)) {
+                p.push('(p) kernel ' + k + ' evidence is ' + K.kernel + ' ' + JSON.stringify(got) + ', not '
+                    + JSON.stringify(wantFiles) + '; ' + B6_RECUT);
+            }
+            for (const f of Array.isArray(K.files) ? K.files : []) {
+                const want = b6Has(parity, f.path) ? parity[f.path] : null;
+                if (f.sha256 !== want) {
+                    p.push('(p) kernel ' + k + ' ' + f.path + ' sha ' + f.sha256 + ' != parity.json ' + want + '; ' + B6_RECUT);
+                }
+            }
+        }
+        for (const d of lanes) {
+            if (bound.indexOf(d.name) === -1) continue;   // a lane this kernel does not cut (calibrate.mjs LANE_KERNELS)
             for (const [sh, scenMin, floor] of [['full', C.SCEN_MIN, C.CHECK_FLOOR], ['smoke', C.SCEN_MIN_SMOKE, C.CHECK_FLOOR_SMOKE]]) {
                 const f = (K[sh] || {})[d.name];
                 const at = k + ' ' + sh + ' ' + d.name;
@@ -661,17 +702,34 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE) {
                 }
             }
         }
-        const hv = (doc.hollowVolume || {})[k];
-        const hollowLanes = hv ? B6_LANES.filter((d) => hv[d.name] && hv[d.name].worst.leastPerformed.performed < C.CHECK_FLOOR).map((d) => d.name) : [];
-        if (hollowLanes.length === 0) p.push('(e) ' + k + ': no lane at ' + C.DEFAULT_CYCLES + ' x OPS_MIN falls below CHECK_FLOOR=' + C.CHECK_FLOOR + ' (the floor is hollow)');
-        let smokeMin = Infinity;
-        for (const d of B6_LANES) for (const o of d.hardOracles) {
-            const f = (K.smoke || {})[d.name];
-            if (f && b6Has(f.performed, o) && f.performed[o] < smokeMin) smokeMin = f.performed[o];
+        // a cell on a lane this kernel does not cut (WIE on pre-b33 1.5.2): the map decides, never the JSON
+        for (const sh of ['full', 'smoke']) for (const lane of Object.keys(K[sh] || {})) {
+            if (bound.indexOf(lane) !== -1) continue;
+            const by = names.indexOf(lane) === -1 ? [] : b6KernelsFor(lane);
+            const why = ': a cell no calibrate.mjs binding cuts (lane ' + lane + ' -> ' + JSON.stringify(by) + '); ';
+            p.push('(a) ' + k + ' ' + sh + ' ' + lane + why + B6_RECUT);
         }
-        if (!(C.CHECK_FLOOR_SMOKE * 8 >= smokeMin)) p.push('(e) ' + k + ': CHECK_FLOOR_SMOKE=' + C.CHECK_FLOOR_SMOKE + ' is below 1/8 of the least clean smoke cell ' + smokeMin);
+        // (e) hollow volume + the smoke floor: binding kernels only (hollowVolume.<lane-only> is recorded by --write, not gated)
+        if (b6Has(B6_KERNELS, k)) {
+            const hv = (doc.hollowVolume || {})[k];
+            const hollow = (d) => hv[d.name] && hv[d.name].worst.leastPerformed.performed < C.CHECK_FLOOR;
+            const hollowLanes = hv ? lanes.filter(hollow).map((d) => d.name) : [];
+            if (hollowLanes.length === 0) {
+                const at = ': no lane at ' + C.DEFAULT_CYCLES + ' x OPS_MIN falls below CHECK_FLOOR=' + C.CHECK_FLOOR;
+                p.push('(e) ' + k + at + ' (the floor is hollow)');
+            }
+            let smokeMin = Infinity;
+            for (const d of lanes) if (bound.indexOf(d.name) !== -1) for (const o of d.hardOracles) {
+                const f = (K.smoke || {})[d.name];
+                if (f && b6Has(f.performed, o) && f.performed[o] < smokeMin) smokeMin = f.performed[o];
+            }
+            if (!(C.CHECK_FLOOR_SMOKE * 8 >= smokeMin)) {
+                const at = ': CHECK_FLOOR_SMOKE=' + C.CHECK_FLOOR_SMOKE + ' is below 1/8 of the least clean smoke cell ';
+                p.push('(e) ' + k + at + smokeMin);
+            }
+        }
         const clean = ((doc.seedSweep || {}).cells || {});
-        for (const d of B6_LANES) for (const c of clean[k + ':' + d.name] || []) {
+        for (const d of lanes) if (bound.indexOf(d.name) !== -1) for (const c of clean[k + ':' + d.name] || []) {
             if (!(c.maxTaint.ratio <= C.TAINT_SKIP_MAX)) p.push('(e) ' + k + ' clean sweep ' + d.name + ' seed ' + c.seed + ' taint ' + c.maxTaint.ratio + ' > ' + C.TAINT_SKIP_MAX);
         }
     }
@@ -679,12 +737,13 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE) {
     if (!b6SeedsOk(cov)) p.push('(e) the headpatched NEST cov-off sweep seeds ' + JSON.stringify(cov.map((c) => (c || {}).seed)) + ' != COVOFF_SEEDS');
     for (const c of cov) if (!(c.maxTaint.ratio > C.TAINT_SKIP_MAX)) p.push('(e) NEST cov-off seed ' + c.seed + ' taint ' + c.maxTaint.ratio + ' <= TAINT_SKIP_MAX ' + C.TAINT_SKIP_MAX + ' (the hollow run passes)');
     // (e) a cov-off must really switch its scenario off: every covOff cell, every covOffSweep cell, both kernels
-    for (const lane of Object.keys(COV_OFF_SUPPORTED)) for (const scen of COV_OFF_SUPPORTED[lane]) {
+    for (const { name: lane, covOff } of lanes) for (const scen of Object.keys(covOff)) {
         const c = (doc.covOff || {})[lane + ':' + scen];
         if (!c) { p.push('(e) cov-off ' + lane + ':' + scen + ' has no evidence; ' + B6_RECUT); continue; }
         if (!(b6Count(c.hits) && c.hits < C.SCEN_MIN_SMOKE)) p.push('(e) cov-off ' + lane + ':' + scen + ' hits=' + c.hits + ' >= SCEN_MIN_SMOKE ' + C.SCEN_MIN_SMOKE + ' (the cov-off switch leaks: the hollow run clears coverage)');
     }
-    for (const k of Object.keys(B6_KERNELS)) for (const lane of Object.keys(COV_OFF_SUPPORTED)) for (const scen of COV_OFF_SUPPORTED[lane]) {
+    for (const k of ks) for (const { name: lane, covOff } of lanes) for (const scen of Object.keys(covOff)) {
+        if (b6LanesFor(k, names).indexOf(lane) === -1) continue;   // a lane this kernel does not cut
         const key = k + ':' + lane + ':' + scen;
         const cells = (((doc.covOffSweep || {}).cells || {})[key]) || [];
         if (!b6SeedsOk(cells)) p.push('(e) the ' + key + ' cov-off sweep seeds ' + JSON.stringify(cells.map((c) => (c || {}).seed)) + ' != COVOFF_SEEDS');
@@ -710,7 +769,8 @@ const b6With = (over) => Object.assign({}, B6_C, over);
 // the binding minima, read from the evidence (never typed in): mutants sit one step past them
 function b6Min(sh, pick) {
     let best = null;
-    for (const k of Object.keys(B6_KERNELS)) for (const d of B6_LANES) {
+    for (const k of b6KernelsOf(B6_ROSTER)) for (const d of B6_LANES) {
+        if (b6LanesFor(k, B6_ROSTER).indexOf(d.name) === -1) continue;   // a lane this kernel does not cut
         const f = B6_DOC.kernels[k][sh][d.name];
         for (const [name, n] of pick(d, f)) if (best === null || n < best.n) best = { k, lane: d.name, name, n };
     }
@@ -721,18 +781,20 @@ const B6_SCEN_SMOKE = b6Min('smoke', (d, f) => d.required.map((s) => [s, f.scena
 const B6_PERF_FULL = b6Min('full', (d, f) => d.hardOracles.map((o) => [o, f.performed[o]]));
 const B6_PERF_SMOKE = b6Min('smoke', (d, f) => d.hardOracles.map((o) => [o, f.performed[o]]));
 let B6_TAINT_MAX = 0;
-for (const k of Object.keys(B6_KERNELS)) for (const d of B6_LANES) for (const sh of ['full', 'smoke']) {
+for (const k of b6KernelsOf(B6_ROSTER)) for (const d of B6_LANES) for (const sh of ['full', 'smoke']) {
+    if (b6LanesFor(k, B6_ROSTER).indexOf(d.name) === -1) continue;
     for (const o of d.hardOracles) if (B6_SKIP_NAMES.indexOf(o) !== -1) B6_TAINT_MAX = Math.max(B6_TAINT_MAX, B6_DOC.kernels[k][sh][d.name].taintRatio[o]);
 }
 const B6_COV = B6_DOC.covOffSweep.cells['headpatched:NEST:saved-cursor-hazard'].map((c) => c.maxTaint.ratio);
 
-// main.mjs --smoke on every binding kernel, concurrently, folded per lane (cached: one pair of spawns per file)
+// main.mjs --smoke on every kernel of the roster (kernelsOf), each on SOAK_LANES = its bound lanes (lanesFor),
+// concurrently, folded per lane (cached: one set of spawns per file)
 let b6Live = null;
 function b6LiveRun() {
     b6ProbeRun();   // the probe child runs concurrently with the smoke pair
     if (b6Live === null) {
-        const ks = Object.keys(B6_KERNELS);
-        b6Live = Promise.all(ks.map((k) => runMainSmoke(join(ROOT, B6_KERNELS[k])))).then((runs) => {
+        const ks = b6KernelsOf(B6_ROSTER);
+        b6Live = Promise.all(ks.map((k) => runMainSmoke(join(ROOT, b6KernelPath(k)), b6LanesFor(k, B6_ROSTER)))).then((runs) => {
             const out = {};
             ks.forEach((k, i) => {
                 const m = runs[i];
@@ -741,7 +803,9 @@ function b6LiveRun() {
                 assert.equal(m.recs[m.recs.length - 1].type, 'summary', 'main.mjs --smoke on ' + k + ' reached its summary');
                 const cyc = m.recs.filter((r) => r.type === 'cycle');
                 out[k] = {};
-                for (const d of B6_LANES) out[k][d.name] = foldMainRecords(B6_DOC.lanes[d.name], cyc.filter((r) => r.lane === d.name), B6_SKIP_NAMES);
+                for (const lane of b6LanesFor(k, B6_ROSTER)) {
+                    out[k][lane] = foldMainRecords(B6_DOC.lanes[lane], cyc.filter((r) => r.lane === lane), B6_SKIP_NAMES);
+                }
             });
             return out;
         });
@@ -786,7 +850,7 @@ const b6ProbeMismatch = (docProbe, live) => {
 };
 const b6LiveMismatch = (doc, live) => {
     const out = [];
-    for (const k of Object.keys(live)) for (const lane of B6_ROSTER) {
+    for (const k of Object.keys(live)) for (const lane of b6LanesFor(k, B6_ROSTER)) {
         if (JSON.stringify(live[k][lane]) !== JSON.stringify(((doc.kernels[k] || {}).smoke || {})[lane])) out.push(k + ':' + lane);
     }
     return out;
@@ -851,7 +915,7 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     const leak = b6Copy(B6_DOC);
     leak.covOff['GRAPH:dep-set-flip'].hits = CFG.SCEN_MIN_SMOKE;
     red(leak, B6_C, '(e)', 'a covOff cell with hits >= SCEN_MIN_SMOKE');
-    for (const k of Object.keys(B6_KERNELS)) {
+    for (const k of b6KernelsFor('BATCH')) {
         const sw = b6Copy(B6_DOC);
         sw.covOffSweep.cells[k + ':BATCH:revert-after-mid-read'][3].hits = CFG.SCEN_MIN_SMOKE;
         red(sw, B6_C, '(e)', k + ' BATCH covOffSweep cell with hits >= SCEN_MIN_SMOKE');
@@ -896,9 +960,103 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     red(rounded, B6_C, '(d)', 'a rounded stored ratio is not the exact one');
 });
 
+test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing or off-parity lane-only kernel -> red', () => {
+    // the map (calibrate.mjs): an unlisted lane runs on every binding kernel; a lane's pin joins only when rostered
+    const roster5 = B6_ROSTER.concat(['WIE']);
+    assert.deepEqual(b6KernelsFor('WIE'), ['tree']);
+    assert.deepEqual(b6KernelsFor('GRAPH'), Object.keys(B6_KERNELS));
+    assert.deepEqual(b6KernelsOf(B6_ROSTER), Object.keys(B6_KERNELS));
+    assert.deepEqual(b6KernelsOf(roster5), Object.keys(B6_KERNELS).concat(['tree']));
+    assert.deepEqual(b6LanesFor('tree', roster5), ['WIE']);
+    assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), B6_ROSTER.slice());
+    assert.equal(b6KernelPath('tree'), 'Signal.js');
+    assert.throws(() => b6KernelPath('nope'), /unknown kernel nope/);
+    assert.deepEqual(b6PinnedFor(B6_ROSTER), B6_PINNED);
+    assert.equal(b6PinnedFor(B6_ROSTER).length, 15);
+    assert.equal(b6PinnedFor(roster5)[15], 'bench/soak/lanes/wie.mjs');
+    // A2 (the real roster): a WIE cell on lite-1.5.2 is a cell no binding cuts -> exactly one new problem
+    const base = calibrationProblems(B6_DOC, B6_C);
+    const a2 = b6Copy(B6_DOC);
+    a2.kernels['lite-1.5.2'].full.WIE = b6Copy(a2.kernels['lite-1.5.2'].full.GRAPH);
+    const a2Got = calibrationProblems(a2, B6_C).filter((x) => base.indexOf(x) === -1);
+    assert.deepEqual(a2Got, ['(a) lite-1.5.2 full WIE: a cell no calibrate.mjs binding cuts (lane WIE -> []); ' + B6_RECUT]);
+    // A3 (a synthetic WIE roster, as after the roster flip): tree carries WIE exactly at the floors, clean control
+    const lanes5 = B6_LANES.concat([Object.assign({}, B6_WIE, { index: 4 })]);
+    const cell = (scenMin, floor) => {
+        const c = { crashes: 0, scenarios: {}, performed: {}, skipTainted: {}, taintRatio: {} };
+        for (const s of B6_WIE.required) c.scenarios[s] = scenMin;
+        for (const o of B6_WIE.hardOracles) {
+            c.performed[o] = floor;
+            if (B6_SKIP_NAMES.indexOf(o) !== -1) { c.skipTainted[o] = 0; c.taintRatio[o] = 0; }
+        }
+        return c;
+    };
+    const doc5 = b6Copy(B6_DOC);
+    const W = B6_WIE;
+    doc5.lanes.WIE = { index: 4, required: W.required.slice(), optional: W.optional.slice(), oracles: W.hardOracles.slice() };
+    doc5.provenance.pinnedSha256['bench/soak/lanes/wie.mjs'] = b6ShaOf('bench/soak/lanes/wie.mjs');
+    doc5.kernels.tree = {
+        kernel: 'Signal.js', knownAs: null,
+        files: ['Signal.js', 'Watch.js'].map((path) => ({ path, sha256: B6_PARITY_FILES[path] })),
+        full: { WIE: cell(B6_C.SCEN_MIN, B6_C.CHECK_FLOOR) }, smoke: { WIE: cell(B6_C.SCEN_MIN_SMOKE, B6_C.CHECK_FLOOR_SMOKE) },
+    };
+    const cp5 = (doc) => calibrationProblems(doc, B6_C, b6ShaOf, B6_PROBE, lanes5);
+    assert.deepEqual(cp5(doc5), [], 'control: the synthetic WIE roster with tree at the floors is clean');
+    // + WIE cells on lite-1.5.2 (pre-b33: DIV-B33 by design) -> exactly the full + smoke lines
+    const stray = b6Copy(doc5);
+    stray.kernels['lite-1.5.2'].full.WIE = b6Copy(doc5.kernels.tree.full.WIE);
+    stray.kernels['lite-1.5.2'].smoke.WIE = b6Copy(doc5.kernels.tree.smoke.WIE);
+    const why = ': a cell no calibrate.mjs binding cuts (lane WIE -> ["tree"]); ' + B6_RECUT;
+    assert.deepEqual(cp5(stray), ['(a) lite-1.5.2 full WIE' + why, '(a) lite-1.5.2 smoke WIE' + why]);
+    // no tree evidence -> the kernel-key line and the missing-evidence line
+    const noTree = b6Copy(doc5);
+    delete noTree.kernels.tree;
+    const noTreeGot = cp5(noTree);
+    const keyLine = '(a) doc.kernels ["headpatched","lite-1.5.2"] != calibrate.mjs kernels ["headpatched","lite-1.5.2","tree"]; '
+        + B6_RECUT;
+    assert.ok(noTreeGot.includes(keyLine), JSON.stringify(noTreeGot));
+    assert.ok(noTreeGot.includes('(a) kernel tree has no evidence'), JSON.stringify(noTreeGot));
+    // a tree file off parity.json (D7) -> (p)
+    const off = b6Copy(doc5);
+    off.kernels.tree.files[0].sha256 = 'f'.repeat(64);
+    const offGot = cp5(off);
+    const offLine = '(p) kernel tree Signal.js sha ' + 'f'.repeat(64) + ' != parity.json ' + B6_PARITY_FILES['Signal.js'] + '; '
+        + B6_RECUT;
+    assert.ok(offGot.includes(offLine), JSON.stringify(offGot));
+    // the evidence must BE the tree's Signal.js + Watch.js: wrong cut, empty, partial, or another kernel's path -> (p)
+    const evLine = (doc) => cp5(doc).filter((x) => x.startsWith('(p) kernel tree evidence is '));
+    assert.deepEqual(evLine(doc5), [], 'control: tree evidence is the tree files');
+    const pre = b6Copy(doc5);   // (a) a doc cut on the pre-b33 control copies (their shas are real, just the wrong engine)
+    pre.kernels.tree.kernel = 'bench/soak/controls/preb33/Signal.js';
+    pre.kernels.tree.files = ['bench/soak/controls/preb33/Signal.js', 'bench/soak/controls/preb33/Watch.js']
+        .map((path) => ({ path, sha256: b6ShaOf(path) }));
+    const none = b6Copy(doc5);   // (b)
+    none.kernels.tree.files = [];
+    const part = b6Copy(doc5);   // (c)
+    part.kernels.tree.files = part.kernels.tree.files.filter((f) => f.path === 'Watch.js');
+    const old = b6Copy(doc5);    // (d) kernel names the 1.5.2 path, files untouched
+    old.kernels.tree.kernel = b6KernelPath('lite-1.5.2');
+    for (const [name, d] of [['pre-b33 cut', pre], ['no files', none], ['Watch.js only', part], ['1.5.2 kernel path', old]]) {
+        assert.equal(evLine(d).length, 1, name + ': ' + JSON.stringify(cp5(d)));
+    }
+    // (b) no files: the evidence line and the lists-no-files line, nothing else
+    assert.deepEqual(cp5(none), ['(p) kernel tree lists no files; ' + B6_RECUT,
+        '(p) kernel tree evidence is Signal.js [], not ["Signal.js","Watch.js"]; ' + B6_RECUT]);
+    // (e) an extra file with no parity.json key (real sha, so only the null-is-not-a-sha rule can catch it)
+    const extra = b6Copy(doc5);
+    extra.kernels.tree.files.push({ path: 'package.json', sha256: b6ShaOf('package.json') });
+    const extraLine = '(p) kernel tree package.json sha ' + b6ShaOf('package.json') + ' != parity.json null; ' + B6_RECUT;
+    assert.ok(cp5(extra).includes(extraLine), JSON.stringify(cp5(extra)));
+    // a kernel whose files is not a non-empty array lists no files -> (p)
+    const abc = b6Copy(B6_DOC);
+    abc.kernels.headpatched.files = 'abc';
+    const abcGot = calibrationProblems(abc, B6_C);
+    assert.ok(abcGot.includes('(p) kernel headpatched lists no files; ' + B6_RECUT), JSON.stringify(abcGot));
+});
+
 test('B6 drift guard live: main.mjs --smoke on BOTH binding kernels folds to exactly kernels.<k>.smoke', async () => {
     const live = await b6LiveRun();
-    assert.deepEqual(Object.keys(live), Object.keys(B6_KERNELS));
+    assert.deepEqual(Object.keys(live), b6KernelsOf(B6_ROSTER));
     assert.deepEqual(b6LiveMismatch(B6_DOC, live), []);
     // must-fail: hand edits that still clear every constant are caught only by the re-measure (J1 and its twin)
     for (const k of Object.keys(B6_KERNELS)) {
