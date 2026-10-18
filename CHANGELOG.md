@@ -264,6 +264,21 @@ dispose, and the lifecycle count returns to 0. Pre-existing: shipped in 1.5.2. B
 14 without it: a white-box lifecycle-count lane runs in plain `npm test`, and the WeakRef retention rows are
 skipped).
 
+### Added -- soak lane WIE (write-in-evaluation) joins the roster; per-lane kernel map (dev-only, not shipped)
+
+Unit 0s (harness only; the engine, `Signal.js` d07e0b17, is unchanged). The soak roster is now five lanes: GRAPH, BATCH,
+ERROR, NEST and WIE, a write made from inside a computed body (the F-b33-1 shape, LEDGER #37). Lane `lanes/wie.mjs`
+(92c0020) with its oracle `test/66-soak-wie.test.mjs`; the roster flip, teeth and calibration recut are 35bbf26.
+`parity.json` now pins 34 files (was 33: adds `bench/soak/lanes/wie.mjs`). Per-lane kernel map in `calibrate.mjs`
+(`LANE_KERNELS`, `LANE_ONLY_KERNELS`, `LANE_PINS`, `pinnedFor`): WIE is cut only on the tree kernel, because 1.5.2 predates
+the b33 fix; the tree kernel's files must equal `parity.json`. Divergence DIV-B33 (lane WIE only) explains the lost
+update on a controls.json kernel as O1e effect-stale, O1c computed-mismatch and O2 glitch, and (widened, ruling b68)
+O4 effect-dead (replay `WIE:4:0x88c7b46b`); on the tree it stays a regression. New must-fail control `L-WIE-preb33`
+(preb33 at 11 x 100000 WIE: exit 1, 'explained' by DIV-B33). Teeth universe 47 ids (was 46), `CHECKS` 35 (`CHECKS_MIN`
+35, was 34), 34 must-fail controls (was 33). The WIE digest was appended to `golden/scripts-1000.json`. Calibration
+recut: 832 s (`.handoff/b68-evidence/b2b/recut.log`), started at load 2.75 / 2.71 / 3.01 (`recut-load-before.txt`),
+so any throughput in it is PRELIMINARY and decides no gate.
+
 ### Changed -- torture NEST retention lane gates on exact counts (dev-only, not shipped)
 
 `test/torture.mjs` phase 4c (NEST retention) no longer gates on the resident heap delta: `heapUsed` noise

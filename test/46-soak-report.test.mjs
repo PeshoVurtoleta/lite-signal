@@ -12,7 +12,7 @@
  * mustfail, scratch kernel) prove the opposite direction: an honest stream is never labelled INTEGRITY.
  *
  * Release policy (burst 12, maintainer decision c: the full roster, at default volume, on a clean committed tree):
- * a release-size tree stream (4 lanes x DEFAULT_CYCLES x DEFAULT_OPS) is too slow to generate here, so the ACCEPTED
+ * a release-size tree stream (5 lanes, the roster, x DEFAULT_CYCLES x DEFAULT_OPS) is too slow to generate here, so the ACCEPTED
  * path is proven on the exported PURE releaseRefusal() with the REAL REV-152 header relabelled as a tree run and
  * edited field by field (RELEASE table); the CLI rows prove the small honest streams refuse with the first class.
  */
@@ -437,7 +437,7 @@ for (const [name, edit, reason, detail] of RELEASE) {
         assert.match(got.detail, detail);
     });
 }
-test('releaseRefusal: the base really is the REV-152 header (4 lanes x DEFAULT_CYCLES completed, the roster by import)', () => {
+test('releaseRefusal: the base really is the REV-152 header (5 lanes x DEFAULT_CYCLES completed, the roster by import)', () => {
     const b = releaseBase();
     assert.deepEqual(b.h.laneRoster, ROSTER.slice());
     assert.deepEqual(b.h.lanes.map((L) => L.status), ROSTER.map(() => 'run'));

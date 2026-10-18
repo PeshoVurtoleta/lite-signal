@@ -326,7 +326,9 @@ export const CONTROLS = deepFreeze([
     // write-in-eval lost update, explained by the FIXED entry DIV-B33 (includeFixed: preb33 is a controls.json kernel).
     // 'explained' with specs [] would not pair lane:WIE (test/45 reads expect.specs), so the O1e head is spelled out.
     // Burst 68 smoke (3 x 20000, before DIV-B33 existed): heads O1e effect-stale, O2 glitch, O1c computed-mismatch, all
-    // known=none (.handoff/b68-evidence/b2b/preb33-wie-smoke.err). L-REV-152 keeps its explicit 4-lane list (1.5.2).
+    // known=none (.handoff/b68-evidence/b2b/preb33-wie-smoke.err). The 11 x 100000 full run on preb33 (preb33-wie-full.err /
+    // .jsonl, same dir) adds an O4 effect-dead head, known=none then (replay WIE:4:0x88c7b46b, "(ran 0 times this op)"); DIV-B33
+    // was widened with O4 (maintainer ruling b68). L-REV-152 keeps its explicit 4-lane list (1.5.2).
     M('L-WIE-preb33', 'preb33', { SOAK_LANES: 'WIE', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'explained', lines: [], specs: ['oracle=O1 lane=WIE sig=effect-stale'], known: ['DIV-B33'],
     }),

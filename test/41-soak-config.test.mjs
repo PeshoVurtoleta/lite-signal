@@ -602,8 +602,8 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
 // each kernel on the lanes it is bound to (lanesFor); doc.kernels keys == kernelsOf (a); a cell on a lane its kernel
 // does not cut is red (a); a lane-only kernel (tree: WIE) must carry parity.json's shas (p) and gets (a) (p) (b)-(d)
 // and the clean-sweep taint check, never the (e) hollow-volume / smoke-floor checks (binding kernels only).
-// The live check spawns the REAL main.mjs --smoke on both binding kernels and main.mjs on PROBE (all three
-// concurrently) and folds their cycle records, which must equal kernels.<k>.smoke and probe.fold exactly: the
+// The live check spawns the REAL main.mjs --smoke on every kernel of kernelsOf(roster) (headpatched, lite-1.5.2,
+// tree; each on its lanesFor) and main.mjs on PROBE (all four concurrently) and folds their cycle records, which must equal kernels.<k>.smoke and probe.fold exactly: the
 // JSON was not hand-edited and neither main nor gen / exec / oracles drifted. Only the smoke cells and the
 // probe are re-measured live; the full-shape cells are not (accepted LP design: (p) pins the gen-side code that
 // cut them, and a recut dies unless the DEFAULT main.mjs run folds to kernels.<k>.full too). A GRAPH smoke
@@ -1066,7 +1066,7 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.ok(abcGot.includes('(p) kernel headpatched lists no files; ' + B6_RECUT), JSON.stringify(abcGot));
 });
 
-test('B6 drift guard live: main.mjs --smoke on BOTH binding kernels folds to exactly kernels.<k>.smoke', async () => {
+test('B6 drift guard live: main.mjs --smoke on every kernelsOf(roster) kernel folds to exactly kernels.<k>.smoke', async () => {
     const live = await b6LiveRun();
     assert.deepEqual(Object.keys(live), b6KernelsOf(B6_ROSTER));
     assert.deepEqual(b6LiveMismatch(B6_DOC, live), []);

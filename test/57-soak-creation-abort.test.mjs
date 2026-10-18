@@ -207,7 +207,7 @@ test('A2-b: a lite adapter with no knownAs -> the Exec ctor throws (fail closed)
     assert.match(o.threw, /^exec: lite adapter has no knownAs\(\)/);
 });
 
-test('A2-d: exec.mjs:74 -- a lite knownAs() returning undefined or "" -> the Exec ctor throws (neither null nor a control name)', () => {
+test('A2-d: exec.mjs:78 -- a lite knownAs() returning undefined or "" -> the Exec ctor throws (neither null nor a control name)', () => {
     for (const bad of ['undef', 'empty']) {
         const o = child(null, { mode: 'stub', knownAs: bad, world: PLAIN });
         assert.equal(typeof o.threw, 'string', 'knownAs ' + bad + ' must throw, got ' + JSON.stringify(o));
@@ -215,7 +215,7 @@ test('A2-d: exec.mjs:74 -- a lite knownAs() returning undefined or "" -> the Exe
     }
 });
 
-test('A2-e: exec.mjs:66 -- creationAbort set on the PROTOTYPE of opts is not read (own key only): no throw', () => {
+test('A2-e: exec.mjs:70 -- creationAbort set on the PROTOTYPE of opts is not read (own key only): no throw', () => {
     const o = child(null, { mode: 'run', world: PLAIN, protoOpts: { creationAbort: 1 } });
     assert.equal(o.threw, undefined, 'an inherited creationAbort must be ignored, got ' + o.threw);
     assert.equal(o.keys, null, JSON.stringify(o.detail));

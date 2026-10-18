@@ -153,7 +153,7 @@ export const GAPS = deepFreeze({
         until: 'S5 adapters', covers: ['oracle:OB', 'sig:OB:batch-early-run'],
     },
     'T-OB-nested-close': {
-        why: 'exec.mjs:298 marks only the OUTERMOST close (depth 1); no in-tree kernel flushes at a nested batch close, so only a reviewer mutant kernel reaches exec.mjs:304 did(\'OB\') that way',
+        why: 'exec.mjs:381 marks only the OUTERMOST close (depth 1); no in-tree kernel flushes at a nested batch close, so only a reviewer mutant kernel reaches exec.mjs:387 did(\'OB\') that way',
         until: 'a pinned nested-flush control kernel (controls.json)', covers: ['oracle:OB'],
     },
     'totals-e2e': {
@@ -169,7 +169,7 @@ export const GAPS = deepFreeze({
         until: 'a mutant kernel per count (node leak, kind flip, teardown residue)', covers: ['sig:O5:node-count', 'sig:O5:kind-count', 'sig:O5:teardown-residue'],
     },
     'T-O6-shape': {
-        why: 'equals-mutated (exec.mjs:263) and escape-empty (exec.mjs:176) have no known red kernel; no census row names them',
+        why: 'equals-mutated (exec.mjs:346) and escape-empty (exec.mjs:211) have no known red kernel; no census row names them',
         until: 'a mutant kernel (equals throw that still writes; an empty escape leaf list)', covers: ['sig:O6:equals-mutated', 'sig:O6:escape-empty'],
     },
     'T-no-lane': { why: 'lite with a SKIP exits 2 (gates.mjs:560) and SOAK_LANES never parses empty (config.mjs:242), so no-lane (gates.mjs:565) needs a non-lite engine', until: 'S5 adapters', covers: ['cause:no-lane'] },
@@ -184,7 +184,7 @@ export const UNREACHABLE = deepFreeze({
         anchor: { file: 'bench/soak/gates.mjs', text: "if (L.status === I && L.causes.length === 0) causes.push({ cause: 'lane-status', lane: L.lane });" },
     },
     'replay-ops-guard': {
-        proof: 'replay.mjs imports runWorld statically from exec.mjs (no adapter can replace it); Exec.run counts each op (exec.mjs:109 opsRun++) BEFORE applying it (:112), so a world that returns has ops >= 1, a throwing one is caught above the guard, and every lane init pushes >= 6 ops (lanes/nest.mjs:117, the smallest).',
+        proof: 'replay.mjs imports runWorld statically from exec.mjs (no adapter can replace it); Exec.run counts each op (exec.mjs:143 opsRun++) BEFORE applying it (:146), so a world that returns has ops >= 1, a throwing one is caught above the guard, and every lane init pushes >= 6 ops (lanes/nest.mjs:117, the smallest).',
         anchor: { file: 'bench/soak/replay.mjs', text: 'if (!(Number.isSafeInteger(r.ops) && r.ops >= 1)) {' },
     },
     'report-crash': {

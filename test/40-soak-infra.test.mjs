@@ -754,7 +754,7 @@ test('main: headpatched ERROR (smoke) -> exit 1, every BREACH carries known in {
     assert.ok(fails.some((f) => f.op === 'batch' && Array.isArray(f.escape) && f.escape.length > 0), 'F22 worlds carry the outermost-batch escape');
 });
 
-test('main: 1.5.2 (smoke, 4 lanes) -> exit 1 with the four L-REV-152 BREACH heads; failure records keep ids and families apart', () => {
+test('main: 1.5.2 (smoke, the 5-lane roster) -> exit 1 with the four L-REV-152 BREACH heads; failure records keep ids and families apart', () => {
     const r = soak({ SOAK_KERNEL: K_152 }, ['--smoke']);
     assert.equal(r.status, 1, r.stderr);
     assert.equal(r.recs[0].controls.name, 'rev152');
