@@ -248,6 +248,34 @@ describe('59: sync-scheduler creation throw disposes the effect', () => {
         }
     });
 
+    // ROWS 10-11 (b61, qa gap tests; evidence .handoff/b60-evidence/qa/gap-*.txt). Oracle: spec "a run thunk handed to a
+    // scheduler that then throws is stale: firing it later is a no-op"; row 11 = row 7 with node.gen forced to 2^31-1 so
+    // the stranger's slot reuse crosses the wrap to -2^31 (white-box via the NODE_PTR symbol). Regression pins.
+    it('10 run stored by a throwing scheduler is a no-op when fired later', () => {
+        const r = mk(); const dep = r.signal(0); let runs = 0, saved = null;
+        const res = attempt(() => r.effect(() => { runs++; dep(); }, { scheduler: (run) => { saved = run; throw boom; } }));
+        assert.equal(res.val, boom);
+        saved(); dep.set(1);
+        assert.equal(runs, 0); assert.equal(r.stats().effects, 0); assert.equal(r.hasObservers(dep), false);
+        r.destroy();
+    });
+    it('11 row 7 across the gen wrap (2^31-1 -> -2^31)', () => {
+        const r = mk();
+        const st0 = r.stats(); let f0 = st0.nodePoolPopulation - st0.activeNodes; while (f0-- > 0) r.signal(-2);
+        const t = r.signal(0);
+        const sym = Object.getOwnPropertySymbols(t).find((k) => typeof t[k] === 'object' && t[k] !== null);
+        const tn = t[sym]; r.dispose(t); tn.gen = 2 ** 31 - 1;          // free-list top, gen at the wrap point
+        let own = null, s = null;
+        const res = attempt(() => r.effect(() => { own = r.getOwner(); r.dispose(own); }, { scheduler: (run) => {
+            run(); const st = r.stats(); let f = st.nodePoolPopulation - st.activeNodes - 1; while (f-- > 0) r.signal(-1);
+            s = r.signal(7); throw boom; } }));
+        assert.equal(own[sym], tn, 'precondition: effect took the forced slot');
+        assert.equal(s[sym], tn, 'precondition: stranger took it after the wrap');
+        assert.equal(tn.gen, -(2 ** 31));
+        assert.equal(res.val, boom); assert.equal(s(), 7); s.set(8); assert.equal(s(), 8);
+        r.destroy();
+    });
+
     // ASSERTION 8 (A2): `throw null` is rethrown (HEAD: swallowed + handle returned without a scheduler; rethrown but left live through a sync one), effect disposed.
     describe('8 throw null', () => {
         it('no-scheduler path', () => {
@@ -278,6 +306,7 @@ describe('59: sync-scheduler creation throw disposes the effect', () => {
             assert.equal(res.threw, true, 'effect() must throw');
             assert.equal(res.val, undefined);
             assert.equal(r.stats().effects, 0);
+            assert.equal(r.hasObservers(dep), false);
             r.destroy();
         });
         it('throw undefined, sync-scheduler path', () => {
@@ -287,6 +316,7 @@ describe('59: sync-scheduler creation throw disposes the effect', () => {
             assert.equal(res.threw, true, 'effect() must throw');
             assert.equal(res.val, undefined);
             assert.equal(r.stats().effects, 0);
+            assert.equal(r.hasObservers(dep), false);
             r.destroy();
         });
     });

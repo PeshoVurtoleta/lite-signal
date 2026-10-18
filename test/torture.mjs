@@ -22,8 +22,13 @@
 //     the callback (fires === steps) or the lane is blind. (An in-process
 //     measureAllocs lane cannot see a per-fire allocation that dies young.)
 //   * NEST retention: 1e4 cycles of the P10 + F8 shapes (nested-frame disposal,
-//     onDisconnect disposing the next dep) -> engine-owned WeakRefs all collected,
-//     activeNodes/activeLinks back to baseline, resident delta <= 64 KB
+//     onDisconnect disposing the next dep) -> engine-owned WeakRefs all collected
+//     (6 per sampled cycle x 161; a live/dead WeakRef control proves the census
+//     can see), free-list census (every slot the counters call free is drained
+//     back out of R's pools, one more node must throw CapacityError), post-drain
+//     stats() back to baseline. The resident delta is an advisory print
+//     (res=...KB(adv)), gated nowhere: heapUsed noise crossed 64 KB with every
+//     exact term green (b60).
 //   * PIN (A1.8): 1e4 effects that dispose themselves while RUNNING (pinned slots),
 //     at top level and inside a flush -> nodePoolPopulation flat after warm-up,
 //     maxMajor 0; 1e3 dead-owner cycles (a child created under a parent disposed
@@ -321,31 +326,51 @@ const qsChildLabel = nestLane === null || typeof nestLane.qs !== 'number' ? 'unm
 
 // 4c: retention -- 1e4 cycles of the P10 (child effect's nested first run disposes
 // a dep the parent reads later) and F8 (onDisconnect disposes the next dep during
-// the dispose walk) shapes. The retention oracle is ENGINE-owned: every 64th cycle
-// holds WeakRefs to the user objects the engine stores in its pooled nodes (a
-// signal's value payload, an effect's body closure). After disposal + forced GC
-// none may survive: a pooled or pinned node that kept its value / computeFn would
-// keep them alive. (lite-leak's tracker would only see harness-owned markers here,
-// so 4c does not use it.) Pass 2 (warm, unsampled) measures the resident delta.
+// the dispose walk) shapes. Three exact oracles, no heap threshold:
+// (1) WeakRef census, ENGINE-owned: every 64th cycle of pass 1 and the last 4
+//     cycles (161 sampled) hold WeakRefs to the six user objects handed to the
+//     engine (a signal's value payload, the effect bodies bodyP / childP /
+//     bodyF, the observeObservers hooks object and its onDisconnect). After
+//     disposal + forced GC none may survive: a pooled or pinned node (or the
+//     lifecycle map) that kept a value / computeFn / hook would keep them alive.
+//     Control: a module-held object's WeakRef must still deref and a WeakRef whose
+//     target died with its function's frame must be cleared -- either failing =
+//     blind census = FAIL.
+// (2) Free-list census on R: every slot the counters call free
+//     (nodePoolPopulation - activeNodes, linkPoolPopulation - activeLinks) is
+//     drained back out under the default "throw" policy, and one more node must
+//     throw CapacityError. A slot that left the free list while activeNodes still
+//     decremented is silent to the counters and to the heap (the eager pool holds
+//     it either way); only the drain sees it.
+// (3) Post-drain stats(): activeNodes / activeLinks / signals / computeds / effects
+//     back to nestBase, and totalAllocations - totalDisposals === activeNodes.
+// Pass 2 (warm, unsampled) measures the resident delta: an advisory print
+// (res=...KB(adv)), gated nowhere. (lite-leak's tracker would only see
+// harness-owned markers here, so 4c does not use it.) Cannot see: engine-internal
+// retention of objects that are neither user-owned nor counted (e.g. a growing
+// array of node refs).
 const NEST_CYCLES = 10000;
 const nestBase = stats();
 let nestShapeFail = 0;
+let nestSampled = 0;
 let resBefore = null;
 const nestRefs = [];
 // One cycle per call, so its locals die on return: only the engine can keep the
 // sampled objects alive afterwards.
 function nestCycle(sample) {
+  if (sample) nestSampled++;
   try {
     // P10
     const payload = { sample };
     const t = signal(0), a = signal(payload), b = signal(0);
     let mode = 0, runs = 0;
+    const childP = () => { dispose(a); };
     const bodyP = () => {
       runs++; t();
-      if (mode === 1) effect(() => { dispose(a); });
+      if (mode === 1) effect(childP);
       a(); b();
     };
-    if (sample) { nestRefs.push(new WeakRef(payload)); nestRefs.push(new WeakRef(bodyP)); }
+    if (sample) { nestRefs.push(new WeakRef(payload)); nestRefs.push(new WeakRef(bodyP)); nestRefs.push(new WeakRef(childP)); }
     const stopP = effect(bodyP);
     mode = 1;
     t.set(1);
@@ -356,9 +381,10 @@ function nestCycle(sample) {
     dispose(b);
     // F8
     const a2 = signal(0), b2 = signal(0);
-    const off = observeObservers(a2, { onDisconnect: () => dispose(b2) });
+    const hooks = { onDisconnect: () => dispose(b2) };
+    const off = observeObservers(a2, hooks);
     const bodyF = () => { a2(); b2(); };
-    if (sample) nestRefs.push(new WeakRef(bodyF));
+    if (sample) { nestRefs.push(new WeakRef(bodyF)); nestRefs.push(new WeakRef(hooks)); nestRefs.push(new WeakRef(hooks.onDisconnect)); }
     const stopF = effect(bodyF);
     stopF();
     if (stats().activeLinks !== nestBase.activeLinks || stats().signals !== nestBase.signals + 1) nestShapeFail++;
@@ -380,6 +406,12 @@ for (let i = 0; i < 2 * NEST_CYCLES; i++) {
   // that kept its payload or closure after disposal can keep them alive.
   nestCycle((i < NEST_CYCLES && (i & 63) === 0) || i >= 2 * NEST_CYCLES - 4);
 }
+// Census control: ctlHeld stays reachable from module scope (must deref alive);
+// nestCtlRef()'s target dies with its frame (the gc sequence below must clear it).
+const ctlHeld = { ctl: 1 };
+const ctlLiveRef = new WeakRef(ctlHeld);
+function nestCtlRef() { return new WeakRef({ ctl: 2 }); }
+const ctlDeadRef = nestCtlRef();
 globalThis.gc?.();
 await new Promise((r) => setTimeout(r, 50));
 globalThis.gc?.();
@@ -387,13 +419,67 @@ await new Promise((r) => setTimeout(r, 0));   // WeakRef targets stay alive unti
 globalThis.gc?.();
 let nestAlive = 0;
 for (let i = 0; i < nestRefs.length; i++) if (nestRefs[i].deref() !== undefined) nestAlive++;
+const ctlAlive = ctlLiveRef.deref() === ctlHeld;
+const ctlDead = ctlDeadRef.deref() === undefined;
 const resAfter = process.memoryUsage();
 const nestResKB = ((resAfter.heapUsed + resAfter.arrayBuffers) - (resBefore.heapUsed + resBefore.arrayBuffers)) / 1024;
 const nestAfter = stats();
-const nestRetOk = nestShapeFail === 0 && nestRefs.length > 0 && nestAlive === 0 &&
+// Free-list census on R (after the res read). Nodes: drain every free slot, then one
+// more must throw CapacityError (default "throw" policy: the pool cannot grow).
+const nD = nestAfter.nodePoolPopulation - nestAfter.activeNodes;
+const lD = nestAfter.linkPoolPopulation - nestAfter.activeLinks;
+let nDrained = 0, nExtraThrew = false, lDrained = 0, lFull = false;
+const drainSigs = [];
+try {
+  for (let i = 0; i < nD; i++) { drainSigs.push(signal(i)); nDrained++; }
+} catch { /* nDrained < nD: a slot the counters call free is not on the free list */ }
+if (nDrained === nD) {
+  try {
+    drainSigs.push(signal(-1));
+  } catch (e) {
+    nExtraThrew = (e !== null && typeof e === 'object' && e.name === 'CapacityError') ||
+      String(e && e.message).startsWith('CapacityError');
+  }
+}
+for (let i = 0; i < drainSigs.length; i++) dispose(drainSigs[i]);
+drainSigs.length = 0;
+// Links: 64 source signals, floor(lD / 64) effects reading all 64, one effect reading
+// lD % 64. Unmeasured (fails closed) if the node pool cannot hold sources + effects.
+const LDW = 64;
+const lFullEff = Math.floor(lD / LDW);
+const lEff = lFullEff + (lD % LDW !== 0 ? 1 : 0);
+const lMeasured = LDW + lEff <= nD;
+const lSrc = [], lStops = [];
+if (lMeasured) {
+  const l0 = stats().activeLinks;
+  try {
+    for (let i = 0; i < LDW; i++) lSrc.push(signal(i));
+    for (let e = 0; e < lEff; e++) {
+      const w = e < lFullEff ? LDW : lD % LDW;
+      lStops.push(effect(() => { for (let k = 0; k < w; k++) lSrc[k](); }));
+    }
+  } catch { /* lDrained < lD */ }
+  const lst = stats();
+  lDrained = lst.activeLinks - l0;
+  lFull = lst.activeLinks === lst.linkPoolPopulation;
+}
+for (let i = 0; i < lStops.length; i++) lStops[i]();
+for (let i = 0; i < lSrc.length; i++) dispose(lSrc[i]);
+lStops.length = 0;
+lSrc.length = 0;
+const nestDrainAfter = stats();
+const nestRetOk = nestShapeFail === 0 && nestSampled === 161 && nestRefs.length === 161 * 6 && nestAlive === 0 &&
+  ctlAlive && ctlDead &&
   nestAfter.activeNodes === nestBase.activeNodes &&
   nestAfter.activeLinks === nestBase.activeLinks &&
-  nestResKB <= 64;
+  nDrained === nD && nExtraThrew &&
+  lMeasured && lDrained === lD && lFull &&
+  nestDrainAfter.activeNodes === nestBase.activeNodes &&
+  nestDrainAfter.activeLinks === nestBase.activeLinks &&
+  nestDrainAfter.signals === nestBase.signals &&
+  nestDrainAfter.computeds === nestBase.computeds &&
+  nestDrainAfter.effects === nestBase.effects &&
+  nestDrainAfter.totalAllocations - nestDrainAfter.totalDisposals === nestDrainAfter.activeNodes;
 
 // ---- phase 5: PIN (SPEC-A A1.8) --------------------------------------------
 // 5a: slots disposed while RUNNING are pinned until depth 0 and must come back.
@@ -607,7 +693,8 @@ console.log(
   ' maxMs=' + s.gc.maxMs.toFixed(2) +
   ' | alloc=' + bpcLabel + ' B/op' +
   ' | nest gc major=' + ns.gc.major + ' minor=' + ns.gc.minor + ' alloc=' + nestLabel + ' B/op' +
-  ' watch=' + watchLabel + ' B/op control=' + ctlLabel + ' B/op retention=' + nestAlive + '/' + nestRefs.length + ' res=' + nestResKB.toFixed(1) + 'KB' +
+  ' watch=' + watchLabel + ' B/op control=' + ctlLabel + ' B/op retention=' + nestAlive + '/' + nestRefs.length +
+  ' free=' + nDrained + '/' + nD + 'n,' + lDrained + '/' + lD + 'l res=' + nestResKB.toFixed(1) + 'KB(adv)' +
   ' | pin pool=+' + pinPoolDelta + ' major=' + ps.gc.major + ' deadOwner=' + deadOwnerFail + '/1000' +
   ' | qs gc major=' + qs.gc.major + ' minor=' + qs.gc.minor + ' alloc=' + qsBpcLabel + ' B/op child=' + qsChildLabel + ' B/op' +
   ' k=' + qsKLabel + 'B/batch K=' + qsAttempts.length + ' ctl=' + qsCtlLabel + 'B' +
@@ -627,9 +714,17 @@ if (!ok) {
   if (!watchOk) console.error('  watch lane: ' + (nestLane === null ? 'no result' :
     'watch=' + nestLane.watch + ' window0=' + nestLane.watchWindow0 + ' fires=' + nestLane.watchFires +
     ' steps=' + nestLane.watchSteps) + ' budget<=' + NEST_BUDGET + (nestOk ? '' : ' (child lane failed: control/pin)'));
-  if (!nestRetOk) console.error('  nest retention: shapeFail=' + nestShapeFail + ' alive=' + nestAlive + '/' + nestRefs.length +
+  if (!nestRetOk) console.error('  nest retention: shapeFail=' + nestShapeFail + ' sampled=' + nestSampled + '/161' +
+    ' alive=' + nestAlive + '/' + nestRefs.length + ' control alive=' + (ctlAlive ? 1 : 0) + ' dead=' + (ctlDead ? 1 : 0) +
     ' nodes ' + nestBase.activeNodes + '->' + nestAfter.activeNodes +
-    ' links ' + nestBase.activeLinks + '->' + nestAfter.activeLinks + ' res=' + nestResKB.toFixed(1) + 'KB (<=64)');
+    ' links ' + nestBase.activeLinks + '->' + nestAfter.activeLinks +
+    ' drain nodes=' + nDrained + '/' + nD + ' extraThrew=' + nExtraThrew +
+    ' links=' + (lMeasured ? lDrained + '/' + lD + ' full=' + lFull : 'unmeasured') +
+    ' post-drain nodes=' + nestDrainAfter.activeNodes + ' links=' + nestDrainAfter.activeLinks +
+    ' sig/comp/eff=' + nestDrainAfter.signals + '/' + nestDrainAfter.computeds + '/' + nestDrainAfter.effects +
+    ' (base ' + nestBase.signals + '/' + nestBase.computeds + '/' + nestBase.effects + ')' +
+    ' alloc-disp=' + (nestDrainAfter.totalAllocations - nestDrainAfter.totalDisposals) +
+    ' res=' + nestResKB.toFixed(1) + 'KB (advisory)');
   if (!pinOk) console.error('  pin: threw=' + pinThrew + ' poolDelta=' + pinPoolDelta + ' deadOwnerFail=' + deadOwnerFail +
     ' nodes ' + pinBase.activeNodes + '->' + pinAfter.activeNodes +
     (pinGcReport.ok ? '' : ' gc ' + pinGcReport.violations.map((v) => v.metric + '=' + v.actual).join(',')));

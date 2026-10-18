@@ -223,6 +223,37 @@ its slot (a signal created afterwards could be destroyed). That handle is now st
 are byte-identical; `effect()` creation is cold). New `test/59-sync-scheduler-creation-throw.test.mjs`
 (21 tests; 13 red on the previous engine).
 
+### Fixed -- engine: null opts no longer leak a node or a lifecycle entry
+
+`signal`, `computed`, `signalBox`, `computedBox`, `effect` and `observeObservers` called with `null` opts
+still throw `TypeError`, but nothing is allocated first. The five creation entries read `opts.equals` /
+`opts.scheduler` after `createNode`, so the throw left an active node (+1, never freed; 10/10 entries x
+{registry, default exports} leaked on the previous engine, 0/10 now). `observeObservers` created its
+lifecycle entry and bumped the internal lifecycle count before reading `opts.onConnect`, so the throw left a
+hook-less entry (freed only by a later `observeObservers` + unobserve on that slot) that kept the count
+non-zero, and the connect/disconnect branch on for every link, until then (+1 on both the registry method and the default wrapper
+before, 0/2 now). Every opts read is hoisted above the allocation (read opts first, no new checks). The
+`effect()` JSDoc now says any throw that escapes the call (a CycleError, a body throw, a throwing scheduler, or a
+truthy non-function scheduler) disposes the effect first, and a deferred first run (async scheduler) that throws
+later leaves it live (comment only). Cold paths only (the 7 hot function bodies are
+byte-identical). Under `onCapacityExceeded: 'throw'` at capacity, null opts or a throwing opts getter now throw their
+own error (the null TypeError, or whatever the getter throws) instead of CapacityError (the opts read now happens before the capacity check), and
+`observeObservers` reads each hook once (a Proxy can observe the difference); benign. New
+`test/60-null-opts-no-leak.test.mjs` (62 tests, including O5, a white-box lifecycleCount witness; 33 red on the previous engine);
+`test/59` gains rows 10 (a stored run from a throwing scheduler, fired later, is a no-op) and 11
+(generation wrap 2^31-1 -> -2^31) plus `hasObservers` checks on the undefined rows (23 tests; regression pins).
+
+### Changed -- torture NEST retention lane gates on exact counts (dev-only, not shipped)
+
+`test/torture.mjs` phase 4c (NEST retention) no longer gates on the resident heap delta: `heapUsed` noise
+crossed the 64 KB bound with every exact term green (b51; b60 1 of 43; burst 61 5 of 60 runs). It now gates
+on exact counts: a 6-object WeakRef census over 161 sampled cycles with a live/dead control, a free-list
+census that drains every free node and link slot (1021/1021 nodes, 4095/4095 links) and requires one more
+node to throw `CapacityError`, and post-drain `stats()` equality. `res=<x>KB(adv)` stays an advisory print;
+the new gate token is `free=<n>/<n>n,<l>/<l>l`. Teeth: two retention mutants the old gate passed (every
+1000th disposal skipping the free list; an unobserve (`off()`) that leaves its lifecycle entry behind) now fail. 60 of 60 runs ok
+under quiet-lock (res advisory -175.5..209.0 KB).
+
 ### Changed -- soak models the R2-M1 creation abort; `preb33` control; DIV-F6 widened (dev-only, not shipped)
 
 DELTA 4b (eb5acc2). The soak model predicts the O6 `CycleError` at `effect()` creation when the kernel aborts

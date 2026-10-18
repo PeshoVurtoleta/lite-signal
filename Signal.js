@@ -1568,8 +1568,9 @@ export function createRegistry(config) {
      * @returns {Signal<T>}
      */
     function signal(initial, opts) {
+        const equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
         const node = createNode(initial, FLAG_SIGNAL);
-        node.equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
+        node.equals = equals;
         node.version = globalVersion;
         statSignals++;
 
@@ -1638,9 +1639,10 @@ export function createRegistry(config) {
      * @returns {Computed<T>}
      */
     function computed(fn, opts) {
+        const equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
         const node = createNode(undefined, FLAG_COMPUTED);
         node.computeFn = fn;
-        node.equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
+        node.equals = equals;
         statComputeds++;
 
         const birthGen = node.gen;
@@ -1788,8 +1790,9 @@ export function createRegistry(config) {
      * @returns {SignalBox<T>}
      */
     function signalBox(initial, opts) {
+        const equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
         const node = createNode(initial, FLAG_SIGNAL);
-        node.equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
+        node.equals = equals;
         node.version = globalVersion;
         statSignals++;
         // Object.create(proto) allocates the box already on the shared prototype's
@@ -1812,9 +1815,10 @@ export function createRegistry(config) {
      * @returns {ComputedBox<T>}
      */
     function computedBox(fn, opts) {
+        const equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
         const node = createNode(undefined, FLAG_COMPUTED);
         node.computeFn = fn;
-        node.equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
+        node.equals = equals;
         statComputeds++;
         const box = Object.create(COMPUTED_BOX_PROTO);
         box[NODE_PTR] = node;
@@ -1839,8 +1843,10 @@ export function createRegistry(config) {
      * A run that reads a value a later write in the same evaluation changes runs
      * again (F-b33-1); a body that never settles throws an Error prefixed
      * `"CycleError:"` -- from this call itself when the loop forms on the first run,
-     * with or without a synchronous scheduler; the effect is disposed before the
-     * rethrow.
+     * with or without a synchronous scheduler. Any throw that escapes this call (a
+     * CycleError, a body throw, a throwing scheduler, or a truthy non-function
+     * scheduler) disposes the effect first; a deferred first run (async scheduler)
+     * that throws later leaves it live.
      *
      * @param {() => void} fn        Effect body.
      * @param {object} [opts]
@@ -1853,16 +1859,18 @@ export function createRegistry(config) {
      *                               after registry.destroy().
      */
     function effect(fn, opts) {
+        const scheduler = (opts !== undefined) ? opts.scheduler : undefined;
         const node = createNode(undefined, FLAG_EFFECT);
         node.computeFn = fn;
-        node.scheduler = (opts !== undefined) ? opts.scheduler : undefined;
+        node.scheduler = scheduler;
         statEffects++;
 
         let firstRunError = null;
         let threw = false;
         // birthGen is captured BEFORE the first run: a first run that disposes
-        // its own effect lets the slot be recycled (gen bumped), and the catch
-        // below must then not dispose the stranger now living in that slot.
+        // its own effect lets the slot be recycled (gen bumped), so the dispose
+        // tail after the catch and the returned handle (disposeFn guard + NODE_GEN
+        // stamp) key on this pre-run gen and never touch the slot's new resident.
         const birthGen = node.gen;
         try {
             if (node.scheduler) {
@@ -2187,16 +2195,16 @@ export function createRegistry(config) {
     function observeObservers(handle, opts) {
         const node = liveNode(handle);
         if (node === undefined) throw new TypeError("observeObservers: argument is not a reactive handle");
+        const onConnect = (opts !== undefined) ? opts.onConnect : undefined;
+        const onDisconnect = (opts !== undefined) ? opts.onDisconnect : undefined;
         let e = lifecycleMap.get(node);
         if (e === undefined) {
             e = {onConnect: undefined, onDisconnect: undefined};
             lifecycleMap.set(node, e);
             lifecycleCount = (lifecycleCount + 1) | 0;
         }
-        if (opts !== undefined) {
-            if (opts.onConnect !== undefined) e.onConnect = opts.onConnect;
-            if (opts.onDisconnect !== undefined) e.onDisconnect = opts.onDisconnect;
-        }
+        if (onConnect !== undefined) e.onConnect = onConnect;
+        if (onDisconnect !== undefined) e.onDisconnect = onDisconnect;
         let live = true;
         return () => {
             if (!live) return;
