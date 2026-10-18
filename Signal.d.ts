@@ -403,11 +403,13 @@ export function computed<T>(fn: () => T, opts?: ComputedOptions<T>): Computed<T>
  * `effect()`, so a never-settling write cycle formed by it throws an `Error` whose message
  * starts `"CycleError:"` from the `effect()` call itself, and the effect is disposed. With a
  * scheduler the first run is the scheduler's: a synchronous scheduler rethrows from `effect()`
- * before a handle exists and the effect stays live (known issue, not fixed in 1.6.0-dev); a
- * deferred one does not throw from `effect()`. A write made while another body is
- * mid-run re-runs a reader that already read the old value: a stale effect is re-queued
- * after its run and runs again in the same flush (1.6.0, F-b33-1). Rules and KNOWN
- * exceptions: llms.txt 'Write during an evaluation'.
+ * after disposing the effect, as without one (also when the scheduler itself throws); a
+ * deferred one does not throw from `effect()`. Any value the first run throws, `null`
+ * included, is rethrown. A write made while another body is mid-run re-runs a reader that
+ * already read the old value: a stale effect is re-queued after its run and runs again in the
+ * same flush (1.6.0, F-b33-1). Rules and KNOWN exceptions: llms.txt 'Write during an
+ * evaluation'. The handle of an effect that disposes itself during its first run is stale:
+ * calling it, or `dispose(h)`, is a no-op.
  */
 export function effect(fn: () => void, opts?: EffectOptions): Dispose;
 /** Allocation-light, non-callable signal (1.5.0), bound to the default registry. See {@link SignalBox}. */

@@ -1838,7 +1838,9 @@ export function createRegistry(config) {
      *
      * A run that reads a value a later write in the same evaluation changes runs
      * again (F-b33-1); a body that never settles throws an Error prefixed
-     * `"CycleError:"` -- from this call itself when the loop forms on the first run.
+     * `"CycleError:"` -- from this call itself when the loop forms on the first run,
+     * with or without a synchronous scheduler; the effect is disposed before the
+     * rethrow.
      *
      * @param {() => void} fn        Effect body.
      * @param {object} [opts]
@@ -1857,25 +1859,30 @@ export function createRegistry(config) {
         statEffects++;
 
         let firstRunError = null;
-        if (node.scheduler) {
-            const gen = node.gen | 0;
-            // Cache the gen-bound thunk so re-schedules reuse the same closure.
-            // The inline guard preserves ABA correctness across dispose+recycle
-            // (gen bumps on disposeNode -> stale thunk no-ops).
-            node.schedulerThunk = () => {
-                if (node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);
-            };
-            node.scheduler(node.schedulerThunk);
-        } else {
-            try {
+        let threw = false;
+        // birthGen is captured BEFORE the first run: a first run that disposes
+        // its own effect lets the slot be recycled (gen bumped), and the catch
+        // below must then not dispose the stranger now living in that slot.
+        const birthGen = node.gen;
+        try {
+            if (node.scheduler) {
+                const gen = node.gen | 0;
+                // Cache the gen-bound thunk so re-schedules reuse the same closure.
+                // The inline guard preserves ABA correctness across dispose+recycle
+                // (gen bumps on disposeNode -> stale thunk no-ops).
+                node.schedulerThunk = () => {
+                    if (node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);
+                };
+                node.scheduler(node.schedulerThunk);
+            } else {
                 executeEffect(node);
-            } catch (err) {
-                firstRunError = err;
             }
+        } catch (err) {
+            threw = true;
+            firstRunError = err;
         }
 
         let disposed = false;
-        const birthGen = node.gen;
         const disposeFn = function dispose() {
             if (disposed) return;
             disposed = true;
@@ -1895,7 +1902,7 @@ export function createRegistry(config) {
         disposeFn[NODE_PTR] = node;
         disposeFn[NODE_GEN] = birthGen;
 
-        if (firstRunError !== null) {
+        if (threw) {
             disposeFn();
             throw firstRunError;
         }

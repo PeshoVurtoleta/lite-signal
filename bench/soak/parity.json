@@ -1,6 +1,6 @@
 {
   "files": {
-    "Signal.js": "4b30d795c278a579c9e12a3cf03e6b4e5384334efe65a7f16d8f0f201371df2a",
+    "Signal.js": "734b7e0baf0595dfaa443075b4302a7c8af6217a739e99fc7e3357c07f2ce810",
     "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
     "bench/soak/model.mjs": "6a2bea8408a82c0b68f7d067b4149e7ff10e8ac1216b380f01b1abbe24c1905b",

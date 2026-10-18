@@ -11,7 +11,7 @@ closed after the link-SoA fork (LEDGER #27) passed the gates while costing +10-3
 shapes, a gate-1 conformance runner, and the `bench/soak/` randomized soak harness. `Watch.js`
 changes `watch()`'s fire order and `stop()` ("### Fixed -- `watch()`" below) and `when()`'s cancel
 handle ("### Fixed -- `when()`" below; `Signal.d.ts` gains doc comments only); `Signal.js` changes the tracking-flag fold described below (no
-API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F21 flushEffects fix ("### Fixed -- engine: stale effect-queue entries skip a node that is no longer QUEUED" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
+API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F21 flushEffects fix ("### Fixed -- engine: stale effect-queue entries skip a node that is no longer QUEUED" below), the sync-scheduler creation-throw fix ("### Fixed -- engine: a synchronous scheduler's creation-time throw disposes the effect" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
@@ -207,6 +207,21 @@ base, because the tree ERROR lane fails 17039 of 17050 worlds (DIV-F5 / F6 / F22
 recovery-after-throw BREACHes (the 3 known=none breaches also appear on the pre-F21 740edfc kernel); P-TREE is still a GAP), while headpatched + hunk
 gives 4077 worlds, 3020 failing, 1 BREACH (DIV-F22). Until the tree base can host it, the proof that the
 shipped tree's ERROR lane is clean of F21 rests on test/58. Wiring gate: test/46 "fixed-entry wiring".
+
+### Fixed -- engine: a synchronous scheduler's creation-time throw disposes the effect
+
+`effect()` with a scheduler that runs the first run synchronously rethrew a first-run error (CycleError,
+body throw, or a throw from the scheduler itself) before a handle existed, and the effect stayed
+subscribed. It is now disposed before the rethrow, as on the no-scheduler path. Deferred schedulers are
+unchanged. A first run that throws `null` without a scheduler was swallowed and a live handle returned
+(through a synchronous scheduler it was rethrown, but the effect stayed live); any thrown value,
+including `null` and `undefined`, is now rethrown and the effect disposed. The handle's generation is now
+captured before the first run, which also fixes a no-throw case: an effect that disposed itself during
+its first run returned a handle that, called or passed to `dispose()`, disposed whatever node had reused
+its slot (a signal created afterwards could be destroyed). That handle is now stale: calling it or
+`dispose(h)` is a no-op and `describe(h)` is `undefined`. Hot paths unchanged (the 7 hot function bodies
+are byte-identical; `effect()` creation is cold). New `test/59-sync-scheduler-creation-throw.test.mjs`
+(21 tests; 13 red on the previous engine).
 
 ### Changed -- soak models the R2-M1 creation abort; `preb33` control; DIV-F6 widened (dev-only, not shipped)
 
