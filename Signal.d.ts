@@ -192,7 +192,11 @@ export type ReactiveHandle = Signal<any> | Computed<any> | SignalBox<any> | Comp
  *
  *  - `1` node create.    `(intA, intB) = (node.id, node.flags)`.
  *  - `2` node dispose.   `(intA, intB) = (node.id, node.flags)` -- fires for every node
- *                        disposed, including cascaded owner-tree children.
+ *                        disposed, including cascaded owner-tree children. `flags` can
+ *                        carry bit 6 (`1 << 6`, the internal stale-read mark, 1.6.0) when
+ *                        a node that a write flagged mid-run is disposed before the flag
+ *                        clears (still mid-run, or after that run threw);
+ *                        op `1` never carries it.
  *  - `3` link add.       `(intA, intB) = (source.id, target.id)`.
  *  - `4` link remove.    `(intA, intB) = (source.id, target.id)` -- `-1` if the link
  *                        was already nulled (defensive, rare).
@@ -394,6 +398,17 @@ export function setDefaultRegistry(registry: Registry): void;
 
 export function signal<T>(initial: T, opts?: SignalOptions<T>): Signal<T>;
 export function computed<T>(fn: () => T, opts?: ComputedOptions<T>): Computed<T>;
+/**
+ * Create and immediately run an effect. Without `opts.scheduler` the first run happens inside
+ * `effect()`, so a never-settling write cycle formed by it throws an `Error` whose message
+ * starts `"CycleError:"` from the `effect()` call itself, and the effect is disposed. With a
+ * scheduler the first run is the scheduler's: a synchronous scheduler rethrows from `effect()`
+ * before a handle exists and the effect stays live (known issue, not fixed in 1.6.0-dev); a
+ * deferred one does not throw from `effect()`. A write made while another body is
+ * mid-run re-runs a reader that already read the old value: a stale effect is re-queued
+ * after its run and runs again in the same flush (1.6.0, F-b33-1). Rules and KNOWN
+ * exceptions: llms.txt 'Write during an evaluation'.
+ */
 export function effect(fn: () => void, opts?: EffectOptions): Dispose;
 /** Allocation-light, non-callable signal (1.5.0), bound to the default registry. See {@link SignalBox}. */
 export function signalBox<T>(initial: T, opts?: SignalOptions<T>): SignalBox<T>;

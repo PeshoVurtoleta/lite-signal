@@ -1,6 +1,7 @@
 # ADR 0001 -- The soak harness (bench/soak): design, gates, teeth
 
-Status: ACCEPTED for the 1.6.0 line (S1a-S1d, bursts through 13, 2026-10-10 .. 2026-10-13). Dev-only tooling:
+Status: ACCEPTED for the 1.6.0 line (S1a-S1d, bursts through 13, 2026-10-10 .. 2026-10-13; amended through burst 55,
+2026-10-18: see Amendment 2026-10-18 in section 5). Dev-only tooling:
 nothing under bench/soak/ is in package.json `files[]`, and Signal.js / Watch.js are not touched by it.
 Open items are listed in "Consequences". The longer design record is audit/2026-10-07/verification/SPEC-B.md plus
 SPEC-B-S1cd-batches.md (git-ignored); this ADR is the part that has to outlive them. File:line cites are HEAD 3f169dd.
@@ -42,9 +43,9 @@ Per-op 0 B/op stays owned by test/32-perf-gate and test/torture.mjs, not by the 
 
 All S1 runs load the engine through one seam (kernel.mjs:1-20). By default the in-tree Signal.js; SOAK_KERNEL=<abs path
 to a Signal.js with a sibling Watch.js> swaps a control. The path is realpath-resolved once so the hashed files are the
-loaded files. controls.json pins two controls by sha256: `rev152` (the published 1.5.2, exact devDependency alias
+loaded files. controls.json pins two controls by sha256 [three since 2026-10-18: preb33 added, Amendment 2026-10-18]: `rev152` (the published 1.5.2, exact devDependency alias
 `lite-signal-1.5.2`) and `headpatched` (the audit patch build, frozen in bench/soak/controls/headpatched, because
-/audit/ is git-ignored). parity.json pins 23 files (Signal.js, Watch.js, 21 bench/soak files, config.mjs and SoakReport.mjs among them); `npm run soak:parity`
+/audit/ is git-ignored). parity.json pins 23 files [33 since eb5acc2, Amendment 2026-10-18] (Signal.js, Watch.js, 21 bench/soak files, config.mjs and SoakReport.mjs among them); `npm run soak:parity`
 exits 1 on any drift, and a pin moves only through `parity.mjs --update` after review. The header records the kernel
 hashes and `controls.name`; a stream from a scratch kernel is consistent but is never release evidence (section 9).
 
@@ -74,8 +75,8 @@ Entries are `fix` (an audit finding the engine fix will close), `contract` (a de
 model) or `engine`. A tolerated failure is still a FAIL: it is tagged, never forgiven.
 
 DIV-F21 (CycleError from a stale queue entry) is FIXED: fixedIn A2-F21 (c2f123c, qskip2; ruling D2 2026-10-14).
-It explains a failure only on a pre-fix controls.json kernel: main.mjs failureRecord and SoakReport checkCycles
-both pass includeFixed (main.mjs: the kernel is a known control, the header's controls.name identity; SoakReport: controls.name !== null). The GAP P-INTERIM-ERROR-clean is now an active short-battery
+It explains a failure only on a controls.json kernel (all pre-fix until preb33, a post-fix control; see Amendment 2026-10-18): main.mjs failureRecord and SoakReport checkCycles
+both pass includeFixed (main.mjs: the kernel is a known control, the header's controls.name identity; SoakReport: controls.name !== null). [Re-pointed to preb33 on 2026-10-18, see Amendment 2026-10-18.] The GAP P-INTERIM-ERROR-clean is now an active short-battery
 control: headpatched + the A2-F21 hunk, ERROR at 11 x DEFAULT_OPS, 'explained' by DIV-F22 only (the tree's ERROR
 lane still fails on F5 / F6 + 3 known=none recovery-after-throw, so the control cannot use the tree base before
 A1-A3). DIV-F22 (batch body error replaced by the close-flush error) stays TEMPORARY (fixedIn null, fixBy A2).
@@ -83,7 +84,7 @@ F22 is tagged F6+F22 when DIV-F6 itself explains the replacing token, F22
 when it was a predicted effect-body escape (the census corrected 17 -> 16 + 1, f21-census.json "correction").
 
 Amendment 2026-10-14 (burst 39, F21 B3, be0fe70):
-- B39-D1, RULED 2026-10-14: (a) keep (reviewer: "acceptable for now"): the control P-INTERIM-ERROR-clean runs on
+- B39-D1, RULED 2026-10-14 [superseded for the control's base on 2026-10-18, Amendment 2026-10-18]: (a) keep (reviewer: "acceptable for now"): the control P-INTERIM-ERROR-clean runs on
   base headpatched + the qskip2 hunk, NOT on the base 'tree'. The tree ERROR lane (11 x 100000) fails 17039 of 17050
   worlds with BREACHes DIV-F5 / F6 / F22 plus 3 known=none recovery-after-throw (the 3 known=none breaches also appear on the pre-F21 740edfc
   kernel; P-TREE is still a GAP); headpatched + hunk: 4077 worlds, 3020 failing, 1 BREACH (DIV-F22). Cost: no
@@ -91,10 +92,60 @@ Amendment 2026-10-14 (burst 39, F21 B3, be0fe70):
   can be used (test/45 teeth k pins the control's flush loop == the live Signal.js). Options: (a) keep [recommended];
   (b) move it back to a GAP until A1-A3.
 - Reviewer NIT: includeFixed is "any control" (controls.name !== null), not "a control older than fixedIn". Safe
-  while controls.json holds only rev152 / headpatched; a post-fix control added later would fail open.
+  while controls.json holds only rev152 / headpatched; a post-fix control added later would fail open. [preb33 is that control; see Amendment 2026-10-18.]
 - Reviewer NIT: replay.mjs / shrink.mjs classify with includeFixed false (fails closed: a replayed F21 world on
   headpatched prints known=none where the main run printed known=DIV-F21).
-- The wiring gate is test/46 "fixed-entry wiring".
+- The wiring gate is test/46 "fixed-entry wiring" [unit rows on the classify path since N18.1, Amendment 2026-10-18].
+
+Amendment 2026-10-18 (bursts 46-55: F-b33-1, the R2-M1 creation abort, the b53 triage, the b54 re-pin; commits f4f9475,
+b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer to this paragraph; the rulings stay.
+- Controls (section 3, :46-47): controls.json now pins THREE controls: `rev152`, `headpatched` and `preb33`
+  (1.6.0-dev@7c65afd: Signal.js a5c64df9 + Watch.js 065f21bd, byte-frozen in bench/soak/controls/preb33/). preb33 is the
+  last kernel before the F-b33-1 fix, so a write-cycle creation does not abort on it (creationAbort false), and it is
+  POST-F21 (it carries A2-F21, qskip2). It is frozen without FIX-T (and FIX-R / the A2 batch-error fix); its F5 / F6 / F22
+  lines never clear.
+- Parity (section 3 :48, section 12(b) :279): parity.json pins 33 files since eb5acc2 (PARITY_FILES 29 -> 33: adds
+  adapters/lite.mjs, controls.json, controls/preb33/Signal.js and Watch.js). The "23 pins" lines are history.
+- P-INTERIM-ERROR-clean (section 5 :79-82, B39-D1 :87-88): re-pointed to base `preb33`, no patches (N17.2, burst 51-52).
+  It is no longer a headpatched + A2-F21-hunk control: preb33 is already post-F21, so the expected set is exit 1,
+  kind 'explained', known [DIV-F5, DIV-F6, DIV-F22]; a DIV-F21 label there is a MISS (A3': zero DIV-F21 on preb33).
+  It stays 'explained' at exit 1 PERMANENTLY (N18.2, N19.4, N19.5): no FIX-T kernel, so the F5 / F6 / F22 lines
+  never clear; a clean (exit 0, 'nobreach') control needs a FIX-T kernel. Burst 52 measured the first expectation as a
+  MISS (DIV-F6 x2, DIV-F22 x1, DIV-F5 x4 and 3 known=none recovery-after-throw lines, 2 heads); the b53 triage
+  (N19) classified them as DIV-F6 (below). The B39-D1 reasoning about the tree base (headpatched + hunk, 4077 worlds)
+  is history. test/46's F21 wiring gate is now unit rows on the classify path (N18.1), not a scratch-kernel run.
+- includeFixed (B39 NIT, :94-95): the NIT said the "any control" boolean is safe only while controls.json holds
+  rev152 / headpatched and that a post-fix control added later would fail open. preb33 IS that post-fix control.
+  What holds it closed: A3' pins ZERO DIV-F21 labels on preb33 (P-INTERIM-ERROR-clean MISSes on one; smoke on live and
+  preb33 shows 0 DIV-F21, eb5acc2), and the includeFixed boolean was kept (maintainer D50-1, N16.1). Per-control
+  scoping (include a fixed entry only for a control older than its fixedIn) is the follow-up D50-1; until it lands, a
+  future post-fix control needs its own zero-DIV-F21 pin.
+- R2-M1, the creation abort (4b, eb5acc2): the fixed engine (F-b33-1) throws the CycleError at the creation of the
+  second ping-pong effect when that effect closes a write-cycle (the intended X2 abort), where the naive model expected
+  it at the later cyc:1 set (world ERROR:0:0x53c41559, escape-CycleError + expected-escape-missing). RULED model it, no
+  DIV (D2 by reasoning, D1 = byte-frozen preb33 control). exec predicts the O6 CycleError at effect creation when
+  creationAbort holds (the lite adapter's knownAs() === null: the kernel is not a controls.json control), else at
+  the cyc:1 set; an unmodelled creation cycle inside a batch or frame fails closed. A creation CycleError with no
+  write-cycle is never predicted, so a D-R3-class abort stays a BREACH known=none. Tests: test/57 (14 rows: A1p-a live
+  predicts the abort; A1p-c live with creationAbort false throws "unmodelled cycle set"; A1p-d preb33 with creationAbort
+  true fails exactly [O6:expected-escape-missing]). The must-fail control P-R2M1-old-model planned in DELTA 4b was moved
+  by DELTA 4b-v2 (ii) from _mustfail.mjs to test/57 rows A1p-c / A1p-d (it is not in _mustfail.mjs).
+- DIV-F6 widened (b53 triage, N19.2, N19.3, N19.6; eb5acc2): the known=none preb33 ERROR heads are the COMPUTED-site twin
+  of F6 (pullComputed's pre-walk has no catch; MID keeps its old version and the equality cutoff hides the recovery, so a
+  computed reader keeps a stale cached ERR, or an effect never re-runs; it ships in 1.5.2). Three standalone shapes
+  were added: O4 effect-dead with ERR(computed:N) on the ENGINE side, O1 computed-err-mismatch and O2 glitch with
+  engine=ERR(computed:N), each with worldScen [recovery-after-throw] and notWorldScen [revert-after-mid-read]
+  (F5 shapes stay F5). N19.6 dropped throw-dep-computed-prewalk from them: the cached-rethrow fast path runs no body
+  frame, so scenarios.mjs:151-154 never tags it (tagger gap, follow-up). Full enumeration of all 17039 failing preb33
+  ERROR worlds: known=none 2 -> 0 (b53 t2). FAIL_CAP (16 per cycle, config.mjs:48) can still mask heads. Not F-MB:
+  the 4 BATCH known=none lines are a separate OPEN candidate (LEDGER #36).
+- Calibration (section 8, :185-188): recut again on 2026-10-17 23:39 UTC (calibrate.mjs --write --timed under
+  quiet-lock, 737 s, node v26.8.2, M4 Pro, kernels headpatched and 1.5.2): every deterministic cell identical; only
+  provenance and pinnedSha256 (exec / model / adapters/lite) moved. Throughput is PRELIMINARY: load 2.67 / 2.63 / 2.65
+  at start and 9.30 / 5.62 / 3.93 at the end, with two other node processes listed
+  (provenance.busyNodeBefore: 26332 at 0.0% CPU, 56845 at 9.9%) (b54-evidence/calibrate.txt,
+  calibrate.provenance.txt). Throughput is REPORTED tier and decides no gate. The 2026-10-13 cut in section 8 is
+  history.
 
 ### 6. Oracle OB (F5, QA finding 5): batch-early-run -- adopted
 
@@ -135,7 +186,7 @@ gitInfo('/nonexistent') fails closed but prints "spawnSync git ENOENT"; a root i
 Cut: seed 0xC0FFEE, 11 x 100000 per lane plus smoke 3 x 20000, kernels headpatched and 1.5.2, one `--timed` run
 (734 s under quiet-lock, M4 Pro, node v26.8.2, sequential children one kernel at a time; loadavg 2.61/2.44/2.35
 before and 2.55/2.64/2.49 after the timed phase; throughput is REPORTED tier and decides no gate), the recut of
-2026-10-13. `calibrate.mjs --write` dies unless main.mjs folds equal to the evidence, on the full cells and on the
+2026-10-13 [recut again 2026-10-17 UTC, Amendment 2026-10-18]. `calibrate.mjs --write` dies unless main.mjs folds equal to the evidence, on the full cells and on the
 large-world probe (PROBE: GRAPH, headpatched, 11 cycles x 33000 ops, calibrate.mjs:69; main.mjs rejects fewer than 11
 cycles). test/41 fails when a constant, the generator version, a (p) PINNED file sha, a live smoke re-measure or the
 live probe fold moves without a recut. PINNED (calibrate.mjs:56) covers the generator, executor, oracles, model,
@@ -226,7 +277,7 @@ MUSTFAIL_LIST=1 builds all and runs none; MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=
 
 - (a) OB: a fail check for every batch engine; the OB evidence floor only where a close-flush is observable (native
   batch). Accepted, not built (the S5 adapter pass narrows ORACLE_CAPS for BATCH and ERROR alike).
-- (b) parity.json also pins config.mjs and SoakReport.mjs (built: 23 pins).
+- (b) parity.json also pins config.mjs and SoakReport.mjs (built: 23 pins; 33 since 2026-10-18, Amendment 2026-10-18).
 - (c) Release policy: the full roster at default volume from a clean committed tree (section 9; built).
 - (d) test/41 stops pinning main.mjs and calibrate.mjs; a live smoke fold and a live large-world probe guard main.mjs
   (section 8; built). The probe cost is accepted as built (measured 2026-10-13, M4 Pro: the probe run standalone 25.7

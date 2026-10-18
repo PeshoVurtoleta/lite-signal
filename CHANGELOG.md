@@ -107,6 +107,56 @@ ACCEPT, PRELIMINARY -- 0 / 45 sweep rows and 0 / 6 microscope scenarios beyond t
 KAIROS and BROADCAST are bimodal and their fast-mode ratios are 0.984 and 0.994. The full
 BENCH-CAMPAIGN runs before release.
 
+### Fixed -- engine: a write made while a body is mid-run flags the stale reader (F-b33-1)
+
+A write made while some body was running (an effect or computed mid-run, `untrack` included) was marked
+and queued like any other, but a reader that was itself mid-run and had already read the old value was
+skipped: it finished with the stale value and nothing re-ran it (a lost update). Present in 1.5.2 (the
+b33 lanes lose updates there). Commits f4f9475 (engine), b1e7a06 (tests), 32625fe (D-R3), 87a9e92 (KC).
+Behavior now, as in the `Signal.js` header "WRITE DURING AN EVALUATION":
+- A write while `cursorDepth !== 0` goes through a cold twin, `markDownstreamInEval`: the same marking, plus
+  an internal flag bit (`FLAG_STALE_READ`, 1 << 6) on every mid-run (COMPUTING) reader that is reachable from
+  the written signal along some path through no mid-run computed (order-independent), and is not the writer
+  (writer = the current observer, else the current owner; an untrack-wrapped or `watch()`-callback self-write
+  stays absorbed). A stale effect is re-queued after its run and runs again in the same flush; a stale
+  computed is re-pulled in the same read.
+- A write made before a body's first read (by its own cleanups, or its owned children's) is seen, not stale:
+  `disposeOwned` / `runOwnCleanup` clear the node's own flag (gen-guarded), so there is no false re-run and
+  no false `CycleError`.
+- D-R3: a write absorbed by a mid-run computed (its own write, or one made before its body reads) no longer
+  re-runs or `CycleError`s the readers behind it. Before this, such a shape (row ANC) threw `CycleError:
+  flush passes exceeded` at `effect()` creation after 101 runs.
+- KC: whether a reader gets the flag no longer depends on subscription order (a reader reached first through
+  an absorbed path and later through a clean edge still gets it; each node pops at most twice, O(V+E), no
+  allocation). This fixed a lost update.
+- A never-settling loop throws `CycleError:` where it forms: effects through `flushEffects`' `maxFlushPasses`,
+  computeds when the nested re-pull count reaches `maxFlushPasses` ("CycleError: computed keeps invalidating
+  its own reads"), including from `effect()` creation (its first run) and from reads.
+
+KNOWN residuals (maintainer ruling 2026-10-14 "accept all three"; D-M1 and D-M2 pinned in test/56 as KNOWN
+rows, KC-NEST0 accepted for 1.6.0 with its own KNOWN row), none fixed:
+- D-M1: a conservative over-run. A stale re-pull through an equality-cutoff computed (row EQ: the computed
+  always returns 7) still re-runs its reader once; values are correct, at most +1 effect run per write wave
+  (the pin asserts 1, the ideal is 0).
+- D-M2: a write from an `onConnect` callback, or from an `onDisconnect` fired by `severTail`, runs with
+  `currentOwner` = the reading node (`fireConnect` / `fireDisconnect` null only the observer), so it is
+  absorbed as that reader's self-write: not flagged, that run keeps the value it read (same as 1.5.2).
+- KC-NEST0: a write by W that is absorbed by a nested computed chain (row KC-NEST without the extra read P,
+  T = X()) does not flag F: F runs once and its second X read returns 1; the fixed engine's value is pinned,
+  not an ideal.
+
+Cost (node v26.8.2, `--print-bytecode`, from the commit messages): byte-identical to the pre-fix tree
+7c65afd: `flushEffects` 440, `runCleanup` 28, `destroy` 619, `disposeNode` 667. Changed: `executeEffect` 455
+(cap 459), `pullComputed` 824, new `effectTail` 25; the cold `markDownstreamInEval` is 335 (frame 88) after
+the D-R3 and KC hunks (235 at f4f9475); cold `disposeOwned` 57 -> 95, `runOwnCleanup` 166 -> 204;
+`markDownstream` is 194, unchanged by D-R3 and KC. Allocation (gates in the 32625fe / 87a9e92 messages):
+torture GATE 0 B/op, qs 0; 1e5 KC-PX sets give maxMajor 0 and 0 B/op; 1000 create / destroy cycles leave
+`tracker.size()` 0. `Watch.js` is unchanged.
+
+New `test/56-write-in-eval.test.mjs` (48 rows at 87a9e92). Gates at 87a9e92: `npm test` 1420 tests / 1404
+pass / 0 fail / 7 skip / 9 todo; `test:gate` 10/10; `visit-anatomy --verify` 61/61. Review R2 and R3:
+engine APPROVED (mutant sets in the commit messages).
+
 ### Fixed -- engine: stale effect-queue entries skip a node that is no longer QUEUED (F21, LEDGER #35)
 
 A `CycleError: flush passes exceeded` abort, or a dispose in the same pass, left stale entries in the
@@ -132,22 +182,47 @@ New `test/58-f21-stale-queue.test.mjs` (21 rows, 22 tests with the kernel diagno
 P8, d, D1, rows 7 / 8, PX3; preservation rows P5, P7, P2_Bfirst, row 3, C1 (N=1000, default registry), C3,
 U1, R2-ABA, self-dispose and keep-QUEUED; KNOWN rows R1, R2). Mutants Q1-Q5, each caught on its named rows
 (Q1 no QUEUED test: 9 red; Q2 test on the executeEffect branch only: 6; Q3 on the scheduler branch only: 3;
-Q4 EFFECT|COMPUTING: 6; Q5 inverted polarity: 19). `test/torture.mjs` gains phase QS (1e5 `s.set` with one
-sync-scheduled and one plain effect: 0 B/op in-process and in the pinned semi-space child lane, maxMajor 0)
+Q4 EFFECT|COMPUTING: 6; Q5 inverted polarity: 19). `test/torture.mjs` gains phase QS (`s.set` driving one
+sync-scheduled and one plain effect; as first shipped, 0 B/op in-process, since replaced by an interleaved
+one-call retention slope, a6c66a9: one `measureAllocs` call alternates pseudo-batches of 2e4 calls at 1 and at 5
+steps per call, the per-batch constant k cancels, and an attempt passes iff it settled, ran exactly 1080000 steps,
+ended in the reset state, kept >= 4 batches per parity and Dhi <= Dlo (up to 3 attempts, stop at the first pass);
+three local runs (node v26.8.2) read alloc=0 B/op
+k=0B/batch K=1 ctl=2560B, child 0.000 B/op, gc major 0; the retention control must read Dhi - Dlo >= 1280 B)
 and phase F21 retention (1e3 x {`createRegistry({maxFlushPasses: 8})`, the P3 shape, `destroy()`} -> lite-leak
-tracker size 0); the pre-fix engine gives size 1000 there, and a QS-teeth control gives 135.975 B/op in the
+tracker size 0); the pre-fix engine gives size 1000 there, and a QS-teeth control gives 135.972 B/op in the
 child lane. `npm test` at be0fe70: 1372 tests / 1356 pass / 0 fail / 7 skip / 9 todo.
 
 Soak wiring (dev-only, not shipped; be0fe70): `divergences.json` DIV-F21 `fixedIn` null -> "A2-F21"
-(ruling D2), so it explains a failure only on a pre-fix `controls.json` kernel; `main.mjs` and
+(ruling D2), so it explains a failure only on a `controls.json` kernel (all pre-fix until the post-fix `preb33` was
+added, eb5acc2, which pins zero DIV-F21); `main.mjs` and
 `SoakReport.mjs` classify with `includeFixed` = the kernel is a known control (the header's `controls.name` identity; SoakReport tests `controls.name !== null`); DIV-F22 stays temporary. The GAP
-P-INTERIM-ERROR-clean is deleted (GAPS 25 -> 24) and becomes a short-battery `_mustfail.mjs` control on
-headpatched + the qskip2 hunk (ERROR lane, 11 x DEFAULT_OPS, expects exit 1 explained by DIV-F22 only).
-Decision B39-D1 is RULED 2026-10-14: (a) keep -- the control uses headpatched + the hunk, not the tree
+P-INTERIM-ERROR-clean is deleted (GAPS 25 -> 24) and became a short-battery `_mustfail.mjs` control on
+headpatched + the qskip2 hunk (ERROR lane, 11 x DEFAULT_OPS, expects exit 1 explained by DIV-F22 only); it was
+later re-pointed to `preb33` with no patches, expected exit 1 explained by [DIV-F5, DIV-F6, DIV-F22] (see "Changed --
+soak models the R2-M1 creation abort" below).
+Decision B39-D1 was RULED 2026-10-14 (superseded for the control base by the `preb33` re-point): (a) keep -- the control
+uses headpatched + the hunk, not the tree
 base, because the tree ERROR lane fails 17039 of 17050 worlds (DIV-F5 / F6 / F22 plus 3 known=none
 recovery-after-throw BREACHes (the 3 known=none breaches also appear on the pre-F21 740edfc kernel); P-TREE is still a GAP), while headpatched + hunk
 gives 4077 worlds, 3020 failing, 1 BREACH (DIV-F22). Until the tree base can host it, the proof that the
 shipped tree's ERROR lane is clean of F21 rests on test/58. Wiring gate: test/46 "fixed-entry wiring".
+
+### Changed -- soak models the R2-M1 creation abort; `preb33` control; DIV-F6 widened (dev-only, not shipped)
+
+DELTA 4b (eb5acc2). The soak model predicts the O6 `CycleError` at `effect()` creation when the kernel aborts
+a write-cycle creation (`creationAbort`), else at the `cyc:1` set; an unmodelled creation cycle inside a
+batch or frame fails closed. New byte-frozen control `preb33` (1.6.0-dev at 7c65afd, the last kernel before
+the F-b33-1 fix, post-F21; a DIV-F21 label on it is a FAIL) in `bench/soak/controls/preb33/`. DIV-F6 gains
+3 standalone shapes: the known=none `preb33` ERROR heads are the computed-site twin of F6 (`pullComputed`'s
+pre-walk has no catch, so a throwing dep leaves the computed's version unchanged and the equality cutoff
+hides the recovery; present in 1.5.2). Full unmasked enumeration of all 17039 failing `preb33` worlds:
+known=none 0. `_mustfail` P-INTERIM-ERROR-clean now runs on `preb33` with no patches and expects exit 1,
+`explained` by [DIV-F5, DIV-F6, DIV-F22]; `preb33` is frozen without a FIX-T kernel, so it stays exit 1
+permanently. `bench/soak/parity.mjs` pins 33 files (was 29; adds `adapters/lite.mjs`, `controls.json`,
+`controls/preb33/Signal.js` and `Watch.js`). Calibration recut (`calibrate.mjs --write --timed`, quiet-lock,
+2026-10-17 UTC, 737 s): every deterministic cell identical, only provenance and `pinnedSha256` moved;
+throughput PRELIMINARY (host noisy: load 2.67 at start, 9.30 at end, another process).
 
 ### Fixed -- soak wrap job: `soak:wrap` refuses a NEARWRAP config first; semi-space probe tolerance (dev-only, not shipped)
 
@@ -278,7 +353,7 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
   SOAK -- lane-subset|volume|provenance`. A pinned control kernel skips that tree policy and prints `NOTE -- control
   kernel <name>, not release evidence`, exiting 0 unless mustfail / smoke / non-lite refuses it. The decision is the
   exported pure `releaseRefusal()`. `parity.json` also pins `config.mjs`
-  and `SoakReport.mjs` (decision b; 23 pins).
+  and `SoakReport.mjs` (decision b; 23 pinned files then, 29 since 8c3eb9a, 33 since eb5acc2).
 - Calibration: `calibration/calibrate.mjs` + `soak-calibration.json` (seed 0xC0FFEE, 11 x 100000 + smoke, headpatched
   and 1.5.2): DEFAULT_OPS 100000 and SCEN_MIN 8 kept; CHECK_FLOOR 1000 -> 10000, CHECK_FLOOR_SMOKE 250 -> 500,
   TAINT_SKIP_MAX 0.5 -> 0.35; drift guard in test/41.
@@ -298,8 +373,9 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
   runs GRAPH 11 x 33000 on headpatched and its fold must equal the recorded `probe.fold`, with one LARGE world in
   every
   cycle. The pinned set drops `main.mjs` and `calibrate.mjs` (an edit of either was a ~13-minute recut) and adds
-  `kinds.mjs` and `bench/torture/helpers/index.mjs`. Recut 2026-10-13: one `--timed` run of 734 s under quiet-lock
-  (sequential children, throughput REPORTED, decides no gate); the `kernels.*.full` / `smoke` counts are unchanged.
+  `kinds.mjs` and `bench/torture/helpers/index.mjs`. Recut 2026-10-17 (UTC): one `--timed` run of 737 s under quiet-lock
+  (sequential children, throughput REPORTED and PRELIMINARY: host noisy, load 2.67 at start, 9.30 at end; decides no
+  gate); the `kernels.*.full` / `smoke` counts are unchanged.
 
 ### Docs
 
