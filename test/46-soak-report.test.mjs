@@ -177,13 +177,13 @@ after(async () => {
 
 /* ---- honest streams: consistent, never INTEGRITY ----------------------------------------------------- */
 
-test('B5: the untampered REV-152 stream (1.5.2, 4 lanes, 11 cycles) -> exit 0, the control NOTE, `soak:report: verdict FAIL (consistent)` last', () => {
+test('B5: the untampered REV-152 stream (1.5.2, 5 lanes, 11 cycles) -> exit 0, the control NOTE, `soak:report: verdict FAIL (consistent)` last', () => {
     const s = S.rev;
     assert.equal(s.status, 1, 'main judged 1.5.2 FAIL: ' + s.stderr.slice(0, 400));
     assert.equal(s.recs[0].controls.name, 'rev152');
     const r = expectConsistent('rev');
     assert.equal(r.out[r.out.length - 1], 'soak:report: verdict FAIL (consistent)');
-    assert.match(r.out[0], /^soak:report: stream records=\d+ kernel=control:rev152 engine=lite lanes=GRAPH,BATCH,ERROR,NEST cycles=\d+ /);
+    assert.match(r.out[0], /^soak:report: stream records=\d+ kernel=control:rev152 engine=lite lanes=GRAPH,BATCH,ERROR,NEST,WIE cycles=\d+ /);
     assert.equal(r.out[r.out.length - 2], 'soak:report: NOTE -- control kernel rev152, not release evidence');
     assert.equal(r.out.filter((l) => l.indexOf('soak:report: NOTE -- control kernel ') === 0).length, 1, JSON.stringify(r.out));
 });
@@ -270,6 +270,42 @@ test('fixed-entry wiring (report): NON-control kernel + F21 record tagged null -
     const r = expectIntegrity(f21Stream('DIV-F21', 'F21', true), 'known-tag');
     assert.match(r.err[0], /known "DIV-F21" re-derives as null/);
 });
+/* ---- fixed-entry wiring, DIV-B33 (fixedIn F-b33-1; unit 0s B2, PLAN-0s-wie A3(iii)): unit rows, no kernel run ------
+ * Two real preb33 WIE heads (burst 68 smoke 3 x 20000, .handoff/b68-evidence/b2b/preb33-wie-smoke.jsonl): world 0 step 22
+ * O1e alone, and step 26 O2 + O1e; plus the preb33 O4 effect-dead world of the 11 x 100000 run (replay WIE:4:0x88c7b46b,
+ * step 52; preb33-wie-full.err; DIV-B33 widened to O4 by maintainer ruling b68). On the tree kernel (no controls.json pin: includeFixed false) a WIE lost update is a
+ * regression (known null -> a known=none BREACH, FAIL); on a named control kernel it reads DIV-B33. Red when DIV-B33 is
+ * dropped from divergences.json, its fixedIn is cleared, or a shape loses its wie-stale-* world clause. */
+const B33_ROWS = [
+    { step: 22, op: 'eff', scen: ['wie-stale-effect'], counts: { 'wie-stale-effect': 1 },
+        fails: [{ oracle: 'O1e', sig: 'effect-stale', detail: 'effect#22 saw [#21=0,#20=352] model [#21=352,#20=352]' }] },
+    { step: 26, op: 'eff', scen: ['wie-stale-computed'], counts: { 'wie-write-before-read': 1, 'wie-stale-computed': 1 },
+        fails: [{ oracle: 'O2', sig: 'glitch', detail: 'body#26 read #25 engine=213 model=426' }, { oracle: 'O1e', sig: 'effect-stale', detail: 'effect#26 saw [#25=213] model [#25=426]' }] },
+    { step: 52, op: 'set', scen: ['wie-stale-computed', 'dep-set-flip', 'equality-cutoff', 'wie-prewalk', 'diamond-write'],
+        counts: { 'equality-cutoff': 3, 'wie-prewalk': 7, 'dep-set-flip': 4, 'adversarial-equality': 1, 'second-invalidation': 2, 'wie-stale-computed': 1, 'diamond-write': 1 },
+        fails: [{ oracle: 'O4', sig: 'effect-dead', detail: 'effect#28 saw [#27=1] model [#27=2] (ran 0 times this op)' }] },
+];
+test('fixed-entry wiring (unit): a WIE lost-update world on the tree kernel reads known null (FAIL), DIV-B33 only with includeFixed true', () => {
+    const entry = JSON.parse(readFileSync(join(SOAK, 'divergences.json'), 'utf8')).entries.find((e) => e.id === 'DIV-B33');
+    assert.ok(entry !== undefined, 'DIV-B33 is in divergences.json');
+    assert.equal(entry.fixedIn, 'F-b33-1');
+    assert.deepEqual(entry.lanes, ['WIE']);
+    for (const b of B33_ROWS) {
+        const r = { failure: { step: b.step, op: b.op, scen: b.scen, fails: b.fails }, scen: b.counts };
+        const rec = failureRecord(r, { engine: 'lite', lane: 'WIE', cycle: 0, world: 0, worldSeed: 1, escape: null });
+        assert.equal(rec.known, null, 'tree kernel: a regression, not DIV-B33 (step ' + b.step + ')');
+        assert.equal(rec.tag, null);
+        const crec = { engine: 'lite', lane: 'WIE', step: b.step, op: b.op, fails: rec.fails, scen: b.scen, worldScen: Object.keys(b.counts), worldScenCounts: b.counts };
+        const on = classify(crec, { includeFixed: true });
+        assert.ok(on !== null, 'the preb33 head is DIV-B33-shaped (step ' + b.step + ')');
+        assert.equal(on.known, 'DIV-B33');
+        assert.equal(on.tag, 'B33');
+        assert.equal(classify(crec, { includeFixed: false }), null);
+        // fail closed: the same fails in a world that counted no wie-stale-* write, or on another lane, stay unknown
+        assert.equal(classify(Object.assign({}, crec, { worldScen: ['wie-write-before-read'], worldScenCounts: { 'wie-write-before-read': 1 } }), { includeFixed: true }), null);
+        assert.equal(classify(Object.assign({}, crec, { lane: 'GRAPH' }), { includeFixed: true }), null);
+    }
+});
 test('honest FATAL stream (scratch kernel, uncaught throw armed mid-cycle) -> consistent, then NOT A RELEASE SOAK -- overridden-kernel', () => {
     const recs = S.fatal.recs;
     assert.ok(S.fatal.stderr.indexOf(ARMED) !== -1, 'the armed throw fired: ' + S.fatal.stderr.slice(0, 400));
@@ -323,12 +359,17 @@ function asTree(recs, sig, wat, parityOk) {
 test('a small GRAPH-only tree run at the parity.json pins, parity ok -> consistent, then NOT A RELEASE SOAK -- lane-subset (the first class), kernel=tree', () => {
     const r = expectRefusal(tamper('scratch', (recs) => asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true)), 'lane-subset');
     assert.match(r.out[0], / kernel=tree /);
-    assert.match(r.err[0], /ran GRAPH of the roster \["GRAPH","BATCH","ERROR","NEST"\]/);
+    assert.match(r.err[0], /ran GRAPH of the roster \["GRAPH","BATCH","ERROR","NEST","WIE"\]/);
     assert.ok(!r.out.some((l) => l.indexOf('NOTE -- control kernel') !== -1), 'a tree run prints no control NOTE');
 });
 test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x OPS_MIN) -> NOT A RELEASE SOAK -- volume', () => {
-    const r = expectRefusal(tamper('rev', (recs) => { recs[0].controls.name = null; asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true); }), 'volume');
-    assert.match(r.out[0], / kernel=tree engine=lite lanes=GRAPH,BATCH,ERROR,NEST /);
+    // a tree run classifies with includeFixed false: 1.5.2's WIE worlds (DIV-B33, a FIXED entry) re-tag as known null there
+    const retag = (recs) => {
+        for (const c of cyclesOf(recs)) for (const f of c.failures) if (f.known === 'DIV-B33') Object.assign(f, { known: null, tag: null, failKnown: f.fails.map(() => null) });
+        for (const b of summaryOf(recs).breaches) if (b.known === 'DIV-B33') b.known = null;
+    };
+    const r = expectRefusal(tamper('rev', (recs) => { recs[0].controls.name = null; asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true); retag(recs); }), 'volume');
+    assert.match(r.out[0], / kernel=tree engine=lite lanes=GRAPH,BATCH,ERROR,NEST,WIE /);
     assert.match(r.err[0], new RegExp('SOAK_OPS ' + OPS_MIN + ' is not a count >= config DEFAULT_OPS ' + DEFAULT_OPS));
 });
 
@@ -360,7 +401,7 @@ const RELEASE = [
     ['a forever run (SOAK_CYCLES=0) that completed DEFAULT_CYCLES', (h) => { h.config.SOAK_CYCLES = { value: 0, source: 'env' }; }, null],
     ['a pinned control kernel (rev152), small and dirty: the tree policy does not apply', (h) => { h.controls.name = 'rev152'; h.config.SOAK_OPS.value = OPS_MIN; h.gitDirty = true; lanesTo(h, 1); }, null],
     ['SOAK_LANES GRAPH,BATCH,ERROR', (h) => lanesTo(h, 3), 'lane-subset', /^ran GRAPH,BATCH,ERROR of the roster/],
-    ['a roster lane with status skip', (h) => { h.lanes[3].status = 'skip'; }, 'lane-subset', /^ran GRAPH,BATCH,ERROR of the roster/],
+    ['a roster lane with status skip', (h) => { h.lanes[3].status = 'skip'; }, 'lane-subset', /^ran GRAPH,BATCH,ERROR,WIE of the roster/],
     ['a laneRoster that is not lanes/index.mjs ROSTER (all of it ran)', (h) => { lanesTo(h, 3); h.laneRoster = ROSTER.slice(0, 3); }, 'lane-subset', /is not lanes\/index\.mjs ROSTER/],
     ['SOAK_OPS DEFAULT_OPS - 1', (h) => { h.config.SOAK_OPS.value = DEFAULT_OPS - 1; }, 'volume', new RegExp('^SOAK_OPS ' + (DEFAULT_OPS - 1) + ' is not a count >= config DEFAULT_OPS')],
     ['SOAK_OPS null (fail closed)', (h) => { h.config.SOAK_OPS.value = null; }, 'volume', /^SOAK_OPS null is not a count/],

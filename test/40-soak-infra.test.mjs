@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openStream, writeRecord, writeFatal, RECORD_TYPES } from '../bench/soak/jsonl.mjs';
 import { fmix32, unfmix32, seedFor, worldSeed, selfCheckSeeds, remapCollision, REMAP_PREIMAGE, LANE_LIMIT, CYCLE_LIMIT } from '../bench/soak/seeds.mjs';
 import { CYCLES_MAX, DEFAULT_SEED, ROSTER_MAX } from '../bench/soak/config.mjs';
+import { ROSTER as SOAK_ROSTER } from '../bench/soak/lanes/index.mjs';
 import { PARITY_FILES } from '../bench/soak/parity.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -292,8 +293,8 @@ test('seeds: remapCollision is exact for any span -- a crafted colliding base, v
     assert.notEqual(d, null);
     assert.equal(seedFor(DEFAULT_SEED, d.laneA, d.cycleA), seedFor(DEFAULT_SEED, d.laneB, d.cycleB));
     assert.notDeepEqual([d.laneA, d.cycleA], [d.laneB, d.cycleB]);
-    // the S1 default run (4 lanes, 11 cycles, base 0xC0FFEE) cannot reach it
-    assert.equal(remapCollision(DEFAULT_SEED, 4, 11), null);
+    // the S1 default run (the full roster, SOAK_ROSTER.length lanes; 11 cycles, base 0xC0FFEE) cannot reach it
+    assert.equal(remapCollision(DEFAULT_SEED, SOAK_ROSTER.length, 11), null);
     // the mirror base: base = PRE makes PRE the REMAPPED input and 0 the natural one, so the A and B roles
     // swap; the pA domain check alone decides lanes = 1 (pA lane 8 is out of a 1-lane roster)
     assert.equal(remapCollision(REMAP_PREIMAGE, 1, 11), null);

@@ -322,6 +322,14 @@ export const CONTROLS = deepFreeze([
     M('L-REV-AUDIT', 'headpatched', { SOAK_LANES: 'NEST', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O6 lane=NEST scen=saved-cursor-hazard'],
     }),
+    // L-WIE-preb33 (unit 0s B2, PLAN-0s-wie ADDENDUM 2 item 4): preb33 predates F-b33-1, so every WIE BREACH there is the
+    // write-in-eval lost update, explained by the FIXED entry DIV-B33 (includeFixed: preb33 is a controls.json kernel).
+    // 'explained' with specs [] would not pair lane:WIE (test/45 reads expect.specs), so the O1e head is spelled out.
+    // Burst 68 smoke (3 x 20000, before DIV-B33 existed): heads O1e effect-stale, O2 glitch, O1c computed-mismatch, all
+    // known=none (.handoff/b68-evidence/b2b/preb33-wie-smoke.err). L-REV-152 keeps its explicit 4-lane list (1.5.2).
+    M('L-WIE-preb33', 'preb33', { SOAK_LANES: 'WIE', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 1, kind: 'explained', lines: [], specs: ['oracle=O1 lane=WIE sig=effect-stale'], known: ['DIV-B33'],
+    }),
     // L-P-INTERIM (amendment 13): the interim pass control on GRAPH,BATCH -- exit 0, no BREACH, 22 clean boundaries.
     M('L-P-INTERIM', 'headpatched', { SOAK_LANES: 'GRAPH,BATCH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { boundaries: 2 * MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'PASS' },

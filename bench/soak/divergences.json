@@ -210,7 +210,7 @@
       "decision": "by design: a computed that writes its own dependency caches an inconsistent value",
       "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": null, "conformanceCases": [], "expectedThrow": null,
-      "description": "Generator rule I2: computed bodies never write (FINDINGS I2)."
+      "description": "Generator rule I2: computed bodies never write, except lane WIE (unit 0s: computed writers, gen.mjs Gen.writer; their lost update is DIV-B33) (FINDINGS I2)."
     },
     {
       "id": "DIV-G4-duplicate-read-links", "kind": "contract", "finding": "G4", "since": "1.5.2", "fixedIn": null, "fixBy": null,
@@ -239,6 +239,24 @@
       "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": null, "conformanceCases": ["bench/soak/calibration/probes/p5-disposed-read.mjs", "bench/soak/calibration/probes/p8-dispose-taint.mjs"], "expectedThrow": null,
       "description": "SPEC-B 4.1 taint: the oracle allowance for reads through a disposed source."
+    },
+    {
+      "id": "DIV-B33", "kind": "fix", "finding": "B33", "since": "1.5.2", "fixedIn": "F-b33-1", "fixBy": "F-b33-1",
+      "decision": "fixed (unit 0s, maintainer ruling D2, 2026-10-18): fixedIn F-b33-1 (markDownstreamInEval: a write from inside a running body flags a reader that already read the target and re-runs it). Explains only when classify includeFixed is true (a named controls.json kernel, e.g. preb33 or rev152); on the tree a WIE lost update is a regression (known=none)",
+      "engines": ["lite"], "lanes": ["WIE"], "oracles": ["O1c", "O1e", "O2", "O4"], "sigs": ["computed-mismatch", "effect-stale", "glitch", "effect-dead"],
+      "ops": [], "scen": [], "worldScen": [], "priorScen": [],
+      "shapes": [
+        { "pair": "O1e:effect-stale", "detail": "^effect#\\d+ saw \\[.*\\] model \\[.*\\]$", "worldScen": ["wie-stale-effect"], "notWorldScen": ["effect-created-mid-batch", "recovery-after-throw"] },
+        { "pair": "O1e:effect-stale", "detail": "^effect#\\d+ saw \\[.*\\] model \\[.*\\]$", "worldScen": ["wie-stale-computed"], "notWorldScen": ["effect-created-mid-batch", "recovery-after-throw"] },
+        { "pair": "O1c:computed-mismatch", "detail": "^node#\\d+ \\(\\w+\\) engine=.* model=.*$", "worldScen": ["wie-stale-effect"], "notWorldScen": ["effect-created-mid-batch", "recovery-after-throw"] },
+        { "pair": "O1c:computed-mismatch", "detail": "^node#\\d+ \\(\\w+\\) engine=.* model=.*$", "worldScen": ["wie-stale-computed"], "notWorldScen": ["effect-created-mid-batch", "recovery-after-throw"] },
+        { "pair": "O2:glitch", "detail": "^body#\\d+ read #\\d+ engine=.* model=.*$", "worldScen": ["wie-stale-effect"], "notWorldScen": ["effect-created-mid-batch", "recovery-after-throw"] },
+        { "pair": "O2:glitch", "detail": "^body#\\d+ read #\\d+ engine=.* model=.*$", "worldScen": ["wie-stale-computed"], "notWorldScen": ["effect-created-mid-batch", "recovery-after-throw"] },
+        { "pair": "O4:effect-dead", "detail": "^effect#\\d+ saw \\[.*\\] model \\[.*\\] \\(ran 0 times this op\\)$", "worldScen": ["wie-stale-effect"], "notWorldScen": ["effect-created-mid-batch", "recovery-after-throw"] },
+        { "pair": "O4:effect-dead", "detail": "^effect#\\d+ saw \\[.*\\] model \\[.*\\] \\(ran 0 times this op\\)$", "worldScen": ["wie-stale-computed"], "notWorldScen": ["effect-created-mid-batch", "recovery-after-throw"] }
+      ],
+      "attribution": null, "pending": null, "conformanceCases": ["test/56-write-in-eval.test.mjs", "test/66-soak-wie.test.mjs"], "expectedThrow": null,
+      "description": "Write-in-eval lost update (LEDGER #37): a computed WRITER C writes w while a reader that already read w (directly, or through a computed over w) is suspended below it; before F-b33-1 the reader keeps the old value and is never re-run (O1e effect-stale on an effect reader, O1c computed-mismatch on a computed reader, O2 glitch on a body that reads it). Lane WIE only; every shape needs a world that counted wie-stale-effect or wie-stale-computed (the detector of a write landing under a reader that read the target) and none of effect-created-mid-batch / recovery-after-throw (DIV-F5 / DIV-F6 worlds; WIE generates neither)."
     }
   ]
 }

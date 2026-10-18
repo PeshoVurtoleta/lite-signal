@@ -10,10 +10,11 @@ import { GRAPH } from './graph.mjs';
 import { BATCH } from './batch.mjs';
 import { ERROR } from './error.mjs';
 import { NEST } from './nest.mjs';
+import { WIE } from './wie.mjs';
 import { SCENARIOS } from '../scenarios.mjs';
 
-export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST']);
-const BY_NAME = { GRAPH, BATCH, ERROR, NEST };
+export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE']);
+const BY_NAME = { GRAPH, BATCH, ERROR, NEST, WIE };
 
 export const LANES = Object.freeze(ROSTER.map((name, index) => Object.freeze(Object.assign({}, BY_NAME[name], { index }))));
 

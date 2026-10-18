@@ -130,55 +130,68 @@
     "O6",
     "O7a"
    ]
+  },
+  "WIE": {
+   "index": 4,
+   "required": [
+    "wie-stale-effect",
+    "wie-stale-computed",
+    "wie-prewalk",
+    "wie-untrack",
+    "wie-write-before-read"
+   ],
+   "optional": [],
+   "oracles": [
+    "O1c",
+    "O1e",
+    "O2",
+    "O4",
+    "O5",
+    "O6"
+   ]
   }
  },
  "provenance": {
-  "date": "2026-10-17T23:39:02.725Z",
-  "gitHead": "87a9e92afe4fd1e7c2edc274567c5a5778198ffb",
+  "date": "2026-10-18T21:53:46.224Z",
+  "gitHead": "e1eca5915287b807ab60751eb1a520f7db8c7964",
   "gitDirty": [
-   "M Signal.js",
-   " M bench/soak/_mustfail.mjs",
-   " M bench/soak/adapters/lite.mjs",
-   " M bench/soak/controls.json",
+   "M bench/soak/_mustfail.mjs",
+   " M bench/soak/calibration/golden/scripts-1000.json",
    " M bench/soak/divergences.json",
-   " M bench/soak/divergences.mjs",
-   " M bench/soak/exec.mjs",
-   " M bench/soak/model.mjs",
+   " M bench/soak/lanes/index.mjs",
    " M bench/soak/parity.json",
-   " M bench/soak/parity.mjs",
+   " M bench/soak/teeth.mjs",
+   " M test/41-soak-config.test.mjs",
    " M test/43-soak-model.test.mjs",
-   " M test/44-soak-divergences.test.mjs",
    " M test/45-soak-teeth.test.mjs",
    " M test/46-soak-report.test.mjs",
    "?? BRIEF.md",
-   "?? bench/bench-runs/",
-   "?? bench/soak/controls/preb33/",
-   "?? test/57-soak-creation-abort.test.mjs"
+   "?? bench/bench-runs/"
   ],
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   2.67,
-   2.63,
-   2.65
+   2.61,
+   2.68,
+   3
   ],
   "loadavgAfterTimed": [
-   3.53,
-   2.71,
-   2.64
+   1.2,
+   1.65,
+   2.33
   ],
   "loadavgAfter": [
-   9.3,
-   5.62,
-   3.93
+   5.32,
+   3.7,
+   3.04
   ],
   "busyNodeBefore": [
    "26332 0.0 /opt/homebrew/bin/node",
-   "56845 9.9 node"
+   "68503 3.1 node"
   ],
-  "seconds": 737,
+  "seconds": 832,
   "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
@@ -187,7 +200,7 @@
    "bench/soak/model.mjs": "6a2bea8408a82c0b68f7d067b4149e7ff10e8ac1216b380f01b1abbe24c1905b",
    "bench/soak/scenarios.mjs": "46b4e2316327d6ad75bbef179a8c79100787a37b2bad4fb9d7c757f4c5aabf33",
    "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",
-   "bench/soak/lanes/index.mjs": "a89ad2bc76b4b7e8d5c80602346b8686f973a9688086b3af9fd1c42cbd4030a6",
+   "bench/soak/lanes/index.mjs": "22d67802a0981e0b978c33ae953b0934c3b5d8fe3b1c2142e815b7c69e91156c",
    "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
    "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
@@ -195,7 +208,8 @@
    "bench/soak/adapters/lite.mjs": "1aa463afac307918b424f6eb406ba2d950f763e1943c516def9e40428359db0f",
    "bench/soak/adapters/contract.mjs": "7cdd3c5d985f22b6ec91f8d6acb42bd83bdd790fb197f53f163ad3a77a732bb3",
    "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
-   "bench/torture/helpers/index.mjs": "0f58faf5f553716bf5059cdfeae7fe887ea07fe3e853d8cba0e75106e54cb119"
+   "bench/torture/helpers/index.mjs": "0f58faf5f553716bf5059cdfeae7fe887ea07fe3e853d8cba0e75106e54cb119",
+   "bench/soak/lanes/wie.mjs": "2e4dc769d0ee33ccbac73fe9620663477f570ea2664c5c1d972acfe2c9f57e6e"
   }
  },
  "worst": {
@@ -431,6 +445,40 @@
      "maxTaint": {
       "oracle": "O1c",
       "ratio": 0.18949128402018764
+     }
+    }
+   }
+  },
+  "tree": {
+   "full": {
+    "WIE": {
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 14556
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 1106023
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   },
+   "smoke": {
+    "WIE": {
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 840
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61064
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
      }
     }
    }
@@ -837,75 +885,75 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      13730,
-      14016,
-      13778,
-      14037,
-      13394,
-      13220,
-      13707,
-      13578,
-      13772,
-      13567,
-      13593
+      13454,
+      13549,
+      13424,
+      13915,
+      13248,
+      13399,
+      13697,
+      13539,
+      13736,
+      13510,
+      13734
      ],
-     "min": 13220,
-     "median": 13707,
-     "max": 14037
+     "min": 13248,
+     "median": 13539,
+     "max": 13915
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      47675,
-      48379,
-      48893,
-      47526,
-      47566,
-      47402,
-      44901,
-      45523,
-      46894,
-      46914,
-      46934
+      49453,
+      50269,
+      51342,
+      49507,
+      49492,
+      50342,
+      50688,
+      50264,
+      50322,
+      49109,
+      49583
      ],
-     "min": 44901,
-     "median": 47402,
-     "max": 48893
+     "min": 49109,
+     "median": 50264,
+     "max": 51342
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      44946,
-      45761,
-      46653,
-      46497,
-      47549,
-      47180,
-      46765,
-      47784,
-      46477,
-      47669,
-      46814
+      46874,
+      47402,
+      47072,
+      48968,
+      50763,
+      50001,
+      49690,
+      51227,
+      49455,
+      50377,
+      49590
      ],
-     "min": 44946,
-     "median": 46765,
-     "max": 47784
+     "min": 46874,
+     "median": 49590,
+     "max": 51227
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      32738,
-      35761,
-      35704,
-      35930,
-      35454,
-      35892,
-      35386,
-      35646,
-      35740,
-      35438,
-      35607
+      34007,
+      37186,
+      37260,
+      37418,
+      37272,
+      37361,
+      36988,
+      37287,
+      37242,
+      37313,
+      37403
      ],
-     "min": 32738,
-     "median": 35646,
-     "max": 35930
+     "min": 34007,
+     "median": 37272,
+     "max": 37418
     }
    }
   },
@@ -1309,75 +1357,199 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      13399,
-      13578,
-      13803,
-      14103,
-      13492,
-      13450,
-      13945,
-      13843,
-      13790,
-      13254,
-      13435
+      13602,
+      13669,
+      13690,
+      13941,
+      13342,
+      13404,
+      13777,
+      13727,
+      13659,
+      13316,
+      13566
      ],
-     "min": 13254,
-     "median": 13578,
-     "max": 14103
+     "min": 13316,
+     "median": 13659,
+     "max": 13941
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      19541,
-      19672,
-      19593,
-      19510,
-      19320,
-      19284,
-      18882,
-      19054,
-      19029,
-      19147,
-      19035
+      20672,
+      20843,
+      21071,
+      20981,
+      20913,
+      20963,
+      20943,
+      21035,
+      20846,
+      21073,
+      20874
      ],
-     "min": 18882,
-     "median": 19284,
-     "max": 19672
+     "min": 20672,
+     "median": 20943,
+     "max": 21073
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      46386,
-      61960,
-      64063,
-      64271,
-      65020,
-      64045,
-      63484,
-      63074,
-      63580,
-      63571,
-      64170
+      48420,
+      66632,
+      67670,
+      67475,
+      67953,
+      68035,
+      67801,
+      67904,
+      67913,
+      67524,
+      67638
      ],
-     "min": 46386,
-     "median": 63580,
-     "max": 65020
+     "min": 48420,
+     "median": 67670,
+     "max": 68035
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      30853,
-      33592,
-      33833,
-      33819,
-      33535,
-      33886,
-      33678,
-      33297,
-      33712,
-      32986,
-      33309
+      32553,
+      35440,
+      35614,
+      35544,
+      35679,
+      35839,
+      35492,
+      35735,
+      35590,
+      35630,
+      35789
      ],
-     "min": 30853,
-     "median": 33592,
-     "max": 33886
+     "min": 32553,
+     "median": 35614,
+     "max": 35839
+    }
+   }
+  },
+  "tree": {
+   "kernel": "Signal.js",
+   "knownAs": null,
+   "files": [
+    {
+     "path": "Signal.js",
+     "sha256": "d07e0b172187f7ea3721a668a635608251b70bf87bb13695cbc279947e2b0d84"
+    },
+    {
+     "path": "Watch.js",
+     "sha256": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80"
+    }
+   ],
+   "full": {
+    "WIE": {
+     "cycles": 11,
+     "worlds": 2552,
+     "ops": 1103471,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "wie-stale-effect": 186441,
+      "wie-stale-computed": 101082,
+      "wie-prewalk": 3772117,
+      "wie-untrack": 72585,
+      "wie-write-before-read": 14556
+     },
+     "performed": {
+      "O1c": 32637925,
+      "O1e": 22079523,
+      "O2": 44357234,
+      "O4": 17663772,
+      "O5": 1106023,
+      "O6": 6499465,
+      "O7a": 0,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "wie-stale-effect": 16295,
+      "wie-stale-computed": 8643,
+      "wie-prewalk": 331786,
+      "wie-untrack": 5993,
+      "wie-write-before-read": 1252
+     }
+    }
+   },
+   "smoke": {
+    "WIE": {
+     "cycles": 3,
+     "worlds": 141,
+     "ops": 60923,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "wie-stale-effect": 9716,
+      "wie-stale-computed": 5528,
+      "wie-prewalk": 206154,
+      "wie-untrack": 3859,
+      "wie-write-before-read": 840
+     },
+     "performed": {
+      "O1c": 1807513,
+      "O1e": 1221357,
+      "O2": 2398836,
+      "O4": 982708,
+      "O5": 61064,
+      "O6": 357842,
+      "O7a": 0,
+      "OB": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "wie-stale-effect": 3037,
+      "wie-stale-computed": 1679,
+      "wie-prewalk": 62849,
+      "wie-untrack": 1129,
+      "wie-write-before-read": 278
+     }
+    }
+   },
+   "throughput": {
+    "WIE": {
+     "opsPerSecPerCycle": [
+      10830,
+      10523,
+      10432,
+      10618,
+      10974,
+      10393,
+      10595,
+      10468,
+      10907,
+      10680,
+      10702
+     ],
+     "min": 10393,
+     "median": 10618,
+     "max": 10974
     }
    }
   }
@@ -1402,6 +1574,12 @@
      "ERROR",
      "NEST"
     ]
+   },
+   "tree": {
+    "mainExit": 0,
+    "lanesEqual": [
+     "WIE"
+    ]
    }
   },
   "full": {
@@ -1421,6 +1599,12 @@
      "BATCH",
      "ERROR",
      "NEST"
+    ]
+   },
+   "tree": {
+    "mainExit": 0,
+    "lanesEqual": [
+     "WIE"
     ]
    }
   }
@@ -1724,6 +1908,37 @@
      "maxTaint": {
       "oracle": "O1c",
       "ratio": 0.1958443169483641
+     }
+    }
+   }
+  },
+  "tree": {
+   "WIE": {
+    "cycles": 11,
+    "ops": 14290,
+    "worlds": 33,
+    "performed": {
+     "O1c": 436654,
+     "O1e": 301948,
+     "O2": 590210,
+     "O4": 241096,
+     "O5": 14323,
+     "O6": 85734,
+     "O7a": 0,
+     "OB": 0
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 194
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 14323
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
      }
     }
    }
@@ -2937,6 +3152,128 @@
      "maxTaint": {
       "oracle": "O1c",
       "ratio": 0.186910793304688
+     }
+    }
+   ],
+   "tree:WIE": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 778
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61164
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 770
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61124
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 832
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61090
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 808
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61174
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 818
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61161
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 851
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61129
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 759
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61111
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "wie-write-before-read",
+      "hits": 796
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61151
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
      }
     }
    ]

@@ -73,6 +73,9 @@ export const CHECKS = deepFreeze({
     'lane:BATCH': ['L-REV-152'],
     'lane:ERROR': ['L-REV-152'],
     'lane:NEST': ['L-REV-AUDIT', 'L-REV-152'],
+    // unit 0s B2 (DIV-B33): preb33 predates the F-b33-1 write-in-eval fix, so its WIE lane heads
+    // `oracle=O1 lane=WIE sig=effect-stale known=DIV-B33` (b65 census: O1e heads 9490 of 10000 preb33 worlds)
+    'lane:WIE': ['L-WIE-preb33'],
     'gate:oracle': ['L-REV-152'],
     'gate:heap': ['L-T-leak'],
     'gate:retention': ['L-T-retain'],
