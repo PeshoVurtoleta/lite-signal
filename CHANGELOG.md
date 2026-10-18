@@ -286,6 +286,33 @@ NEST sampled count is derived (161) and gated, an unmeasured link drain prints `
 what the census can and cannot see. Note: removing the unobserve's delete (M-OFF) is no longer visible to the
 torture NEST lane; `test/13` and `test/62` catch it.
 
+### Added -- test-gap gates: torture must-fail control, hot-body source pins, LEDGER #40 boundary probes (dev-only, not shipped)
+
+`test/64-torture-mustfail.test.mjs` (5 tests) runs `test/torture.mjs` under `--expose-gc` on the working-tree
+engine and on three mutant engines built in a temp dir. The live run must end `| ok` with full drains
+(1021/1021 nodes, 4095/4095 links) and retention 0/966. Each mutant must exit 1 with a `| FAIL` GATE line AND
+its own breach (observed): every 1000th disposal skipping the node free list -> `free=811/1021n`; skipping the
+link free list -> `4032/4095l`; disposal keeping `node.value` -> `retention=1/966`. A crashed child (no GATE
+line) fails the test, and a mutant whose anchor text is not found exactly once fails it (re-anchor). The
+unobserve-leaves-its-entry mutant of the NEST lane entry above is not in the set: since LEDGER #40 disposal
+drops the entry and torture cannot see it by design. Runs inside `npm test` (count verdicts; the torture's
+only timing term is its 4 ms cap on a GC pause inside a window).
+
+`test/65-hot-body-pins.test.mjs` (14 tests) pins the sha256 (first 16 hex) and UTF-8 byte length of the source
+text of the 7 hot functions (`flushEffects`, `executeEffect`, `createNode`, `nodeMiss`, `disposeNode`,
+`effectTail`, `pullComputed`). V8-independent (source, not bytecode): any edit to a hot body fails with the
+function's name until it is re-pinned on purpose in the same change (`HOT_BODY_PRINT=1` prints the current
+table). Sibling of `bench/soak/parity.json`, which pins the whole file. Its extractor ignores braces in
+strings, templates and comments, and fails closed on a missing or duplicated name.
+
+`test/63-lifecycle-boundary.test.mjs` (33 tests) holds boundary probes for LEDGER #40 (`observeObservers`
+lifecycle entries across dispose, slot reuse, stale unobserve, destroy, and the lifecycle-count wrap), ported
+from the burst-62 qa scratch suite; 30 of 33 are red on the engine before #40. `test/62` gains row A9 (now 20
+tests under `--expose-gc`, 15 without): an unobserve must really delete its entry (a mutant that only
+decremented the count while keeping the entry passed test/13 and test/62 before); green on the current and the
+pre-#40 engine (a regression pin, not a red-first row). `npm test`: 1584 -> 1637 tests (+53: test/63 33,
+test/65 14, test/64 5, test/62 1), 0 fail.
+
 ### Changed -- soak models the R2-M1 creation abort; `preb33` control; DIV-F6 widened (dev-only, not shipped)
 
 DELTA 4b (eb5acc2). The soak model predicts the O6 `CycleError` at `effect()` creation when the kernel aborts

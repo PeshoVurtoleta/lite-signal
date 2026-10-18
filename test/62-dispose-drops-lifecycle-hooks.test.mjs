@@ -2,7 +2,8 @@
 // observeObservers() lifecycle entry, so a pooled slot's next resident never inherits (or keeps alive) the dead
 // node's onConnect / onDisconnect hooks; a stale off() must not delete the new resident's entry.
 // Oracle: .handoff/PLAN-0v.md ASSERTIONS A1-A8 (no expected value comes from a kernel run).
-// RED on the frozen b62-before engine: A1, A3, A4, A5 (and A8). A2 / A6 are controls (GREEN on both).
+// RED on the frozen b62-before engine (measured): A1, A3, A4, A5, A7, A8, D1. A2 / A6 are controls (GREEN on both).
+// A9 is a regression pin (GREEN on b62-before and live: both off()s delete); it is red only on the off()-has-not-delete mutant.
 // A7: lifecycleCount is closure-private, so it is read white-box: the test loads a scratch copy of the kernel with one
 // stats() field injected (LC_ANCHOR, as test/60 O5 and test/61 B3 do). That lane runs WITHOUT --expose-gc.
 // Slot reuse is proven white-box through the NODE_PTR symbol (as test/59 rows 10/11).
@@ -206,6 +207,37 @@ describe('A7 zero-cost gate (white-box, no gc needed)', () => {
                 assert.equal(lc(), 4);
                 r.destroy();
                 assert.equal(lc(), 0, 'destroy() with no off()');
+            } finally { r.destroy(); }
+        } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+});
+
+describe('A9 off() really deletes (white-box, no gc needed; regression pin, GREEN on b62-before and live)', () => {
+    // Kills the mutant `lifecycleMap.delete(node)` -> `lifecycleMap.has(node)` inside off(): the count drops but the
+    // entry (the hooks) stays, so once another registration keeps lifecycleCount != 0 the removed hooks fire again.
+    const LC_ANCHOR = '    function stats() {\n        return {\n';
+    it('A9 hooks removed by off() never fire while another registration keeps lifecycleCount at 1', async () => {
+        const src = readFileSync(KPATH, 'utf8');
+        assert.equal(src.split(LC_ANCHOR).length, 2, 'stats() anchor must occur exactly once');
+        const dir = mkdtempSync(join(tmpdir(), 'ls62-'));
+        try {
+            const inj = LC_ANCHOR + '            lifecycleCount: lifecycleCount,\n';
+            writeFileSync(join(dir, 'Signal.js'), src.replace(LC_ANCHOR, () => inj));
+            copyFileSync(join(dirname(KPATH), 'Watch.js'), join(dir, 'Watch.js'));
+            const W = await import(join(dir, 'Signal.js') + '?a9');
+            const r = W.createRegistry({ maxNodes: 256, onCapacityExceeded: 'grow' });
+            try {
+                const h1 = counter(), h2 = counter();
+                const s1 = r.signal(0), s2 = r.signal(0);
+                const off1 = r.observeObservers(s1, { onConnect: h1.f, onDisconnect: h1.f });
+                assert.equal(r.stats().lifecycleCount, 1, 'control: one live registration');
+                off1();
+                assert.equal(r.stats().lifecycleCount, 0, 'off() drops the count');
+                r.observeObservers(s2, { onConnect: h2.f, onDisconnect: h2.f });
+                assert.equal(r.stats().lifecycleCount, 1, 'only s2 is registered');
+                readThenStop(r, s1);
+                assert.equal(h1.n, 0, 'hooks removed by off() fired (entry not deleted)');
+                assert.equal(h2.n, 0, 'h2 is on an unread signal');
             } finally { r.destroy(); }
         } finally { rmSync(dir, { recursive: true, force: true }); }
     });

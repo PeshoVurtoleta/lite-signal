@@ -485,8 +485,8 @@ describe("adversarial: nested subscribe minted inside a subscribe callback", () 
 //     over the per-cycle user closures (effect body + untrack callback) of every 64th
 //     cycle and the last 4: none may survive disposal + forced GC (a pooled node that
 //     kept its computeFn keeps them alive; every cycle reuses one LIFO slot, so such a
-//     node holds only the LAST cycle's closures -- only the last-4 sample can catch it). A live/dead WeakRef control proves gc and
-//     WeakRef clearing work -- not that the census samples the right objects. The
+//     node holds only the LAST cycle's closures -- only the last-4 sample can catch it). A live/dead WeakRef control
+//     proves gc and WeakRef clearing work -- not that the census samples the right objects. The
 //     resident delta is an advisory print, gated nowhere. Cannot see: a free-list leak
 //     rarer than ~1 slot per 1e4 cycles, engine-internal retention of objects that
 //     are neither user-owned nor counted, or a retained value / cleanup payload (this
