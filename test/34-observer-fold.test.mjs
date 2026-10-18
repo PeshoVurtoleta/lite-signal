@@ -10,7 +10,7 @@
 // recycled pool slot).
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { createRegistry } from "../Signal.js";
+import { createRegistry, CapacityError } from "../Signal.js";
 
 let r;
 beforeEach(() => { r = createRegistry(); });
@@ -473,43 +473,133 @@ describe("adversarial: nested subscribe minted inside a subscribe callback", () 
 });
 
 // ---------------------------------------------------------------------------
-// 11. Resident-memory budget over 1e4 create/dispose cycles exercising the
-//     #30 observer-fold window (untrack / subscribe / self-dispose-in-untrack).
+// 11. Retention over 1e4 create/dispose cycles exercising the #30 observer-fold
+//     window (effect create/dispose, untrack enter/exit). Exact counts, no heap
+//     threshold (a 64 KB resident gate read 85 KB on a clean engine when this test
+//     ran alone, b62): (1) activeNodes / activeLinks back to baseline; (2) free-list
+//     census -- every slot the counters call free (nodePoolPopulation - activeNodes,
+//     linkPoolPopulation - activeLinks) drains back out of the eager "throw" pools and
+//     one more node throws CapacityError (a slot that left the free list while
+//     activeNodes still decremented is silent to the counters and to the heap); a link
+//     drain the node pool cannot host fails closed as "unmeasured"; (3) WeakRef census
+//     over the per-cycle user closures (effect body + untrack callback) of every 64th
+//     cycle and the last 4: none may survive disposal + forced GC (a pooled node that
+//     kept its computeFn keeps them alive; every cycle reuses one LIFO slot, so such a
+//     node holds only the LAST cycle's closures -- only the last-4 sample can catch it). A live/dead WeakRef control proves gc and
+//     WeakRef clearing work -- not that the census samples the right objects. The
+//     resident delta is an advisory print, gated nowhere. Cannot see: a free-list leak
+//     rarer than ~1 slot per 1e4 cycles, engine-internal retention of objects that
+//     are neither user-owned nor counted, or a retained value / cleanup payload (this
+//     shape hands the engine none; torture 4c covers value).
 //     Requires --expose-gc; loudly skips (not silently passes) otherwise.
 // ---------------------------------------------------------------------------
 describe("observer-fold window churn: 1e4 create/dispose cycles", () => {
     const hasGc = typeof globalThis.gc === "function";
 
-    it("activeNodes/activeLinks return to baseline; resident delta measured under forced GC", { skip: hasGc ? false : "requires node --expose-gc" }, () => {
+    it("activeNodes/activeLinks return to baseline; every free slot drains; no sampled user closure survives", { skip: hasGc ? false : "requires node --expose-gc" }, async () => {
         const CYCLES = 10000;
+        const SAMPLED = Math.ceil(CYCLES / 64) + 4;   // (i & 63) === 0, plus the last 4 (disjoint for this CYCLES)
+        const LDW = 64;
         // s1/s2 are long-lived (created once, outside the loop): the axis under
         // test is the #30 observer-fold WINDOW's own churn (effect create/dispose,
         // untrack enter/exit), not the signal pool.
         const s1 = r.signal(0), s2 = r.signal(0);
         const baselineNodes = r.stats().activeNodes;
         const baselineLinks = r.stats().activeLinks;
+        const refs = [];
+        let sampled = 0;
+        // One cycle per call, so its closures die on return: only the engine can keep a sampled one alive.
+        function cycle(sample) {
+            const inner = () => { s2(); };
+            const body = () => {
+                s1();
+                r.untrack(inner);   // exercise the #30 observer-fold window every cycle
+            };
+            if (sample) { sampled++; refs.push(new WeakRef(body)); refs.push(new WeakRef(inner)); }
+            const stop = r.effect(body);
+            stop();
+        }
+        function deadRef() { return new WeakRef({ ctl: 2 }); }
 
         globalThis.gc();
         const before = process.memoryUsage();
         const beforeResident = before.heapUsed + before.arrayBuffers;
 
-        for (let i = 0; i < CYCLES; i++) {
-            const stop = r.effect(() => {
-                s1();
-                r.untrack(() => { s2(); });   // exercise the #30 observer-fold window every cycle
-            });
-            stop();
-        }
+        for (let i = 0; i < CYCLES; i++) cycle((i & 63) === 0 || i >= CYCLES - 4);
 
         assert.equal(r.stats().activeNodes, baselineNodes, "activeNodes returns to baseline after 1e4 create/dispose cycles");
         assert.equal(r.stats().activeLinks, baselineLinks, "activeLinks returns to baseline after 1e4 create/dispose cycles");
 
+        // WeakRef census. A WeakRef keeps its target alive until the job that created
+        // or read it ends, so yield before each forced GC.
+        const ctlHeld = { ctl: 1 };
+        const ctlLive = new WeakRef(ctlHeld);
+        const ctlDead = deadRef();
+        await new Promise((res) => setTimeout(res, 0));
         globalThis.gc();
+        await new Promise((res) => setTimeout(res, 0));
+        globalThis.gc();
+        let alive = 0;
+        for (let i = 0; i < refs.length; i++) if (refs[i].deref() !== undefined) alive++;
         const after = process.memoryUsage();
-        const afterResident = after.heapUsed + after.arrayBuffers;
-        const deltaKB = (afterResident - beforeResident) / 1024;
+        const deltaKB = ((after.heapUsed + after.arrayBuffers) - beforeResident) / 1024;
 
-        console.log(`GATE resident delta after 1e4 create/dispose cycles: ${deltaKB.toFixed(2)} KB (limit 64 KB)`);
-        assert.ok(deltaKB <= 64, `resident (heapUsed+arrayBuffers) delta ${deltaKB.toFixed(2)} KB must be <= 64 KB after forced GC`);
+        // Free-list census (after the census reads: the drain overwrites the pooled slots).
+        const st = r.stats();
+        const nD = st.nodePoolPopulation - st.activeNodes;
+        const lD = st.linkPoolPopulation - st.activeLinks;
+        let nDrained = 0, nExtraThrew = false;
+        const drain = [];
+        try {
+            for (let i = 0; i < nD; i++) { drain.push(r.signal(i)); nDrained++; }
+        } catch { /* nDrained < nD: a slot the counters call free is not on the free list */ }
+        if (nDrained === nD) {
+            try { drain.push(r.signal(-1)); } catch (e) { nExtraThrew = e instanceof CapacityError; }
+        }
+        for (let i = 0; i < drain.length; i++) r.dispose(drain[i]);
+        drain.length = 0;
+        // Links: LDW source signals, floor(lD / LDW) effects reading all of them, one reading
+        // lD % LDW. Unmeasured (fails closed) if the node pool cannot host sources + effects.
+        const lFullEff = Math.floor(lD / LDW);
+        const lEff = lFullEff + (lD % LDW !== 0 ? 1 : 0);
+        const lMeasured = LDW + lEff <= nD;
+        let lDrained = 0, lFull = false;
+        const lSrc = [], lStops = [];
+        if (lMeasured) {
+            const l0 = r.stats().activeLinks;
+            try {
+                for (let i = 0; i < LDW; i++) lSrc.push(r.signal(i));
+                for (let e = 0; e < lEff; e++) {
+                    const w = e < lFullEff ? LDW : lD % LDW;
+                    lStops.push(r.effect(() => { for (let k = 0; k < w; k++) lSrc[k](); }));
+                }
+            } catch { /* lDrained < lD */ }
+            const lst = r.stats();
+            lDrained = lst.activeLinks - l0;
+            lFull = lst.activeLinks === lst.linkPoolPopulation;
+        }
+        for (let i = 0; i < lStops.length; i++) lStops[i]();
+        for (let i = 0; i < lSrc.length; i++) r.dispose(lSrc[i]);
+        lStops.length = 0;
+        lSrc.length = 0;
+        const post = r.stats();
+
+        console.log("GATE observer-fold churn: retention=" + alive + "/" + refs.length +
+            " free=" + nDrained + "/" + nD + "n," + (lMeasured ? lDrained + "/" + lD + "l" : "unmeasured") +
+            " control alive=" + (ctlLive.deref() === ctlHeld ? 1 : 0) + " dead=" + (ctlDead.deref() === undefined ? 1 : 0) +
+            " res=" + deltaKB.toFixed(2) + "KB(adv)");
+        assert.equal(ctlLive.deref(), ctlHeld, "census control: a held object's WeakRef must still deref (else the census is blind)");
+        assert.equal(ctlDead.deref(), undefined, "census control: a dead object's WeakRef must be cleared (else gc did not collect)");
+        assert.equal(sampled, SAMPLED, "sampled cycles = ceil(CYCLES / 64) + 4");
+        assert.equal(refs.length, SAMPLED * 2, "two WeakRefs (effect body, untrack callback) per sampled cycle");
+        assert.equal(alive, 0, alive + "/" + refs.length + " sampled user closures survived disposal + forced GC: a pooled node kept a user closure");
+        assert.equal(nDrained, nD, "free-list census: " + nDrained + "/" + nD + " free node slots drained (a slot left the free list while activeNodes decremented)");
+        assert.equal(nExtraThrew, true, "one node past the drained pool must throw CapacityError (eager pool, default throw policy)");
+        assert.equal(lMeasured, true, "link drain unmeasured: " + LDW + " sources + " + lEff + " effects exceed the " + nD + " free node slots (fail closed)");
+        assert.equal(lDrained, lD, "free-list census: " + lDrained + "/" + lD + " free link slots drained");
+        assert.equal(lFull, true, "after the link drain activeLinks === linkPoolPopulation");
+        assert.equal(post.activeNodes, baselineNodes, "post-drain activeNodes back to baseline");
+        assert.equal(post.activeLinks, baselineLinks, "post-drain activeLinks back to baseline");
+        assert.equal(post.totalAllocations - post.totalDisposals, post.activeNodes, "totalAllocations - totalDisposals === activeNodes");
     });
 });

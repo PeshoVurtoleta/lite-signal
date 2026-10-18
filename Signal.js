@@ -480,6 +480,12 @@ export function createRegistry(config) {
         currentObserver = null;
         try { e.onDisconnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }
     }
+    // LEDGER #40: the node object is pooled, so its lifecycleMap entry would outlive the handle
+    // and hand its hooks to the slot's next resident. Cold: disposeNode / destroy call it only
+    // while some registration is live (lifecycleCount !== 0).
+    function dropLifecycleHooks(node) {
+        if (lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;
+    }
     let isFlushing = false;
 
     const flushErrorBuffer = [];
@@ -842,6 +848,9 @@ export function createRegistry(config) {
         node.preBatchVersion = 0;
         node.nextMark = null;   // 1.3.0: defensive -- disposal during a sweep shouldn't happen, but ensures clean state
 
+        // LEDGER #40: drop observeObservers hooks before the slot is pooled (else the next resident
+        // inherits them); before the gen bump, so hooks user code registered during teardown go too.
+        if (lifecycleCount !== 0) dropLifecycleHooks(node);
         node.gen = (node.gen + 1) | 0;
         if ((f & FLAG_COMPUTING) !== 0) {
             node.nextFree = pinnedHead;   // A1.8: running -> pinned until depth 0
@@ -2134,6 +2143,7 @@ export function createRegistry(config) {
             n.firstOwned = null;
             n.nextMark = null;
 
+            if (lifecycleCount !== 0) dropLifecycleHooks(n);   // LEDGER #40: destroy re-seats every slot too
             n.gen = (n.gen + 1) | 0;
 
             if (i < nodeCount - 1) n.nextFree = nodePool[i + 1];
@@ -2205,11 +2215,14 @@ export function createRegistry(config) {
         }
         if (onConnect !== undefined) e.onConnect = onConnect;
         if (onDisconnect !== undefined) e.onDisconnect = onDisconnect;
+        // LEDGER #40: gen-stamped -- an off() that outlives its node (disposed, slot re-seated)
+        // is a no-op; disposeNode already dropped the entry, and the live one is a stranger's.
+        const g = node.gen;
         let live = true;
         return () => {
             if (!live) return;
             live = false;
-            if (lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;
+            if (node.gen === g && lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;
         };
     }
     function describeNode(node) {

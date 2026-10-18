@@ -241,7 +241,28 @@ own error (the null TypeError, or whatever the getter throws) instead of Capacit
 `observeObservers` reads each hook once (a Proxy can observe the difference); benign. New
 `test/60-null-opts-no-leak.test.mjs` (62 tests, including O5, a white-box lifecycleCount witness; 33 red on the previous engine);
 `test/59` gains rows 10 (a stored run from a throwing scheduler, fired later, is a no-op) and 11
-(generation wrap 2^31-1 -> -2^31) plus `hasObservers` checks on the undefined rows (23 tests; regression pins).
+(generation wrap 2^31-1 -> -2^31) plus `hasObservers` checks on the undefined rows (23 tests; regression pins);
+`test/61-null-opts-boundary.test.mjs` adds 39 boundary probes (33 red on the previous engine).
+
+### Fixed -- engine: disposing a node drops its observeObservers hooks (LEDGER #40)
+
+`disposeNode` never deleted the node's `observeObservers` entry; only the unobserve closure did. A signal or
+computed disposed without calling its unobserve handed its `onConnect` / `onDisconnect` hooks to the next
+resident of its pooled slot, and the internal lifecycle count stayed above 0 (the link alloc/free connect
+branch stayed on). `disposeNode` now calls a cold `dropLifecycleHooks(node)` when the count is non-zero, just
+before the generation bump, so every dispose path (`dispose(api)`, an effect disposer, the owner cascade, a
+re-entrant dispose, a pinned node) drops the entry; hooks registered by user code during teardown are dropped
+too. A sweep found a second site of the same class: registry `destroy()` bumped every node's generation and
+rebuilt the free list without clearing hooks (count stuck above 0, the next resident inherited them); it makes
+the same cold call. The unobserve returned by `observeObservers` captures the node's generation and is a
+no-op once the node is disposed, so a stale unobserve no longer removes the next resident's hooks (it did
+before). Effects: a pooled slot no longer hands hooks to its next resident, the hooks become collectable at
+dispose, and the lifecycle count returns to 0. Pre-existing: shipped in 1.5.2. Bytes (node v26.8.2
+`--print-bytecode`): `disposeNode` 667 -> 686 B (+19, the only changed body of the 7 hashed hot functions),
+`dropLifecycleHooks` 31 B (new, cold), `destroy` 619 -> 638, `observeObservers` 169 -> 181. New
+`test/62-dispose-drops-lifecycle-hooks.test.mjs` (19 tests under `--expose-gc`, 12 red on the previous engine;
+14 without it: a white-box lifecycle-count lane runs in plain `npm test`, and the WeakRef retention rows are
+skipped).
 
 ### Changed -- torture NEST retention lane gates on exact counts (dev-only, not shipped)
 
@@ -251,8 +272,19 @@ on exact counts: a 6-object WeakRef census over 161 sampled cycles with a live/d
 census that drains every free node and link slot (1021/1021 nodes, 4095/4095 links) and requires one more
 node to throw `CapacityError`, and post-drain `stats()` equality. `res=<x>KB(adv)` stays an advisory print;
 the new gate token is `free=<n>/<n>n,<l>/<l>l`. Teeth: two retention mutants the old gate passed (every
-1000th disposal skipping the free list; an unobserve (`off()`) that leaves its lifecycle entry behind) now fail. 60 of 60 runs ok
+1000th disposal skipping the free list; an unobserve (`off()`) that leaves its lifecycle entry behind -- on the
+0u engine; since LEDGER #40 disposal drops the entry too, see below) now fail. 60 of 60 runs ok
 under quiet-lock (res advisory -175.5..209.0 KB).
+
+### Changed -- test/34 heap gate -> exact counts; torture NEST NITs (dev-only, not shipped)
+
+`test/34` section 11's 64 KB resident-delta gate flaked (85 KB run alone on HEAD). It now gates on exact
+counts: the `activeNodes` / `activeLinks` baseline, a free-list drain (1022/1022 nodes, 4096/4096 links; one
+more throws `CapacityError`) and a WeakRef census over 322 sampled user closures with a live/dead control; the
+delta prints as advisory. It fails on two retention mutants the old gate passed. `test/torture.mjs`: the
+NEST sampled count is derived (161) and gated, an unmeasured link drain prints `unmeasured`, and comments say
+what the census can and cannot see. Note: removing the unobserve's delete (M-OFF) is no longer visible to the
+torture NEST lane; `test/13` and `test/62` catch it.
 
 ### Changed -- soak models the R2-M1 creation abort; `preb33` control; DIV-F6 widened (dev-only, not shipped)
 

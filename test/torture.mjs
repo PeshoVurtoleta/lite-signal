@@ -23,10 +23,12 @@
 //     measureAllocs lane cannot see a per-fire allocation that dies young.)
 //   * NEST retention: 1e4 cycles of the P10 + F8 shapes (nested-frame disposal,
 //     onDisconnect disposing the next dep) -> engine-owned WeakRefs all collected
-//     (6 per sampled cycle x 161; a live/dead WeakRef control proves the census
-//     can see), free-list census (every slot the counters call free is drained
-//     back out of R's pools, one more node must throw CapacityError), post-drain
-//     stats() back to baseline. The resident delta is an advisory print
+//     (6 per sampled cycle x NEST_SAMPLED (161) = 966; a live/dead WeakRef
+//     control proves gc + WeakRef clearing work in this process, not that the
+//     census samples the objects a leak would keep), free-list census (every
+//     slot the counters call free is drained back out of R's pools, one more
+//     node must throw CapacityError), post-drain stats() back to baseline. The
+//     resident delta is an advisory print
 //     (res=...KB(adv)), gated nowhere: heapUsed noise crossed 64 KB with every
 //     exact term green (b60).
 //   * PIN (A1.8): 1e4 effects that dispose themselves while RUNNING (pinned slots),
@@ -328,14 +330,19 @@ const qsChildLabel = nestLane === null || typeof nestLane.qs !== 'number' ? 'unm
 // a dep the parent reads later) and F8 (onDisconnect disposes the next dep during
 // the dispose walk) shapes. Three exact oracles, no heap threshold:
 // (1) WeakRef census, ENGINE-owned: every 64th cycle of pass 1 and the last 4
-//     cycles (161 sampled) hold WeakRefs to the six user objects handed to the
+//     cycles (NEST_SAMPLED = 161) hold WeakRefs to the six user objects handed to the
 //     engine (a signal's value payload, the effect bodies bodyP / childP /
 //     bodyF, the observeObservers hooks object and its onDisconnect). After
 //     disposal + forced GC none may survive: a pooled or pinned node (or the
 //     lifecycle map) that kept a value / computeFn / hook would keep them alive.
+//     The hooks-object WeakRef cannot catch anything on this engine:
+//     observeObservers copies onDisconnect into its own lifecycle entry and never
+//     holds the hooks object (a retained entry shows up as the onDisconnect ref).
 //     Control: a module-held object's WeakRef must still deref and a WeakRef whose
 //     target died with its function's frame must be cleared -- either failing =
-//     blind census = FAIL.
+//     FAIL. It proves gc + WeakRef clearing work here, NOT that the census counts
+//     the right objects (that rests on mutants that must leave a sampled ref
+//     alive, e.g. dropping disposeNode's value or computeFn clear).
 // (2) Free-list census on R: every slot the counters call free
 //     (nodePoolPopulation - activeNodes, linkPoolPopulation - activeLinks) is
 //     drained back out under the default "throw" policy, and one more node must
@@ -348,8 +355,14 @@ const qsChildLabel = nestLane === null || typeof nestLane.qs !== 'number' ? 'unm
 // (res=...KB(adv)), gated nowhere. (lite-leak's tracker would only see
 // harness-owned markers here, so 4c does not use it.) Cannot see: engine-internal
 // retention of objects that are neither user-owned nor counted (e.g. a growing
-// array of node refs).
+// array of node refs); a free-list leak rarer than ~1 slot per 2e4 cycles (the
+// drain counts every slot stranded on R since its creation -- phases 1-4c share R --
+// but only this lane's 2 x NEST_CYCLES cycles run the P10 / F8 shapes).
 const NEST_CYCLES = 10000;
+// Sampled cycles: (i & 63) === 0 over pass 1 (ceil(NEST_CYCLES / 64)) plus the last 4
+// cycles of pass 2 (disjoint from pass 1). nestSampled === NEST_SAMPLED is gated, so a
+// sampling-loop change that breaks the formula fails closed.
+const NEST_SAMPLED = Math.ceil(NEST_CYCLES / 64) + 4;
 const nestBase = stats();
 let nestShapeFail = 0;
 let nestSampled = 0;
@@ -408,6 +421,7 @@ for (let i = 0; i < 2 * NEST_CYCLES; i++) {
 }
 // Census control: ctlHeld stays reachable from module scope (must deref alive);
 // nestCtlRef()'s target dies with its frame (the gc sequence below must clear it).
+// Proves gc + WeakRef clearing work, not that nestRefs holds what a leak would keep.
 const ctlHeld = { ctl: 1 };
 const ctlLiveRef = new WeakRef(ctlHeld);
 function nestCtlRef() { return new WeakRef({ ctl: 2 }); }
@@ -468,7 +482,7 @@ for (let i = 0; i < lSrc.length; i++) dispose(lSrc[i]);
 lStops.length = 0;
 lSrc.length = 0;
 const nestDrainAfter = stats();
-const nestRetOk = nestShapeFail === 0 && nestSampled === 161 && nestRefs.length === 161 * 6 && nestAlive === 0 &&
+const nestRetOk = nestShapeFail === 0 && nestSampled === NEST_SAMPLED && nestRefs.length === NEST_SAMPLED * 6 && nestAlive === 0 &&
   ctlAlive && ctlDead &&
   nestAfter.activeNodes === nestBase.activeNodes &&
   nestAfter.activeLinks === nestBase.activeLinks &&
@@ -694,7 +708,7 @@ console.log(
   ' | alloc=' + bpcLabel + ' B/op' +
   ' | nest gc major=' + ns.gc.major + ' minor=' + ns.gc.minor + ' alloc=' + nestLabel + ' B/op' +
   ' watch=' + watchLabel + ' B/op control=' + ctlLabel + ' B/op retention=' + nestAlive + '/' + nestRefs.length +
-  ' free=' + nDrained + '/' + nD + 'n,' + lDrained + '/' + lD + 'l res=' + nestResKB.toFixed(1) + 'KB(adv)' +
+  ' free=' + nDrained + '/' + nD + 'n,' + (lMeasured ? lDrained + '/' + lD + 'l' : 'unmeasured') + ' res=' + nestResKB.toFixed(1) + 'KB(adv)' +
   ' | pin pool=+' + pinPoolDelta + ' major=' + ps.gc.major + ' deadOwner=' + deadOwnerFail + '/1000' +
   ' | qs gc major=' + qs.gc.major + ' minor=' + qs.gc.minor + ' alloc=' + qsBpcLabel + ' B/op child=' + qsChildLabel + ' B/op' +
   ' k=' + qsKLabel + 'B/batch K=' + qsAttempts.length + ' ctl=' + qsCtlLabel + 'B' +
@@ -714,7 +728,7 @@ if (!ok) {
   if (!watchOk) console.error('  watch lane: ' + (nestLane === null ? 'no result' :
     'watch=' + nestLane.watch + ' window0=' + nestLane.watchWindow0 + ' fires=' + nestLane.watchFires +
     ' steps=' + nestLane.watchSteps) + ' budget<=' + NEST_BUDGET + (nestOk ? '' : ' (child lane failed: control/pin)'));
-  if (!nestRetOk) console.error('  nest retention: shapeFail=' + nestShapeFail + ' sampled=' + nestSampled + '/161' +
+  if (!nestRetOk) console.error('  nest retention: shapeFail=' + nestShapeFail + ' sampled=' + nestSampled + '/' + NEST_SAMPLED +
     ' alive=' + nestAlive + '/' + nestRefs.length + ' control alive=' + (ctlAlive ? 1 : 0) + ' dead=' + (ctlDead ? 1 : 0) +
     ' nodes ' + nestBase.activeNodes + '->' + nestAfter.activeNodes +
     ' links ' + nestBase.activeLinks + '->' + nestAfter.activeLinks +

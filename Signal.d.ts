@@ -179,7 +179,10 @@ export interface ObserveObserversHooks {
     onDisconnect?: () => void;
 }
 
-/** Stops an {@link Registry.observeObservers} subscription. Idempotent. */
+/**
+ * Stops an {@link Registry.observeObservers} subscription. Idempotent. A no-op once the observed node is
+ * disposed (disposing the handle, or `destroy()`, already drops its hooks).
+ */
 export type Unobserve = () => void;
 
 /** Anything carrying a node identity that the introspection surface can read. */
