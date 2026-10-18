@@ -30,11 +30,29 @@
 //     mid-run, then the parent's slot recycled) -> the child is never adopted by
 //     the stranger in that slot
 //   * QS (F21, LEDGER #35): 1e5 s.set with one sync-scheduled effect (the
-//     scheduler calls run() immediately) + one plain effect -> 0 B/op, maxMajor 0;
-//     the same step in the pinned child -> <= 0.05 B/op steady state; every step
-//     must run both bodies and the scheduler (else the lane is blind). Both halves
-//     gate, but only the child lane caught the QS-teeth control (one run, burst 38:
-//     child 135.975 B/op FAIL; in-process still 0 B/op with gc minor=2)
+//     scheduler calls run() immediately) + one plain effect -> maxMajor 0 and a
+//     0 B/op retention SLOPE; the same step in the pinned child -> <= 0.05 B/op
+//     steady state; every step must run both bodies and the scheduler (else the
+//     lane is blind). Both halves gate, but only the child lane caught the
+//     QS-teeth control (one run, burst 38: child 135.975 B/op FAIL; in-process
+//     still 0 B/op with gc minor=2).
+//     Slope (PLAN-0c addendum 1): ONE measureAllocs call per attempt over a
+//     wrapper that alternates pseudo-batches of 2e4 calls at 1 qsStep per call
+//     (even batches, Dlo = min non-null batchBytes) and 5 (odd batches, Dhi), so
+//     the instrument's per-batch constant k (CI read 16-72 B in every batch, a
+//     0.0008-0.0036 B/op min-over-batches false red; it also differs BETWEEN
+//     calls) is shared by both parities and cancels; a per-call retainer grows
+//     with the 8e4 extra steps. An attempt passes iff it settled, ran exactly
+//     1080000 steps, ended in the reset state, kept >= 4 batches per parity and
+//     Dhi <= Dlo; up to 3 attempts, stop at the first pass. Control: the same
+//     estimator with one object retained per 1000 qsSteps MUST read Dhi - Dlo
+//     >= 1280 B, or the slope is blind. Cannot see: (1) a retainer slower than
+//     ~1 per 1e5 steps; (2) retention once per batch or GC cycle, independent of
+//     step count (reported as k, gated nowhere); (3) allocations that die young
+//     -- the child lane owns those at <= 0.05 B/op, so a transient 1-in-1000
+//     16 B box (0.016 B/op) passes both lanes. A k that grows with batch
+//     duration reads as per-step growth (fails closed); a spike riding every
+//     even batch masks a retainer up to its size.
 //   * F21 retention: 1e3 x {createRegistry({maxFlushPasses: 8}), the P3 shape
 //     (creation-time CycleError caught, then a new effect in a recycled slot),
 //     destroy()} -> lite-leak tracker.size() === 0 (a cycle's marker is released
@@ -463,12 +481,78 @@ await new Promise((r) => setTimeout(r, 50));
 const qs = qgc.summary();
 const qsGcReport = checkNoGc(qs, { maxMajor: 0, maxPauseMs: 4 });
 qgc.stop();
-const allocQs = measureAllocs(qsStep, { iterations: 20000, batches: 8, warmup: 20000 });
-const allocQsReport = checkAllocs(allocQs, { maxBytesPerCall: 0 });
+// In-process verdict = retention SLOPE. min-over-batches alone reads a per-batch constant
+// k as k / iterations B/op, and k differs between measureAllocs calls, so ONE call per
+// attempt interleaves both step counts: even batches run 1 qsStep per call, odd ones 5.
+// k is shared by both parities and cancels; a per-call retainer grows with the steps.
+// The wrappers are hot (Smi state only); everything else is cold and may allocate.
+const QS_ITER = 20000, QS_BATCHES = 16, QS_WARM = 40000, QS_K = 3;
+// Warm-up = pseudo-batches 0 (even) and 1 (odd); measured batch b has parity b & 1.
+const QS_STEPS = ((QS_WARM + QS_ITER * QS_BATCHES) / QS_ITER / 2) * QS_ITER * 6;   // 1080000
+let qpLeft = 0, qpOdd = 1;
+const qsPairStep = () => {
+  if (qpLeft === 0) { qpLeft = QS_ITER; qpOdd ^= 1; }
+  qpLeft--;
+  qsStep();
+  if (qpOdd === 1) { qsStep(); qsStep(); qsStep(); qsStep(); }
+};
+// Fail closed: an attempt that did not run exactly QS_STEPS steps, end in the reset state,
+// settle, and keep >= 4 batches per parity is unmeasured, never a pass.
+function qsRead(r, n0, endOk) {
+  let lo = null, hi = null, nLo = 0, nHi = 0;
+  for (let b = 0; b < r.batchBytes.length; b++) {
+    const v = r.batchBytes[b];
+    if (v === null) continue;
+    if ((b & 1) === 0) { nLo++; if (lo === null || v < lo) lo = v; }
+    else { nHi++; if (hi === null || v < hi) hi = v; }
+  }
+  const steps = (qsN - n0) & 0x3FFFFFFF;
+  return { r, lo, hi, nLo, nHi, steps, endOk,
+    measured: r.settled && endOk && steps === QS_STEPS && nLo >= 4 && nHi >= 4 && lo !== null && hi !== null };
+}
+const qsAttempts = [];
+let qsPass = null;
+for (let a = 0; a < QS_K && qsPass === null; a++) {
+  qpLeft = 0; qpOdd = 1;
+  const n0 = qsN;
+  const r = measureAllocs(qsPairStep, { iterations: QS_ITER, batches: QS_BATCHES, warmup: QS_WARM });
+  const at = qsRead(r, n0, qpLeft === 0 && qpOdd === 1);
+  qsAttempts.push(at);
+  if (at.measured && at.hi <= at.lo) qsPass = at;
+}
+const qsAllocOk = qsPass !== null;
+// Control with teeth: drives qsPairStep itself (same estimator, one call), retaining one
+// { v } per 1000 qsN steps, at most 1 per call (Smi mark, pre-sized ring: 1080 holds per
+// call; past the ring fails closed). Odd batches hold 100, even 20: Dhi - Dlo >= 1280 B or blind.
+const QS_HOLD_N = 2048;
+const QS_HOLD = new Array(QS_HOLD_N).fill(null);
+let qcMark = 0, qh = 0;
+const qsCtlPairStep = () => {
+  qsPairStep();
+  if (((qsN - qcMark) & 0x3FFFFFFF) >= 1000) { qcMark = (qcMark + 1000) & 0x3FFFFFFF; if (qh < QS_HOLD_N) QS_HOLD[qh] = { v: qh }; qh++; }
+};
+qpLeft = 0; qpOdd = 1; qcMark = qsN;
+const qcN0 = qsN;
+const qsCtl = qsRead(measureAllocs(qsCtlPairStep, { iterations: QS_ITER, batches: QS_BATCHES, warmup: QS_WARM }),
+  qcN0, qpLeft === 0 && qpOdd === 1);
+const qsCtlDelta = qsCtl.measured ? qsCtl.hi - qsCtl.lo : null;
+const qsCtlOk = qsCtlDelta !== null && qsCtlDelta >= 1280 && qh <= QS_HOLD_N;
+QS_HOLD.fill(null);
+// Advisory only (never gates): on a red slope, sample where the qs steps allocate.
+let qsAttr = null;
+if (!qsAllocOk) {
+  qpLeft = 0; qpOdd = 1;
+  qsAttr = measureAllocs(qsPairStep, { iterations: QS_ITER, batches: 4, warmup: 0, attribute: true, topSites: 5 });
+}
 // Blind unless every step ran the scheduler and both bodies (+1: each creation run).
+// Counted after the control and the attribution run: both drive qsStep.
 const qsFired = qsN >= HOT && qsRuns === qsN + 1 && qsPlain === qsN + 1 && qsSched === qsN + 1;
-const qsBpcLabel = allocQs.bytesPerCall === null ? 'unmeasured' : String(Math.max(allocQs.bytesPerCall, 0));
-const qsOk = qsFired && qsGcReport.ok && allocQs.bytesPerCall !== null && allocQsReport.verdict === 'pass' && qsChildOk;
+// Label: the passing attempt, else the last one. A pass has Dhi <= Dlo, so it reads 0.
+const qsShown = qsPass !== null ? qsPass : qsAttempts[qsAttempts.length - 1];
+const qsBpcLabel = qsShown.measured ? String(Math.max(0, (qsShown.hi - qsShown.lo) / (QS_ITER * 4))) : 'unmeasured';
+const qsKLabel = qsShown.lo === null ? 'unmeasured' : String(qsShown.lo);
+const qsCtlLabel = qsCtlDelta === null ? 'unmeasured' : String(qsCtlDelta);
+const qsOk = qsFired && qsGcReport.ok && qsAllocOk && qsCtlOk && qsChildOk;
 qsStop1();
 qsStop2();
 dispose(qS);
@@ -526,6 +610,7 @@ console.log(
   ' watch=' + watchLabel + ' B/op control=' + ctlLabel + ' B/op retention=' + nestAlive + '/' + nestRefs.length + ' res=' + nestResKB.toFixed(1) + 'KB' +
   ' | pin pool=+' + pinPoolDelta + ' major=' + ps.gc.major + ' deadOwner=' + deadOwnerFail + '/1000' +
   ' | qs gc major=' + qs.gc.major + ' minor=' + qs.gc.minor + ' alloc=' + qsBpcLabel + ' B/op child=' + qsChildLabel + ' B/op' +
+  ' k=' + qsKLabel + 'B/batch K=' + qsAttempts.length + ' ctl=' + qsCtlLabel + 'B' +
   ' | f21 size=' + f21Live + '/0 fail=' + f21Fail + '/' + F21_CYCLES +
   ' | ' + (ok ? 'ok' : 'FAIL')
 );
@@ -548,9 +633,22 @@ if (!ok) {
   if (!pinOk) console.error('  pin: threw=' + pinThrew + ' poolDelta=' + pinPoolDelta + ' deadOwnerFail=' + deadOwnerFail +
     ' nodes ' + pinBase.activeNodes + '->' + pinAfter.activeNodes +
     (pinGcReport.ok ? '' : ' gc ' + pinGcReport.violations.map((v) => v.metric + '=' + v.actual).join(',')));
-  if (!qsOk) console.error('  qs: fired=' + qsFired + ' steps=' + qsN + ' runs=' + qsRuns + ' plain=' + qsPlain + ' sched=' + qsSched +
-    ' alloc=' + qsBpcLabel + ' (' + allocQsReport.verdict + ') child=' + qsChildLabel + ' childFired=' + qsChildFired +
-    (qsGcReport.ok ? '' : ' gc ' + qsGcReport.violations.map((v) => v.metric + '=' + v.actual).join(',')));
+  if (!qsOk) {
+    console.error('  qs: fired=' + qsFired + ' steps=' + qsN + ' runs=' + qsRuns + ' plain=' + qsPlain + ' sched=' + qsSched +
+      ' alloc=' + qsBpcLabel + ' child=' + qsChildLabel + ' childFired=' + qsChildFired +
+      (qsGcReport.ok ? '' : ' gc ' + qsGcReport.violations.map((v) => v.metric + '=' + v.actual).join(',')));
+    const show = (at) => 'Dlo=' + at.lo + ' Dhi=' + at.hi + ' (pass iff Dhi <= Dlo) batches ' +
+      at.r.batchBytes.map((v, b) => ((b & 1) === 0 ? 'e' : 'o') + v).join(',') +
+      ' measured=' + at.r.measuredBatches + ' inverted=' + at.r.invertedBatches + ' settled=' + at.r.settled +
+      ' perParity=' + at.nLo + '/' + at.nHi + ' steps=' + at.steps + '/' + QS_STEPS + ' endState=' + at.endOk;
+    for (let a = 0; a < qsAttempts.length; a++) console.error('  qs attempt ' + a + ': ' + show(qsAttempts[a]));
+    console.error('  qs control: delta=' + qsCtlDelta + ' (>= 1280) holds=' + qh + '/' + QS_HOLD_N + ' ' + show(qsCtl));
+    if (qsAttr !== null) {
+      const at = qsAttr.attribution;
+      if (at === null || !at.available) console.error('  qs attribution (advisory): unavailable ' + (at === null ? 'null' : at.reason));
+      else for (const st of at.sites) console.error('  qs attribution (advisory): ' + st.url + ':' + st.line + ' ' + st.selfBytes + ' B');
+    }
+  }
   if (!f21Ok) console.error('  f21 retention: size=' + f21Live + ' fail=' + f21Fail + '/' + F21_CYCLES);
   for (const v of gcReport.violations) console.error('  gc violation ' + v.metric + ' limit=' + v.limit + ' actual=' + v.actual);
   if (allocSetReport.verdict !== 'pass') console.error('  set alloc ' + allocSetReport.verdict + ' bytesPerCall=' + allocSet.bytesPerCall);
