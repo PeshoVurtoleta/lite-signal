@@ -27,6 +27,8 @@ export const SCENARIOS = Object.freeze([
     // NEST
     'saved-cursor-hazard', 'live-cursor-hazard', 'child-first-run-dispose', 'nested-computed-dispose', 'untrack-dispose', 'outer-computed',
     'early-exit-after-dispose', 'lifecycle-callback-dispose', 'lifecycle-dispose-recycle', 'dispose-outer-observer',
+    // WIE (unit 0s; not in the roster until B2)
+    'wie-stale-effect', 'wie-stale-computed', 'wie-prewalk', 'wie-untrack', 'wie-write-before-read',
 ]);
 
 const DEEP_PULL_MIN = 16;
@@ -95,6 +97,7 @@ export class Detectors {
         const sub = this.subscriberCounts();
         if (isAdversarialPair(old, v) && (sub.get(s) || 0) > 0) this.count('adversarial-equality');
         if (!changed) return;
+        if (!topLevel) this.onBodyWrite(s);
         if (topLevel) {
             this.setThisOp.push(s);
             if ((sub.get(s) || 0) >= WIDE_MARK_MIN) this.count('wide-mark');
@@ -108,6 +111,45 @@ export class Detectors {
             if ((sub.get(k) || 0) > 0) continue;
             if (this.obsCone(k, memo).has(s)) this.wsp.set(k, (this.wsp.get(k) || 0) + 1);
         }
+    }
+
+    /* ---- WIE ---------------------------------------------------------------------------------------- */
+
+    /**
+     * A value-changing write of signal s from inside a body. Only a COMPUTED writer counts (the innermost
+     * frame is the writer: exec.write runs before its frame pops). Over the suspended frames below it:
+     *   wie-stale-effect / wie-stale-computed  an effect / computed frame already read s (directly, or through
+     *                        a computed whose observed links reach s): it holds the old value (the #37 class)
+     *   wie-untrack          as stale, and the write actually ran inside W.untrack (the writer frame's wu flag,
+     *                        set by exec around the untracked write), not merely spec.wu === 1
+     *   wie-write-before-read  a frame whose spec reads s directly has NOT read it yet (the control order)
+     *   wie-prewalk          the writer was pulled by a pre-walk (effect flush or computed dependency walk)
+     */
+    onBodyWrite(s) {
+        const x = this.x;
+        const frames = x.frames;
+        const n = frames.length;
+        if (n === 0) return;
+        const top = frames[n - 1];
+        if (top.t !== 'c') return;
+        const spec = x.M.n[top.i].spec;
+        if (spec === null || spec.w !== s) return;
+        if (top.pre !== 0) this.count('wie-prewalk');
+        const memo = new Map();
+        let stale = false;
+        for (let j = n - 2; j >= 0; j--) {
+            const F = frames[j];
+            let read = false;
+            for (const e of F.seen) if (e.r === s || this.obsCone(e.r, memo).has(s)) { read = true; break; }
+            if (read) {
+                stale = true;
+                this.count(F.t === 'e' ? 'wie-stale-effect' : 'wie-stale-computed');
+            } else {
+                const fs = x.M.n[F.i].spec;
+                if (fs !== null && fs.d !== undefined && fs.d.indexOf(s) !== -1) this.count('wie-write-before-read');
+            }
+        }
+        if (stale && top.wu === 1) this.count('wie-untrack');
     }
 
     /** End of a top-level op: diamond-write = some body that ran reads >= 2 nodes whose cone holds a written s. */

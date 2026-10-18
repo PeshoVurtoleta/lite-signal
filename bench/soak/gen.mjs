@@ -11,7 +11,12 @@
  * Generator rules (by-design behaviour is a generator rule, never an oracle exception; header.genRules):
  *   I1   an effect writes only a signal whose rank > the max rank of its transitive read set (acyclic
  *        cascades; an effect never writes what it reads). Each write target has exactly one writer.
- *   I2   computed bodies never write. NEST bodies may dispose (P7-P9 shapes).
+ *   I2   computed bodies never write. NEST bodies may dispose (P7-P9 shapes). Lifted for WIE only (unit 0s,
+ *        D3 narrow v1): a computed WRITER C (spec.w target, optional spec.inc, spec.wu = write under untrack;
+ *        Gen.writer) writes w := f(C's output). W1 rank(w) > the max rank of C's transitive read set (the I1
+ *        rule; exec.mjs D4: a target that is not an earlier signal (forward / self / non-integer / non-signal)
+ *        or is in C's own transitive read set fails closed). W2 one writer per target.
+ *        W3 w is never set at top level and never disposed while its writer is live (role 'target').
  *   G4   no duplicate reads in one body (O5 slack 0).
  *   G5   chain depth <= MAX_DEPTH (200).
  *   G6   GRAPH / BATCH / ERROR computeds read only non-disposable signals. NEST lifts it.
@@ -172,6 +177,19 @@ export class Gen {
 
     /** Allocate a node index without creating it (a child effect created by a body at run time). */
     reserve() { return this.next++; }
+
+    /**
+     * WIE (I2 lifted): a computed WRITER over `spec`. W1: its target is a fresh signal (W2) of rank
+     * specRank(spec) + 1, role 'target' (W3: never set at top level, never disposed). o: { inc, wu }.
+     * Returns [targetOp, writerOp] (callers push them, target first).
+     */
+    writer(spec, o) {
+        const w = this.sig({ role: 'target', rank: this.specRank(spec) + 1, v: 0 });
+        spec.w = w.i;
+        if (o && o.inc !== undefined) spec.inc = o.inc;
+        if (o && o.wu) spec.wu = 1;
+        return [w, this.comp(spec, false)];
+    }
 
     /* ---- spec builders ------------------------------------------------------------------------------ */
 

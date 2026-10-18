@@ -23,6 +23,10 @@
  *   taint         model.kill() taints observers that read a disposed node; a run in progress during a
  *                 disposal is tainted until it ends (taint clears only for a run entirely after it)
  *   at rest       O1e + O4 every op, O5 every op, O1c when the op's chk bit is set and at world end
+ *   wie writer    (WIE, gen.mjs I2 lifted) a computed whose spec carries w writes w := f(its output) through
+ *                 write() after its body returns (spec.wu: under untrack), exactly like an effect writer. D4: a
+ *                 target that is not an earlier signal (forward / self / non-integer / non-signal) or is in its
+ *                 own transitive read set fails closed at creation (unmodelled)
  *   batch         OB inline: an effect that ALREADY ran must not re-run while a batch is open (batchDepth > 0;
  *                 a first run inside a batch is allowed, p2). OB is PERFORMED once per outermost batch whose
  *                 close-flush re-ran >= 1 effect (a witnessed deferral); a batch with nothing to defer is
@@ -32,7 +36,7 @@
  * COLD module.
  */
 
-import { SoakThrow, ERR, evalKind, decodeValue, EQ_BOMB, toNum } from './kinds.mjs';
+import { SoakThrow, ERR, evalKind, decodeValue, EQ_BOMB, toNum, specRefs } from './kinds.mjs';
 import { Model } from './model.mjs';
 import * as O from './oracles.mjs';
 import { Detectors } from './scenarios.mjs';
@@ -251,8 +255,26 @@ class Exec {
 
     createComputed(op) {
         this.M.addComputed(op.i, op.spec);
-        this.D.onCreate(op.i, 'c');
         const i = op.i;
+        // D4 (WIE): a computed writer whose target is not a signal, or sits in the writer's own transitive read
+        // set (static, every branch), is outside the model (W1 broken): fail closed before the engine sees it.
+        // A target index with no node writes nothing, as write() already does -- but only for an integer w < i (an
+        // earlier node the shrinker removed). A forward, self, negative, non-integer or non-numeric target fails
+        // closed here: only an integer 0 <= w < i reaches the next arm.
+        const w = op.spec.w;
+        if (w !== undefined && w !== null && !(Number.isInteger(w) && w >= 0 && w < i)) {
+            this.unmodelled = new Error('exec: unmodelled computed writer: computed#' + i + ' writes #' + w +
+                ', which is not an earlier node (forward, self, negative, non-integer or non-numeric target; W1)');
+            throw this.unmodelled;
+        }
+        if (w !== undefined && w !== null && this.M.n[w] !== undefined) {
+            if (this.M.n[w].t !== 's' || this.readSet(op.spec).has(w)) {
+                this.unmodelled = new Error('exec: unmodelled computed writer: computed#' + i + ' writes #' + w +
+                    (this.M.n[w].t !== 's' ? ', which is not a signal' : ', which is in its own transitive read set (W1)'));
+                throw this.unmodelled;
+            }
+        }
+        this.D.onCreate(i, 'c');
         this.guard(() => { this.H[i] = this.W.computed(() => this.runBody(i)); });
         if (op.pull === 1) this.readCheck(i, false);
     }
@@ -276,6 +298,20 @@ class Exec {
         const esc = this.guard(() => { this.H[i] = this.W.effect(() => { this.runBody(i); }); }, cycle);
         if (esc !== NONE && nd.live) this.M.kill(i);   // a throwing first run disposes it (p3)
         this.D.onEffectCreated(this.batchDepth > 0, nd.runs > before);
+    }
+
+    /** Static transitive read set of a spec over the model's specs (every branch; D4). Cold DFS. */
+    readSet(spec) {
+        const out = new Set();
+        const stack = specRefs(spec);
+        while (stack.length > 0) {
+            const r = stack.pop();
+            if (out.has(r)) continue;
+            out.add(r);
+            const nd = this.M.n[r];
+            if (nd !== undefined && nd.t === 'c' && nd.spec !== null) for (const x of specRefs(nd.spec)) stack.push(x);
+        }
+        return out;
     }
 
     /** Inside a parent body (NEST): an owned child effect whose first run disposes x. */
@@ -311,7 +347,7 @@ class Exec {
         }
     }
 
-    /** A write from inside a body (I1 effect writes, cycle-bomb). Guarded: a nested flush's escape is checked here. */
+    /** A write from inside a body (I1 effect writes, cycle-bomb, WIE computed writers). Guarded: a nested flush's escape is checked here. */
     write(w, v) {
         const nd = this.M.n[w];
         if (nd === undefined || !nd.live) return;
@@ -491,7 +527,7 @@ class Exec {
         }
         const f = {
             i, t: nd.t, prev, reads: [], seen: [], ok: true, inRead: -1, inReadU: false, nested: false,
-            first: nd.runs === 0, taintRun: false, depth: frames.length, pre, hazard: false, hazardAt: -1,
+            first: nd.runs === 0, taintRun: false, depth: frames.length, pre, hazard: false, hazardAt: -1, wu: 0,
         };
         frames.push(f);
         nd.runs++;
@@ -504,6 +540,15 @@ class Exec {
             out = evalKind(nd.spec, this.reader(f, nd), i, ctx);
             if (nd.t === 'e' && nd.spec.w !== undefined && nd.spec.w !== null) {
                 this.write(nd.spec.w, nd.spec.inc !== undefined ? (toNum(out) + nd.spec.inc) | 0 : out);
+            } else if (nd.t === 'c' && nd.spec.w !== undefined && nd.spec.w !== null) {
+                // WIE computed writer: same value rule as the effect writer; wu = the write runs under untrack.
+                // The untrack branch is wrapper coverage: engine-equivalent on the live engine (Signal.js:1095,
+                // markDownstreamInEval writer = observer else owner = this computed either way). f.wu marks it.
+                const wv = nd.spec.inc !== undefined ? (toNum(out) + nd.spec.inc) | 0 : out;
+                if (nd.spec.wu === 1) this.W.untrack(() => {
+                    f.wu = 1; try { this.write(nd.spec.w, wv); } finally { f.wu = 0; }
+                });
+                else this.write(nd.spec.w, wv);
             }
         } catch (e) {
             err = e;

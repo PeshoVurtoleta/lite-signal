@@ -52,6 +52,8 @@ export const PARITY_FILES = Object.freeze([
     // registry and the byte-frozen preb33 control kernel decide which kernel a control run loads (creationAbort)
     'bench/soak/adapters/lite.mjs', 'bench/soak/controls.json',
     'bench/soak/controls/preb33/Signal.js', 'bench/soak/controls/preb33/Watch.js',
+    // unit 0s B1 (burst 64): the WIE lane decides its scripts and coverage (pinned before its roster flip, B2)
+    'bench/soak/lanes/wie.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
