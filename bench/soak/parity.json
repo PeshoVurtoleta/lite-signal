@@ -1,11 +1,11 @@
 {
   "files": {
-    "Signal.js": "091856f343239d5d9038767ce63e9cc807dacb1390a85ec11245d62a7fb93d9b",
+    "Signal.js": "4b30d795c278a579c9e12a3cf03e6b4e5384334efe65a7f16d8f0f201371df2a",
     "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
-    "bench/soak/model.mjs": "6269d8b3f6fa89a5c88027b2807755c2c4d498de6190313b1670e2e3b51e35a7",
+    "bench/soak/model.mjs": "6a2bea8408a82c0b68f7d067b4149e7ff10e8ac1216b380f01b1abbe24c1905b",
     "bench/soak/oracles.mjs": "3447e38b646966037044939f367dd533e8212f6143dc1162bc2321cecd205d6b",
-    "bench/soak/exec.mjs": "dd3b1e633167348913adf774f7b7d998f505c2523be123479f39906b6fceff9c",
+    "bench/soak/exec.mjs": "d52911c6b6364ba5e527830e7190157c0287ab8b7c012ca81b15a1379406fdb7",
     "bench/soak/gen.mjs": "c634d459bb8a585f287be043c9eb42c7b15cfaa249ee7337166420ddf3c19183",
     "bench/soak/scenarios.mjs": "a28f304c05e147b5e1e0848e41d83ad5862d116a645ae9d2f70e4762e1ca2bc7",
     "bench/soak/lanes/index.mjs": "a89ad2bc76b4b7e8d5c80602346b8686f973a9688086b3af9fd1c42cbd4030a6",
@@ -15,8 +15,8 @@
     "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
     "bench/soak/gates.mjs": "098cdb8d61d5b3844521ac4df3a376d8c84973645762170cc4d6af6d0a7f58e5",
     "bench/soak/boundary.mjs": "a9b1b75ca945b31f7454e5243cf1ed5ac1c12a625299c5a34d2413d02373eec7",
-    "bench/soak/divergences.mjs": "df99c3adf247aeb7b5b0290ef72aeed2221aee89cd360f0340cb27efebb938a2",
-    "bench/soak/divergences.json": "285ea957e4a7bef845c2dc56192de0009c01c88e5ee9839f99ee8b0f4f810cb3",
+    "bench/soak/divergences.mjs": "2dc1ec5f5361d57d7cd01cfcb1b2e0814ad4464277506fb4d3b7bc9c62b0f56b",
+    "bench/soak/divergences.json": "0c3120298e61714f8de0e7fcae83ccb3a327e0c11130f03ac9d56c37964846f8",
     "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",
     "bench/soak/main.mjs": "b601419011e792884d95cbef693e5fa2951e611c1765bffd380421693cb43765",
     "bench/soak/replay.mjs": "3e2d635c46440eda14f79afbeab6e8477c93e97e2657e3672939e50b88400171",
@@ -28,6 +28,10 @@
     "bench/soak/wraprules.mjs": "de8293528e6535a628ef18d3ee41848b82a41562a23b2d7bf21871709c124275",
     "bench/soak/nearwrap.mjs": "6cb1f9abbfec577bda84b1e31ad564df73093631358a3f4bd6fdae22067ada0b",
     "bench/soak/kernel.mjs": "3bb9579913398d9c8946eef8785612647fb8838e60917181c54c0c1cfca85e75",
-    "bench/torture/helpers/spin.mjs": "5823cad2d38c2ac9831631f4d774c2ae1ca4a0b5eab78cf06885ce0e1d970c6c"
+    "bench/torture/helpers/spin.mjs": "5823cad2d38c2ac9831631f4d774c2ae1ca4a0b5eab78cf06885ce0e1d970c6c",
+    "bench/soak/adapters/lite.mjs": "1aa463afac307918b424f6eb406ba2d950f763e1943c516def9e40428359db0f",
+    "bench/soak/controls.json": "4d8ab729a6546b5657338f2f9a8d0faba1c6bf5fd98de15baa754e1d9d9bac0e",
+    "bench/soak/controls/preb33/Signal.js": "a5c64df91928e9b71bc519e8be4c77861c0abe590ad845c22e28419a8b03fa73",
+    "bench/soak/controls/preb33/Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80"
   }
 }

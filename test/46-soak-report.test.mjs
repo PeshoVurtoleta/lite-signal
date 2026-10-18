@@ -31,6 +31,8 @@ import { GATE_NAMES } from '../bench/soak/gates.mjs';
 import { ORACLES } from '../bench/soak/oracles.mjs';
 import { GAPS, CHECKS } from '../bench/soak/teeth.mjs';
 import { releaseRefusal } from '../bench/soak/SoakReport.mjs';
+import { failureRecord } from '../bench/soak/main.mjs';   // kernel-free on import (main.mjs header): no Signal.js loads
+import { classify } from '../bench/soak/divergences.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SOAK = join(ROOT, 'bench', 'soak');
@@ -161,8 +163,6 @@ before(async () => {
         gen('scratch', Object.assign({ SOAK_KERNEL: join(TMP, 'kscratch', 'Signal.js'), SOAK_LANES: 'GRAPH' }, SMALL)),
         gen('mustfail', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH', SOAK_MUSTFAIL: 'cov-off:' + COV_OFF_SUPPORTED.GRAPH[0] }, SMALL)),
         gen('smoke', { SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' }, ['--smoke']),
-        // the fixed-entry wiring row: headpatched + one comment line is NO controls.json kernel (includeFixed false)
-        gen('scratcherr', { SOAK_KERNEL: join(TMP, 'kscratch', 'Signal.js'), SOAK_LANES: 'ERROR' }, ['--smoke']),
         gen('fatal', Object.assign({ SOAK_KERNEL: join(TMP, 'kfatal', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
         gen('sigint', Object.assign({ SOAK_KERNEL: join(TMP, 'ksigint', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
     ]);
@@ -196,21 +196,79 @@ test('honest headpatched ERROR stream (DIV-F21/F22 failures, no capped cycle) ->
     assert.ok(summaryOf(S.hperr.recs).totals.failingWorlds > 0, 'the interim kernel still fails ERROR');
     expectConsistent('hperr');
 });
-test('fixed-entry wiring: a NON-control headpatched copy, ERROR smoke -> the F21 BREACH reads known=none, no DIV-F21 record, report consistent', () => {
-    // DIV-F21 is fixedIn A2-F21: main.mjs failureRecord and SoakReport checkCycles classify with includeFixed =
-    // (controls.name !== null), so on a kernel that is not a controls.json pin an F21 world is a regression (known
-    // null) and the report re-derives the same tag. Red on: main forced true, report inverted or forced true,
-    // DIV-F21 fixedIn null.
-    const s = S.scratcherr;
-    assert.equal(s.status, 1, s.stderr.slice(0, 400));
-    assert.equal(s.recs[0].controls.name, null, 'the scratch copy is no controls.json kernel');
-    const breach = s.stderr.split('\n').filter((l) => l.indexOf('soak: BREACH oracle=') === 0);
-    assert.equal(breach.filter((l) => / sig=escape-CycleError known=none /.test(l)).length, 1, breach.join('\n'));
-    const fails = cyclesOf(s.recs).flatMap((c) => c.failures);
-    assert.ok(fails.length > 0);
-    assert.ok(!fails.some((f) => f.known === 'DIV-F21'), 'a failure record carries the fixed DIV-F21');
-    const r = expectRefusal(s.path, 'smoke');
-    assert.equal(r.out[r.out.length - 1], 'soak:report: verdict FAIL (consistent)');
+/* ---- fixed-entry wiring (DIV-F21 fixedIn A2-F21): unit rows, no kernel run (N18.1) ---------------------------------
+ * main.mjs failureRecord and SoakReport checkCycles classify with includeFixed = (controls.name !== null): on a
+ * kernel that is no controls.json pin an F21 world is a regression (known null); on a pre-fix control it reads
+ * DIV-F21; and the report re-derives the same tag. The F21 shape is the DIV-F21 entry of divergences.json: engine
+ * lite, lane ERROR, op seq, step+world scen cycle-error-surfaces, an EARLIER such step (count >= 2), O6
+ * escape-CycleError with the 'Infinite effect loop detected.' detail. Red on: main includeFixed forced true,
+ * SoakReport forced true / forced false / inverted, DIV-F21 fixedIn null. */
+const F21_DETAIL = 'engine error escaped: Error: CycleError: Infinite effect loop detected.';
+const F21_SCEN = 'cycle-error-surfaces';
+function f21Input() {
+    return {
+        r: { failure: { step: 5, op: 'seq', scen: [F21_SCEN], fails: [{ oracle: 'O6', sig: 'escape-CycleError', detail: F21_DETAIL }] }, scen: { [F21_SCEN]: 2 } },
+        ctx: { engine: 'lite', lane: 'ERROR', cycle: 0, world: 3, worldSeed: 1, escape: null },
+    };
+}
+/** hperr (a controls.json kernel) with its last failing world rewritten to the F21 shape; known/tag/failKnown as given. */
+function f21Stream(known, tag, nonControl) {
+    return tamper('hperr', (recs) => {
+        const cyc = cyclesOf(recs).filter((c) => c.failures.length > 0).pop();   // the LAST failing world: the first-world BREACH entries stay as they are
+        const f = cyc.failures[cyc.failures.length - 1];
+        const w = f.worldScenCounts;
+        const fc = [cyc.failureCounts, summaryOf(recs).perLane.ERROR.failureCounts];   // the cycle's and the lane's tally
+        const bump = (k, d) => { for (const o of fc) { o[k] = (o[k] || 0) + d; if (o[k] === 0) delete o[k]; } };
+        bump(f.oracles[0] + ':' + f.sig, -1);   // failureCounts is per (oracle:sig) of each failing world's FIRST fail
+        bump('O6:escape-CycleError', 1);
+        Object.assign(f, {
+            oracles: ['O6'], sigs: ['escape-CycleError'], sig: 'escape-CycleError', op: 'seq', detail: F21_DETAIL, scen: [F21_SCEN],
+            fails: [{ oracle: 'O6', sig: 'escape-CycleError', detail: F21_DETAIL }], escape: null,
+            known, tag, failKnown: [known],
+        });
+        w[F21_SCEN] = 2;
+        summaryOf(recs).breaches.push({ oracle: 'O6', lane: 'ERROR', sig: 'escape-CycleError', known, replay: f.replay, scen: [F21_SCEN], detail: F21_DETAIL });
+        if (f.worldScen.indexOf(F21_SCEN) === -1) f.worldScen.push(F21_SCEN);
+        if (nonControl) {   // a scratch kernel: sha no controls.json pin, so controls.name null (override stays true)
+            const h = recs[0];
+            h.controls.name = null;
+            h.kernel.files[0].sha256 = '0'.repeat(64);
+            h.engine.files = h.kernel.files.map((x) => ({ path: x.path, sha256: x.sha256 }));
+        }
+    });
+}
+test('fixed-entry wiring (unit): failureRecord with no control kernel loaded -> the F21 world reads known null (a regression), not DIV-F21', () => {
+    const { r, ctx } = f21Input();
+    const rec = failureRecord(r, ctx);
+    assert.equal(rec.known, null);
+    assert.equal(rec.tag, null);
+    assert.deepEqual(rec.failKnown, [null]);
+});
+test('fixed-entry wiring (unit): the same F21 record classifies DIV-F21 only with includeFixed true (registry fixedIn A2-F21)', () => {
+    const { r, ctx } = f21Input();
+    const rec = failureRecord(r, ctx);
+    const crec = { engine: 'lite', lane: 'ERROR', step: 5, op: 'seq', fails: rec.fails, scen: [F21_SCEN], worldScen: [F21_SCEN], worldScenCounts: { [F21_SCEN]: 2 } };
+    const on = classify(crec, { includeFixed: true });
+    assert.ok(on !== null, 'the synthetic record is F21-shaped');
+    assert.equal(on.known, 'DIV-F21');
+    assert.equal(on.tag, 'F21');
+    assert.equal(classify(crec, { includeFixed: false }), null);
+    assert.equal(JSON.parse(readFileSync(join(SOAK, 'divergences.json'), 'utf8')).entries.find((e) => e.id === 'DIV-F21').fixedIn, 'A2-F21');
+});
+test('fixed-entry wiring (report): control kernel + F21 record tagged DIV-F21 -> consistent; tagged null -> known-tag INTEGRITY (includeFixed true)', () => {
+    assert.ok(withFailures(S.hperr.recs), 'hperr has failing worlds');
+    const ok = report([f21Stream('DIV-F21', 'F21', false)]);
+    assert.equal(ok.status, 0, JSON.stringify(ok));
+    assert.match(ok.out[ok.out.length - 1], /^soak:report: verdict \S+ \(consistent\)$/);
+    const r = expectIntegrity(f21Stream(null, null, false), 'known-tag');
+    assert.match(r.err[0], /known null re-derives as "DIV-F21"/);
+});
+test('fixed-entry wiring (report): NON-control kernel + F21 record tagged null -> consistent; tagged DIV-F21 -> known-tag INTEGRITY (includeFixed false)', () => {
+    const ok = report([f21Stream(null, null, true)]);
+    assert.equal(ok.err.filter((l) => l.indexOf('INTEGRITY') !== -1).length, 0, JSON.stringify(ok));
+    assert.match(ok.out[ok.out.length - 1], /^soak:report: verdict \S+ \(consistent\)$/);
+    const r = expectIntegrity(f21Stream('DIV-F21', 'F21', true), 'known-tag');
+    assert.match(r.err[0], /known "DIV-F21" re-derives as null/);
 });
 test('honest FATAL stream (scratch kernel, uncaught throw armed mid-cycle) -> consistent, then NOT A RELEASE SOAK -- overridden-kernel', () => {
     const recs = S.fatal.recs;

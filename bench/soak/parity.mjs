@@ -48,6 +48,10 @@ export const PARITY_FILES = Object.freeze([
     // wrap verdict; nearwrap.mjs and kernel.mjs decide which kernel a run loads; spin.mjs is the W1 / W5 drive
     'bench/soak/wrap.mjs', 'bench/soak/wrap-repr.mjs', 'bench/soak/wraprules.mjs', 'bench/soak/nearwrap.mjs',
     'bench/soak/kernel.mjs', 'bench/torture/helpers/spin.mjs',
+    // 1.6.0 DELTA 4b B4 (burst 54, maintainer ruling): the adapter maps the model onto the engine; the control
+    // registry and the byte-frozen preb33 control kernel decide which kernel a control run loads (creationAbort)
+    'bench/soak/adapters/lite.mjs', 'bench/soak/controls.json',
+    'bench/soak/controls/preb33/Signal.js', 'bench/soak/controls/preb33/Watch.js',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

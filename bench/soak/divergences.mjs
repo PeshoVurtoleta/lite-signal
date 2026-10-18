@@ -21,6 +21,17 @@
  * opts.registry      optional registry object to classify against instead of divergences.json (tests, and an
  *                    engine rung's dv-proposed.json before it is merged). It is validated first; invalid throws.
  *
+ * A shape holds when its pair matches, its anchored detail regex matches, and its optional clauses hold:
+ *   with          a co-fail of the same step has one of these pairs
+ *   scen          the step scen carries every one (all-of)
+ *   worldScen     the world scen carries every one (all-of; a SHAPE-level narrowing, so one entry's shapes may
+ *                 differ: burst 53 DIV-F6 widening, PLAN-F-b33-1 N19.3)
+ *   notWorldScen  the world scen carries NONE of these (the negative clause; e.g. DIV-F6's standalone shapes
+ *                 exclude revert-after-mid-read so a DIV-F5 world never also reads DIV-F6)
+ * worldScen and notWorldScen, when present, must each be a non-empty duplicate-free array of known scenarios; a shape whose
+ * worldScen and notWorldScen overlap, or whose notWorldScen names one of its entry's worldScen, can never hold
+ * and makes the registry invalid (fail closed).
+ *
  * Result: null unless EVERY fail is explained (fail closed: one unexplained fail makes the world unknown).
  * known = the explaining entry ids in registry order joined by '+'; tag = their findings joined by '+'
  * (e.g. 'F6+F22'). A wrong container TYPE throws TypeError; an unknown value just does not match.
@@ -54,7 +65,7 @@ export const ATTRIBUTIONS = Object.freeze(['batch-token-replaced']);
 
 const ENTRY_KEYS = Object.freeze(['id', 'kind', 'finding', 'since', 'fixedIn', 'fixBy', 'decision', 'engines', 'lanes', 'oracles', 'sigs',
     'ops', 'scen', 'worldScen', 'priorScen', 'shapes', 'attribution', 'pending', 'conformanceCases', 'expectedThrow', 'description']);
-const SHAPE_KEYS = Object.freeze(['pair', 'detail', 'with', 'scen']);
+const SHAPE_KEYS = Object.freeze(['pair', 'detail', 'with', 'scen', 'worldScen', 'notWorldScen']);
 const TOP_KEYS = Object.freeze(['schema', 'about', 'allowances', 'entries']);
 const ALLOW_KEYS = Object.freeze(['genRules', 'structural', 'oracle']);
 
@@ -196,6 +207,16 @@ export function validate(reg, vocab) {
                 }
             }
             if (own(sh, 'scen') && (!isStrArr(sh.scen) || sh.scen.length === 0 || sh.scen.some((x) => V.scenarios.indexOf(x) === -1))) out.push(sw + ': scen must be known scenarios');
+            for (const k of ['worldScen', 'notWorldScen']) {
+                if (!own(sh, k)) continue;
+                const a = sh[k];
+                if (!isStrArr(a) || a.length === 0 || a.some((x) => V.scenarios.indexOf(x) === -1)) out.push(sw + ': ' + k + ' must be known scenarios');
+                else if (new Set(a).size !== a.length) out.push(sw + ': ' + k + ' has duplicates');
+            }
+            if (isStrArr(sh.notWorldScen)) for (const x of sh.notWorldScen) {
+                if (isStrArr(sh.worldScen) && sh.worldScen.indexOf(x) !== -1) out.push(sw + ': ' + x + ' is in both worldScen and notWorldScen (never holds)');
+                if (isStrArr(e.worldScen) && e.worldScen.indexOf(x) !== -1) out.push(sw + ': notWorldScen ' + x + ' is in the entry worldScen (never holds)');
+            }
         }
         for (const p of pairs) if (!covered.has(p)) out.push(w + ': pair ' + p + ' has no shape (broad matcher)');
     }
@@ -307,6 +328,8 @@ function shapeHolds(rec, f, sh) {
     if (sh.pair !== f.oracle + ':' + f.sig) return false;
     if (!sh.re.test(f.detail)) return false;
     if (sh.scen !== undefined) for (const s of sh.scen) if (rec.scen.indexOf(s) === -1) return false;
+    if (sh.worldScen !== undefined) for (const s of sh.worldScen) if (rec.worldScen.indexOf(s) === -1) return false;
+    if (sh.notWorldScen !== undefined) for (const s of sh.notWorldScen) if (rec.worldScen.indexOf(s) !== -1) return false;
     if (sh.with !== undefined) {
         let ok = false;
         for (const p of sh.with) for (const x of rec.fails) if (x !== f && x.oracle + ':' + x.sig === p) ok = true;
@@ -391,7 +414,7 @@ function compileShapes(reg) {
         m.set(e.id, e.shapes.map((sh) => {
             const c = compileDetail(sh.detail);
             if (c.error !== undefined) throw new Error('divergences: ' + e.id + ' ' + sh.pair + ': ' + c.error);   // validate ran first
-            return { pair: sh.pair, re: c.re, with: sh.with, scen: sh.scen };
+            return { pair: sh.pair, re: c.re, with: sh.with, scen: sh.scen, worldScen: sh.worldScen, notWorldScen: sh.notWorldScen };
         }));
     }
     return m;

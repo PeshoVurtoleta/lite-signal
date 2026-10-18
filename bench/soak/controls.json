@@ -24,6 +24,18 @@
       "role": "L-REV-AUDIT (must FAIL NEST, and W5 from S2) and L-P-INTERIM (clean kernel for GRAPH, BATCH and ERROR only).",
       "recipe": "git show ec36ab833287456d14be6a79bf1ec5b14e5ec192:Signal.js > Signal.js; patch -p1 < audit/2026-10-07/lite-signal-fixes.patch (sha256 23559dbe77df0703667c68e9ab70f133093bbcddaf00ab535b83316ede09be88); git show ec36ab833287456d14be6a79bf1ec5b14e5ec192:Watch.js > Watch.js. Frozen in-repo because /audit/ is git-ignored and CI cannot rebuild it.",
       "fixture": "byte-frozen; never edited. ASCII-only as of 2026-10-10 (0 non-ASCII bytes in both files)."
+    },
+    {
+      "name": "preb33",
+      "dir": "bench/soak/controls/preb33",
+      "version": "1.6.0-dev@7c65afd",
+      "sha256": {
+        "Signal.js": "a5c64df91928e9b71bc519e8be4c77861c0abe590ad845c22e28419a8b03fa73",
+        "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80"
+      },
+      "role": "R2-M1 control (DELTA 4b-v2 T4): the last kernel before the F-b33-1 fix, so a write-cycle creation does NOT abort and the bomb CycleError surfaces at the cyc:1 set (exec creationAbort false). post-F21 (carries A2-F21); a DIV-F21 label here is a FAIL.",
+      "recipe": "git show 7c65afd084887b79ebe0293abb8a5f00a66dfa9c:Signal.js > Signal.js; git show 7c65afd084887b79ebe0293abb8a5f00a66dfa9c:Watch.js > Watch.js (byte-identical to .handoff/frozen/head-7c65afd/). Frozen in-repo so CI needs no history.",
+      "fixture": "byte-frozen; never edited. ASCII-only as of 2026-10-18 (0 non-ASCII bytes in both files)."
     }
   ],
   "notes": [

@@ -486,17 +486,16 @@ test('teeth j: the wrap control specs are pinned (MD4: W5 evalCount at bop>=15; 
             'gate=wrap check=W3 counter=gen', 'gate=wrap check=W4 counter=nodeSeq']]);
 });
 
-test('teeth k: P-INTERIM-ERROR-clean (A2-F21) is pinned: headpatched + the qskip2 hunk, ERROR at the control budget, explained by DIV-F22 only, short battery', () => {
+test('teeth k: P-INTERIM-ERROR-clean is pinned: preb33 (no patches), ERROR at the control budget, explained by DIV-F5 / DIV-F6 / DIV-F22, short battery', () => {
     const c = CONTROLS.find((x) => x.name === 'P-INTERIM-ERROR-clean');
     assert.ok(c, 'the GAP landed as a _mustfail control');
     assert.ok(SHORT_RE.test(c.name) && !LONG_RE.test(c.name), 'short battery');
     const hp = CONTROLS.find((x) => x.name === 'L-P-INTERIM-ERROR');
     assert.deepEqual([c.run, c.base, c.env, c.argv, c.expect.exit, c.expect.kind, c.expect.specs, c.expect.lines, c.expect.known],
-        ['main', 'headpatched', hp.env, [], 1, 'explained', [], [], ['DIV-F22']]);
+        ['main', 'preb33', hp.env, [], 1, 'explained', [], [], ['DIV-F5', 'DIV-F6', 'DIV-F22']]);
     assert.deepEqual(hp.expect.known, ['DIV-F21', 'DIV-F22'], 'the unpatched pre-fix control still tolerates F21 (includeFixed)');
-    assert.equal(c.patches.length, 1);
+    assert.equal(c.patches.length, 0, 'preb33 carries the A2-F21 hunk natively: no patch');
     const src = buildKernel(c).src;
-    assert.equal(src.split('if ((node.flags & FLAG_QUEUED) !== 0) {   // MUSTFAIL P-INTERIM-ERROR-clean').length, 2, 'the QUEUED test lands once');
     assert.equal(src.indexOf('if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n                        }\n'), -1, 'the pre-fix flush run is gone');
     // the patched flush loop must BE the shipped A2-F21 fix, not only match QSKIP2's own strings: the whole
     // flushEffects `for (let i = 0; i < toRun; i++)` body of the live Signal.js and of the built kernel, comments and

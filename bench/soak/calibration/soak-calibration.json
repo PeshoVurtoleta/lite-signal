@@ -133,49 +133,58 @@
   }
  },
  "provenance": {
-  "date": "2026-10-13T03:11:36.149Z",
-  "gitHead": "13cac976c13768ab885e4112215a276e1d2025b4",
+  "date": "2026-10-17T23:39:02.725Z",
+  "gitHead": "87a9e92afe4fd1e7c2edc274567c5a5778198ffb",
   "gitDirty": [
-   "M bench/soak/SoakReport.mjs",
+   "M Signal.js",
    " M bench/soak/_mustfail.mjs",
-   " M bench/soak/calibration/calibrate.mjs",
-   " M bench/soak/lanes/batch.mjs",
-   " M bench/soak/lanes/error.mjs",
-   " M bench/soak/teeth.mjs",
-   " M test/41-soak-config.test.mjs",
+   " M bench/soak/adapters/lite.mjs",
+   " M bench/soak/controls.json",
+   " M bench/soak/divergences.json",
+   " M bench/soak/divergences.mjs",
+   " M bench/soak/exec.mjs",
+   " M bench/soak/model.mjs",
+   " M bench/soak/parity.json",
+   " M bench/soak/parity.mjs",
    " M test/43-soak-model.test.mjs",
+   " M test/44-soak-divergences.test.mjs",
+   " M test/45-soak-teeth.test.mjs",
+   " M test/46-soak-report.test.mjs",
    "?? BRIEF.md",
-   "?? bench/bench-runs/"
+   "?? bench/bench-runs/",
+   "?? bench/soak/controls/preb33/",
+   "?? test/57-soak-creation-abort.test.mjs"
   ],
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   2.61,
-   2.44,
-   2.35
+   2.67,
+   2.63,
+   2.65
   ],
   "loadavgAfterTimed": [
-   2.55,
-   2.64,
-   2.49
+   3.53,
+   2.71,
+   2.64
   ],
   "loadavgAfter": [
-   6.79,
-   4.71,
-   3.47
+   9.3,
+   5.62,
+   3.93
   ],
   "busyNodeBefore": [
-   "78818 0.0 node"
+   "26332 0.0 /opt/homebrew/bin/node",
+   "56845 9.9 node"
   ],
-  "seconds": 734,
+  "seconds": 737,
   "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "c634d459bb8a585f287be043c9eb42c7b15cfaa249ee7337166420ddf3c19183",
-   "bench/soak/exec.mjs": "dd3b1e633167348913adf774f7b7d998f505c2523be123479f39906b6fceff9c",
+   "bench/soak/exec.mjs": "d52911c6b6364ba5e527830e7190157c0287ab8b7c012ca81b15a1379406fdb7",
    "bench/soak/oracles.mjs": "3447e38b646966037044939f367dd533e8212f6143dc1162bc2321cecd205d6b",
-   "bench/soak/model.mjs": "6269d8b3f6fa89a5c88027b2807755c2c4d498de6190313b1670e2e3b51e35a7",
+   "bench/soak/model.mjs": "6a2bea8408a82c0b68f7d067b4149e7ff10e8ac1216b380f01b1abbe24c1905b",
    "bench/soak/scenarios.mjs": "a28f304c05e147b5e1e0848e41d83ad5862d116a645ae9d2f70e4762e1ca2bc7",
    "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",
    "bench/soak/lanes/index.mjs": "a89ad2bc76b4b7e8d5c80602346b8686f973a9688086b3af9fd1c42cbd4030a6",
@@ -183,7 +192,7 @@
    "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
    "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
-   "bench/soak/adapters/lite.mjs": "22c0a4b348792e37408fbde451285ebef21726a293d54c32c710a401e1733158",
+   "bench/soak/adapters/lite.mjs": "1aa463afac307918b424f6eb406ba2d950f763e1943c516def9e40428359db0f",
    "bench/soak/adapters/contract.mjs": "7cdd3c5d985f22b6ec91f8d6acb42bd83bdd790fb197f53f163ad3a77a732bb3",
    "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
    "bench/torture/helpers/index.mjs": "0f58faf5f553716bf5059cdfeae7fe887ea07fe3e853d8cba0e75106e54cb119"
@@ -828,75 +837,75 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      13456,
-      13391,
-      13016,
-      13695,
-      13050,
-      12943,
-      13072,
-      13344,
-      13255,
-      12708,
-      13459
+      13730,
+      14016,
+      13778,
+      14037,
+      13394,
+      13220,
+      13707,
+      13578,
+      13772,
+      13567,
+      13593
      ],
-     "min": 12708,
-     "median": 13255,
-     "max": 13695
+     "min": 13220,
+     "median": 13707,
+     "max": 14037
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      48041,
-      46050,
-      49232,
-      49244,
-      49176,
-      49234,
-      50033,
-      49789,
-      49696,
-      49402,
-      48452
+      47675,
+      48379,
+      48893,
+      47526,
+      47566,
+      47402,
+      44901,
+      45523,
+      46894,
+      46914,
+      46934
      ],
-     "min": 46050,
-     "median": 49234,
-     "max": 50033
+     "min": 44901,
+     "median": 47402,
+     "max": 48893
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      46305,
-      47306,
-      46856,
-      49115,
-      50334,
-      49622,
-      49211,
-      50918,
-      49151,
-      48833,
-      48671
+      44946,
+      45761,
+      46653,
+      46497,
+      47549,
+      47180,
+      46765,
+      47784,
+      46477,
+      47669,
+      46814
      ],
-     "min": 46305,
-     "median": 49115,
-     "max": 50918
+     "min": 44946,
+     "median": 46765,
+     "max": 47784
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      30452,
-      33499,
-      35252,
-      34983,
-      33420,
-      36214,
-      35910,
-      34787,
-      35013,
-      35012,
-      35448
+      32738,
+      35761,
+      35704,
+      35930,
+      35454,
+      35892,
+      35386,
+      35646,
+      35740,
+      35438,
+      35607
      ],
-     "min": 30452,
-     "median": 35012,
-     "max": 36214
+     "min": 32738,
+     "median": 35646,
+     "max": 35930
     }
    }
   },
@@ -1300,75 +1309,75 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      12944,
-      13769,
-      13752,
-      14055,
-      13193,
-      13196,
-      13268,
-      13222,
-      12646,
-      12786,
-      13208
+      13399,
+      13578,
+      13803,
+      14103,
+      13492,
+      13450,
+      13945,
+      13843,
+      13790,
+      13254,
+      13435
      ],
-     "min": 12646,
-     "median": 13208,
-     "max": 14055
+     "min": 13254,
+     "median": 13578,
+     "max": 14103
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      20060,
-      20034,
-      20557,
-      20506,
-      20430,
-      20539,
-      20545,
-      20581,
-      20190,
-      20743,
-      20484
+      19541,
+      19672,
+      19593,
+      19510,
+      19320,
+      19284,
+      18882,
+      19054,
+      19029,
+      19147,
+      19035
      ],
-     "min": 20034,
-     "median": 20506,
-     "max": 20743
+     "min": 18882,
+     "median": 19284,
+     "max": 19672
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      47732,
-      65515,
-      66897,
-      65984,
-      66743,
-      67534,
-      67631,
-      67483,
-      67080,
-      66942,
-      66563
+      46386,
+      61960,
+      64063,
+      64271,
+      65020,
+      64045,
+      63484,
+      63074,
+      63580,
+      63571,
+      64170
      ],
-     "min": 47732,
-     "median": 66897,
-     "max": 67631
+     "min": 46386,
+     "median": 63580,
+     "max": 65020
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      31981,
-      35009,
-      34634,
-      34906,
-      34788,
-      34550,
-      34984,
-      35311,
-      35138,
-      35373,
-      34675
+      30853,
+      33592,
+      33833,
+      33819,
+      33535,
+      33886,
+      33678,
+      33297,
+      33712,
+      32986,
+      33309
      ],
-     "min": 31981,
-     "median": 34906,
-     "max": 35373
+     "min": 30853,
+     "median": 33592,
+     "max": 33886
     }
    }
   }

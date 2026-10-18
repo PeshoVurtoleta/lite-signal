@@ -82,7 +82,7 @@ const REC = {
         worldScen: ['adversarial-equality', 'cycle-error-surfaces', 'dep-set-flip', 'diamond-write', 'equality-cutoff', 'multi-write-same-signal',
             'recovery-after-throw', 'second-invalidation', 'throw-dep-effect-prewalk', 'throw-in-batch', 'throwing-equals'],
     },
-    // rev152 ERROR 0x5a22a78c@32 and 0x92c29d17@40: fixed by headpatched, root cause unproven -> unclassified
+    // rev152 ERROR 0x5a22a78c@32 and 0x92c29d17@40: fixed by headpatched; root cause proven in b53 (N19.2) -> DIV-F6 since N19.3
     O4solo: {
         engine: 'lite', lane: 'ERROR', step: 32, op: 'set',
         fails: [{ oracle: 'O4', sig: 'effect-dead', detail: 'effect#23 saw [#15=-0,#21=ERR(computed:18)] model [#15=-0,#21=undefined] (ran 0 times this op)' }],
@@ -229,8 +229,7 @@ test('DIV-F6: escape-computed (+ its O4) -> DIV-F6; near-misses -> null', () => 
     const tok = rec('F6'); tok.fails[0].detail = 'unpredicted escape batch:76';
     assert.equal(classify(tok), null);
     // O4 effect-dead is matched only next to the F6 escape
-    assert.equal(classify(rec('O4solo')), null);
-    assert.equal(classify(rec('CEMsolo')), null);
+    // (b53 N19.3: O4solo, the standalone O4 with ERR(computed) on the engine side, is now DIV-F6; see the b53 rows below)
 });
 
 test('DIV-F5: revert-after-mid-read worlds on BATCH and ERROR; near-misses -> null', () => {
@@ -566,11 +565,136 @@ test('QA boundary classify: empty / null / undefined inputs throw; a repeated ca
 });
 
 test('QA teeth DIV-F6 `with`: the F6-shaped O4 effect-dead alone (no O6 escape-computed in the step) classifies null', () => {
-    // O4solo's model carries no ERR(computed), so its detail regex rejects it before `with` is consulted.
+    // (b53: O4solo is now DIV-F6 through the engine-side ERR shape; this record has the ERR on the MODEL side.)
     // This record keeps the real F6 O4 detail (model ERR(computed:13)) and drops only the escape-computed fail.
     const solo = rec('F6');
     solo.fails = solo.fails.filter((f) => f.oracle === 'O4');
     assert.equal(solo.fails.length, 1);
     assert.equal(classify(solo), null, 'O4 effect-dead was explained without its F6 escape');
     assert.equal(known(rec('F6')), 'DIV-F6', 'positive control');
+});
+
+// ---- 8. b53 N19.3: DIV-F6 widened to the pre-walk-throw stale-cache shapes -----------------------------
+// REAL records, preb33 replays of ERROR 0x5a22a78c (cycle 0) and ERROR 0x1b56bf6a (cycle 4), embedded literally
+// (replay-ERROR_*_0x*-preb33.jsonl, key `failure`); records (c) 0x4d02a6e8 and (d) 0x84b7e95f come from
+// c-replay-ERROR_4_0x4d02a6e8-preb33.jsonl and c-replay-ERROR_7_0x84b7e95f-preb33.jsonl (same format). Expected values come from the ruling (PLAN N19.3), not from a run.
+const B53 = {
+    // head (a): standalone O4 effect-dead, the stale ERR(computed) on the engine ("saw") side, no O6
+    a: {
+        engine: 'lite', lane: 'ERROR', step: 32, op: 'set',
+        fails: [{ oracle: 'O4', sig: 'effect-dead', detail: 'effect#23 saw [#15=-0,#21=ERR(computed:18)] model [#15=-0,#21=undefined] (ran 0 times this op)' }],
+        scen: ['recovery-after-throw', 'equality-cutoff'],
+        worldScen: ['diamond-write', 'throw-dep-computed-prewalk', 'dep-set-flip', 'recovery-after-throw', 'equality-cutoff'],
+        worldScenCounts: { 'diamond-write': 1, 'throw-dep-computed-prewalk': 1, 'dep-set-flip': 3, 'recovery-after-throw': 1, 'equality-cutoff': 1 },
+    },
+    // head (c) ERROR 0x4d02a6e8@37 (cached-rethrow site, no throw-dep-computed-prewalk tag): standalone O4 effect-dead
+    c: {
+        engine: 'lite', lane: 'ERROR', step: 37, op: 'set',
+        fails: [{ oracle: 'O4', sig: 'effect-dead', detail: 'effect#22 saw [#16=14,#17=14,#18=ERR(computed:13)] model [#16=14,#17=14,#18=14] (ran 0 times this op)' }],
+        scen: ['recovery-after-throw', 'dep-set-flip', 'equality-cutoff'],
+        worldScen: ['diamond-write', 'throwing-equals', 'equality-cutoff', 'dep-set-flip', 'second-invalidation', 'recovery-after-throw'],
+        worldScenCounts: { 'diamond-write': 1, 'throwing-equals': 1, 'equality-cutoff': 3, 'dep-set-flip': 7, 'second-invalidation': 1, 'recovery-after-throw': 4 },
+    },
+    // head (d) ERROR 0x84b7e95f@63: standalone O1c computed-err-mismatch, engine=ERR(computed)
+    d: {
+        engine: 'lite', lane: 'ERROR', step: 63, op: 'batch',
+        fails: [{ oracle: 'O1c', sig: 'computed-err-mismatch', detail: 'node#31 (sum) engine=ERR(computed:13) model=208570' }],
+        scen: ['recovery-after-throw', 'second-invalidation'],
+        worldScen: ['multi-write-same-signal', 'dep-set-flip', 'second-invalidation', 'throw-in-batch', 'recovery-after-throw'],
+        worldScenCounts: { 'multi-write-same-signal': 1, 'dep-set-flip': 11, 'second-invalidation': 16, 'throw-in-batch': 3, 'recovery-after-throw': 4 },
+        escape: [],
+    },
+    // head (b): O2 glitch + O1c computed-err-mismatch, engine=ERR(computed:N)
+    b: {
+        engine: 'lite', lane: 'ERROR', step: 119, op: 'set',
+        fails: [
+            { oracle: 'O2', sig: 'glitch', detail: 'body#42 read #41 engine=ERR(computed:13) model=7507424' },
+            { oracle: 'O1c', sig: 'computed-err-mismatch', detail: 'node#42 (sum) engine=ERR(computed:13) model=ERR(computed:42)' },
+        ],
+        scen: ['recovery-after-throw', 'second-invalidation'],
+        worldScen: ['diamond-write', 'second-invalidation', 'throwing-equals', 'dep-set-flip', 'equality-cutoff', 'multi-write-same-signal',
+            'throw-dep-computed-prewalk', 'cycle-error-surfaces', 'throw-in-batch', 'recovery-after-throw'],
+        worldScenCounts: { 'diamond-write': 13, 'second-invalidation': 43, 'throwing-equals': 5, 'dep-set-flip': 13, 'equality-cutoff': 6,
+            'multi-write-same-signal': 1, 'throw-dep-computed-prewalk': 5, 'cycle-error-surfaces': 1, 'throw-in-batch': 5, 'recovery-after-throw': 12 },
+    },
+};
+const b53 = (k, mut) => { const r = clone(B53[k]); if (mut) mut(r); return r; };
+const dropWorld = (r, name) => { r.worldScen = without(r.worldScen, name); delete r.worldScenCounts[name]; return r; };
+const addWorld = (r, name) => { r.worldScen.push(name); r.worldScenCounts[name] = 1; return r; };
+const notF6 = (r) => { const c = classify(r); return c === null || !c.known.includes('DIV-F6'); };
+
+test('b53 A1: head (a) -- standalone O4 effect-dead with the stale ERR(computed) on the engine side -> DIV-F6', () => {
+    const c = classify(b53('a'));
+    assert.notEqual(c, null);
+    assert.equal(c.known, 'DIV-F6');
+    assert.deepEqual(c.perFail, [['DIV-F6']]);
+    assert.equal(known(rec('O4solo')), 'DIV-F6', 'the older captured 0x5a22a78c record (same shape) agrees');
+});
+
+test('b53 A2: head (b) -- O2 glitch + O1c computed-err-mismatch with engine=ERR(computed) -> every line DIV-F6', () => {
+    const c = classify(b53('b'));
+    assert.notEqual(c, null);
+    assert.equal(c.known, 'DIV-F6');
+    assert.deepEqual(c.perFail, [['DIV-F6'], ['DIV-F6']]);
+});
+
+test('b53 A3: head (b) in a revert-after-mid-read world is NOT DIV-F6 (the F5 shapes stay F5 or unknown)', () => {
+    assert.ok(notF6(b53('b', (r) => addWorld(r, 'revert-after-mid-read'))));
+    assert.ok(notF6(b53('a', (r) => addWorld(r, 'revert-after-mid-read'))));
+    assert.equal(known(b53('b'), undefined), 'DIV-F6', 'positive control: the unmodified record');
+});
+
+test('b53 A4 (N19.6): dropping throw-dep-computed-prewalk from the world stays DIV-F6; dropping recovery-after-throw is NOT DIV-F6', () => {
+    assert.equal(known(b53('a', (r) => dropWorld(r, 'throw-dep-computed-prewalk'))), 'DIV-F6');
+    assert.ok(notF6(b53('a', (r) => dropWorld(r, 'recovery-after-throw'))));
+    assert.equal(known(b53('b', (r) => dropWorld(r, 'throw-dep-computed-prewalk'))), 'DIV-F6');
+    assert.ok(notF6(b53('b', (r) => dropWorld(r, 'recovery-after-throw'))));
+    assert.equal(known(b53('a')), 'DIV-F6', 'positive control');
+});
+
+test('b53 A5: an O4 effect-dead with ERR(computed) on the MODEL side only, standalone, is NOT DIV-F6 (pre-b53 behaviour)', () => {
+    const r = b53('a');
+    r.fails = [{ oracle: 'O4', sig: 'effect-dead', detail: 'effect#26 saw [#21=8346155] model [#21=ERR(computed:13)] (ran 0 times this op)' }];
+    assert.equal(classify(r), null);
+});
+
+test('b53 A6: DIV-F5-shaped records still classify DIV-F5 (including the ERR(computed) F5err with the prewalk scenarios present)', () => {
+    assert.equal(known(rec('F5')), 'DIV-F5');
+    assert.equal(known(rec('F5later')), 'DIV-F5');
+    assert.equal(known(rec('F5err')), 'DIV-F5');
+    assert.equal(known(rec('F5err')) === 'DIV-F6', false);
+});
+
+test('b53 near-miss: head (a) / (b) on another lane classify null', () => {
+    assert.equal(classify(b53('a', (r) => { r.lane = 'BATCH'; })), null);
+    assert.equal(classify(b53('b', (r) => { r.lane = 'NEST'; })), null);
+});
+
+test('b53 N19.6: heads (c) O4 and (d) O1c computed-err-mismatch (no throw-dep-computed-prewalk tag) -> DIV-F6; narrowing holds', () => {
+    assert.equal(known(b53('c')), 'DIV-F6');
+    assert.equal(known(b53('d')), 'DIV-F6');
+    assert.equal(known(rec('CEMsolo')), 'DIV-F6', 'the older captured standalone O1c (recovery-after-throw world, engine-side ERR)');
+    for (const k of ['c', 'd']) {
+        assert.ok(notF6(b53(k, (r) => dropWorld(r, 'recovery-after-throw'))), k + ' without recovery-after-throw');
+        assert.ok(notF6(b53(k, (r) => addWorld(r, 'revert-after-mid-read'))), k + ' with revert-after-mid-read');
+    }
+    // a standalone O1c computed-err-mismatch with ERR on the MODEL side only is not the stale cache
+    const m = b53('d'); m.fails[0].detail = 'node#31 (sum) engine=208570 model=ERR(computed:13)';
+    assert.equal(classify(m), null);
+});
+
+
+test('b53 validate: shape worldScen / notWorldScen fail closed; all-of / none-of hold', () => {
+    const F6 = (r) => r.entries.find((e) => e.id === 'DIV-F6');
+    const v = (fn) => { const r = fresh(); fn(F6(r).shapes[2], F6(r)); return validate(r); };
+    for (const k of ['worldScen', 'notWorldScen']) {
+        for (const bad of ['recovery-after-throw', [], ['no-such-scen'], null]) assert.ok(has(v((s) => { s[k] = bad; }), new RegExp(k + ' must be known scenarios')), k + ' ' + JSON.stringify(bad));
+        assert.ok(has(v((s) => { s[k] = ['equality-cutoff', 'equality-cutoff']; }), new RegExp(k + ' has duplicates')));
+    }
+    assert.ok(has(v((s) => { s.notWorldScen = ['recovery-after-throw']; }), /in both worldScen and notWorldScen/));
+    assert.ok(has(v((s, e) => { e.worldScen = ['revert-after-mid-read']; }), /is in the entry worldScen/));
+    const all = fresh(); for (const s of F6(all).shapes) if (s.worldScen) s.worldScen = ['recovery-after-throw', 'equality-cutoff'];
+    assert.equal(known(b53('c'), { registry: all }), 'DIV-F6'); assert.equal(classify(b53('d'), { registry: all }), null);
+    const none = fresh(); for (const s of F6(none).shapes) if (s.notWorldScen) s.notWorldScen = ['revert-after-mid-read', 'throwing-equals'];
+    assert.equal(known(b53('d'), { registry: none }), 'DIV-F6'); assert.equal(classify(b53('c'), { registry: none }), null);
 });

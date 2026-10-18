@@ -1099,8 +1099,9 @@ export function createRegistry(config) {
             // twice: O(V+E), no allocation. A shadow mark can outlive the walk, harmlessly:
             // startNode is a signal (never a link target, never pushed), a push always
             // overwrites nextMark, the re-push test only fires on a node stamped in this
-            // walk, disposeNode clears nextMark, and the node already reaches startNode
-            // through its own source links (no extra retention).
+            // walk (modulo the 2^32 markEpoch wrap: a stale match costs one harmless extra
+            // re-walk), and disposeNode clears nextMark. No extra retention: nodePool owns
+            // every node for the registry's life, and destroy() nulls nextMark.
             n.nextMark = nc ? startNode : null;
             if (!nc && (n.flags & FLAG_COMPUTING) !== 0) {
                 nc = true;

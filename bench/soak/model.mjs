@@ -180,6 +180,47 @@ export class Model {
     }
 
     /**
+     * Write cycles (G7, O6 (iii); DELTA 4b-v2 T2). A write edge s -> t is a LIVE effect whose spec.d holds
+     * signal s and whose spec.w is t, with a numeric non-zero spec.inc (a writer with no inc, e.g. the GRAPH
+     * writers, writes its own sum and settles; inc 0 writes the same value). Pure: reads only script state.
+     * writeCycle(sig): a write path sig -> ... -> sig exists (the cyc:1 set's flush exceeds the pass cap).
+     * writeCycleNew(i): effect i, just added, closes a write path from its spec.w back into its spec.d (its
+     * first run's flush exceeds the pass cap). Cold DFS, one visited set per call.
+     */
+    writeCycle(sig) {
+        return this.writeReach(sig, [sig]);
+    }
+
+    writeCycleNew(i) {
+        const nd = this.n[i];
+        if (!this.writeEdge(nd)) return false;
+        return this.writeReach(nd.spec.w, nd.spec.d);   // a self-loop (w in d) is found on the first pop via i's own edge
+    }
+
+    writeEdge(nd) {
+        if (nd === undefined || !nd.live || nd.t !== 'e' || nd.spec === null) return false;
+        const s = nd.spec;
+        return Array.isArray(s.d) && s.w !== undefined && s.w !== null && typeof s.inc === 'number' && s.inc !== 0;
+    }
+
+    /** Is any signal of `goal` reachable from signal `from` over one or more write edges? */
+    writeReach(from, goal) {
+        const seen = new Set([from]);
+        const stack = [from];
+        while (stack.length > 0) {
+            const s = stack.pop();
+            for (let k = 0; k < this.n.length; k++) {
+                const nd = this.n[k];
+                if (!this.writeEdge(nd) || nd.spec.d.indexOf(s) === -1) continue;
+                const t = nd.spec.w;
+                if (goal.indexOf(t) !== -1) return true;
+                if (!seen.has(t)) { seen.add(t); stack.push(t); }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Taint (p8), transitive: node i's last run read a node that was disposed after that run began (flag
      * set by kill() and by exec for runs in progress), or read a computed that is itself tainted.
      */

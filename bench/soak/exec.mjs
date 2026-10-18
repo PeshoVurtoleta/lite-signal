@@ -15,6 +15,11 @@
  *                 effect bodies that ran at the guard's own depth, plus a throw-in-batch token, a throwing
  *                 `equals` token, or an expected CycleError. A computed error that escapes without passing
  *                 through an effect body (F6) is therefore never predicted
+ *   cycle error   (G7, O6 (iii)) where the CycleError surfaces depends on the kernel: a lite kernel that is no
+ *                 controls.json control aborts at the creation of the effect that closes the write cycle
+ *                 (creationAbort, from adapter.knownAs()); a control, or another engine, at the cyc:1 set.
+ *                 Both predictions come from the model's write-cycle census (model.writeCycleNew / writeCycle);
+ *                 the model kill stays keyed on the ACTUAL escape, never on the prediction
  *   taint         model.kill() taints observers that read a disposed node; a run in progress during a
  *                 disposal is tainted until it ends (taint clears only for a run entirely after it)
  *   at rest       O1e + O4 every op, O5 every op, O1c when the op's chk bit is set and at world end
@@ -51,8 +56,33 @@ export function runWorld(adapter, script, opts) {
     return x.run();
 }
 
+/**
+ * O6 (iii) creation prediction (DELTA 4b-v2 T3): true when a write-cycle creation must abort in effect()
+ * (a lite kernel that matches no controls.json control). Fails closed BEFORE any state: a lite adapter
+ * without knownAs(), a knownAs() that throws (controls.json unreadable) or returns neither null nor a name.
+ * opts.creationAbort: test-only override (test/57); it must be a boolean, and the identity is still verified.
+ */
+function creationAbortOf(ad, opts) {
+    const o = Object.hasOwn(opts, 'creationAbort') ? opts.creationAbort : undefined;   // own key only (no prototype chain)
+    if (o !== undefined && typeof o !== 'boolean') {
+        throw new TypeError('exec: opts.creationAbort must be a boolean, got ' + (o === null ? 'null' : typeof o));
+    }
+    let lite = false;
+    if (ad.name === 'lite') {
+        if (typeof ad.knownAs !== 'function') throw new TypeError('exec: lite adapter has no knownAs() (kernel identity unverified)');
+        const k = ad.knownAs();
+        if (k !== null && !(typeof k === 'string' && k.length > 0)) {
+            throw new TypeError('exec: lite adapter knownAs() must return null or a control name, got ' + typeof k);
+        }
+        lite = k === null;
+    }
+    return o === undefined ? lite : o;
+}
+
 class Exec {
     constructor(adapter, script, opts) {
+        this.creationAbort = creationAbortOf(adapter, opts);
+        this.unmodelled = null;   // pin (i) sticky: a batch / body guard must not swallow it (run() rethrows)
         this.ad = adapter;
         this.caps = adapter.caps;
         this.script = script;
@@ -110,6 +140,7 @@ class Exec {
             this.opsByClass[op.o] = (this.opsByClass[op.o] || 0) + 1;
             if (this.trace !== null) this.trace.push(k + ' ' + JSON.stringify(op));
             this.apply(op, k);
+            if (this.unmodelled !== null) throw this.unmodelled;
             this.actions.clear();
             this.regActions.clear();
             this.atRest(op);
@@ -229,10 +260,20 @@ class Exec {
     createEffect(op) {
         const i = op.i;
         this.M.addEffect(i, op.spec, -1);
+        // pin (i): a write-cycle creation is predicted only at top level; inside a batch or a body the abort
+        // point is unmodelled. On a control (creationAbort false) it is legal and the set predicts it.
+        let cycle = false;
+        if (this.creationAbort && this.M.writeCycleNew(i)) {
+            if (this.batchDepth > 0 || this.frames.length > 0) {
+                this.unmodelled = new Error('exec: unmodelled creation cycle: effect#' + i + ' closes a write cycle at batch depth ' + this.batchDepth + ', frame depth ' + this.frames.length);
+                throw this.unmodelled;
+            }
+            cycle = true;
+        }
         this.D.onCreate(i, 'e');
         const nd = this.M.n[i];
         const before = nd.runs;
-        const esc = this.guard(() => { this.H[i] = this.W.effect(() => { this.runBody(i); }); });
+        const esc = this.guard(() => { this.H[i] = this.W.effect(() => { this.runBody(i); }); }, cycle);
         if (esc !== NONE && nd.live) this.M.kill(i);   // a throwing first run disposes it (p3)
         this.D.onEffectCreated(this.batchDepth > 0, nd.runs > before);
     }
@@ -247,9 +288,15 @@ class Exec {
 
     /* ---- writes ---------------------------------------------------------------------------------- */
 
-    setTop(i, code, cycle) {
+    setTop(i, code, cyc) {
         const nd = this.M.n[i];
         if (nd === undefined || nd.t !== 's' || this.H[i] === undefined) return;
+        // pin (iii): cyc:1 predicts a CycleError only while the model still holds the write cycle (on a
+        // creationAbort kernel the creation already aborted and the escape killed the closing effect)
+        const cycle = cyc && this.M.writeCycle(i);
+        if (cyc && !cycle && !this.creationAbort) {
+            throw new Error('exec: unmodelled cycle set: signal#' + i + ' carries cyc:1 but the model holds no write cycle through it');
+        }
         const v = decodeValue(code);
         const old = nd.live ? nd.v : undefined;
         const bomb = v === EQ_BOMB;

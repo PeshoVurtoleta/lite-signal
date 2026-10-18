@@ -84,15 +84,18 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 /**
  * Every base a control can start from. A base is a Signal.js + Watch.js directory with sha256 pins:
- * headpatched and rev152 are pinned by controls.json (by control name), tree by parity.json (red while the
- * live Signal.js is mid-edit, amendment 10). Only the wrap control L-WRAP-TREE (S2) uses tree; no main-run control
- * does until A1-A3 land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS, default
- * seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on unexplained (known=none) recovery-after-throw BREACHes, so the
- * first A2 pass control, P-INTERIM-ERROR-clean, patches the A2-F21 hunk onto headpatched instead.
+ * headpatched, rev152 and preb33 are pinned by controls.json (by control name), tree by parity.json (red while
+ * the live Signal.js is mid-edit, amendment 10). Only the wrap control L-WRAP-TREE (S2) uses tree; no main-run
+ * control does until A1-A3 land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
+ * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
+ * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
+ * DIV-F6 since the burst 53 triage, PLAN-F-b33-1 N19); P-INTERIM-ERROR-clean runs on preb33 because it is the
+ * post-F21 controls.json kernel (N17.2), so a DIV-F21 label there is a MISS.
  */
 export const BASES = Object.freeze({
     headpatched: Object.freeze({ dir: join(SOAK, 'controls', 'headpatched'), pins: 'controls.json', pinName: 'headpatched' }),
     rev152: Object.freeze({ dir: join(ROOT, 'node_modules', 'lite-signal-1.5.2'), pins: 'controls.json', pinName: 'rev152' }),
+    preb33: Object.freeze({ dir: join(SOAK, 'controls', 'preb33'), pins: 'controls.json', pinName: 'preb33' }),
     tree: Object.freeze({ dir: ROOT.replace(/[\\/]$/, ''), pins: 'parity.json', pinName: null }),
 });
 
@@ -251,22 +254,13 @@ const A_SEVER = '                    severTail(node);\n                    node.
 // :1975 the createRegistry return (the public api object main tracks as world.registry).
 const A_RETURN = '    return {getOwner, runWithOwner, signal, computed, effect, signalBox, computedBox, dispose, batch, untrack, createRoot, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};\n';
 
-// :1022-1027 the flushEffects run of one queue entry (24-space indent). P-INTERIM-ERROR-clean replaces it with the
-// A2-F21 fix (Signal.js c2f123c, "qskip2"): run the entry only while its node is still QUEUED.
-const A_FLUSH_RUN = '                        const scheduler = node.scheduler;\n                        if (scheduler) {\n' +
-    '                            scheduler(node.schedulerThunk);  // reuse cached thunk\n                        } else {\n' +
-    '                            if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n                        }\n';
-const QSKIP2 = '                        if ((node.flags & FLAG_QUEUED) !== 0) {   // MUSTFAIL P-INTERIM-ERROR-clean: the A2-F21 hunk\n' +
-    '                            const scheduler = node.scheduler;\n                            if (scheduler) {\n' +
-    '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n                            } else {\n' +
-    '                                executeEffect(node);\n                            }\n                        }\n';
-
 // amendment 13 (TASK 10 amended). headpatched is a PRE-fix controls.json kernel: DIV-F21 (fixedIn A2-F21) still
 // explains there, because main / SoakReport classify with includeFixed = (controls.name !== null).
 const KNOWN_INTERIM = Object.freeze(['DIV-F21', 'DIV-F22']);
-// P-INTERIM-ERROR-clean: the patched scratch kernel is no controls.json kernel (includeFixed false), so only the
-// still-open DIV-F22 may explain a BREACH; an F21 BREACH there reads known=none -> unexplained -> MISS.
-const KNOWN_INTERIM_CLEAN = Object.freeze(['DIV-F22']);
+// P-INTERIM-ERROR-clean (N17.2, N19.4): preb33 is a POST-F21 controls.json kernel (includeFixed true), so a DIV-F21
+// label there is not in this list -> MISS (A3': zero DIV-F21 on preb33); only the still-open DIV-F5 / DIV-F6 /
+// DIV-F22 (no FIX-R / FIX-T / A2 batch-error fix in preb33) may explain a BREACH.
+const KNOWN_INTERIM_CLEAN = Object.freeze(['DIV-F5', 'DIV-F6', 'DIV-F22']);
 
 function deepFreeze(o) {
     if (o !== null && typeof o === 'object' && !Object.isFrozen(o)) {
@@ -385,16 +379,24 @@ export const CONTROLS = deepFreeze([
     }),
 
     /* ---- short (^(?!L-)) ---- */
-    // P-INTERIM-ERROR-clean (amendment 5, A2-F21): L-P-INTERIM-ERROR's run on headpatched + the A2-F21 hunk. With
-    // F21 fixed the interim ERROR lane fails ONLY on DIV-F22 (still open, fixBy A2). Burst 39 run (11 x DEFAULT_OPS,
-    // default seed): 4077 worlds, 3020 failing (every stored record DIV-F22), one BREACH head
-    // `oracle=O6 lane=ERROR sig=expected-escape-missing known=DIV-F22`, exit 1, ~25 s. Its stochastic teeth: the
-    // same run on headpatched WITHOUT the hunk under a non-control sha adds an
-    // `oracle=O6 lane=ERROR sig=escape-CycleError known=none` BREACH (F21, includeFixed false) -> MISS. The
-    // deterministic F21 teeth are test/58. 'explained', not 'nobreach', until A2 fixes F22 (then exit 0, no BREACH).
-    M('P-INTERIM-ERROR-clean', 'headpatched', { SOAK_LANES: 'ERROR', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+    // P-INTERIM-ERROR-clean (amendment 5, A2-F21; re-pointed N17.2, burst 52): L-P-INTERIM-ERROR's run on the
+    // preb33 control, NO patches. preb33 is post-F21 (carries the A2-F21 qskip2 hunk) and pre-F-b33-1 (exec
+    // creationAbort false: a write-cycle creation does not abort). preb33 is a controls.json kernel (includeFixed
+    // true): an F21 world there would read known=DIV-F21, which KNOWN_INTERIM_CLEAN does not list -> MISS (A3' zero
+    // DIV-F21 on preb33). MEASURED burst 52 (.handoff/b52-evidence/b2-mustfail-pinterim*.txt): MISS -- zero DIV-F21,
+    // but preb33 ERROR shows the burst-39 tree picture: DIV-F5 x4 / DIV-F6 x2 / DIV-F22 x1 and three known=none
+    // recovery-after-throw lines (2 heads). After the burst 53 triage (PLAN-F-b33-1 N19) those heads are DIV-F6 (the
+    // COMPUTED pre-walk throw + equality cutoff; DIV-F6 widened), so the expected set is { exit 1, 'explained',
+    // DIV-F5 / DIV-F6 / DIV-F22 }. RE-MEASURED burst 53: the widening unmasked 2 more known=none heads (main.mjs
+    // prints one BREACH line per (family, lane, sig, known) and keeps FAIL_CAP = 16 records per cycle, so b52's first
+    // known=none lines hid them; c-pinterim.txt MISS). Same bug via the CACHED-rethrow path, which the
+    // throw-dep-computed-prewalk tagger misses (t2-SUMMARY.md, N19.6): DIV-F6's standalone shapes dropped that
+    // clause and classify them; OK in .handoff/b53-evidence/c2-pinterim.txt. preb33 is frozen
+    // without FIX-T (and FIX-R / the A2 batch-error fix), so its F5 / F6 / F22 lines never clear: this control stays
+    // 'explained' at exit 1 permanently; a clean (exit 0, 'nobreach') control needs a FIX-T kernel. F21 teeth: test/58.
+    M('P-INTERIM-ERROR-clean', 'preb33', { SOAK_LANES: 'ERROR', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'explained', lines: [], specs: [], known: KNOWN_INTERIM_CLEAN,
-    }, { patches: [[A_FLUSH_RUN, QSKIP2]] }),
+    }),
     // P-NEST-TRIGGERLESS: NEST without its trigger must not false-fail. Lines: gates.mjs:380 (scenario),
     // gates.mjs:382 (taint-skip; B6: headpatched NEST cov-off O1c 0.43-0.44 > TAINT_SKIP_MAX 0.35).
     M('P-NEST-TRIGGERLESS', 'headpatched', { SOAK_LANES: 'NEST', SOAK_MUSTFAIL: 'cov-off:saved-cursor-hazard' }, ['--smoke'], {

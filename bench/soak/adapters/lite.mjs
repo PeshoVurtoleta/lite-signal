@@ -11,7 +11,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { K, KERNEL_FILES, KERNEL_DIR } from '../kernel.mjs';
+import { K, KERNEL_FILES, KERNEL_DIR, KERNEL_KNOWN_AS, CONTROLS_ERROR } from '../kernel.mjs';
 import { normalizeEscape } from '../kinds.mjs';
 
 export const CAPS_LITE = Object.freeze({
@@ -36,6 +36,15 @@ export const liteAdapter = Object.freeze({
     name: 'lite',
     version: kernelVersion,
     files() { return KERNEL_FILES; },
+    /**
+     * The loaded kernel's controls.json name (kernel.mjs KERNEL_KNOWN_AS), or null for the tree / a scratch
+     * kernel. exec.mjs keys the O6 creation prediction on it (exec stays kernel-free on import). Fails closed:
+     * an unreadable controls.json throws, never reads as "not a control".
+     */
+    knownAs() {
+        if (CONTROLS_ERROR !== null) throw new Error('lite adapter: kernel identity unknown -- ' + CONTROLS_ERROR);
+        return KERNEL_KNOWN_AS;
+    },
     caps: CAPS_LITE,
     open(opts) {
         const o = opts || {};

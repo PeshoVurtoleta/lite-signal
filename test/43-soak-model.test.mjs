@@ -816,6 +816,7 @@ function f5Adapter(over) {
     return {
         name: liteAdapter.name, caps: liteAdapter.caps,
         version: () => liteAdapter.version(), files: () => liteAdapter.files(),
+        knownAs: () => liteAdapter.knownAs(),
         open(o) {
             const w = liteAdapter.open(o);
             const out = {};
