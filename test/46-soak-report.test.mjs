@@ -4,7 +4,8 @@
  * Every stream is generated AT TEST TIME by the real bench/soak/main.mjs on FROZEN kernels through SOAK_KERNEL
  * (amendment 11: never the live Signal.js): node_modules/lite-signal-1.5.2 (REV-152),
  * bench/soak/controls/headpatched, and scratch copies of headpatched (no controls.json pin; one throws a
- * deferred fatal). No fixture stream is committed: the gates block and the calibrated constants move (B6), and a
+ * deferred fatal; kscratch is also the SOAK_NEARWRAP base, D-B9 a).
+ * No fixture stream is committed: the gates block and the calibrated constants move (B6), and a
  * stream is only valid against the code that judged it.
  *
  * Teeth: every check statement of SoakReport.mjs (one `bad(...)` / `refuse(...)` each) has a tamper below
@@ -21,6 +22,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -161,6 +163,9 @@ before(async () => {
         gen('hp', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' }, SMALL)),
         gen('hperr', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'ERROR' }, SMALL)),
         gen('scratch', Object.assign({ SOAK_KERNEL: join(TMP, 'kscratch', 'Signal.js'), SOAK_LANES: 'GRAPH' }, SMALL)),
+        // D-B9 (a): kernel.mjs derives kscratch into the content-addressed bench/soak/out/nearwrap/<d7>-<w7>/ pair
+        gen('nwscratch', Object.assign({ SOAK_KERNEL: join(TMP, 'kscratch', 'Signal.js'), SOAK_NEARWRAP: 'zero:8',
+            SOAK_LANES: 'GRAPH' }, SMALL)),
         gen('mustfail', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH', SOAK_MUSTFAIL: 'cov-off:' + COV_OFF_SUPPORTED.GRAPH[0] }, SMALL)),
         gen('smoke', { SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' }, ['--smoke']),
         gen('fatal', Object.assign({ SOAK_KERNEL: join(TMP, 'kfatal', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
@@ -334,6 +339,24 @@ test('honest scratch-kernel stream -> consistent, then NOT A RELEASE SOAK -- ove
     const r = expectRefusal(S.scratch.path, 'overridden-kernel');
     assert.equal(r.out[r.out.length - 1], 'soak:report: verdict ' + summaryOf(S.scratch.recs).verdict + ' (consistent)');
 });
+const fileSha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
+test('honest NEARWRAP scratch stream (SOAK_KERNEL + SOAK_NEARWRAP zero:8, D-B9 a) -> consistent, then NOT A RELEASE ' +
+    'SOAK -- nearwrap (before overridden-kernel)', () => {
+    const h = S.nwscratch.recs[0], f = h.kernel.files;
+    assert.equal(h.kernel.override, true);
+    assert.equal(h.controls.name, null, 'the derived kernel matches no control');
+    const dir = f[0].path.replace(/\\/g, '/').split('/').slice(-2, -1)[0];
+    assert.match(dir, /^[0-9a-f]{7}-[0-9a-f]{7}$/);
+    assert.equal(dir, f[0].sha256.slice(0, 7) + '-' + f[1].sha256.slice(0, 7));
+    assert.equal(h.nearwrap.derivedSha256, f[0].sha256, 'the loaded kernel IS the derived one');
+    assert.equal(h.nearwrap.baseSha256, fileSha(join(TMP, 'kscratch', 'Signal.js')));
+    assert.notEqual(h.nearwrap.baseSha256, h.nearwrap.derivedSha256);
+    assert.equal(f[1].sha256, fileSha(join(TMP, 'kscratch', 'Watch.js')), 'the derived Watch.js is a byte copy');
+    const r = expectRefusal(S.nwscratch.path, 'nearwrap');
+    assert.match(r.err[0], /^soak:report: NOT A RELEASE SOAK -- nearwrap: zero:8 -- /);
+    const v = summaryOf(S.nwscratch.recs).verdict;
+    assert.equal(r.out[r.out.length - 1], 'soak:report: verdict ' + v + ' (consistent)');
+});
 test('honest SOAK_MUSTFAIL cov-off stream (SPEC-B 5.1) -> NOT A RELEASE SOAK -- mustfail', () => {
     assert.notEqual(S.mustfail.recs[0].mustfail, null);
     expectRefusal(S.mustfail.path, 'mustfail');
@@ -448,7 +471,32 @@ test('releaseRefusal: the base really is the REV-152 header (5 lanes x DEFAULT_C
 /* ---- one tamper per check statement ------------------------------------------------------------------ */
 
 const I = (cls, detail) => ({ cls, detail });   // detail: when another statement of the same class would also fire
+const flipLast = (hex) => hex.slice(0, -1) + (hex.slice(-1) === '0' ? '1' : '0');
+const mirrorEngine = (h) => { h.engine.files = h.kernel.files.map((f) => ({ path: f.path, sha256: f.sha256 })); };
 const R = (reason, detail) => ({ reason, detail });
+// review r1 NITs 1-2: a nearwrap base dir under TMP holding Signal.js (made by mk) + kscratch's Watch.js; built once
+const nwBases = {};
+function nwBase(dir, mk) {
+    const p = join(TMP, dir, 'Signal.js');
+    if (nwBases[dir] === undefined) {
+        mkdirSync(join(TMP, dir)); mk(p); copyFileSync(join(TMP, 'kscratch', 'Watch.js'), join(TMP, dir, 'Watch.js'));
+        nwBases[dir] = p;
+    }
+    return p;
+}
+const fifoBase = () => nwBase('kfifo', (p) => { assert.equal(spawnSync('mkfifo', [p]).status, 0, 'mkfifo'); });
+const nonUtf8Base = () => nwBase('knonutf8', (p) => writeFileSync(p, Buffer.concat([
+    readFileSync(join(TMP, 'kscratch', 'Signal.js')), Buffer.from('// non-UTF-8 byte: '), Buffer.from([0xff]),
+    Buffer.from('\n')])));
+const fifoWatchBase = () => {
+    const d = join(TMP, 'kfifow'), p = join(d, 'Signal.js');
+    if (nwBases.kfifow === undefined) {
+        mkdirSync(d); copyFileSync(join(TMP, 'kscratch', 'Signal.js'), p);
+        assert.equal(spawnSync('mkfifo', [join(d, 'Watch.js')]).status, 0, 'mkfifo'); nwBases.kfifow = p;
+    }
+    return p;
+};
+const textSha = (p) => createHash('sha256').update(readFileSync(p, 'utf8'), 'utf8').digest('hex');
 const TAMPERS = [
     // parse
     ['empty stream', 'rev', () => [], I('parse', /empty stream/)],
@@ -487,14 +535,22 @@ const TAMPERS = [
     ['header.nearwrap k 65 (> NEARWRAP_K_MAX)', 'rev', (r) => { r[0].nearwrap = Object.assign(NW(), { k: 65 }); }, I('header', /header\.nearwrap must be null or exactly/)],
     ['header.nearwrap without derivedSha256', 'rev', (r) => { const n = NW(); delete n.derivedSha256; r[0].nearwrap = n; }, I('header', /header\.nearwrap must be null or exactly/)],
     ['header.nearwrap with an extra key', 'rev', (r) => { r[0].nearwrap = Object.assign(NW(), { extra: 1 }); }, I('header', /header\.nearwrap must be null or exactly/)],
-    ['a valid header.nearwrap sign:8 (config SOAK_NEARWRAP sign:8)', 'rev', (r) => { r[0].nearwrap = NW(); r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' }; }, R('nearwrap', /^soak:report: NOT A RELEASE SOAK -- nearwrap: sign:8 /)],
+    // D-B9 (a): a valid-shaped nearwrap is only consistent on its own derived kernel (N1 first)
+    ['a valid-shaped header.nearwrap sign:8 with fake shas on REV-152 (config SOAK_NEARWRAP sign:8)', 'rev', (r) => {
+        r[0].nearwrap = NW(); r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' };
+    }, I('control', /nearwrap derivedSha256 b{64} is not the kernel Signal\.js sha256 /)],
     // review R1 blocker 1: header.nearwrap must agree with config SOAK_NEARWRAP (the SOAK_MUSTFAIL cross-check twin)
     ['config SOAK_NEARWRAP sign:8 but header.nearwrap null', 'rev', (r) => { r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' }; }, I('header', /header\.nearwrap differs from config SOAK_NEARWRAP/)],
     ['config SOAK_NEARWRAP value garbage', 'rev', (r) => { r[0].config.SOAK_NEARWRAP = { value: 'garbage', source: 'env' }; }, I('header', /config SOAK_NEARWRAP value "garbage" is neither null nor \{phase, k\}/)],
     ['config SOAK_NEARWRAP null but a valid header.nearwrap', 'rev', (r) => { r[0].nearwrap = NW(); }, I('header', /header\.nearwrap differs from config SOAK_NEARWRAP/)],
     ['config SOAK_NEARWRAP sign:8 but header.nearwrap k 9', 'rev', (r) => { r[0].nearwrap = Object.assign(NW(), { k: 9 }); r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' }; }, I('header', /header\.nearwrap differs from config SOAK_NEARWRAP/)],
-    // release-reason order: nearwrap fires before overridden-kernel (a scratch kernel that is no pinned control)
-    ['order: a valid nearwrap on an overridden (scratch) kernel -> nearwrap, not overridden-kernel', 'scratch', (r) => { r[0].nearwrap = NW(); r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' }; }, R('nearwrap', /^soak:report: NOT A RELEASE SOAK -- nearwrap: sign:8 /)],
+    // release-reason order nearwrap before overridden-kernel: the honest nwscratch row. Honest shas on a path
+    // that is not the derived <d7>-<w7>/ pair (the scratch kernel itself) -> N2
+    ['a nearwrap header with honest shas on the scratch (non-derived) kernel path', 'scratch', (r) => {
+        r[0].nearwrap = Object.assign(NW(), { derivedSha256: r[0].kernel.files[0].sha256 });
+        r[0].config.SOAK_NEARWRAP = { value: { phase: 'sign', k: 8 }, source: 'env' };
+    }, I('control',
+        /nearwrap kernel files .* are not the derived pair [0-9a-f]{7}-[0-9a-f]{7}\/\{Signal,Watch\}\.js$/)],
     ['genVersion 2', 'rev', (r) => { r[0].genVersion = 2; }, I('header', /genVersion 2/)],
     ['genRules edited', 'rev', (r) => { r[0].genRules.pop(); }, I('header', /!= gen\.mjs GEN_RULES/)],
     ['config is not an object', 'rev', (r) => { r[0].config = []; }, I('header', /header\.config is not an object/)],
@@ -523,6 +579,40 @@ const TAMPERS = [
     ['a forged control name (headpatched claims rev152)', 'hp', (r) => { r[0].controls.name = 'rev152'; }, I('control', /controls\.name rev152 does not match/)],
     ['rev152 relabelled as a tree run (review repro)', 'rev', (r) => { r[0].controls.name = null; asTree(r); }, I('control', /is control rev152 but controls\.name is null/)],
     ['engine.files differ from kernel.files', 'rev', (r) => { r[0].engine.files[0].sha256 = '0'.repeat(64); }, I('control', /engine\.files differ/)],
+    // D-B9 (a) N1-N5: the honest nwscratch stream, one field forged per row (engine.files mirrored where moved)
+    ['M1: nearwrap baseSha256 forged', 'nwscratch', (r) => { r[0].nearwrap.baseSha256 = 'a'.repeat(64); },
+        I('control',
+            /nearwrap baseSha256 a{64} is not the sha256 of the SOAK_KERNEL file .* on this host \([0-9a-f]{64}\)$/)],
+    ['M2: nearwrap derivedSha256 last hex flipped', 'nwscratch', (r) => {
+        r[0].nearwrap.derivedSha256 = flipLast(r[0].nearwrap.derivedSha256);
+    }, I('control', /nearwrap derivedSha256 [0-9a-f]{64} is not the kernel Signal\.js sha256 [0-9a-f]{64}$/)],
+    ['M3: nearwrap AND config SOAK_NEARWRAP null on the derived path (the plain override rule)', 'nwscratch', (r) => {
+        r[0].nearwrap = null; r[0].config.SOAK_NEARWRAP = { value: null, source: 'default' };
+    }, I('control',
+        /kernel path .*\/soak\/out\/nearwrap\/[0-9a-f]{7}-[0-9a-f]{7}\/Signal\.js is not the SOAK_KERNEL value /)],
+    ['M4: a SOAK_KERNEL base that does not resolve on this host', 'nwscratch', (r) => {
+        r[0].config.SOAK_KERNEL.value = '/nonexistent-db9a/Signal.js';
+    }, I('control',
+        /nearwrap base SOAK_KERNEL \/nonexistent-db9a\/Signal\.js .* does not resolve on this host: .*closed\)$/)],
+    // review r1 NIT 1: a base that is not a regular file is unresolvable, refused before any read (a FIFO hung it)
+    ['M7: a SOAK_KERNEL base that is a FIFO, not a regular file', 'nwscratch', (r) => {
+        r[0].config.SOAK_KERNEL.value = fifoBase();
+    }, I('control', /nearwrap base SOAK_KERNEL \S+\/kfifo\/Signal\.js .* does not resolve on this host: .*closed\)$/)],
+    ['M9: a SOAK_KERNEL base whose sibling Watch.js is a FIFO, not a regular file', 'nwscratch', (r) => {
+        r[0].config.SOAK_KERNEL.value = fifoWatchBase();
+    }, I('control', /nearwrap base SOAK_KERNEL \S+\/kfifow\/Signal\.js .* does not resolve on this host: .*closed\)$/)],
+    // review r1 NIT 2: baseSha256 is the utf8-decoded text sha (as nearwrap.mjs records it), not the raw bytes
+    ['M8: an honest base with a non-UTF-8 byte (baseSha256 = its utf8-decoded text sha)', 'nwscratch', (r) => {
+        const p = nonUtf8Base();
+        r[0].config.SOAK_KERNEL.value = p; r[0].nearwrap.baseSha256 = textSha(p);
+    }, R('nearwrap', /^soak:report: NOT A RELEASE SOAK -- nearwrap: zero:8 -- /)],
+    ['M5: kernel Watch.js sha256 last hex flipped (engine.files mirrored)', 'nwscratch', (r) => {
+        r[0].kernel.files[1].sha256 = flipLast(r[0].kernel.files[1].sha256); mirrorEngine(r[0]);
+    }, I('control', /kernel Watch\.js sha256 [0-9a-f]{64} is not the sha256 of the SOAK_KERNEL sibling Watch\.js /)],
+    ['M6: kernel Watch.js moved out of the derived pair dir (engine.files mirrored)', 'nwscratch', (r) => {
+        const w = r[0].kernel.files[1];
+        w.path = w.path.replace(/Watch\.js$/, 'moved/Watch.js'); mirrorEngine(r[0]);
+    }, I('control', /nearwrap kernel files .*\/moved\/Watch\.js are not the derived pair /)],
     ['laneRoster edited', 'rev', (r) => { r[0].laneRoster.push('X'); }, I('header-lanes', /laneRoster /)],
     ['SOAK_LANES out of roster order', 'rev', (r) => { r[0].config.SOAK_LANES.value.reverse(); }, I('header-lanes', /not a roster-ordered subset/)],
     ['header.lanes short of SOAK_LANES', 'rev', (r) => { r[0].lanes.pop(); }, I('header-lanes', /does not list exactly/)],

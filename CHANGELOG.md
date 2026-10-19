@@ -15,6 +15,74 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
+### Fixed -- soak:report accepts a NEARWRAP kernel only on verified sha256 (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/SoakReport.mjs only (checkNearwrapKernel,
+checkHeader), plus test/46.
+- Before: a SOAK_KERNEL + SOAK_NEARWRAP stream failed `INTEGRITY -- control` (the derived
+  bench/soak/out/nearwrap/<d7>-<w7>/ kernel is not the SOAK_KERNEL value), so it never reached
+  `NOT A RELEASE SOAK -- nearwrap` -- unless that value was a bare `Signal.js` (`./Signal.js`, `../Signal.js`): the
+  suffix fallback matched every derived path and the base was never hashed.
+- Now (every NEARWRAP stream): derivedSha256 must equal kernel.files[0].sha256, and the kernel files must be the
+  derived pair <d7>-<w7>/{Signal,Watch}.js. On an override, additionally: the SOAK_KERNEL file and its sibling
+  Watch.js are re-hashed on the reporting host -- baseSha256 must equal the base's sha256 (of its utf8 text, as
+  nearwrap.mjs records it) and kernel.files[1].sha256 the sibling Watch.js (the derived Watch.js is a byte copy); a
+  base or sibling Watch.js that does not resolve, or is not a regular file, is refused (fail closed). Each failure
+  is its own `INTEGRITY -- control` message.
+- Residual: derive(base) is never re-run, so the derived pair is self-reported; a TREE NEARWRAP run's baseSha256 and
+  derived Watch.js sha256 are self-reported. Harmless: a nearwrap stream is always refused.
+- Measured (1 run, quiet-lock, load 2.93 -> 2.77, 7 s): the b82 D-B8 spawn (headpatched scratch kernel +
+  SOAK_NEARWRAP=zero:8, GRAPH x 11) now reports `NOT A RELEASE SOAK -- nearwrap: zero:8` (was INTEGRITY), verdict
+  FAIL (consistent) from 4 known=none GRAPH BREACHes (O1 computed-mismatch, O1 effect-stale, O2 glitch, O4
+  effect-dead).
+- SoakReport.mjs is parity-pinned: parity.json re-pinned (35 files, SoakReport line only); not calibration-PINNED,
+  no recut. test/46 200 -> 210 tests (+10): the honest SOAK_KERNEL + NEARWRAP stream; 7 must-fail rows (M1, M2,
+  M4-M7, M9: one per new check, the unresolvable one three ways -- missing, FIFO base, FIFO sibling Watch.js); M3,
+  the plain override rule on the derived path (green on HEAD by design); M8, an honest non-UTF-8 base that must be
+  accepted (red on the raw-byte hash). Two older rows retargeted.
+
+### Changed -- soak teeth: L-T-graveyard, L-T-rss sized (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); the must-fail battery only (bench/soak/_mustfail.mjs,
+teeth.mjs, test/45); no parity-pinned or calibration-pinned file touched.
+Closing run (quiet-lock, Node v26.8.2, 1-min load 1.85-2.75): npm run verify exit 0; npm test 1736 / 1722 pass /
+0 fail / 7 skip / 7 todo; torture GATE ok (alloc=0 B/op, retention=0/966).
+- L-T-graveyard (new control, 38th; headpatched GRAPH 11 x DEFAULT_OPS): freeLink keeps released links in a global
+  graveyard instead of the free list (activeLinks still decremented). It is gate:heap's second tooth
+  (teeth.mjs CHECKS gate:heap = [L-T-leak, L-T-graveyard]). Measured, 1 run: exit 1, gate=heap lane=GRAPH, early
+  33.981 / late 64.837 MB vs limit 39.379 MB = 1.65x; the rss gate passed in that run. Not every release goes through
+  that push: the disposeNodeInner sub-walk recycles about 1% inline (probe: 770 of 71917).
+- L-T-rss starts late: no retention through registry (WARMUP_CYCLES + GATE_N) x RSS_WORLDS_CEIL 240 = 1440, then it
+  retains Buffer.allocUnsafeSlow(1572864) (1.5 MB) per registry. Measured, 1 run each: 1.5 MB tripped gate=heap
+  then gate=rss, band 544.969 MB, late 1775.813 MB vs limit 969.696 MB = 1.83x; a 512 KB size MISSed (late 911.438
+  vs limit 953.017 MB = 0.96x).
+- test/45 +2 (25 tests): the graveyard kernel equals the base with exactly the freeLink push replaced; L-T-rss
+  window bounds, one patch, buffer >= 1.5 MB.
+- Honest-control check: 12 controls OK / 0 MISS, and no gate=rss line in any child stream. RssSampler: 1e6 pushes,
+  stored count max 255, 0 B/op.
+
+### Changed -- soak hard `rss` drift gate (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); soak harness only, no calibration-pinned file touched
+(no recut).
+Closing run (quiet-lock, Node v26.8.2, load 2.8-9.3 shared host): npm test 1734 / 1720 pass / 0 fail / 7 skip /
+7 todo; torture GATE ok (alloc=0 B/op, retention=0/966). npm run verify was PENDING at that commit.
+- Rule (gates.mjs rssRule :207): FAIL when !(late <= limit), limit = band x RSS_RATIO 1.75 + RSS_SLACK_MB 16
+  (config.mjs :83-84), so NaN fails closed. Kind fail, teeth L-T-rss (gates.mjs :361).
+- Window (gates.mjs rssWindows :480): band = median of the first GATE_N post-warm-up per-cycle rss.p95MB values;
+  late = p95 of the last min(max(1, floor(post / 4)), RSS_BUF) post-warm-up cycles. Below 2 x GATE_N post cycles the
+  gate is INCONCLUSIVE (cause post-cycles, shared with heap); a smoke run is SMOKE.
+- Output: BREACH line `soak: BREACH gate=rss lane=<L> detail=late=...MB > limit=...MB (band=...)` (main.mjs :330);
+  drift.rss {band, late, limit, status} beside drift.heap (gates.mjs :634). LaneGates reads rec.rss once; a
+  non-finite or negative p95MB throws GateInputError (gates.mjs :559-561); warm-up cycles' rss is not read (:555).
+- New cycle key `rss` {samples, p95MB, maxMB, stride}, between memory and boundary: one RssSampler per run, reset
+  per lane-cycle, fed process.memoryUsage.rss() at every world end (main.mjs :14-16, :363). config.mjs RSS_BUF 256
+  (the sampler capacity and the late-window cap); SCHEMA_VERSION stays 2.
+- SoakReport key tables know `rss` (SoakReport.mjs :121, :131): an older SoakReport refuses a stream carrying it
+  (unknown-key "rss"; SoakReport.mjs :191).
+- parity.json pins 35 files (+ bench/soak/rss.mjs); L-T-rss is the new teeth control (CHECKS gate:rss).
+- Review: r1 REJECTED (test-only), r2 APPROVED; 400-lane seeded oracle 0 mismatches.
+
 ### Changed -- soak calibrate.mjs D7 at cut time; FAIL_CAP census (dev-only, not shipped)
 
 Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/calibration/calibrate.mjs (a cold tool: not

@@ -49,10 +49,18 @@
  *   cycles it actually ran, like any other), provenance (gitSha not a commit sha, gitDirty !== false -- null
  *   is unknown, never clean -- or gitError non-null). The decision is the exported PURE releaseRefusal().
  *
- * Kernel identity (control class): kernel.override must agree with config SOAK_KERNEL (null <=> no override);
- * an override's resolved path must equal realpath(SOAK_KERNEL value) when that resolves on this host, or end
+ * Kernel identity (control class): kernel.override must agree with config SOAK_KERNEL (null <=> no override).
+ * A plain override's resolved path must equal realpath(SOAK_KERNEL value) when that resolves on this host, or end
  * with the value (leading ./ ../ / stripped). kernel.mjs realpath-resolves the value, so a symlinked value
  * that does not resolve here (another host) is refused, fail closed.
+ * A NEARWRAP run (header.nearwrap non-null; tree or override) loads the DERIVED pair kernel.mjs writes to
+ * bench/soak/out/nearwrap/<derived7>-<watch7>/{Signal,Watch}.js, never the SOAK_KERNEL value itself:
+ * nearwrap.derivedSha256 must equal kernel.files[0].sha256, the parent dir name must be the two sha256 prefixes
+ * and kernel.files[1] its sibling Watch.js. On an override the base is read on THIS host: realpath(SOAK_KERNEL
+ * value) and its sibling Watch.js (no suffix fallback: a value that does not resolve, or is not a regular file, is
+ * refused, fail closed), and nearwrap.baseSha256 must equal the sha256 of the base's utf8-decoded text (the hash
+ * nearwrap.mjs records), kernel.files[1].sha256 the raw-byte sha256 of the sibling Watch.js (the derived Watch.js
+ * is a byte copy of it). Only then is the stream consistent, and refused as nearwrap.
  *
  * Teeth (SPEC-B addendum 9a): the hard gates and oracles whose only teeth are GAPS come from ./teeth.mjs
  * gapTeeth() by import (never copied); a consistent stream prints them on one stdout line
@@ -73,6 +81,10 @@
  *     gitSha / gitDirty / gitError when the scratch run was not on a clean committed tree) exits 0. The git
  *     fields are self-reported too. Signing / attestation of the stream is out of scope here: teeth.mjs GAP
  *     R-kernel-identity (S4).
+ *   - A NEARWRAP derived pair is self-reported: derive(base) is never re-run here, so kernel.files[0] is
+ *     trusted to be derive() of the verified base. Harmless: a nearwrap stream is always refused.
+ *   - A TREE NEARWRAP run's baseSha256 and its derived Watch.js sha256 are self-reported (the base is the
+ *     recording tree's Signal.js, not re-hashed here). Harmless: a nearwrap stream is always refused.
  *   - Release eligibility reads no verdict: a consistent release-size tree stream exits 0 whatever V it
  *     re-derives (FAIL too); the verdict line says which.
  *   - A forged BREACH entry with known null on a lane that has a capped cycle, for a family:sig that lane
@@ -85,9 +97,10 @@
  * Imports are kernel-free (never kernel.mjs / provenance.mjs / adapters/lite.mjs). COLD module.
  */
 
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { normalize } from 'node:path';
+import { normalize, dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
     gatesBlock, writeLineSync, formatReplayKey, KNOWN_KEYS, SCHEMA_VERSION, GEN_VERSION, FAIL_CAP, WARMUP_CYCLES,
@@ -268,6 +281,59 @@ function kernelPathMatches(p, v) {
     return tail.length > 0 && p.replace(/\\/g, '/').endsWith('/' + tail);
 }
 
+/**
+ * Raw-byte sha256 of a regular file on this host (the hash kernel.mjs records for Watch.js); throws when unreadable
+ * or not a regular file (a FIFO or device would block or never end the read: fail closed, never hang).
+ */
+const fileSha256 = (path) => {
+    if (!statSync(path).isFile()) throw new Error('not a file');
+    return createHash('sha256').update(readFileSync(path)).digest('hex');
+};
+/** sha256 of a regular file's utf8-DECODED text (the nearwrap.mjs baseSha256: kernel.mjs reads the base as utf8). */
+const textSha256 = (path) => {
+    if (!statSync(path).isFile()) throw new Error('not a file');
+    return createHash('sha256').update(readFileSync(path, 'utf8'), 'utf8').digest('hex');
+};
+
+/**
+ * A NEARWRAP kernel (header.nearwrap non-null): kernel.files is the derived pair, not the SOAK_KERNEL value (see
+ * the file header). On an override, the base and its sibling Watch.js are hashed here; bad() stays outside the try.
+ */
+function checkNearwrapKernel(n, k, value) {
+    const sig = k.files[0], wat = k.files[1];
+    const sp = sig.path.replace(/\\/g, '/'), at = sp.lastIndexOf('/'), dir = sp.slice(0, at + 1);
+    const pair = sig.sha256.slice(0, 7) + '-' + wat.sha256.slice(0, 7);
+    const pairOk = at > 0 && sp.slice(at + 1) === 'Signal.js' && dir.slice(0, -1).split('/').pop() === pair &&
+        wat.path.replace(/\\/g, '/') === dir + 'Watch.js';
+    if (n.derivedSha256 !== sig.sha256) {
+        bad('control', 'nearwrap derivedSha256 ' + n.derivedSha256 + ' is not the kernel Signal.js sha256 ' +
+            sig.sha256);
+    }
+    if (!pairOk) {
+        bad('control', 'nearwrap kernel files ' + sig.path + ' + ' + wat.path + ' are not the derived pair ' +
+            pair + '/{Signal,Watch}.js');
+    }
+    if (!k.override) return;
+    let base = null, watch = null;
+    try {
+        const p = realpathSync(value);
+        base = textSha256(p);
+        watch = fileSha256(join(dirname(p), 'Watch.js'));
+    } catch (e) { base = null; watch = null; }
+    if (base === null || watch === null) {
+        bad('control', 'nearwrap base SOAK_KERNEL ' + value + ' (or its sibling Watch.js) does not resolve on this ' +
+            'host: baseSha256 unverifiable (fail closed)');
+    }
+    if (n.baseSha256 !== base) {
+        bad('control', 'nearwrap baseSha256 ' + n.baseSha256 + ' is not the sha256 of the SOAK_KERNEL file ' + value +
+            ' on this host (' + base + ')');
+    }
+    if (wat.sha256 !== watch) {
+        bad('control', 'kernel Watch.js sha256 ' + wat.sha256 + ' is not the sha256 of the SOAK_KERNEL sibling ' +
+            'Watch.js (' + watch + '), of which the derived one is a byte copy');
+    }
+}
+
 function checkHeader(h, cfg, registryText) {
     if (!isDeepStrictEqual(h.gates, gatesBlock())) {
         const want = gatesBlock();
@@ -280,7 +346,10 @@ function checkHeader(h, cfg, registryText) {
     const k = h.kernel;
     if (k.override && cfg.kernel === null) bad('control', 'kernel.override is true but config SOAK_KERNEL is null');
     if (!k.override && cfg.kernel !== null) bad('control', 'kernel.override is false but config SOAK_KERNEL is ' + cfg.kernel);
-    if (k.override && !kernelPathMatches(k.files[0].path, cfg.kernel)) bad('control', 'kernel path ' + k.files[0].path + ' is not the SOAK_KERNEL value ' + cfg.kernel);
+    if (h.nearwrap !== null) checkNearwrapKernel(h.nearwrap, k, cfg.kernel);   // the derived pair: N1-N5
+    else if (k.override && !kernelPathMatches(k.files[0].path, cfg.kernel)) {
+        bad('control', 'kernel path ' + k.files[0].path + ' is not the SOAK_KERNEL value ' + cfg.kernel);
+    }
     const names = k.files.map((f) => f.path.split(/[\\/]/).pop());
     if (names[0] !== 'Signal.js' || names[1] !== 'Watch.js') bad('control', 'kernel files must be Signal.js + Watch.js, got ' + names.join(','));
     const ctl = JSON.parse(readFileSync(new URL('./controls.json', import.meta.url), 'utf8')).controls;

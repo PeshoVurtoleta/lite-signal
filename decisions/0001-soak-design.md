@@ -48,7 +48,8 @@ to a Signal.js with a sibling Watch.js> swaps a control. The path is realpath-re
 loaded files. controls.json pins two controls by sha256 [three since 2026-10-18: preb33 added, Amendment 2026-10-18]:
 `rev152` (the published 1.5.2, exact devDependency alias `lite-signal-1.5.2`) and `headpatched` (the audit patch build,
 frozen in bench/soak/controls/headpatched, because /audit/ is git-ignored). parity.json pins 23 files [33 since eb5acc2,
-34 since 92c0020, Amendment 2026-10-18] (Signal.js, Watch.js, 21 bench/soak files, config.mjs and SoakReport.mjs among
+34 since 92c0020, Amendment 2026-10-18; 35 since 2b87bfb: + bench/soak/rss.mjs] (Signal.js, Watch.js, 21 bench/soak
+files, config.mjs and SoakReport.mjs among
 them); `npm run soak:parity` exits 1 on any drift, and a pin moves only through `parity.mjs --update` after review. The
 header records the kernel hashes and `controls.name`; a stream from a scratch kernel is consistent but is never release
 evidence (section 9).
@@ -56,7 +57,7 @@ evidence (section 9).
 ### 4. Verdicts and the INCONCLUSIVE evidence gates
 
 Gates are data: `GATES = [{id, kind, check, pass, mustFail[], teeth}]` (gates.mjs:292); GATE_NAMES derives from it, so a
-gate and its must-fail control land in one edit. Kinds: fail (oracle, heap, retention), evidence (coverage,
+gate and its must-fail control land in one edit. Kinds: fail (oracle, heap, rss, retention), evidence (coverage,
 check-floor, taint-skip), startup (totals). Verdict ladder (gates.mjs:539-566, first match wins): config/expose-gc/
 provenance error -> 2; any FAIL gate, BREACH or fatal -> FAIL 1 (a crash is never PASS or INCONCLUSIVE); any
 INCONCLUSIVE cause -> 3; smoke -> SMOKE 0; a skip on a non-lite engine -> PARTIAL 0 (never the string PASS); else
@@ -109,7 +110,8 @@ b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer t
   POST-F21 (it carries A2-F21, qskip2). It is frozen without FIX-T (and FIX-R / the A2 batch-error fix); its F5 / F6 / F22
   lines never clear.
 - Parity (section 3 :48, section 12(b) :279): parity.json pins 33 files since eb5acc2 (34 since 92c0020: +
-  bench/soak/lanes/wie.mjs) (PARITY_FILES 29 -> 33: adds adapters/lite.mjs, controls.json, controls/preb33/Signal.js and
+  bench/soak/lanes/wie.mjs; 35 since 2b87bfb: + bench/soak/rss.mjs) (PARITY_FILES 29 -> 33: adds adapters/lite.mjs,
+  controls.json, controls/preb33/Signal.js and
   Watch.js). The "23 pins" lines are history.
 - P-INTERIM-ERROR-clean (section 5 :79-82, B39-D1 :87-88): re-pointed to base `preb33`, no patches (N17.2, burst 51-52).
   It is no longer a headpatched + A2-F21-hunk control: preb33 is already post-F21, so the expected set is exit 1,
@@ -287,9 +289,11 @@ Release eligibility reads no verdict: a consistent release-size tree stream exit
 ### 10. The teeth registry (a gate that cannot fail is not a gate)
 
 bench/soak/teeth.mjs holds, by import and never by copy:
-- `universe()` (47 ids at 35bbf26): lane:, gate:, oracle:, sig:<oracle>:<sig>, cause: ids plus `config` and `report`.
+- `universe()` (47 ids at 35bbf26, 48 since 2b87bfb: + gate:rss): lane:, gate:, oracle:, sig:<oracle>:<sig>, cause:
+  ids plus `config` and `report`.
   Excluded on purpose (teeth.mjs:24-31): REPORT_ONLY_GATES, REASONS, WRAP_CHECKS, MUSTFAIL_MODES.
-- `CHECKS` (35 ids at 35bbf26): id -> controls that turn it red. `T-cfg-*` must resolve every config control (>= 16);
+- `CHECKS` (35 ids at 35bbf26, 36 since 2b87bfb: + gate:rss): id -> controls that turn it red. `T-cfg-*` must resolve
+  every config control (>= 16);
   `report` maps to test/46's TEST_ANCHORS.
 - `GAPS` (24 at 35bbf26): controls the SPEC asks for that cannot exist yet, each with why (file:line), until, and `covers`
   (the universe ids it stands in for). GAPS may only shrink.
@@ -297,13 +301,16 @@ bench/soak/teeth.mjs holds, by import and never by copy:
   an anchor that must occur EXACTLY once. The last two are "unreachable from argv or a stream; reachable only from a
   corrupted checkout (untested)".
 - `audit({controls, ceiling, max})` REQUIRES all three (never defaulted); returns the problem list.
-test/45 (22 tests at 35bbf26, no child process) holds the shrink-only literals: the 24-name GAPS ceiling and max 24, the 11
-GAP-covered universe ids (exact set equality), CHECKS_MIN 35 (an exact floor), EVIDENCE_CAUSE {coverage: 'scenario'}
+test/45 (22 tests at 35bbf26, 25 at c5cf442, no child process) holds the shrink-only literals: the 24-name GAPS
+ceiling and max 24, the 11
+GAP-covered universe ids (exact set equality), CHECKS_MIN 35 (an exact floor; 36 since 2b87bfb), EVIDENCE_CAUSE
+{coverage: 'scenario'}
 (interim: the coverage cause is still built inside LaneGates), and a pairing check: EVERY mapped control must expect
 the text its id would print (oracle=/sig= via oracleFamily, lane=, gate=, the INCONCLUSIVE head, a CONFIG line, test
 anchors). It also checks the ^L- / ^(?!L-) partition, validSpec for all controls, staleAnchors and a 1-byte anchor
 mutant ("2 matches" for the severTail anchor), and must-fail copies of every audit problem class.
-`_mustfail.mjs` (34 controls at 35bbf26: 18 non-config + 16 T-cfg) runs each through the REAL main.mjs on a scratch
+`_mustfail.mjs` (34 controls at 35bbf26: 18 non-config + 16 T-cfg; 38 at c5cf442: 22 non-config + 16 T-cfg, by
+MUSTFAIL_LIST=1) runs each through the REAL main.mjs on a scratch
 kernel directory: exactly-once anchors, exact exit, every spec on ONE BREACH/INCONCLUSIVE head, no CRASH, END sentinel
 last, and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short (^(?!L-)); `npm run soak:teeth:long` =
 ^L-; MUSTFAIL_LIST=1 builds all and runs none; MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=1 prints matched heads.
@@ -311,16 +318,16 @@ last, and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short 
 ### 11. Deviations from SPEC-B section 9 (binding; also recorded as S1cd amendment 15)
 
 - L-REV-152 has 9 specs: the 4 SPEC ones plus O1 computed-mismatch, O1 effect-stale, O2 glitch (BATCH), O4 effect-dead
-  and O6 expected-escape-missing (ERROR); each is a unique tooth (_mustfail.mjs:265-291).
+  and O6 expected-escape-missing (ERROR); each is a unique tooth (_mustfail.mjs:324-351).
 - L-P-INTERIM = GRAPH,BATCH at 11 x DEFAULT_OPS, exit 0, 22 clean boundaries; L-P-INTERIM-ERROR is kind `explained`
   (exit 1, every BREACH known in {DIV-F21, DIV-F22}; still true because headpatched is a pre-fix control kernel, so
   includeFixed is true there). Amendment 13.
-- T-cov-BATCH runs --smoke like T-cov-GRAPH (_mustfail.mjs:346); T-cov-ERROR is `explained` at exit 1
+- T-cov-BATCH runs --smoke like T-cov-GRAPH (_mustfail.mjs:503); T-cov-ERROR is `explained` at exit 1
   because a headpatched ERROR run always shows F21/F22 BREACHes, and FAIL outranks INCONCLUSIVE.
 - T-cfg is 16 rows (the S5 polyfill row is deferred); the provenance row uses a zero-commit repo copy under
   bench/soak/out, not `GIT_DIR=/nonexistent` (gitInfo scrubs GIT_DIR).
 - L-I1 / L-I2 arm at the 2nd registry, not "after the first heartbeat" (the kernel raises its own signal).
-- L-T-retain runs 11 x OPS_MIN (_mustfail.mjs:308-318). At 11 x DEFAULT_OPS the retained registries (~500 MB per GRAPH
+- L-T-retain runs 11 x OPS_MIN (_mustfail.mjs:416-426). At 11 x DEFAULT_OPS the retained registries (~500 MB per GRAPH
   cycle) reached the V8 heap limit at cycle 6-7 (residentMB 3534.27, SIGABRT, no END). At 11 x OPS_MIN: exit 1,
   `gate=retention lane=GRAPH`, badBoundaries 10; the heap gate trips too, accepted.
 - T-floor-BATCH (new): 11 x OPS_MIN performs BATCH OB 8295 < 10000 -> `INCONCLUSIVE checks lane=BATCH oracle=OB`.
@@ -330,7 +337,8 @@ last, and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short 
 
 - (a) OB: a fail check for every batch engine; the OB evidence floor only where a close-flush is observable (native
   batch). Accepted, not built (the S5 adapter pass narrows ORACLE_CAPS for BATCH and ERROR alike).
-- (b) parity.json also pins config.mjs and SoakReport.mjs (built: 23 pins; 33 since 2026-10-18, 34 since 92c0020, Amendment 2026-10-18).
+- (b) parity.json also pins config.mjs and SoakReport.mjs (built: 23 pins; 33 since 2026-10-18, 34 since 92c0020, 35
+  since 2b87bfb, Amendment 2026-10-18).
 - (c) Release policy: the full roster at default volume from a clean committed tree (section 9; built).
 - (d) test/41 stops pinning main.mjs and calibrate.mjs; a live smoke fold and a live large-world probe guard main.mjs
   (section 8; built). The probe cost is accepted as built (measured 2026-10-13, M4 Pro: the probe run standalone 25.7
