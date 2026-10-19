@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { universe, CHECKS, GAPS, UNREACHABLE, TEST_ANCHORS, audit, controlMatches } from '../bench/soak/teeth.mjs';
 import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, LONG_RE, SHORT_RE, wrapJudge } from '../bench/soak/_mustfail.mjs';
 import { GATES, oracleFamily, INCONCLUSIVE_CAUSES } from '../bench/soak/gates.mjs';
+import { GATE_N, WARMUP_CYCLES, MIN_ACTIVE_CYCLES } from '../bench/soak/config.mjs';
 import { SIGS } from '../bench/soak/oracles.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -540,4 +541,59 @@ test('teeth l: L-WIE-rev152 is pinned: rev152 unpatched, preb33 WIE budget, DIV-
         ['main', 'rev152', preb33.env, [], [], null, 1, 'explained', ['oracle=O1 lane=WIE sig=effect-stale'], [],
             ['DIV-B33']]);
     assert.deepEqual(CHECKS['lane:WIE'], ['L-WIE-preb33', 'L-WIE-rev152']);
+});
+
+test('teeth m: gate:heap has two teeth, L-T-leak and L-T-graveyard (released links kept off the free list)', () => {
+    assert.deepEqual(CHECKS['gate:heap'], ['L-T-leak', 'L-T-graveyard']);
+    const g = CONTROLS.find((x) => x.name === 'L-T-graveyard');
+    assert.ok(g, 'the graveyard control exists');
+    assert.ok(LONG_RE.test(g.name) && !SHORT_RE.test(g.name), 'long battery');
+    const leak = CONTROLS.find((x) => x.name === 'L-T-leak');
+    assert.deepEqual([g.run, g.base, g.env, g.argv, g.arm, g.expect.exit, g.expect.kind, g.expect.specs,
+        g.expect.lines], ['main', 'headpatched', leak.env, [], null, 1, 'match', ['gate=heap lane=GRAPH'], []]);
+    assert.deepEqual(validSpec(g), []);
+    assert.equal(g.patches.length, 1);
+    // the patch removes freeLink's free-list return (the sub-walk still recycles ~1%) and keeps the activeLinks
+    // decrement (stats / O5 stay consistent)
+    const base = readFileSync(join(ROOT, 'bench/soak/controls/headpatched/Signal.js'), 'utf8');
+    const src = buildKernel(g).src;
+    const n = (t, s) => t.split(s).length - 1;
+    const FREE = '        link.nextFree = freeLinkHead;\n        freeLinkHead = link;\n' +
+        '        activeLinks = (activeLinks - 1) | 0;\n';
+    assert.equal(n(base, FREE), 1, 'freeLink returns a link to its free list at one site');
+    assert.equal(n(base, '            freeLinkHead = sLink;\n'), 1,
+        'the disposeNodeInner sub-walk still recycles (~1%, b82 probe)');
+    const GRAVE = '        (globalThis.__soakGrave ||= []).push(link);   // MUSTFAIL L-T-graveyard\n' +
+        '        activeLinks = (activeLinks - 1) | 0;\n';
+    assert.equal(src, base.replace(FREE, GRAVE), 'the graveyard kernel = base with exactly the freeLink push replaced');
+    // its pairing is the heap gate's: a graveyard control that expects the rss line does not back gate:heap
+    const ctl = copy(CONTROLS);
+    ctl.find((x) => x.name === 'L-T-graveyard').expect.specs = ['gate=rss lane=GRAPH'];
+    assert.deepEqual(pairing(CHECKS, ctl), ['gate:heap: L-T-graveyard -- no BREACH spec naming gate=heap']);
+});
+
+test('teeth m: L-T-rss starts late -- no retention inside the band window, retention before the late window', () => {
+    const c = CONTROLS.find((x) => x.name === 'L-T-rss');
+    assert.deepEqual([c.base, c.env.SOAK_LANES, c.env.SOAK_CYCLES, c.expect.exit, c.expect.kind, c.expect.specs],
+        ['headpatched', 'GRAPH', String(MIN_ACTIVE_CYCLES), 1, 'match', ['gate=rss lane=GRAPH']]);
+    assert.equal(c.patches.length, 1);
+    const lines = buildKernel(c).src.split('\n');
+    const at = lines.findIndex((l) => l.endsWith('// MUSTFAIL L-T-rss'));
+    assert.ok(at > 0, 'the L-T-rss patch is in the kernel');
+    const head = '    if ((globalThis.__soakRssN = (globalThis.__soakRssN | 0) + 1) > ';
+    assert.ok(lines[at].startsWith(head) && lines[at].endsWith(') {   // MUSTFAIL L-T-rss'), lines[at]);
+    const after = Number(lines[at].slice(head.length, lines[at].indexOf(')', head.length)));
+    const buf = /^ {8}\(globalThis\.__soakRss \|\|= \[\]\)\.push\(Buffer\.allocUnsafeSlow\((\d+)\)\.fill\(0x5a\)\);$/
+        .exec(lines[at + 1]);
+    assert.ok(buf !== null, lines[at + 1]);
+    assert.equal(lines[at + 2], '    }');
+    assert.ok(lines[at + 3].startsWith('    return {getOwner, '), 'right before the createRegistry return');
+    // one registry per world; b82 link-probe: 213 GRAPH worlds per DEFAULT_OPS cycle (a deterministic count)
+    const perCycle = 213;
+    assert.ok(Number.isSafeInteger(after) && after >= (WARMUP_CYCLES + GATE_N) * perCycle,
+        'no retention before the band window (cycles 1..GATE_N) ends: ' + after);
+    assert.ok(after <= (MIN_ACTIVE_CYCLES - 4) * perCycle,
+        'retention starts >= 2 cycles before the late window: ' + after);
+    // b82 measured: 512 KB MISSed (late 0.96 x the limit), 1.5 MB tripped gate=rss at 1.83 x: no smaller size is proven
+    assert.ok(Number(buf[1]) >= 1572864, 'a per-registry buffer of >= 1.5 MB (the measured size): ' + buf[1]);
 });

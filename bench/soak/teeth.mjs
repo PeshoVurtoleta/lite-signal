@@ -79,7 +79,9 @@ export const CHECKS = deepFreeze({
     // b75 (PLAN-0s-e TASK 5): the published 1.5.2 also predates F-b33-1 -- L-WIE-rev152, same O1e head, DIV-B33
     'lane:WIE': ['L-WIE-preb33', 'L-WIE-rev152'],
     'gate:oracle': ['L-REV-152'],
-    'gate:heap': ['L-T-leak'],
+    // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
+    // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
+    'gate:heap': ['L-T-leak', 'L-T-graveyard'],
     'gate:rss': ['L-T-rss'],
     'gate:retention': ['L-T-retain'],
     'gate:coverage': T_COV.slice(),

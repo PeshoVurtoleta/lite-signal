@@ -62,7 +62,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB } from './config.mjs';
+import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB, GATE_N, WARMUP_CYCLES } from './config.mjs';
 import { wrapRule, wrapStreamProblems } from './wraprules.mjs';
 import { inconclusiveLine } from './gates.mjs';
 
@@ -243,6 +243,24 @@ export function hasToken(line, spec) {
 
 const CYC = String(MIN_ACTIVE_CYCLES);   // 11: the active floor (2N + warm-up), so the drift gates are live
 
+// L-T-rss sizing (B-B3b, burst 82). The rss gate (gates.mjs rssRule / rssWindows): band = median of the first GATE_N
+// post-warm-up rss.p95MB values (cycles 1..5), late = p95 of the last floor(post / 4) = 2 (cycles 9 and 10; the
+// nearest-rank p95 of 2 values is their max), limit = band x RSS_RATIO + RSS_SLACK_MB. A leak that grows g MB per
+// cycle from cycle 0 lifts the band with it (band ~ R0 + 3.95 g, late ~ R0 + 10.95 g): late >= 1.3 x limit needs
+// g >= (1.275 R0 + 20.8) / 1.964 ~ 365 MB per cycle at the measured R0 ~ 545 MB (b82 run: GRAPH rss.p95MB
+// 527-556 over cycles 0-5 at DEFAULT_OPS), ~4.0 GB in all (nominal).
+// LATE START instead: retain nothing before registry RSS_LEAK_AFTER (one registry per world, exec.mjs
+// :96; nothing else in a burn-in calls createRegistry), past the band window even at RSS_WORLDS_CEIL worlds per
+// cycle (b82 link-probe, a deterministic count: 213 GRAPH worlds in each of cycles 0 and 1 at DEFAULT_OPS, default
+// seed; soak-calibration.json headpatched full GRAPH 2338 / 11 = 212.5): the leak starts in cycle 6 (1440 / 213).
+// MEASURED (b82, 1 run each, quiet-lock, Node v26.8.2, 1-min load 1.85-3.05 (start/end);
+// .handoff/b82-evidence/B1/p2-rss*): 512 KB MISSed (band 535.438, late 911.438 < limit 953.017 = 0.96 x; only
+// gate=heap tripped); 1.5 MB: exit 1, gate=heap
+// then gate=rss, band 544.969, late 1775.813 vs limit 969.696 = 1.83 x, peak rss ~1.8 GB, 84 s wall.
+const RSS_WORLDS_CEIL = 240;
+const RSS_LEAK_AFTER = (WARMUP_CYCLES + GATE_N) * RSS_WORLDS_CEIL;   // 1440 registries
+const RSS_LEAK_BYTES = 1572864;   // 1.5 MB per registry past RSS_LEAK_AFTER (measured b82: 1.83 x the limit)
+
 /**
  * Scratch-kernel tail (test/46 armAt2): rebind the module's createRegistry (a function declaration, a live
  * binding the adapter reads through the namespace) and run `action` on the 2nd registry the run opens, i.e.
@@ -258,6 +276,12 @@ const armAt2 = (action) => '\n;const __mfReg = createRegistry; let __mfN = 0;\n'
 const A_CREATE_NODE = '    function createNode(value, flags) {\n        let node;\n';
 // :1218 the recompute-end severTail (computed path, 20-space indent); :1120 is the effect-run end (16 spaces).
 const A_SEVER = '                    severTail(node);\n                    node.flags &= ~FLAG_COMPUTING;\n';
+// :621 the freeLink free-list push -- freeLink's push, NOT every release: the disposeNodeInner sub-walk :744
+// recycles inline (b82 probe: 770 of 71917 GRAPH cycle-0 releases, 1.07%) (freeLink's callers :522 allocateLink
+// sever, :646 severTailInner, :713 the disposeNodeInner dep-walk; only destroy() :1850 re-threads the pool, and the
+// soak adapter never calls it); 8-space indent, the activeLinks decrement included.
+const A_FREE_LINK = '        link.nextFree = freeLinkHead;\n        freeLinkHead = link;\n' +
+    '        activeLinks = (activeLinks - 1) | 0;\n';
 // :1975 the createRegistry return (the public api object main tracks as world.registry).
 const A_RETURN = '    return {getOwner, runWithOwner, signal, computed, effect, signalBox, computedBox, dispose, batch, untrack, createRoot, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};\n';
 
@@ -360,13 +384,35 @@ export const CONTROLS = deepFreeze([
     M('L-T-leak', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'match', lines: [], specs: ['gate=heap lane=GRAPH'],
     }, { patches: [[A_CREATE_NODE, A_CREATE_NODE + '        (globalThis.__soakLeak ||= []).push(new Array(128));   // MUSTFAIL L-T-leak\n']] }),
-    // L-T-rss (B-B3a, burst 81): every registry retains a 64 KB off-heap Buffer (allocUnsafeSlow, filled so its pages
-    // are resident) in a global array -> the rss drift gate (main.mjs summarize gate BREACH line). PROVISIONAL size
-    // (64 KB x 11 x DEFAULT_OPS) until B-B3b sizes it on a quiet host. Off-heap bytes count in arrayBuffers, so the
-    // heap gate (residentMB) trips too: accepted, the spec pins the rss line (PLAN-0s-bb3 RISK).
+    // L-T-graveyard (B-B3b, burst 82): freeLink never puts a released link back on the free list; the link goes to a
+    // global graveyard instead (its fields already nulled, activeLinks still decremented, so stats() and the O5
+    // link-count oracle stay consistent: only memory shows it) -> the heap drift gate (main.mjs summarize gate BREACH
+    // line). A pool leak, not L-T-leak's foreign arrays: the retained objects are the engine's own ReactiveLinks, and
+    // the free list refills only from fresh pool chunks and the disposeNodeInner sub-walk (~1% of releases). Size
+    // (b82 link-probe, a deterministic count, no timing): 71147 / 70768 links released through freeLink in GRAPH
+    // cycles 0 / 1 (213 worlds each, ~333 per world, max 4395), 90.2 B retained per link -> g ~ 6.1 MB per cycle,
+    // ~67 MB by cycle 10 (L-T-retain's 1.5 GB heap-limit trap is far off). Heap gate
+    // (nominal, R ~ 10 MB residentMB): early = cycle 3 ~ R + 4g ~ 34 MB, limit ~ 40 MB, late = cycle 8 ~ R + 9g ~ 65 MB
+    // = 1.6 x the limit. MEASURED (b82, 1 run, p2-grave): early 33.981, late 64.837 vs limit 39.379 = 1.65 x, rss
+    // PASS (late 615.047 < limit 1273.73), 82 s wall. No every-Nth bound needed.
+    M('L-T-graveyard', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 1, kind: 'match', lines: [], specs: ['gate=heap lane=GRAPH'],
+    }, { patches: [[A_FREE_LINK,
+        '        (globalThis.__soakGrave ||= []).push(link);   // MUSTFAIL L-T-graveyard\n' +
+        '        activeLinks = (activeLinks - 1) | 0;\n']] }),
+    // L-T-rss (B-B3a, burst 81; LATE START B-B3b, burst 82): the kernel counts its registries in a global, and every
+    // registry past RSS_LEAK_AFTER retains an RSS_LEAK_BYTES off-heap Buffer (allocUnsafeSlow, filled so its pages
+    // are resident) in a global array -> the rss drift gate (main.mjs summarize gate BREACH line). Design and nominal
+    // maths and the measured size: the RSS_LEAK_* constants above. Off-heap bytes count in
+    // arrayBuffers, so the heap gate (residentMB) trips too: accepted, the spec pins the rss line (PLAN-0s-bb3 RISK).
     M('L-T-rss', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'match', lines: [], specs: ['gate=rss lane=GRAPH'],
-    }, { patches: [[A_RETURN, '    (globalThis.__soakRss ||= []).push(Buffer.allocUnsafeSlow(65536).fill(0x5a));   // MUSTFAIL L-T-rss\n' + A_RETURN]] }),
+    }, { patches: [[A_RETURN,
+        '    if ((globalThis.__soakRssN = (globalThis.__soakRssN | 0) + 1) > ' + RSS_LEAK_AFTER +
+        ') {   // MUSTFAIL L-T-rss\n' +
+        '        (globalThis.__soakRss ||= []).push(Buffer.allocUnsafeSlow(' + RSS_LEAK_BYTES +
+        ').fill(0x5a));\n    }\n' +
+        A_RETURN]] }),
     // L-T-retain: every registry api is pushed to a global -> tracker.size() never drains (main.mjs:316 line).
     // Sized 11 x OPS_MIN: at 11 x DEFAULT_OPS the retained registries (~500 MB per GRAPH cycle) hit the V8 heap
     // limit at cycle 7 (burst 10 probe: residentMB=3534.27 after cycle 6, then "FATAL ERROR: Ineffective
