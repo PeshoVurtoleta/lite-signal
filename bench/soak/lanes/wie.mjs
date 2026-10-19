@@ -22,7 +22,7 @@
  *
  * D3 narrow v1, OUT: batches, lifecycle, child effects, cleanup writes, disposal of writers / targets (W3).
  * D5: no new oracle; O1e / O1c / O2 against the lockstep model catch the stale class.
- * index 4 lives ON the descriptor: WIE is not in ROSTER until B2 (tests import it directly).
+ * index 4 lives ON the descriptor: WIE is in ROSTER (lanes/index.mjs) since B2b (index 4 == its roster slot).
  */
 
 const MIX = Object.freeze({ set: 40, burst: 6, rewrite: 4, read: 14, readAll: 8, untrack: 3, group: 8, comp: 5, stop: 4 });

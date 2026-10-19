@@ -27,7 +27,7 @@ export const SCENARIOS = Object.freeze([
     // NEST
     'saved-cursor-hazard', 'live-cursor-hazard', 'child-first-run-dispose', 'nested-computed-dispose', 'untrack-dispose', 'outer-computed',
     'early-exit-after-dispose', 'lifecycle-callback-dispose', 'lifecycle-dispose-recycle', 'dispose-outer-observer',
-    // WIE (unit 0s; not in the roster until B2)
+    // WIE (unit 0s; in the roster since B2b)
     'wie-stale-effect', 'wie-stale-computed', 'wie-prewalk', 'wie-untrack', 'wie-write-before-read',
 ]);
 

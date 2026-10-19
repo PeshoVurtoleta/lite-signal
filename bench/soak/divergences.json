@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "about": "lite-signal soak divergence registry (SPEC-B v2 section 4.4; S1cd amendments 5 and 8). Every behaviour the soak tolerates or explains has ONE entry here. divergences.mjs validates it (fail closed: classify throws while the registry is invalid) and classifies a failing world against it. Engine rungs APPEND entries at the end and flip fixedIn when their fix lands; ids are never reused. fixedIn = the rung whose fix has LANDED in the tree (null = still open); an entry with fixedIn set explains a failure only when classify opts.includeFixed is true (main / SoakReport set it for any named control kernel, pre- or post-fix). fixBy = the rung planned to fix it (informative). Matching: every fail of the failing step must be explained by some entry; an entry explains a fail when the engine, lane, oracle, sig, op, step scen (all-of), world scen (all-of), prior scen (all-of, needs worldScenCounts) and at least one shape (pair, anchored detail regex, co-fail, step scen all-of, world scen all-of, world scen none-of) all hold. lanes [] means no S1 matcher: such an entry names where it is observed (pending), or a conformance case, or is referenced by an allowance.",
+  "about": "lite-signal soak divergence registry (SPEC-B v2 section 4.4; S1cd amendments 5 and 8). Every behaviour the soak tolerates or explains has ONE entry here. divergences.mjs validates it (fail closed: classify throws while the registry is invalid) and classifies a failing world against it. Engine rungs APPEND entries at the end and flip fixedIn when their fix lands; ids are never reused. fixedIn = the rung whose fix has LANDED in the tree (null = still open); an entry with fixedIn set explains a failure only when classify opts.includeFixed is true (main / SoakReport set it for any named control kernel, pre- or post-fix). fixBy = the rung planned to fix it (informative). Matching: every fail of the failing step must be explained by some entry; an entry explains a fail when the engine, lane, oracle, sig, op, step scen (all-of), world scen (all-of), prior scen (all-of, needs worldScenCounts) and at least one shape (pair, anchored detail regex, co-fail (sameBody: the co-fail names the same body/effect #N), step scen all-of, world scen all-of, world scen none-of) all hold. lanes [] means no S1 matcher: such an entry names where it is observed (pending), or a conformance case, or is referenced by an allowance.",
   "allowances": {
     "genRules": {
       "I1": "DIV-I1-effect-self-write",
@@ -127,14 +127,15 @@
     {
       "id": "DIV-F15", "kind": "fix", "finding": "F15", "since": "1.5.2", "fixedIn": null, "fixBy": "A1",
       "decision": "fix: repair every suspended cursor, not only the live one (F8, F13 and F15 are one class)",
-      "engines": ["lite"], "lanes": ["NEST"], "oracles": ["O5", "O6"], "sigs": ["escape-TypeError", "link-count"],
+      "engines": ["lite"], "lanes": ["NEST"], "oracles": ["O5", "O6", "O1e"], "sigs": ["escape-TypeError", "link-count", "effect-stale"],
       "ops": [], "scen": ["saved-cursor-hazard"], "worldScen": [], "priorScen": [],
       "shapes": [
         { "pair": "O6:escape-TypeError", "detail": "^(?:body#\\d+ read #\\d+|top-level read of #\\d+|engine error escaped): TypeError: Cannot set properties of null \\(setting 'headSub'\\)$" },
+        { "pair": "O1e:effect-stale", "detail": "^effect#\\d+ saw \\[[^\\]]*\\] model \\[[^\\]]*\\]$", "with": ["O6:escape-TypeError"], "sameBody": true },
         { "pair": "O5:link-count", "detail": "^activeLinks engine=\\d+ expected=\\d+ \\(slack 0\\)$", "with": ["O6:escape-TypeError"] }
       ],
       "attribution": null, "pending": null, "conformanceCases": ["test/35-cursor-safety.test.mjs"], "expectedThrow": null,
-      "description": "A disposal from a nested frame frees the link an outer observer's saved cursor points at; on restore the walk dereferences null.headSub. 1.5.2/wt0 NEST: 123 of 200 worlds; headpatched NEST: 200 of 200. A standalone link-count (P6 silent link loss) is not matched."
+      "description": "A disposal from a nested frame frees the link an outer observer's saved cursor points at; on restore the walk dereferences null.headSub. 1.5.2/wt0 NEST: 123 of 200 worlds; headpatched NEST: 200 of 200. Widened (b70, maintainer ruling b70 #3): an O1e effect-stale on the effect whose body escaped the TypeError in the same step (sameBody: its effect#N is the O6 body#N) is the same crash, its seen being the prefix the TypeError cut; the V1 frame taint (b70 D1) stopped hiding it. NEST smoke @0xC0FFEE under V1: headpatched 942 of 1832 failing worlds carry it, 1.5.2 734 of 1998, each with its O6 body#N co-fail (.handoff/b70-evidence/b1b). Not matched: a standalone link-count (P6 silent link loss), a standalone effect-stale, one naming another effect than the O6 body, or one whose O6 line names no body (top-level read, engine error escaped)."
     },
     {
       "id": "DIV-F16", "kind": "fix", "finding": "F16", "since": "1.5.2+audit-patch", "fixedIn": null, "fixBy": "A3",

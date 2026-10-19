@@ -256,6 +256,31 @@ test('DIV-F15: the TypeError headSub class with saved-cursor-hazard; near-misses
     assert.equal(classify(rec('F15', { lane: 'ERROR' })), null);
 });
 
+// b70 DIV-F15 widening (maintainer ruling b70 #3): under the V1 frame taint, headpatched NEST 0xaed1587a@30 also
+// reports O1e effect-stale on effect#30 = the body that escaped the TypeError in the same step (its `seen` is the
+// prefix the crash cut). Matched only with an O6 escape-TypeError co-fail naming the SAME body #N (sameBody).
+const F15_STALE = { oracle: 'O1e', sig: 'effect-stale', detail: 'effect#30 saw [#26=1,#27=undefined] model [#26=1,#27=undefined,#28=Infinity,#29=16]' };
+const f15stale = (fn) => { const r = rec('F15'); r.fails.splice(1, 0, clone(F15_STALE)); if (fn) fn(r); return r; };
+const TOP_LEVEL_F15 = "top-level read of #30: TypeError: Cannot set properties of null (setting 'headSub')";
+
+test('b70 DIV-F15 widening: O1e effect-stale on the body that escaped the TypeError -> DIV-F15 (REPORT effect#30/body#30)', () => {
+    const c = classify(f15stale());
+    assert.notEqual(c, null);
+    assert.equal(c.known, 'DIV-F15');
+    assert.deepEqual(c.perFail.map((p) => p.slice()), [['DIV-F15'], ['DIV-F15'], ['DIV-F15']]);
+});
+
+test('b70 DIV-F15 widening must-fails: another effect#, no O6 co-fail, an O6 with no body ref -> known=none', () => {
+    // a different effect than the O6 body that crashed: an independent stale effect is not the co-symptom
+    assert.equal(classify(f15stale((r) => { r.fails[1].detail = r.fails[1].detail.replace('effect#30', 'effect#31'); })), null);
+    // no O6 escape-TypeError in the step: a standalone stale effect (with or without the O5 line)
+    assert.equal(classify(f15stale((r) => { r.fails = [r.fails[1]]; })), null);
+    assert.equal(classify(f15stale((r) => { r.fails = [r.fails[1], r.fails[2]]; })), null);
+    // the O6 'top-level read of #N' form names no body: sameBody fails closed (that O6 line alone still matches)
+    assert.equal(classify(f15stale((r) => { r.fails[0].detail = TOP_LEVEL_F15; })), null);
+    assert.equal(known(rec('F15', { fails: [{ oracle: 'O6', sig: 'escape-TypeError', detail: TOP_LEVEL_F15 }] })), 'DIV-F15');
+});
+
 test('DIV-F7: a fire for a disposed target; near-misses -> null', () => {
     assert.equal(known(rec('F7')), 'DIV-F7');
     const off = rec('F7'); off.fails[0].detail = 'onConnect fired for registration r3 on #51: registration off';
@@ -396,6 +421,17 @@ test('validate rejects a broad or malformed matcher', () => {
     assert.ok(has(mut((e) => { e.shapes[1].with = ['O6:escape-NOPE!']; }), /unknown pair/));
     assert.ok(has(validate({ schema: 2 }), /schema must be 1/));
     assert.deepEqual(validate([]), ['registry: not a plain object']);
+});
+
+test('b70 validate: sameBody is a boolean and requires with; the widened DIV-F15 keeps the no-slack rule', () => {
+    const mut = (fn) => { const r = fresh(); fn(r.entries.find((e) => e.id === 'DIV-F15')); return validate(r); };
+    const o1e = (e) => e.shapes.find((sh) => sh.pair === 'O1e:effect-stale');
+    assert.ok(has(mut((e) => { o1e(e).sameBody = 'yes'; }), /sameBody must be a boolean/));
+    assert.ok(has(mut((e) => { o1e(e).sameBody = 1; }), /sameBody must be a boolean/));
+    assert.ok(has(mut((e) => { delete o1e(e).with; }), /sameBody requires with/));
+    assert.deepEqual(mut((e) => { o1e(e).sameBody = false; }), []);
+    assert.ok(has(mut((e) => { e.shapes.splice(e.shapes.indexOf(o1e(e)), 1); }), /pair O1e:effect-stale has no shape \(broad matcher\)/));
+    assert.ok(has(mut((e) => { e.oracles.pop(); }), /sig effect-stale belongs to none of its oracles/));
 });
 
 test('the registry is append-friendly: a valid appended entry validates and classifies', () => {

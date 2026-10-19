@@ -21,7 +21,9 @@
  *                 Both predictions come from the model's write-cycle census (model.writeCycleNew / writeCycle);
  *                 the model kill stays keyed on the ACTUAL escape, never on the prediction
  *   taint         model.kill() taints observers that read a disposed node; a run in progress during a
- *                 disposal is tainted until it ends (taint clears only for a run entirely after it)
+ *                 disposal is tainted until it ends (taint clears only for a run entirely after it) ONLY if
+ *                 that run already read a killed node, or a live computed tainted after the kill (b70 D6 V1);
+ *                 a run that read neither before the kill sees what the model sees and stays untainted
  *   at rest       O1e + O4 every op, O5 every op, O1c when the op's chk bit is set and at world end
  *   wie writer    (WIE, gen.mjs I2 lifted) a computed whose spec carries w writes w := f(its output) through
  *                 write() after its body returns (spec.wu: under untrack), exactly like an effect writer. D4: a
@@ -435,7 +437,6 @@ class Exec {
         if (nd === undefined || !nd.live || this.H[j] === undefined) return;
         this.D.onDispose(j);
         for (const f of this.frames) {
-            f.taintRun = true;
             if (f.prev !== null) {
                 const at = f.prev.indexOf(j);
                 if (at !== -1) { f.prev = f.prev.slice(); f.prev.splice(at, 1); }
@@ -443,7 +444,21 @@ class Exec {
             const ar = f.reads.indexOf(j);
             if (ar !== -1) f.reads.splice(ar, 1);
         }
-        this.M.kill(j);
+        const dead = this.M.kill(j);
+        // V1 (b70 D6): taint an in-flight run only if its reads so far hold a victim, or a live computed that
+        // is tainted after the kill. taintRun stays OR-accumulated; one tainted() memo for the whole call.
+        if (this.frames.length !== 0) {
+            const tm = new Map();
+            for (const f of this.frames) {
+                const seen = f.seen;
+                for (let k = 0; k < seen.length; k++) {
+                    const r = seen[k].r;
+                    if (dead.indexOf(r) !== -1) { f.taintRun = true; break; }
+                    const sn = this.M.n[r];
+                    if (sn !== undefined && sn.t === 'c' && sn.live && this.M.tainted(r, tm)) { f.taintRun = true; break; }
+                }
+            }
+        }
         nd.dying = true;
         try { this.W.dispose(this.H[j]); } finally { nd.dying = false; }
     }

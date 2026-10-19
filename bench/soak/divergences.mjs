@@ -23,6 +23,10 @@
  *
  * A shape holds when its pair matches, its anchored detail regex matches, and its optional clauses hold:
  *   with          a co-fail of the same step has one of these pairs
+ *   sameBody      (boolean; requires with) when true, that co-fail must also name the SAME body: the leading
+ *                 ref /^(?:body|effect)#(\d+)\b/ of both details is equal. A detail with no such ref (O6
+ *                 'top-level read of #N', 'engine error escaped') never matches (fail closed). b70 DIV-F15
+ *                 widening: an O1e effect-stale on the effect whose body escaped the TypeError in that step.
  *   scen          the step scen carries every one (all-of)
  *   worldScen     the world scen carries every one (all-of; a SHAPE-level narrowing, so one entry's shapes may
  *                 differ: burst 53 DIV-F6 widening, PLAN-F-b33-1 N19.3)
@@ -65,7 +69,7 @@ export const ATTRIBUTIONS = Object.freeze(['batch-token-replaced']);
 
 const ENTRY_KEYS = Object.freeze(['id', 'kind', 'finding', 'since', 'fixedIn', 'fixBy', 'decision', 'engines', 'lanes', 'oracles', 'sigs',
     'ops', 'scen', 'worldScen', 'priorScen', 'shapes', 'attribution', 'pending', 'conformanceCases', 'expectedThrow', 'description']);
-const SHAPE_KEYS = Object.freeze(['pair', 'detail', 'with', 'scen', 'worldScen', 'notWorldScen']);
+const SHAPE_KEYS = Object.freeze(['pair', 'detail', 'with', 'sameBody', 'scen', 'worldScen', 'notWorldScen']);
 const TOP_KEYS = Object.freeze(['schema', 'about', 'allowances', 'entries']);
 const ALLOW_KEYS = Object.freeze(['genRules', 'structural', 'oracle']);
 
@@ -206,6 +210,10 @@ export function validate(reg, vocab) {
                     if (p === sh.pair) out.push(sw + ': with names its own pair');
                 }
             }
+            if (own(sh, 'sameBody')) {
+                if (typeof sh.sameBody !== 'boolean') out.push(sw + ': sameBody must be a boolean');
+                if (!own(sh, 'with')) out.push(sw + ': sameBody requires with (the co-fail it pins to the same body)');
+            }
             if (own(sh, 'scen') && (!isStrArr(sh.scen) || sh.scen.length === 0 || sh.scen.some((x) => V.scenarios.indexOf(x) === -1))) out.push(sw + ': scen must be known scenarios');
             for (const k of ['worldScen', 'notWorldScen']) {
                 if (!own(sh, k)) continue;
@@ -299,6 +307,9 @@ function prior(rec, s) {
 }
 
 const ESC_RE = /^unpredicted escape (\S+)$/;
+/** The body / effect a detail names first (sameBody); null when it names none (e.g. 'top-level read of #N'). */
+const BODY_REF_RE = /^(?:body|effect)#(\d+)\b/;
+const bodyRef = (d) => { const m = BODY_REF_RE.exec(d); return m === null ? null : m[1]; };
 const BATCH_RE = /^predicted escape (batch:\d+) x1 did not happen$/;
 
 /** DIV-F22: returns 'computed' (F6 pre-walk token), 'effect' (effect-body escape) or null. */
@@ -331,8 +342,15 @@ function shapeHolds(rec, f, sh) {
     if (sh.worldScen !== undefined) for (const s of sh.worldScen) if (rec.worldScen.indexOf(s) === -1) return false;
     if (sh.notWorldScen !== undefined) for (const s of sh.notWorldScen) if (rec.worldScen.indexOf(s) !== -1) return false;
     if (sh.with !== undefined) {
+        // sameBody: the co-fail must name the same body #N as f; either detail without a ref -> no match (fail closed)
+        const ref = sh.sameBody === true ? bodyRef(f.detail) : null;
+        if (sh.sameBody === true && ref === null) return false;
         let ok = false;
-        for (const p of sh.with) for (const x of rec.fails) if (x !== f && x.oracle + ':' + x.sig === p) ok = true;
+        for (const p of sh.with) for (const x of rec.fails) {
+            if (x === f || x.oracle + ':' + x.sig !== p) continue;
+            if (sh.sameBody === true && bodyRef(x.detail) !== ref) continue;
+            ok = true;
+        }
         if (!ok) return false;
     }
     return true;
@@ -414,7 +432,7 @@ function compileShapes(reg) {
         m.set(e.id, e.shapes.map((sh) => {
             const c = compileDetail(sh.detail);
             if (c.error !== undefined) throw new Error('divergences: ' + e.id + ' ' + sh.pair + ': ' + c.error);   // validate ran first
-            return { pair: sh.pair, re: c.re, with: sh.with, scen: sh.scen, worldScen: sh.worldScen, notWorldScen: sh.notWorldScen };
+            return { pair: sh.pair, re: c.re, with: sh.with, sameBody: sh.sameBody, scen: sh.scen, worldScen: sh.worldScen, notWorldScen: sh.notWorldScen };
         }));
     }
     return m;
