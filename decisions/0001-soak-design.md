@@ -158,7 +158,8 @@ Amendment 2026-10-19 (unit 0s, bursts 63-69: lane WIE; commits 92c0020, e1eca59,
   must equal parity.json; the 1.5.2 control predates F-b33-1. The "both kernels" cells in section 8 are 4-lane history.
 - DIV-B33 (lane WIE only; fixedIn F-b33-1) explains the WIE lost update on a controls.json kernel (preb33, rev152): O1e
   effect-stale, O1c computed-mismatch, O2 glitch, and, widened by ruling b68, O4 effect-dead (replay WIE:4:0x88c7b46b, detail
-  "(ran 0 times this op)"). On the tree it is a regression (known=none). Must-fail control L-WIE-preb33.
+  "(ran 0 times this op)"). On the tree it is a regression (known=none).
+  Must-fail controls L-WIE-preb33 and L-WIE-rev152 (b75).
 - golden/scripts-1000.json: the WIE digest was APPENDED in B2b (35bbf26) and has no cut provenance of its own (ruling b69);
   cutAt / inputsSha256AtCut describe the 2026-10-11 four-lane cut.
 - Calibration recut at 35bbf26: 832 s, started 00:53:46 EEST 2026-10-19 at load 2.75 / 2.71 / 3.01

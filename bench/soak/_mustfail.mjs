@@ -339,6 +339,15 @@ export const CONTROLS = deepFreeze([
     M('L-WIE-preb33', 'preb33', { SOAK_LANES: 'WIE', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'explained', lines: [], specs: ['oracle=O1 lane=WIE sig=effect-stale'], known: ['DIV-B33'],
     }),
+    // L-WIE-rev152 (b75, PLAN-0s-e TASK 4): the published 1.5.2 (rev152) predates F-b33-1 too, so it is the second WIE
+    // control (a second engine build behind lane:WIE, teeth.mjs CHECKS). Evidence: b69 qa, 11 x 100000 rev152 WIE
+    // (.handoff/b69-evidence/qa/logs/r152-full.err): 4 BREACH heads -- O1e effect-stale, O2 glitch, O1c
+    // computed-mismatch and O4 effect-dead (replay WIE:4:0x88c7b46b) -- every one known=DIV-B33 (includeFixed: rev152
+    // is a controls.json kernel). Same shape as L-WIE-preb33: 'explained' by DIV-B33, the O1e head spelled out so
+    // lane:WIE pairs.
+    M('L-WIE-rev152', 'rev152', { SOAK_LANES: 'WIE', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 1, kind: 'explained', lines: [], specs: ['oracle=O1 lane=WIE sig=effect-stale'], known: ['DIV-B33'],
+    }),
     // L-P-INTERIM (amendment 13): the interim pass control on GRAPH,BATCH -- exit 0, no BREACH, 22 clean boundaries.
     M('L-P-INTERIM', 'headpatched', { SOAK_LANES: 'GRAPH,BATCH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { boundaries: 2 * MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'PASS' },

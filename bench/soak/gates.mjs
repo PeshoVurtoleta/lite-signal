@@ -106,8 +106,12 @@ export class Totals {
     get(name) { return this.slot[this.index(name)]; }
     has(name) { return this.ix.has(name); }
     toJSON() {
+        // defineProperty, not out[name] = v: a slot named "__proto__" (an own key of a JSON-parsed failureCounts)
+        // would hit the Object.prototype setter and vanish from the report. A plain {} in names order (cold path).
         const out = {};
-        for (let i = 0; i < this.names.length; i++) out[this.names[i]] = this.slot[i];
+        for (let i = 0; i < this.names.length; i++) {
+            Object.defineProperty(out, this.names[i], { value: this.slot[i], enumerable: true, writable: true, configurable: true });
+        }
         return out;
     }
 }
@@ -423,9 +427,13 @@ function countMap(obj, keys, where) {
  * A malformed record throws GateInputError (fail closed). Warm-up cycles (cycle < WARMUP_CYCLES) count
  * toward every total and do not feed the heap drift. Every cycle, warm-up included, must carry a measured
  * boundary: an unmeasured one FAILs retention; only a BAD warm-up boundary is ignored.
+ * A re-entrant push (a record getter that pushes into this lane mid-fold) throws GateInputError; the guard
+ * resets in a finally, so the next push folds normally.
  *   opts { lane, oracles: applicable hard oracles, required: applicable required scenarios }
  */
 export class LaneGates {
+    #busy = false;   // push re-entry guard (no allocation on the success path)
+
     constructor(opts) {
         if (!opts || typeof opts.lane !== 'string') throw new TypeError('LaneGates: opts.lane must be a lane name');
         if (!Array.isArray(opts.oracles) || !Array.isArray(opts.required)) throw new TypeError('LaneGates: opts.oracles and opts.required must be arrays');
@@ -446,6 +454,17 @@ export class LaneGates {
     }
 
     push(rec) {
+        if (this.#busy) bad('cycle record lane=' + this.lane + ': re-entrant push (a record getter pushed into this lane while a record was folding)');
+        this.#busy = true;
+        try {
+            this.#fold(rec);
+        } finally {
+            this.#busy = false;
+        }
+    }
+
+    /** One record's checks and fold (the body of push before the re-entry guard). */
+    #fold(rec) {
         const where = 'cycle record lane=' + this.lane + ' cycle=' + (rec && rec.cycle);
         if (rec === null || typeof rec !== 'object') bad(where + ': not an object');
         if (rec.lane !== this.lane) bad(where + ': belongs to lane ' + String(rec.lane));

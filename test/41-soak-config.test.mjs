@@ -25,6 +25,7 @@ import { derive as nwDerive } from '../bench/soak/nearwrap.mjs';
 import { createHash } from 'node:crypto';
 // lanes/index.mjs is kernel-free (gen-side only): the cov-off universe is IMPORTED, never copied.
 import { COV_OFF_SUPPORTED } from '../bench/soak/lanes/index.mjs';
+import { validate } from '../bench/soak/divergences.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SOAK = join(ROOT, 'bench', 'soak');
@@ -602,8 +603,8 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
 //       below TAINT_SKIP_MAX (the headpatched NEST cov-off sweep must hold exactly COVOFF_SEEDS; its skip ratio is
 //       REPORTED only since b70 D6 V1 -- it was ~80% blanket frame taint; PLAN-0s-d6 ADDENDUM 1 item 2: the
 //       taint-skip must-fail is P-NEST-TAINT-HALF in test/67, cov-off stays the coverage gate's case);
-//       every covOff cell and every BATCH covOffSweep cell (both kernels) has hits < SCEN_MIN_SMOKE (a cov-off
-//       switch that leaks hits lets the hollow run clear coverage)
+//       every covOff cell and every covOffSweep cell (each kernel on the lanes it cuts, lanesFor) has hits
+//       < SCEN_MIN_SMOKE (a cov-off switch that leaks hits lets the hollow run clear coverage)
 //   (f) b74 D4: every rostered lane has FULL-LENGTH evidence: >= 1 kernel of kernelsFor(lane) whose full AND smoke
 //       cells both have failingWorlds 0 (a count: null is not zero) and worlds > 0. A fail-stopped cell (every world
 //       fails early: headpatched NEST 33885/33885 at 32.5 ops/world) confounds every length-dependent count (O7a, the
@@ -773,8 +774,11 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
     }
     // (f) b74 D4: every rostered lane has full-length evidence on some kernel that cuts it (header); ERROR is exempt
     // only while one of DIV-F5 / F6 / F22 is open, and the exemption set is exactly the ruled one
-    if (JSON.stringify(exempt) !== B6_F_EXEMPT_RULED) {
-        p.push('(f) the exemption set ' + JSON.stringify(exempt) + ' != ' + B6_F_EXEMPT_RULED + ' (maintainer ruling b74: only ERROR, tied to DIV-F5 / F6 / F22)');
+    // second literal on purpose: editing :654 (B6_F_EXEMPT_RULED, the default source only) alone is red; fail closed
+    // -- a non-object exempt (null) is red, never a TypeError
+    const exK = exempt !== null && typeof exempt === 'object' ? Reflect.ownKeys(exempt) : null;
+    if (JSON.stringify(exK) !== '["ERROR"]' || JSON.stringify(exempt.ERROR) !== '["DIV-F5","DIV-F6","DIV-F22"]') {
+        p.push('(f) the exemption set ' + JSON.stringify(exempt) + ' != {"ERROR":["DIV-F5","DIV-F6","DIV-F22"]} (maintainer ruling b74: only ERROR, tied to DIV-F5 / F6 / F22)');
     }
     for (const d of lanes) {
         let ok = false;
@@ -800,7 +804,7 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
     const cov = (((doc.covOffSweep || {}).cells || {})['headpatched:NEST:saved-cursor-hazard']) || [];
     if (!b6SeedsOk(cov)) p.push('(e) the headpatched NEST cov-off sweep seeds ' + JSON.stringify(cov.map((c) => (c || {}).seed)) + ' != COVOFF_SEEDS');
     // b71 (PLAN-0s-d6 ADDENDUM 1 item 2): no taint-skip leg on the cov-off sweep (V1 reads it at ~0.09; REPORTED only)
-    // (e) a cov-off must really switch its scenario off: every covOff cell, every covOffSweep cell, both kernels
+    // (e) a cov-off must switch its scenario off: every covOff cell; every covOffSweep cell, each kernel on its lanes
     for (const { name: lane, covOff } of lanes) for (const scen of Object.keys(covOff)) {
         const c = (doc.covOff || {})[lane + ':' + scen];
         if (!c) { p.push('(e) cov-off ' + lane + ':' + scen + ' has no evidence; ' + B6_RECUT); continue; }
@@ -1002,7 +1006,7 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
         extra.covOffSweep.cells[key].push(b6Copy(extra.covOffSweep.cells[key][0]));
         red(extra, B6_C, '(e)', key + ': an 18th sweep cell');
     }
-    // every cov-off sweep (not only BATCH) is hit-checked, both kernels
+    // every cov-off sweep (not only BATCH) is hit-checked on every kernel that cuts its lane (lanesFor)
     const gHit = b6Copy(B6_DOC);
     gHit.covOffSweep.cells['lite-1.5.2:ERROR:throw-dep-effect-prewalk'][0].hits = CFG.SCEN_MIN_SMOKE;
     red(gHit, B6_C, '(e)', 'an ERROR cov-off sweep cell with hits >= SCEN_MIN_SMOKE');
@@ -1048,9 +1052,28 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     red(B6_DOC, B6_C, '(f) ERROR: the exemption expired', 'DIV-F5 / F6 / F22 absent from divergences.json (absent is not open)', b6ShaOf, B6_PROBE, absent);
     const oneOpen = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, closeDivs(['DIV-F6', 'DIV-F22']));
     assert.deepEqual(oneOpen.filter((x) => x.indexOf('(f) ERROR') === 0), [], 'control: DIV-F5 alone open keeps ERROR exempt');
+    // (f) b6DivOpen: only fixedIn === null is open; a missing fixedIn key or '' is closed, so the exemption expires
+    // (a `== null` or `!e.fixedIn` open test would keep ERROR exempt on a malformed registry: fail open)
+    const noKey = b6Copy(B6_DIVS);
+    for (const e of noKey.entries) if (F_IDS.indexOf(e.id) !== -1) delete e.fixedIn;
+    red(B6_DOC, B6_C, '(f) ERROR: the exemption expired',
+        'fixedIn deleted on DIV-F5 / F6 / F22 (a missing key is not open)', b6ShaOf, B6_PROBE, noKey);
+    const noKeyV = validate(noKey);
+    assert.ok(noKeyV.some((x) => /missing key fixedIn/.test(x)),
+        'validate() names the missing fixedIn key: ' + JSON.stringify(noKeyV));
+    const emptyFx = b6Copy(B6_DIVS);
+    for (const e of emptyFx.entries) if (F_IDS.indexOf(e.id) !== -1) e.fixedIn = '';
+    red(B6_DOC, B6_C, '(f) ERROR: the exemption expired',
+        "fixedIn '' on DIV-F5 / F6 / F22 (an empty string is not open)", b6ShaOf, B6_PROBE, emptyFx);
+    // (f) the structural exemption check fails closed: a null exempt is a '(f)' problem, never a TypeError
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'exempt = null (a non-object exemption set)',
+        b6ShaOf, B6_PROBE, B6_DIVS, null);
     // (f) the exemption set must be exactly the ruled one: a second lane, or another divergence id -> red
     red(B6_DOC, B6_C, '(f)', 'NEST added to the exemption', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: F_IDS.slice(), NEST: ['DIV-F15'] });
     red(B6_DOC, B6_C, '(f)', 'the ERROR exemption tied to a never-closing divergence', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F7'] });
+    const hidden = { ERROR: F_IDS.slice() };   // a non-enumerable own key is still an exemption (b6Has is hasOwnProperty)
+    Object.defineProperty(hidden, 'GRAPH', { value: ['DIV-F7'] });
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'a non-enumerable GRAPH key on the exemption set', b6ShaOf, B6_PROBE, B6_DIVS, hidden);
     // (e) b74 D4: a hollowVolume row counts only when full-length; every row failing -> the floor reads hollow
     const hvFail = b6Copy(B6_DOC);
     for (const k of Object.keys(hvFail.hollowVolume)) for (const l of Object.keys(hvFail.hollowVolume[k])) hvFail.hollowVolume[k][l].failingWorlds = 1;

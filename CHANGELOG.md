@@ -15,6 +15,33 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
+### Changed -- test/41 clause (f) hardened; exemption set spelled twice (dev-only, not shipped)
+
+The (f) exemption-set check now spells the ruled set `{ERROR: [DIV-F5, DIV-F6, DIV-F22]}` a second time, structurally
+and fail-closed: editing the test/41 literal alone is red (before, it compared against the string it had parsed). Three
+new must-fail rows: `fixedIn` deleted and `fixedIn` '' (only `fixedIn === null` counts as open, so the exemption expires
+and (f) is red) and a null exemption set (exempt = null: red, no TypeError). The comments that said "both kernels" now
+say every kernel that cuts the lane.
+
+### Added -- soak must-fail control L-WIE-rev152 (dev-only, not shipped)
+
+`_mustfail.mjs` gains a long control: base rev152, lane WIE, 11 x 100000, expected spec oracle=O1 lane=WIE
+sig=effect-stale, known DIV-B33. Measured (b75): 1 OK / 0 MISS; the four heads O1e/O2/O1c (WIE:0) and O4
+(WIE:4:0x88c7b46b) are byte-identical to the b69 r152-full.err, all DIV-B33, 0 known=none, 0 retention/heap BREACH.
+Must-fail checks: the base tree -> MISS (no BREACH); DIV-B33 without O4 -> MISS (O4 known=none). `teeth.mjs` lane:WIE is
+now backed by [L-WIE-preb33, L-WIE-rev152]; test/45 "teeth l" pins it. MUSTFAIL_LIST 36 -> 37 lines.
+
+### Fixed -- soak gates.mjs: `Totals.toJSON` keeps a `__proto__` key; `LaneGates.push` refuses re-entry (dev-only)
+
+`Totals.toJSON` keeps a key named `__proto__` (an own key of a JSON-parsed failureCounts) as an own data property of a
+plain object (`Object.defineProperty`); key order and JSON bytes are unchanged for every other key set (golden
+byte-identical). `LaneGates.push` throws GateInputError on a re-entrant push into the same lane (a record getter pushing
+mid-check); the guard resets in `finally`. test/42 todo rows 2 -> 0 (both now real tests, red on the old gates.mjs);
+parity.json re-pinned (gates.mjs line only), parity OK 34 files. Engine unchanged. OPEN: a getter that fires DURING the
+fold (after the cycle count moves, e.g. `rec.boundary`) can still leave a lane half-folded; it now throws GateInputError
+(before this change a same-cycle push there also threw, on the cycle-order check, and a next-cycle push folded silently
+inside the outer fold).
+
 ### Changed -- soak D4: NEST floors re-cut on full-length worlds; test/41 clause (f) (dev-only, not shipped)
 
 The tree kernel is added to the NEST calibration only (`calibrate.mjs` LANE_KERNELS): headpatched and lite-1.5.2

@@ -465,12 +465,19 @@ test('QA boundary Totals growth: N-1, N, N+1 slots around the initial 4 keep eve
 });
 
 test('QA adversarial Totals.toJSON: a slot named __proto__ (an own key of a JSON-parsed failureCounts) survives the report',
-    { todo: 'DEFECT gates.mjs Totals.toJSON: out[name] = v on a plain {} drops a "__proto__" slot (get() reads 7, toJSON() omits it)' }, () => {
+    () => {
         const t = new G.Totals(['a']);
         t.ensure('__proto__');
         t.add('__proto__', 7);
         assert.equal(t.get('__proto__'), 7);
-        assert.ok(Object.prototype.hasOwnProperty.call(t.toJSON(), '__proto__'), 'toJSON lost the __proto__ slot');
+        const j = t.toJSON();
+        assert.ok(Object.prototype.hasOwnProperty.call(j, '__proto__'), 'toJSON lost the __proto__ slot');
+        assert.equal(Object.getOwnPropertyDescriptor(j, '__proto__').value, 7, 'the own __proto__ slot carries the total');
+        assert.deepEqual(Object.getOwnPropertyDescriptor(j, 'a'), { value: 0, writable: true, enumerable: true, configurable: true });
+        assert.deepEqual(Object.getOwnPropertyDescriptor(j, '__proto__'),
+            { value: 7, writable: true, enumerable: true, configurable: true });
+        assert.equal(Object.getPrototypeOf(j), Object.prototype, 'a plain {} (an own data key, not a prototype swap or a null-proto object)');
+        assert.equal(JSON.stringify(j), '{"a":0,"__proto__":7}', 'the report keeps the slot, in names order');
     });
 
 test('QA boundary EarlyLate: the ring counter started just below 2^30, 2^31 and 2^32 crosses the wrap; n = 1 and an empty window', () => {
@@ -527,15 +534,35 @@ test('QA boundary LaneGates: zero records is not PASS; compute twice is idempote
 });
 
 test('QA adversarial LaneGates re-entrant push: a record getter that pushes the same cycle must not fold cycle 0 twice',
-    { todo: 'DEFECT gates.mjs LaneGates.push: the cycle-order check runs before the field reads, so a re-entrant push from a getter folds cycle 0 twice (cycles=2, worlds=500)' }, () => {
+    () => {
         const L = new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'b'] });
         const outer = rec('GRAPH', 0);
         let fired = false;
         Object.defineProperty(outer, 'worlds', { enumerable: true, get() { if (!fired) { fired = true; L.push(rec('GRAPH', 0)); } return 250; } });
         let threw = false;
-        try { L.push(outer); } catch { threw = true; }
-        assert.ok(threw || L.cycles === 1, 'cycle 0 was folded ' + L.cycles + ' times');
+        let err = null;
+        try { L.push(outer); } catch (e) { threw = true; err = e; }
+        assert.equal(threw, true, 'a re-entrant push must throw (cycles=' + L.cycles + ')');
+        assert.ok(err instanceof G.GateInputError && /re-entrant push/.test(err.message), 'GateInputError naming the re-entry: ' + String(err));
+        assert.equal(L.cycles, 0, 'cycle 0 was folded ' + L.cycles + ' times (no partial fold on the refused record)');
+        L.push(rec('GRAPH', 0));
+        assert.equal(L.cycles, 1, 'the guard resets: a fresh push of cycle 0 folds once');
+        assert.equal(L.totals.get('worlds'), 250);
     });
+
+test('LaneGates re-entry guard is per lane: a record getter may push into a different lane', () => {
+    const A = new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'b'] });
+    const B = new G.LaneGates({ lane: 'BATCH', oracles: ORA, required: ['a', 'b'] });
+    const outer = rec('GRAPH', 0);
+    let fired = false;
+    Object.defineProperty(outer, 'worlds', {
+        enumerable: true,
+        get() { if (!fired) { fired = true; B.push(rec('BATCH', 0)); } return 250; },
+    });
+    A.push(outer);
+    assert.equal(A.cycles, 1);
+    assert.equal(B.cycles, 1);
+});
 
 test('QA boundary judgeRun: empty lanes, null lane, duplicate lane result, status not in {PASS, FAIL, INCONCLUSIVE}', () => {
     const base = { engine: 'lite', skipped: [], reason: 'end', forever: false, smoke: false, configError: null, fatal: false };

@@ -528,3 +528,16 @@ test('teeth j: wrapJudge re-derives the INCONCLUSIVE causes from the records (ne
     // the stream ran another selection than the control asked for
     assert.deepEqual(wrapJudge(WRAP_CTL('W1,W2'), wrapStream(), 'FAIL', []), ['header SOAK_WRAP ["W1"] != control SOAK_WRAP ["W1","W2"]']);
 });
+
+test('teeth l: L-WIE-rev152 is pinned: rev152 unpatched, preb33 WIE budget, DIV-B33, long; lane:WIE pair', () => {
+    const c = CONTROLS.find((x) => x.name === 'L-WIE-rev152');
+    assert.ok(c, 'the rev152 WIE control exists');
+    assert.ok(LONG_RE.test(c.name) && !SHORT_RE.test(c.name), 'long battery');
+    const preb33 = CONTROLS.find((x) => x.name === 'L-WIE-preb33');
+    assert.ok(preb33, 'the preb33 WIE control exists');
+    assert.deepEqual([c.run, c.base, c.env, c.argv, c.patches, c.arm, c.expect.exit, c.expect.kind, c.expect.specs,
+        c.expect.lines, c.expect.known],
+        ['main', 'rev152', preb33.env, [], [], null, 1, 'explained', ['oracle=O1 lane=WIE sig=effect-stale'], [],
+            ['DIV-B33']]);
+    assert.deepEqual(CHECKS['lane:WIE'], ['L-WIE-preb33', 'L-WIE-rev152']);
+});

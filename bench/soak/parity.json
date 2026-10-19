@@ -13,7 +13,7 @@
     "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
     "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
     "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
-    "bench/soak/gates.mjs": "35af4827039b8a747a41f920591eb3e40c7aa7067697883350d1818a1355df07",
+    "bench/soak/gates.mjs": "2697e3f7808b40010e38916c93e2c0c7a327542d8921046ce735979bd5aaa90c",
     "bench/soak/boundary.mjs": "a9b1b75ca945b31f7454e5243cf1ed5ac1c12a625299c5a34d2413d02373eec7",
     "bench/soak/divergences.mjs": "f0edccea6f3209df661c4605091c30aada0227e7eef441f07faf2f597f6eb185",
     "bench/soak/divergences.json": "9fb8bd62e89ed15b7704a4b8008080804431d074e77e479ab0c0fcad81cd7593",
