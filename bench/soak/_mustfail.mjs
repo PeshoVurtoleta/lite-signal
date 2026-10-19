@@ -61,7 +61,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB } from './config.mjs';
 import { wrapRule, wrapStreamProblems } from './wraprules.mjs';
 import { inconclusiveLine } from './gates.mjs';
@@ -77,6 +77,12 @@ const REPORT_TIMEOUT_MS = 5 * 60 * 1000;
 const GC_FLAGS = Object.freeze(['--expose-gc']);
 // wrap.mjs's own flag trio (wrap.mjs semiSpaceProblem refuses any other semi-space setting, exit 2)
 const WRAP_FLAGS = Object.freeze(['--expose-gc', '--min-semi-space-size=' + SEMI_SPACE_MB, '--max-semi-space-size=' + SEMI_SPACE_MB]);
+// P-NEST-TAINT-HALF's preload (a data: URL, no file): tainted() -> true for every odd node index
+const HALF_PRELOAD = 'data:text/javascript,' + encodeURIComponent(
+    'import { Model } from ' + JSON.stringify(pathToFileURL(join(SOAK, 'model.mjs')).href) + ';\n' +
+    'const orig = Model.prototype.tainted;\n' +
+    "if (typeof orig !== 'function') throw new Error('P-NEST-TAINT-HALF: Model.prototype.tainted is not a function');\n" +
+    'Model.prototype.tainted = function (i, tmemo) { return (i & 1) === 1 ? true : orig.call(this, i, tmemo); };\n');
 const ARMED = 'mustfail ARMED';   // an armed scratch kernel writes this to stderr when its event fires
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
@@ -85,8 +91,9 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 /**
  * Every base a control can start from. A base is a Signal.js + Watch.js directory with sha256 pins:
  * headpatched, rev152 and preb33 are pinned by controls.json (by control name), tree by parity.json (red while
- * the live Signal.js is mid-edit, amendment 10). Only the wrap control L-WRAP-TREE (S2) uses tree; no main-run
- * control does until A1-A3 land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
+ * the live Signal.js is mid-edit, amendment 10). The wrap control L-WRAP-TREE (S2) uses tree, and one main-run control,
+ * P-NEST-TAINT-HALF (b71, NEST lane only: the tree NEST smoke is clean); no other main-run control does until A1-A3
+ * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
  * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
  * DIV-F6 since the burst 53 triage, PLAN-F-b33-1 N19); P-INTERIM-ERROR-clean runs on preb33 because it is the
@@ -407,12 +414,23 @@ export const CONTROLS = deepFreeze([
     M('P-INTERIM-ERROR-clean', 'preb33', { SOAK_LANES: 'ERROR', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'explained', lines: [], specs: [], known: KNOWN_INTERIM_CLEAN,
     }),
-    // P-NEST-TRIGGERLESS: NEST without its trigger must not false-fail. Lines: gates.mjs:380 (scenario),
-    // gates.mjs:382 (taint-skip; B6: headpatched NEST cov-off O1c 0.43-0.44 > TAINT_SKIP_MAX 0.35).
+    // P-NEST-TRIGGERLESS: NEST without its trigger must not false-fail. Line: gates.mjs:380 (scenario). RE-MEASURED b71
+    // (.handoff/b71-evidence/b2/t7a-*.log): under b70 D6 V1 its taint-skip line is gone (headpatched NEST cov-off O1c
+    // 0.083-0.092, max oracle O1e 0.147-0.162 over 17 seeds, all <= TAINT_SKIP_MAX 0.35; the old 0.43-0.44 was ~80%
+    // blanket in-flight frame taint), so it is the coverage gate's case only (PLAN-0s-d6 ADDENDUM 1 item 2).
     M('P-NEST-TRIGGERLESS', 'headpatched', { SOAK_LANES: 'NEST', SOAK_MUSTFAIL: 'cov-off:saved-cursor-hazard' }, ['--smoke'], {
         exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=NEST missing=saved-cursor-hazard'],
-        specs: ['INCONCLUSIVE scenario lane=NEST missing=saved-cursor-hazard', 'INCONCLUSIVE taint-skip lane=NEST oracle=O1c'],
+        specs: ['INCONCLUSIVE scenario lane=NEST missing=saved-cursor-hazard'],
     }),
+    // P-NEST-TAINT-HALF (b71; PLAN-0s-d6 ADDENDUM 1 item 2, THE taint-skip must-fail; test/67 runs the same patch on
+    // live AND headpatched): a data: preload makes Model.prototype.tainted answer true for every odd node index, so
+    // ~half of every skipping oracle's checks are skipped and the taint-skip gate (gates.mjs:382) must trip. The
+    // preload imports the SAME model.mjs URL main.mjs imports, so the patch lands on the live class. Tree base:
+    // full-length clean NEST worlds (exit 3, no BREACH).
+    M('P-NEST-TAINT-HALF', 'tree', { SOAK_LANES: 'NEST' }, ['--smoke'], {
+        exit: 3, kind: 'nobreach', lines: [],
+        specs: ['INCONCLUSIVE taint-skip lane=NEST oracle=O1c', 'INCONCLUSIVE taint-skip lane=NEST oracle=O1e'],
+    }, { flags: GC_FLAGS.concat(['--import', HALF_PRELOAD]) }),
     // T-cov-*: the coverage gate (gates.mjs:380), each at the smoke shape. BATCH's cov-off switch compares DECODED
     // values with Object.is (lanes/batch.mjs put, the test scenarios.mjs:236 counts a revert by), so it leaves 0
     // revert-after-mid-read hits per smoke run (burst 13; the code compare it replaced leaked 18 through the

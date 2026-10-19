@@ -23,7 +23,7 @@
  *   taint         model.kill() taints observers that read a disposed node; a run in progress during a
  *                 disposal is tainted until it ends (taint clears only for a run entirely after it) ONLY if
  *                 that run already read a killed node, or a live computed tainted after the kill (b70 D6 V1);
- *                 a run that read neither before the kill sees what the model sees and stays untainted
+ *                 a run that read neither before the kill sees what the model sees and is not tainted by this disposal
  *   at rest       O1e + O4 every op, O5 every op, O1c when the op's chk bit is set and at world end
  *   wie writer    (WIE, gen.mjs I2 lifted) a computed whose spec carries w writes w := f(its output) through
  *                 write() after its body returns (spec.wu: under untrack), exactly like an effect writer. D4: a

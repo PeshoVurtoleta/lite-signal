@@ -55,10 +55,14 @@ const CONSTANTS = Object.freeze({
     //                    NEST O7a 413 / 502, BATCH OB 8295 / 1789 and ERROR OB 2152 / 1227 read INCONCLUSIVE.
     //                    One scalar for every oracle: only GRAPH at 11 x OPS_MIN (O5 14791 / 14791) clears it.
     //   TAINT_SKIP_MAX   per oracle that skips tainted nodes: skipped / (performed + skipped) above this is
-    //                    hollow evidence -> INCONCLUSIVE. Clean max 0.2585 (NEST O1c, 8-seed smoke sweep;
-    //                    binding cut 0.2546); headpatched NEST cov-off:saved-cursor-hazard reads O1c 0.43-0.44
-    //                    over 17 seeds and trips. Margins 0.09 below and 0.08 above. On 1.5.2 that cov-off
-    //                    reads 0.25 (not separable here); the coverage gate catches it.
+    //                    hollow evidence -> INCONCLUSIVE. 0.35 kept (b70 D3). Binding-kernel clean max (b71 recut)
+    //                    0.0579 (headpatched NEST O1c smoke; 8-seed smoke sweep 0.0663). The old design case
+    //                    (headpatched NEST cov-off:saved-cursor-hazard O1c 0.43-0.44 trips) is VOID under b70 D6
+    //                    V1: that ratio was ~80% blanket in-flight frame taint; V1 reads O1c 0.083-0.092 over 17
+    //                    seeds (max oracle O1e 0.147-0.162; 1.5.2 0.125-0.133), so cov-off stays the COVERAGE
+    //                    gate's case. The taint-skip must-fail is P-NEST-TAINT-HALF (test/67). Live NEST smoke
+    //                    under V1 reads O1c 0.125-0.142 / O1e 0.218-0.232 over 9 seeds (b70 REPORT); the
+    //                    late/early world-bucket ratio is REPORTED only.
     CHECK_FLOOR: 10000,
     CHECK_FLOOR_SMOKE: 500,
     TAINT_SKIP_MAX: 0.35,

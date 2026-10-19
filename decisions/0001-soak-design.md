@@ -162,6 +162,25 @@ Amendment 2026-10-19 (unit 0s, bursts 63-69: lane WIE; commits 92c0020, e1eca59,
   (.handoff/b68-evidence/b2b/recut.log, recut-load-before.txt); any throughput in it is PRELIMINARY (REPORTED tier,
   decides no gate).
 
+Amendment 2026-10-19 (D6, bursts 70-71: NEST taint-skip triage; harness only, Signal.js d07e0b17 unchanged). The model's
+taint rule (p8, model.mjs:24) is narrowed to V1:
+- Root cause (b70): every binding-kernel NEST calibration cell (headpatched, lite-1.5.2) had been cut on fail-stopped
+  worlds (30.0-32.8 ops/world vs 425 live); sticky taint grows with world age. On the live tree 352343 of 352343
+  disposal-hit in-flight frames were BLANKET (never read the victim).
+- V1 (ruling D1): exec.mjs disposeIdx taints an in-flight run only if its reads so far hold a victim or a live computed
+  tainted after the kill; the :652 pre-skip is kept; the orphan 'na' (D2) is dropped. Live NEST smoke O1c
+  0.577 -> 0.136, O1e 0.434 -> 0.220 (b70; 9 seeds max 0.142 / 0.232; 0 fail, 0 BREACH).
+- D3: TAINT_SKIP_MAX stays 0.35; the late/early bucket ratio is REPORTED only. D4: NEST floors re-cut on full-length
+  worlds is DEFERRED (own item).
+- Teeth: P-NEST-TAINT-HALF (patch Model.prototype.tainted -> true for odd i) is THE taint-skip must-fail, as a _mustfail
+  control on the tree kernel (gate:taint-skip) and in test/67 (cause:taint-skip). P-NEST-TRIGGERLESS is coverage-only
+  now; the cov-off taint leg is VOID (cov-off stays the coverage gate's case). test/67 pins the live NEST smoke
+  @0xC0FFEE exactly.
+- DIV-F15 is WIDENED (sameBody): it also explains O1e effect-stale on the effect that escaped the DIV-F15 TypeError in
+  the same step (headpatched 942/1832 worlds, 1.5.2 734/1998; b70).
+- b71 recut: clean max 0.2546 -> 0.0579 (binding cut), 8-seed sweep 0.2585 -> 0.0663; headpatched cov-off maxTaint O1e
+  0.147-0.162 (17 seeds), 1.5.2 0.125-0.133 (.handoff/b71-evidence/b2/t9-provenance.txt, t9-recut.log).
+
 ### 6. Oracle OB (F5, QA finding 5): batch-early-run -- adopted
 
 An effect that ALREADY ran must not re-run while a batch is open (exec.mjs:521). First runs are exempt (an effect
@@ -212,10 +231,13 @@ scenarios, seeds, lanes, adapters, kinds.mjs and the torture helpers; it does NO
 | SCEN_MIN / SCEN_MIN_SMOKE | 8 / 1 (kept) | smoke minimum 156 (GRAPH deep-pull, both kernels); 1.5.2 smoke ERROR aggregate reads 2 (seed-dependent, masked because 1.5.2 always FAILs) |
 | CHECK_FLOOR | 10000 (was 1000) | least performed clean cell NEST O7a 41184 (4.1x); at 11 x OPS_MIN NEST O7a 413, BATCH OB 8295 and ERROR OB 2152 -> INCONCLUSIVE |
 | CHECK_FLOOR_SMOKE | 500 (was 250) | least clean smoke cell NEST O7a 2170 (4.3x); 8-seed smoke minimum 2174 |
-| TAINT_SKIP_MAX | 0.35 (was 0.5) | clean max 0.2585 over 8 seeds; headpatched NEST cov-off O1c 0.4314-0.4434 over 17 seeds |
+| TAINT_SKIP_MAX | 0.35 (was 0.5; kept b70 D3) | S1d: clean max 0.2585 over 8 seeds; headpatched NEST cov-off O1c 0.4314-0.4434 over 17 seeds (VOID design case under V1, b70 D6; b71 recut: clean max 0.0579 binding, sweep 0.0663; headpatched cov-off maxTaint O1e 0.147-0.162 over 17 seeds) |
 TAINT_SKIP_MAX was an ORCHESTRATOR decision on the reviewer's ruling: at 0.5 the gate did not trip its own design case,
 and the S1b "0.53" figure was not reproducible. On 1.5.2 the same cov-off reads 0.2425-0.2612, which taint-skip cannot
-separate; the coverage gate catches it (asserted in test/41). One scalar floor serves every oracle: at
+separate; the coverage gate catches it (asserted in test/41). Since b70 D6 V1 the cov-off design case is VOID: that
+ratio was mostly blanket in-flight frame taint (Amendment 2026-10-19, D6); under V1 cov-off reads maxTaint O1e
+0.147-0.162 (headpatched, 17 seeds) / 0.125-0.133 (1.5.2) in the b71 recut and stays the coverage gate's case. One
+scalar floor serves every oracle: at
 11 x OPS_MIN only GRAPH clears it (O5 14791 on both kernels); ERROR OB (2152 / 1227), BATCH OB (8295 / 1789) and
 NEST O7a (413 / 502) read INCONCLUSIVE (per-oracle floors stay deferred, decision (e)). The 1.5.2 ERROR smoke
 `aggregate` count (2) is seed-dependent; no action.

@@ -508,7 +508,7 @@ async function write(outPath, timed, importFrom) {
         .concat(['--seed', String(sd)], smokeArgs, ['--cov-off', scen])), 4);
     const covOffSweep = {
         shape: CFG.SMOKE_CYCLES + ' x ' + CFG.SMOKE_OPS, seeds: COVOFF_SEEDS.slice(),
-        note: 'lite-1.5.2 NEST cov-off reads O1c ~0.25 (inside the clean band): the taint gate cannot separate it there; the coverage gate does (hits 0 < SCEN_MIN_SMOKE)',
+        note: 'NEST cov-off on both kernels is the coverage gate\'s case since b70 D6 V1 (its skip ratio is REPORTED in cells[].maxTaint; no taint tooth): the coverage gate catches it (hits 0 < SCEN_MIN_SMOKE)',
         cells: {},
     };
     coList.forEach(([k, lane, scen, sd], i) => {

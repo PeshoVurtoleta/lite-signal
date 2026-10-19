@@ -264,6 +264,20 @@ dispose, and the lifecycle count returns to 0. Pre-existing: shipped in 1.5.2. B
 14 without it: a white-box lifecycle-count lane runs in plain `npm test`, and the WeakRef retention rows are
 skipped).
 
+### Changed -- soak NEST taint-skip triage (D6): in-flight frames taint only on a victim read (dev-only, not shipped)
+
+Harness only; the engine (`Signal.js` d07e0b17) is unchanged. Every binding-kernel NEST calibration cell (headpatched,
+lite-1.5.2) had been cut on fail-stopped worlds (30.0-32.8 ops/world vs 425 live), where sticky taint grows with world
+age; on the live tree 352343 of 352343 disposal-hit in-flight frames were blanket (never read the victim). `exec.mjs`
+`disposeIdx` now taints an in-flight run only if its reads so far hold a victim or a computed tainted after the kill
+(ruling D1, V1); the `:652` pre-skip is kept. Live NEST smoke O1c 0.577 -> 0.136, O1e 0.434 -> 0.220 (b70; 9 seeds max
+0.142 / 0.232; 0 fail, 0 BREACH). `TAINT_SKIP_MAX` stays 0.35 (D3); the late/early bucket ratio is reported, not
+gated. The taint-skip must-fail is now P-NEST-TAINT-HALF (`gate:taint-skip` in `_mustfail.mjs`, `cause:taint-skip` in
+`test/67`); P-NEST-TRIGGERLESS is coverage-only and the cov-off taint leg is void (cov-off stays the coverage gate's
+case). DIV-F15 is widened: it also explains O1e effect-stale on the effect that escaped the DIV-F15 TypeError in the
+same step. Recut (b71): clean max 0.2546 -> 0.0579 (binding cut), sweep 0.2585 -> 0.0663. NEST floors on full-length
+worlds (D4) are deferred.
+
 ### Added -- soak lane WIE (write-in-evaluation) joins the roster; per-lane kernel map (dev-only, not shipped)
 
 Unit 0s (harness only; the engine, `Signal.js` d07e0b17, is unchanged). The soak roster is now five lanes: GRAPH, BATCH,

@@ -592,8 +592,10 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
 //   (d) every applicable skip ratio, computed EXACTLY from the counts as gates.mjs does, <= TAINT_SKIP_MAX
 //       (full and smoke); the stored ratio equals it; no crash in the binding cut
 //   (e) the gates are not toothless: at DEFAULT_CYCLES x OPS_MIN at least one lane falls below CHECK_FLOOR;
-//       CHECK_FLOOR_SMOKE >= 1/8 of the least clean smoke cell; the headpatched NEST cov-off skip ratio
-//       exceeds TAINT_SKIP_MAX on every cov-off sweep seed while every clean sweep cell stays at or below it;
+//       CHECK_FLOOR_SMOKE >= 1/8 of the least clean smoke cell; every clean sweep cell's skip ratio stays at or
+//       below TAINT_SKIP_MAX (the headpatched NEST cov-off sweep must hold exactly COVOFF_SEEDS; its skip ratio is
+//       REPORTED only since b70 D6 V1 -- it was ~80% blanket frame taint; PLAN-0s-d6 ADDENDUM 1 item 2: the
+//       taint-skip must-fail is P-NEST-TAINT-HALF in test/67, cov-off stays the coverage gate's case);
 //       every covOff cell and every BATCH covOffSweep cell (both kernels) has hits < SCEN_MIN_SMOKE (a cov-off
 //       switch that leaks hits lets the hollow run clear coverage)
 //   (q) doc.probe is the calibrate.mjs PROBE (lane, kernel, cycles, ops); PROBE.cycles === MIN_ACTIVE_CYCLES (main
@@ -745,7 +747,7 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
     }
     const cov = (((doc.covOffSweep || {}).cells || {})['headpatched:NEST:saved-cursor-hazard']) || [];
     if (!b6SeedsOk(cov)) p.push('(e) the headpatched NEST cov-off sweep seeds ' + JSON.stringify(cov.map((c) => (c || {}).seed)) + ' != COVOFF_SEEDS');
-    for (const c of cov) if (!(c.maxTaint.ratio > C.TAINT_SKIP_MAX)) p.push('(e) NEST cov-off seed ' + c.seed + ' taint ' + c.maxTaint.ratio + ' <= TAINT_SKIP_MAX ' + C.TAINT_SKIP_MAX + ' (the hollow run passes)');
+    // b71 (PLAN-0s-d6 ADDENDUM 1 item 2): no taint-skip leg on the cov-off sweep (V1 reads it at ~0.09; REPORTED only)
     // (e) a cov-off must really switch its scenario off: every covOff cell, every covOffSweep cell, both kernels
     for (const { name: lane, covOff } of lanes) for (const scen of Object.keys(covOff)) {
         const c = (doc.covOff || {})[lane + ':' + scen];
@@ -887,8 +889,8 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     red(B6_DOC, b6With({ CHECK_FLOOR: B6_PERF_FULL.n + 1 }), '(c)', 'CHECK_FLOOR above the least-performed full cell ' + B6_PERF_FULL.lane + ' ' + B6_PERF_FULL.name);
     red(B6_DOC, b6With({ CHECK_FLOOR_SMOKE: B6_PERF_SMOKE.n + 1 }), '(c)', 'CHECK_FLOOR_SMOKE above the least-performed smoke cell');
     red(B6_DOC, b6With({ TAINT_SKIP_MAX: B6_TAINT_MAX - 1e-9 }), '(d)', 'TAINT_SKIP_MAX below the clean max ratio');
-    red(B6_DOC, b6With({ TAINT_SKIP_MAX: Math.min.apply(null, B6_COV) }), '(e)', 'TAINT_SKIP_MAX at the cov-off ratio: the hollow run passes');
-    red(B6_DOC, b6With({ TAINT_SKIP_MAX: 0.5 }), '(e)', 'the provisional 0.5 lets the NEST cov-off pass');
+    // the taint-skip teeth are live (test/67 P-NEST-TAINT-HALF, ADDENDUM 1 item 2); statically, a moved value is stale
+    red(B6_DOC, b6With({ TAINT_SKIP_MAX: 0.5 }), '(a)', 'TAINT_SKIP_MAX moved off the D3 0.35 without a recut');
     red(B6_DOC, b6With({ DEFAULT_OPS: CFG.DEFAULT_OPS / 2 }), '(a)', 'DEFAULT_OPS moved without a recut');
     red(B6_DOC, b6With({ SMOKE_OPS: CFG.SMOKE_OPS + 1 }), '(a)', 'SMOKE_OPS moved');
     red(B6_DOC, b6With({ DEFAULT_SEED: CFG.DEFAULT_SEED + 1 }), '(a)', 'seed moved');
@@ -1097,11 +1099,14 @@ test('B6 drift guard live probe: main.mjs on PROBE runs a LARGE world every cycl
     assert.deepEqual(raw((m) => { m.recs.push(m.recs[1]); }), ['last record is cycle, not the summary', 'summary verdict undefined exitCode undefined != PASS 0']);
 });
 
-test('B6 TAINT_SKIP_MAX separates: every clean cell at or below it, the headpatched NEST cov-off above it on all 17 seeds; 1.5.2 cov-off is left to coverage', () => {
-    assert.ok(B6_TAINT_MAX <= CFG.TAINT_SKIP_MAX && CFG.TAINT_SKIP_MAX < Math.min.apply(null, B6_COV), JSON.stringify([B6_TAINT_MAX, CFG.TAINT_SKIP_MAX, B6_COV]));
+test('B6 TAINT_SKIP_MAX: every clean cell at or below it; the NEST cov-off (both kernels, 17 seeds) is left to coverage (b70 D6 V1)', () => {
+    assert.ok(B6_TAINT_MAX <= CFG.TAINT_SKIP_MAX, JSON.stringify([B6_TAINT_MAX, CFG.TAINT_SKIP_MAX]));
     assert.equal(B6_COV.length, 17);
-    // 1.5.2: the same cov-off reads inside the clean band, so taint cannot separate it; coverage does (0 hits)
-    for (const c of B6_DOC.covOffSweep.cells['lite-1.5.2:NEST:saved-cursor-hazard']) assert.ok(c.hits < CFG.SCEN_MIN_SMOKE, JSON.stringify(c));
+    // under V1 the cov-off skip ratio is no taint tooth (ADDENDUM 1 item 2; REPORTED in covOffSweep): coverage catches
+    // it on both kernels (0 hits); the taint-skip must-fail is test/67 P-NEST-TAINT-HALF
+    for (const k of ['headpatched', 'lite-1.5.2']) {
+        for (const c of B6_DOC.covOffSweep.cells[k + ':NEST:saved-cursor-hazard']) assert.ok(c.hits < CFG.SCEN_MIN_SMOKE, k + ' ' + JSON.stringify(c));
+    }
 });
 
 /* ---- S2 A-B2p (DELTA 1 task 9 / 10, assertions D3 + D4): SCHEMA_VERSION 2, SOAK_NEARWRAP, header.nearwrap ---- */

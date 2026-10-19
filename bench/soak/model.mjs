@@ -221,8 +221,9 @@ export class Model {
     }
 
     /**
-     * Taint (p8), transitive: node i's last run read a node that was disposed after that run began (flag
-     * set by kill() and by exec for runs in progress), or read a computed that is itself tainted.
+     * Taint (p8), transitive: node i's last run read a node before it was disposed (flag set by kill() for
+     * completed runs; by exec.disposeIdx for a run in progress whose reads so far hold a victim or a
+     * kill-tainted live computed, b70 D6 V1), or read a computed that is itself tainted.
      */
     tainted(i, tmemo) {
         const nd = this.n[i];

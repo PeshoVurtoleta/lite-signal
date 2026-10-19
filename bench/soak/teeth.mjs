@@ -66,6 +66,7 @@ export function universe() {
 const T_COV = ['T-cov-BATCH', 'T-cov-GRAPH', 'T-cov-ERROR'];
 const TEST46 = 'test/46-soak-report.test.mjs';
 const TEST48 = 'test/48-soak-wrap.test.mjs';
+const TEST67 = 'test/67-soak-taint.test.mjs';
 
 /** id -> the must-fail controls (by NAME; _mustfail.mjs CONTROLS owns them) that turn it red. */
 export const CHECKS = deepFreeze({
@@ -81,7 +82,10 @@ export const CHECKS = deepFreeze({
     'gate:retention': ['L-T-retain'],
     'gate:coverage': T_COV.slice(),
     'gate:check-floor': ['T-floor-BATCH'],
-    'gate:taint-skip': ['P-NEST-TRIGGERLESS'],
+    // b71 (PLAN-0s-d6 ADDENDUM 1 item 2): under D6 V1 the headpatched NEST cov-off no longer trips taint-skip, so
+    // P-NEST-TRIGGERLESS is the coverage gate's case only; THE taint-skip must-fail is P-NEST-TAINT-HALF (a gate id
+    // takes a _mustfail control, never a test file: test/45 pairing)
+    'gate:taint-skip': ['P-NEST-TAINT-HALF'],
     // L-REV-152 BATCH heads `oracle=O1 lane=BATCH sig=computed-mismatch` / `sig=effect-stale` and
     // `oracle=O2 lane=BATCH sig=glitch` (f21-census.json:96, every 1.5.2 BATCH world); the O1 family is told
     // apart by its sig (oracles.mjs:30-31)
@@ -107,7 +111,8 @@ export const CHECKS = deepFreeze({
     'cause:interrupted': ['L-I1', 'L-I2'],
     'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS']),
     'cause:check-floor': ['T-floor-BATCH'],
-    'cause:taint-skip': ['P-NEST-TRIGGERLESS'],
+    // test/67 drives the same patch on live AND headpatched NEST and checks each line is inconclusiveLine('taint-skip')
+    'cause:taint-skip': ['P-NEST-TAINT-HALF', TEST67],
     // S2 wrap gate (wrap.mjs): W5 evalCount past 2^31 on headpatched; W1-W4 on the tree kernel
     'gate:wrap': ['L-REV-AUDIT-W5', 'L-WRAP-TREE'],
     // no frozen kernel leaves a crossing unwitnessed or a W5 side unmeasured (burst 25: 0 INCONCLUSIVE on 3 kernels),
@@ -118,12 +123,14 @@ export const CHECKS = deepFreeze({
     'report': [TEST46],
 });
 
-/** Test-file teeth: file -> strings that must each occur (quoted, '<s>') at least once. The R-tamper classes of test/46; the wrap causes of test/48. */
+/** Test-file teeth: file -> strings that must each occur (quoted, '<s>') at least once. The R-tamper classes of test/46; the wrap causes of test/48; the taint-skip cause of test/67. */
 export const TEST_ANCHORS = deepFreeze({
     [TEST46]: ['cycle-grid', 'failure-count', 'seq-gap', 'fatal-after-summary', 'gates-block', 'verdict',
         'scenario-counts', 'summary-missing', 'overridden-kernel', 'non-lite', 'known-tag', 'malformed'],
     // the wrap causes test/48 drives by name (CHECKS cause:wrap-*; test/45 pairs each cause with this list)
     [TEST48]: ['wrap-crossing', 'wrap-unmeasured'],
+    // the taint-skip cause test/67 drives by name (P-NEST-TAINT-HALF on live + headpatched; CHECKS cause:taint-skip)
+    [TEST67]: ['taint-skip'],
 });
 
 const SPEC = 'audit/2026-10-07/verification/SPEC-B.md';
