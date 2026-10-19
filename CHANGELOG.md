@@ -15,6 +15,31 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
+### Changed -- soak calibrate.mjs D7 at cut time; FAIL_CAP census (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/calibration/calibrate.mjs (a cold tool: not
+parity-pinned, not calibration-PINNED, so no recut) and one new test only.
+Closing run (quiet-lock, Node v26.8.2, load 1.89 -> 7.37): npm test 1727 / 1713 pass / 0 fail / 7 skip / 7 todo;
+torture GATE ok (alloc=0 B/op, k=0B/batch,0B/batch K=1,1, retention=0/966).
+- calibrate.mjs `--write`: for a lane-only kernel (tree) the cut now dies before writing unless the new pure export
+  laneOnlyProblems(k, res, parity) is empty -- test/41's D7 rule at cut time: res.kernel is kernelPath(k), the files
+  are exactly [Signal.js, Watch.js] of that kernel, and each sha256 is a string equal to an OWN parity.json entry
+  (null is not a sha). Before, a sha-less entry for an unlisted path, a wrong kernel, and extra / missing / reordered
+  files passed, as did a string files (for-of walked its characters); any other non-array files threw a TypeError.
+- calibrate.mjs gitHead: provenance gitDirty keeps byte 0 of each `git status --porcelain` line (new export
+  porcelainLines; the old whole-output trim() turned line 0's ' M' into 'M'; one trailing CR is stripped per line).
+  soak-calibration.json shows it only after the next recut.
+- new test/70-calibrate-d7.test.mjs (19 rows): the D7 rule on GOOD and hostile inputs, a live 1-cycle x 1-op child
+  whose real output passes, porcelain parsing, and a static row pinning both call sites (the die in the cut loop and
+  gitHead's use of porcelainLines).
+- FAIL_CAP census (a long-open item, now closed): FAIL_CAP (config.mjs, 16) caps only the stored failure records per
+  cycle; every failing world still reaches the BREACH log. Witness: the full L- battery (12 controls, full length)
+  run twice in scratch copies of HEAD, FAIL_CAP 16 vs 1e9 -- 12/12 OK both times, identical BREACH keys in every
+  control; in the 5 controls where the cap bit (259 to 3485 failing worlds per cycle) the BREACH streams were
+  byte-identical; the 3 other differences were measured values only (heap MB, wrap W5 bop / pre) in controls with no
+  failing worlds. Wall time 793 s / 776 s per battery (load 3.62 -> 1.73 / 1.73 -> 1.05). Only BreachLog's dedup
+  (one line per oracle family / lane / sig / known) can hide a head, by design.
+
 ### Changed -- small sweep: test/torture, test/41, 42, 66, 69 and soak gates.mjs NITs (dev-only, not shipped)
 
 Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); test harness, bench/soak/gates.mjs and its parity pin only.

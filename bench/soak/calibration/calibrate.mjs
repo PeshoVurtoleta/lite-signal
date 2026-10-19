@@ -41,8 +41,10 @@
  * Per-lane kernel map (b67 B2a, D7): a lane listed in LANE_KERNELS is cut ONLY on its kernels (WIE -> tree, the
  * working-tree engine: 1.5.2 predates the b33 fix and BREACHes WIE by design, DIV-B33); an unlisted lane runs on
  * every KERNELS id. A lane-only kernel is never a binding kernel (cut.bindingKernels stays KERNELS); --write dies
- * unless its files' sha256 equal parity.json, and test/41 re-checks that pin. A lane's own descriptor file joins
- * the pinned list only while the lane is rostered (LANE_PINS, pinnedFor).
+ * unless laneOnlyProblems is empty (test/41's D7 rule: the evidence is the kernel's own path with exactly its
+ * Signal.js + Watch.js, each sha256 a string equal to an own parity.json entry; null is not a sha), and test/41
+ * re-checks that pin. A lane's own descriptor file joins the pinned list only while the lane is rostered
+ * (LANE_PINS, pinnedFor).
  * NEST -> headpatched, lite-1.5.2, tree (b74 D4): both binding kernels fail-stop EVERY NEST world (headpatched
  * 33885/33885 at 32.5 ops/world, 1.5.2 36726/36726 at 30.0, b71 cut), so tree (clean, 425.0 ops/world, b74 TASK 0b)
  * carries NEST's full-length evidence (test/41 (f)). headpatched stays first: covOff and the headpatched NEST
@@ -66,8 +68,8 @@ export const KERNELS = Object.freeze({
     'lite-1.5.2': 'node_modules/lite-signal-1.5.2/Signal.js',
 });
 // Lane-only kernels (b67 B2a, D7): cut only on the lanes LANE_KERNELS binds them to, never a binding kernel (not in
-// KERNELS, so cut.bindingKernels is unchanged). tree = the working-tree engine; --write dies unless its files'
-// sha256 equal parity.json.
+// KERNELS, so cut.bindingKernels is unchanged). tree = the working-tree engine; --write dies unless
+// laneOnlyProblems (below: test/41's D7 rule) is empty.
 export const LANE_ONLY_KERNELS = Object.freeze({ tree: 'Signal.js' });
 // lane -> the kernels that cut it; an unlisted lane runs on every KERNELS id (never on a lane-only kernel).
 // NEST (b74 D4): the binding kernels fail-stop every NEST world; tree carries its full-length cells (header).
@@ -88,6 +90,45 @@ export const lanesFor = (k, roster) => roster.filter((l) => kernelsFor(l).indexO
 /** The kernels some lane of `roster` binds: KERNELS ids first, then lane-only ids (stable order). */
 export const kernelsOf = (roster) => Object.keys(KERNELS).concat(Object.keys(LANE_ONLY_KERNELS))
     .filter((k) => lanesFor(k, roster).length > 0);
+/**
+ * D7 (b80 F1): the problems that keep lane-only kernel `k`'s child result `res` out of the cut, against
+ * parity.json's `files` map `parity` -- test/41's D7 rule, mirrored: the evidence is kernelPath(k) with exactly
+ * [kp, kp Signal.js -> Watch.js] as its files, and every file's sha256 is a string equal to an OWN parity entry
+ * (null is not a sha). Pure, never throws on JSON-shaped input; [] = clean. Tags: `D7 kernel:` (k is not a
+ * lane-only kernel; the only line), `D7 files:`, `D7 evidence:`, `D7 sha:` (one per entry).
+ */
+export function laneOnlyProblems(k, res, parity) {
+    const p = [];
+    const txt = (v) => (typeof v === 'string' ? v : v === null || (typeof v !== 'object' && typeof v !== 'function')
+        ? String(v) : typeof v);
+    if (typeof k !== 'string' || !own(LANE_ONLY_KERNELS, k)) {
+        p.push('D7 kernel: ' + txt(k) + ' is not a lane-only kernel (LANE_ONLY_KERNELS)');
+        return p;
+    }
+    const kp = LANE_ONLY_KERNELS[k], wantFiles = [kp, kp.replace(/Signal\.js$/, 'Watch.js')];
+    const ro = res !== null && typeof res === 'object';
+    const files = ro && Array.isArray(res.files) ? res.files : null;
+    if (files === null || files.length === 0) {
+        p.push('D7 files: kernel ' + k + ' lists no files; nothing to check against parity.json');
+    }
+    const got = files === null ? null : files.map((f) => (f !== null && typeof f === 'object' ? f.path : null));
+    let gotJson = null;
+    try { gotJson = JSON.stringify(got); } catch { gotJson = null; }   // unserializable = a difference (fail closed)
+    const kern = ro ? res.kernel : undefined;
+    if (kern !== kp || gotJson === null || gotJson !== JSON.stringify(wantFiles)) {
+        p.push('D7 evidence: kernel ' + k + ' evidence is ' + txt(kern) + ' '
+            + (gotJson === null ? 'unserializable' : gotJson) + ', not ' + kp + ' ' + JSON.stringify(wantFiles));
+    }
+    const po = parity !== null && typeof parity === 'object';
+    for (const f of files === null ? [] : files) {
+        const fo = f !== null && typeof f === 'object', fp = fo ? f.path : null, sha = fo ? f.sha256 : null;
+        const want = po && typeof fp === 'string' && own(parity, fp) ? parity[fp] : null;
+        if (typeof sha !== 'string' || sha !== want) {
+            p.push('D7 sha: kernel ' + k + ' ' + txt(fp) + ' sha ' + txt(sha) + ' != parity.json ' + txt(want));
+        }
+    }
+    return p;
+}
 // The file hashes that pin "the generator and checker that cut this evidence" (provenance; the live
 // re-measure in test/41 is the gate, a hash change alone is not). kinds.mjs (the op-kind codes) and the torture
 // helpers (VALUE_POOL: the value each code decodes to) shape every script; main.mjs and this tool are gated by
@@ -333,10 +374,24 @@ async function runChildren(list, width) {
     return out;
 }
 
+/**
+ * The lines of `git status --porcelain` stdout (b80 F2): split on '\n', ONE trailing '\r' stripped per line, empty
+ * lines dropped, never trimmed (byte 0 of a line is the index status: ' M' keeps its space). Non-string -> null.
+ */
+export function porcelainLines(stdout) {
+    if (typeof stdout !== 'string') return null;
+    const out = [];
+    for (const raw of stdout.split('\n')) {
+        const l = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+        if (l.length > 0) out.push(l);
+    }
+    return out;
+}
+
 function gitHead() {
     const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
     const s = spawnSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' });
-    return { head: r.status === 0 ? r.stdout.trim() : null, dirty: s.status === 0 ? s.stdout.trim().split('\n').filter((l) => l.length > 0) : null };
+    return { head: r.status === 0 ? r.stdout.trim() : null, dirty: s.status === 0 ? porcelainLines(s.stdout) : null };
 }
 
 function busyNode() {
@@ -409,13 +464,11 @@ async function write(outPath, timed, importFrom) {
     const meta = {};
     for (const k of KS) {
         const res = runChild(['--kernel', kernelPath(k)].concat(lanesArg(k), base));
-        // D7: a lane-only kernel's cells are evidence only for the parity-pinned engine
+        // D7: a lane-only kernel's cells are evidence only for the parity-pinned engine (laneOnlyProblems:
+        // test/41's D7 rule)
         if (own(LANE_ONLY_KERNELS, k)) {
-            if (res.files.length === 0) die('kernel ' + k + ' lists no files; nothing to check against parity.json');
-            for (const f of res.files) {
-                const want = parityFiles[f.path];
-                if (f.sha256 !== want) die('kernel ' + k + ' ' + f.path + ' sha ' + f.sha256 + ' != parity.json ' + want);
-            }
+            const d7 = laneOnlyProblems(k, res, parityFiles);
+            if (d7.length > 0) die(d7.join('; '));
         }
         const s = summarize(res, SKIP_NAMES);
         const tp = {};
