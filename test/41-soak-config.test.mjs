@@ -699,8 +699,13 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
         const bound = b6LanesFor(k, names);
         const K = (doc.kernels || {})[k];
         if (!K) { p.push('(a) kernel ' + k + ' has no evidence'); continue; }
+        // b79 C2: a file shaOf cannot read (null) is red even when the evidence says null (null is not a sha);
+        // a non-object entry is a (p) line, never a TypeError
         for (const f of Array.isArray(K.files) ? K.files : []) {
-            if (shaOf(f.path) !== f.sha256) p.push('(p) kernel file ' + f.path + ' moved since the cut; ' + B6_RECUT);
+            const fo = f !== null && typeof f === 'object', fp = fo ? f.path : null, cur = shaOf(fp);
+            if (cur === null || cur !== (fo ? f.sha256 : null)) {
+                p.push('(p) kernel file ' + fp + ' moved since the cut; ' + B6_RECUT);
+            }
         }
         if (!(Array.isArray(K.files) && K.files.length > 0)) p.push('(p) kernel ' + k + ' lists no files; ' + B6_RECUT);
         // D7: a lane-only kernel's evidence is the parity-pinned engine (null is not a sha: an unlisted file is red)
@@ -713,9 +718,10 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
                     + JSON.stringify(wantFiles) + '; ' + B6_RECUT);
             }
             for (const f of Array.isArray(K.files) ? K.files : []) {
-                const want = b6Has(parity, f.path) ? parity[f.path] : null;
-                if (f.sha256 !== want) {
-                    p.push('(p) kernel ' + k + ' ' + f.path + ' sha ' + f.sha256 + ' != parity.json ' + want + '; ' + B6_RECUT);
+                const fo = f !== null && typeof f === 'object', fp = fo ? f.path : null, fsha = fo ? f.sha256 : null;
+                const want = b6Has(parity, fp) ? parity[fp] : null;
+                if (fsha === null || fsha !== want) {
+                    p.push('(p) kernel ' + k + ' ' + fp + ' sha ' + fsha + ' != parity.json ' + want + '; ' + B6_RECUT);
                 }
             }
         }
@@ -725,6 +731,12 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
                 const f = (K[sh] || {})[d.name];
                 const at = k + ' ' + sh + ' ' + d.name;
                 if (!f) { p.push('(a) ' + at + ' missing'); continue; }
+                // b79 C5: the cell ran the cut's cycles (full = cut.cycles, smoke = cut.smokeCycles); a count only
+                const cyc = f.cycles, wantCyc = sh === 'full' ? cut.cycles : cut.smokeCycles;
+                if (!(b6Count(cyc) && cyc === wantCyc)) {
+                    p.push('(a) ' + at + ' cycles=' + cyc + ' != cut.' + (sh === 'full' ? 'cycles' : 'smokeCycles')
+                        + ' ' + wantCyc + '; ' + B6_RECUT);
+                }
                 if (f.crashes !== 0) p.push('(d) ' + at + ' crashes=' + f.crashes);
                 for (const s of d.required) {
                     const n = b6Has(f.scenarios, s) ? f.scenarios[s] : null;
@@ -776,10 +788,24 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
     // only while one of DIV-F5 / F6 / F22 is open, and the exemption set is exactly the ruled one
     // second literal on purpose: editing :654 (B6_F_EXEMPT_RULED, the default source only) alone is red; fail closed
     // -- a non-object exempt (null) is red, never a TypeError
+    // b79 C1: exempt.ERROR is read ONCE and compared + printed element by element (an indexed loop: no
+    // JSON.stringify, toJSON or iterator on it), so a toJSON-spoofed ['DIV-F7'] is red and its line shows ["DIV-F7"]
     const exK = exempt !== null && typeof exempt === 'object' ? Reflect.ownKeys(exempt) : null;
-    if (JSON.stringify(exK) !== '["ERROR"]' || JSON.stringify(exempt.ERROR) !== '["DIV-F5","DIV-F6","DIV-F22"]') {
+    const exE = exK === null ? null : exempt.ERROR;
+    const exRuled = ['DIV-F5', 'DIV-F6', 'DIV-F22'];
+    const exElt = (v) => (typeof v === 'string' ? '"' + v + '"'
+        : v !== null && (typeof v === 'object' || typeof v === 'function') ? '<' + typeof v + '>' : String(v));
+    const exA = Array.isArray(exE), exN = exA ? exE.length : -1;
+    let exOk = exN === exRuled.length, exS = '';
+    for (let i = 0; i < exN && i < 8; i++) {   // each element read once; at most 8 shown
+        const v = exE[i];
+        if (v !== exRuled[i]) exOk = false;
+        exS += (i === 0 ? '' : ',') + exElt(v);
+    }
+    exS = exA ? '[' + exS + (exN > 8 ? ',... (' + exN + ')' : '') + ']' : exElt(exE);
+    if (JSON.stringify(exK) !== '["ERROR"]' || !exOk) {
         const shown = exK === null ? 'null'
-            : JSON.stringify(exK.map(String)) + ' ERROR=' + JSON.stringify(exempt.ERROR);
+            : JSON.stringify(exK.map(String)) + ' ERROR=' + exS;
         p.push('(f) the exemption set ' + shown + ' != ["ERROR"] ERROR=["DIV-F5","DIV-F6","DIV-F22"]'
             + ' (maintainer ruling b74: only ERROR, tied to DIV-F5 / F6 / F22)');
     }
@@ -1014,6 +1040,15 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     gHit.covOffSweep.cells['lite-1.5.2:ERROR:throw-dep-effect-prewalk'][0].hits = CFG.SCEN_MIN_SMOKE;
     red(gHit, B6_C, '(e)', 'an ERROR cov-off sweep cell with hits >= SCEN_MIN_SMOKE');
     red(B6_DOC, B6_C, '(p)', 'a binding kernel file moved', (rel) => (rel === B6_DOC.kernels['lite-1.5.2'].files[0].path ? null : b6ShaOf(rel)));
+    // b79 C2: an unreadable kernel file whose evidence sha is null (null === null is not a match), and a null entry
+    const nope = b6Copy(B6_DOC);
+    nope.kernels['lite-1.5.2'].files.push({ path: 'nope.js', sha256: null });
+    red(nope, B6_C, '(p) kernel file nope.js moved', 'an unreadable kernel file with evidence sha256 null');
+    const nulF = b6Copy(B6_DOC);
+    nulF.kernels['lite-1.5.2'].files = [null];
+    red(nulF, B6_C, '(p) kernel file null moved', 'files [null]: a (p) line, never a TypeError');
+    const nulT = b6Copy(B6_DOC); nulT.kernels.tree.files = [null];
+    red(nulT, B6_C, '(p) kernel tree null sha null', 'tree files [null]');
     const lowered = b6Copy(B6_DOC);
     lowered.kernels[B6_SCEN_FULL.k].full[B6_SCEN_FULL.lane].scenarios[B6_SCEN_FULL.name] = CFG.SCEN_MIN - 1;
     red(lowered, B6_C, '(b)', 'evidence edited below SCEN_MIN');
@@ -1026,6 +1061,20 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     const crashed = b6Copy(B6_DOC);
     crashed.kernels.headpatched.smoke.GRAPH.crashes = 1;
     red(crashed, B6_C, '(d)', 'a crash in the binding cut');
+    // b79 C5: a cell cut at other cycles than the cut -> exactly one new (a) line; smoke too; null is not a count
+    const cyc10 = b6Copy(B6_DOC);
+    cyc10.kernels.headpatched.full.GRAPH.cycles = 10;
+    assert.deepEqual(calibrationProblems(cyc10, B6_C).filter((x) => before.indexOf(x) === -1),
+        ['(a) headpatched full GRAPH cycles=10 != cut.cycles ' + B6_DOC.cut.cycles + '; ' + B6_RECUT]);
+    const cycS = b6Copy(B6_DOC);
+    cycS.kernels['lite-1.5.2'].smoke.BATCH.cycles = B6_DOC.cut.smokeCycles + 1;
+    red(cycS, B6_C, '(a) lite-1.5.2 smoke BATCH cycles=', 'a smoke cell off cut.smokeCycles');
+    const cycN = b6Copy(B6_DOC);   // cut.cycles and every full cell's cycles absent: undefined is not a count
+    delete cycN.cut.cycles;
+    for (const k of Object.keys(cycN.kernels)) for (const l of Object.keys(cycN.kernels[k].full)) {
+        delete cycN.kernels[k].full[l].cycles;
+    }
+    red(cycN, B6_C, '(a) headpatched full GRAPH cycles=undefined', 'no cycles on the cut nor on any full cell');
     const one = b6Copy(B6_DOC);
     one.cut.bindingKernels = ['headpatched'];
     red(one, B6_C, '(a)', 'a binding kernel dropped from the evidence (J5)');
@@ -1076,10 +1125,22 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     red(B6_DOC, B6_C, '(f)', 'the ERROR exemption tied to a never-closing divergence', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F7'] });
     const hidden = { ERROR: F_IDS.slice() };   // a non-enumerable own key is still an exemption (b6Has is hasOwnProperty)
     Object.defineProperty(hidden, 'GRAPH', { value: ['DIV-F7'] });
-    red(B6_DOC, B6_C, '(f) the exemption set ', 'a non-enumerable GRAPH key on the exemption set', b6ShaOf, B6_PROBE, B6_DIVS, hidden);
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'a non-enumerable GRAPH key on the exemption set',
+        b6ShaOf, B6_PROBE, B6_DIVS, hidden);
     const hiddenP = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, B6_DIVS, hidden);
     assert.ok(hiddenP.some((x) => x.indexOf('(f) the exemption set ["ERROR","GRAPH"]') === 0),
         'the (f) line names the hidden key (not the JSON of its enumerable keys): ' + JSON.stringify(hiddenP));
+    // b79 C1: ERROR compared element by element: a toJSON serialising the ruled ids does not hide ['DIV-F7'], and
+    // the line prints the real elements; a trailing 4th slot (undefined), or an array-like with the ruled ids -> red
+    const spoof = { ERROR: Object.assign(['DIV-F7'], { toJSON: () => F_IDS.slice() }) };
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'a toJSON-spoofed ERROR list', b6ShaOf, B6_PROBE, B6_DIVS, spoof);
+    const spoofP = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, B6_DIVS, spoof);
+    assert.ok(spoofP.some((x) => x.indexOf('(f) the exemption set ["ERROR"] ERROR=["DIV-F7"] != ') === 0),
+        'the (f) line shows the real elements, not the toJSON: ' + JSON.stringify(spoofP));
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'a trailing undefined 4th slot on ERROR', b6ShaOf, B6_PROBE, B6_DIVS,
+        { ERROR: F_IDS.concat([undefined]) });
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'an array-like (not an Array) ERROR', b6ShaOf, B6_PROBE, B6_DIVS,
+        { ERROR: { 0: 'DIV-F5', 1: 'DIV-F6', 2: 'DIV-F22', length: 3 } });
     // (e) b74 D4: a hollowVolume row counts only when full-length; every row failing -> the floor reads hollow
     const hvFail = b6Copy(B6_DOC);
     for (const k of Object.keys(hvFail.hollowVolume)) for (const l of Object.keys(hvFail.hollowVolume[k])) hvFail.hollowVolume[k][l].failingWorlds = 1;
@@ -1114,8 +1175,8 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.deepEqual(a2Got, ['(a) lite-1.5.2 full WIE: a cell no calibrate.mjs binding cuts (lane WIE -> ["tree"]); ' + B6_RECUT]);
     // A3 (the WIE roster, live since the roster flip): tree carries WIE exactly at the floors, clean control
     const lanes5 = B6_LANES;
-    const cell = (scenMin, floor) => {
-        const c = { worlds: 1, ops: 1, failingWorlds: 0, crashes: 0, scenarios: {}, performed: {}, skipTainted: {}, taintRatio: {} };
+    const cell = (scenMin, floor, cycles) => {
+        const c = { cycles, worlds: 1, ops: 1, failingWorlds: 0, crashes: 0, scenarios: {}, performed: {}, skipTainted: {}, taintRatio: {} };
         for (const s of B6_WIE.required) c.scenarios[s] = scenMin;
         for (const o of B6_WIE.hardOracles) {
             c.performed[o] = floor;
@@ -1131,8 +1192,10 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
         kernel: 'Signal.js', knownAs: null,
         files: ['Signal.js', 'Watch.js'].map((path) => ({ path, sha256: B6_PARITY_FILES[path] })),
         // the recut NEST cells kept (b74 D4: tree cuts NEST too); WIE at the floors
-        full: Object.assign(b6Copy(B6_DOC.kernels.tree.full), { WIE: cell(B6_C.SCEN_MIN, B6_C.CHECK_FLOOR) }),
-        smoke: Object.assign(b6Copy(B6_DOC.kernels.tree.smoke), { WIE: cell(B6_C.SCEN_MIN_SMOKE, B6_C.CHECK_FLOOR_SMOKE) }),
+        full: Object.assign(b6Copy(B6_DOC.kernels.tree.full),
+            { WIE: cell(B6_C.SCEN_MIN, B6_C.CHECK_FLOOR, B6_DOC.cut.cycles) }),
+        smoke: Object.assign(b6Copy(B6_DOC.kernels.tree.smoke),
+            { WIE: cell(B6_C.SCEN_MIN_SMOKE, B6_C.CHECK_FLOOR_SMOKE, B6_DOC.cut.smokeCycles) }),
     };
     const cp5 = (doc) => calibrationProblems(doc, B6_C, b6ShaOf, B6_PROBE, lanes5);
     assert.deepEqual(cp5(doc5), [], 'control: the synthetic WIE roster with tree at the floors is clean');

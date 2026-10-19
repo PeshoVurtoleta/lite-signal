@@ -198,9 +198,11 @@ export function heapRule(input) {
 /** One boundary's retention state: 'ok', 'bad' (something outlived its world) or 'unmeasured'. */
 export function boundaryState(b) {
     if (b === null || typeof b !== 'object') return 'unmeasured';
-    if (!(Number.isSafeInteger(b.trackerSize) && b.trackerSize >= 0)) return 'unmeasured';
-    if (!(Number.isSafeInteger(b.weakAlive) && b.weakAlive >= 0)) return 'unmeasured';
-    return b.trackerSize <= RETAIN_MAX && b.weakAlive <= RETAIN_MAX ? 'ok' : 'bad';
+    const t = b.trackerSize;
+    if (!(Number.isSafeInteger(t) && t >= 0)) return 'unmeasured';
+    const w = b.weakAlive;
+    if (!(Number.isSafeInteger(w) && w >= 0)) return 'unmeasured';
+    return t <= RETAIN_MAX && w <= RETAIN_MAX ? 'ok' : 'bad';
 }
 
 /**
@@ -490,10 +492,11 @@ export class LaneGates {
 
     /** One record's checks and fold (the body of push before the re-entry guard). */
     #fold(rec) {
-        const where = 'cycle record lane=' + this.lane + ' cycle=' + (rec && rec.cycle);
+        const cycle = rec && rec.cycle;
+        const where = 'cycle record lane=' + this.lane + ' cycle=' + cycle;
         if (rec === null || typeof rec !== 'object') bad(where + ': not an object');
         if (rec.lane !== this.lane) bad(where + ': belongs to lane ' + String(rec.lane));
-        if (rec.cycle !== this.cycles) bad(where + ': expected cycle ' + this.cycles + ' (records arrive in cycle order, none missing)');
+        if (cycle !== this.cycles) bad(where + ': expected cycle ' + this.cycles + ' (records arrive in cycle order, none missing)');
         const worlds = intField(rec, 'worlds', where);
         const ops = intField(rec, 'ops', where);
         const fw = intField(rec, 'failingWorlds', where);
@@ -504,7 +507,8 @@ export class LaneGates {
         const warm = this.cycles < WARMUP_CYCLES;
         let resident = NaN;
         if (!warm) {
-            resident = rec.memory && rec.memory.residentMB;
+            const mem = rec.memory;
+            resident = mem && mem.residentMB;
             if (!(typeof resident === 'number' && Number.isFinite(resident) && resident >= 0)) bad(where + ': memory.residentMB must be a finite MB value');
         }
         const st = boundaryState(rec.boundary);

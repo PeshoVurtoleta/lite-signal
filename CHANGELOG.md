@@ -15,6 +15,26 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
+### Changed -- small sweep: test/torture, test/41, 42, 66, 69 and soak gates.mjs NITs (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); test harness, bench/soak/gates.mjs and its parity pin only.
+Closing run (quiet-lock, Node v26.8.2, load 1.46 -> 8.44): npm test 1708 / 1694 pass / 0 fail / 7 skip / 7 todo;
+torture GATE ok (alloc=0 B/op, k=0B/batch,0B/batch K=1,1, retention=0/966).
+- test: torture k label prints fail(unmeasured) for any non-finite Dlo (was fail(Dlo=NaNB)); test/69 own-min-loop
+  wiring check reads only the alRead / qsRead bodies and fails closed when either is missing; blind-spot comments
+  say "each dipping by >= the retainer's per-batch bytes".
+- test/66: the WIE generated row pins the exact scenario-counter map of its 200 worlds (cut at HEAD; re-cut on a
+  gen/exec/scenarios/engine change); new W1 row notSignal2 (effect target) is a second killer of the dropped
+  not-a-signal check.
+- soak gates: boundaryState reads trackerSize / weakAlive once each, and LaneGates.push reads rec.cycle and
+  rec.memory at most once each, so a record getter cannot change the verdict between reads; gates.mjs re-pinned in
+  parity.json; new test/42 read-once row.
+- test/41 calibrationProblems: the (f) exemption check compares exempt.ERROR element by element (a toJSON
+  spoof is red); a kernel file shaOf cannot read is red even with sha256 null, and files [null] is a (p) line; every
+  bound cell's cycles must equal cut.cycles / cut.smokeCycles.
+- test/69 also fails closed on an alRead / qsRead body holding a quote, backtick or slash (a } in a string cannot cut
+  it short); the test/41 D7 lane-only loop object-guards each files entry, a null sha256 is red (row tree files [null]).
+
 ### Changed -- test/torture.mjs slope lanes: 2nd-smallest odd batch (dev-only, not shipped)
 
 In the b77 closing npm test the test/64 aset must-fail row went red: the mutant exited 1 only via the untrack lane,
@@ -81,6 +101,8 @@ now backed by [L-WIE-preb33, L-WIE-rev152]; test/45 "teeth l" pins it. MUSTFAIL_
 plain object (`Object.defineProperty`); key order and JSON bytes are unchanged for every other key set (golden
 byte-identical). `LaneGates.push` throws GateInputError on a re-entrant push into the same lane (a record getter pushing
 mid-check); the guard resets in `finally`. test/42 todo rows 2 -> 0 (both now real tests, red on the old gates.mjs);
+the descriptor rows pin both own keys as writable / enumerable / configurable data properties (`writable: false` is
+red); the per-lane row pushes into a 2nd lane from a record getter mid-push: both fold (one shared busy flag is red).
 parity.json re-pinned (gates.mjs line only), parity OK 34 files. Engine unchanged. A getter firing during the fold
 (after the cycle count moves, e.g. `rec.boundary`) still left the OUTER lane half-folded here; closed by the
 all-or-nothing entry above.

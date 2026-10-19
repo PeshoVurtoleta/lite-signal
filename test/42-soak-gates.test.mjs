@@ -473,7 +473,8 @@ test('QA adversarial Totals.toJSON: a slot named __proto__ (an own key of a JSON
         const j = t.toJSON();
         assert.ok(Object.prototype.hasOwnProperty.call(j, '__proto__'), 'toJSON lost the __proto__ slot');
         assert.equal(Object.getOwnPropertyDescriptor(j, '__proto__').value, 7, 'the own __proto__ slot carries the total');
-        assert.deepEqual(Object.getOwnPropertyDescriptor(j, 'a'), { value: 0, writable: true, enumerable: true, configurable: true });
+        assert.deepEqual(Object.getOwnPropertyDescriptor(j, 'a'),
+            { value: 0, writable: true, enumerable: true, configurable: true });
         assert.deepEqual(Object.getOwnPropertyDescriptor(j, '__proto__'),
             { value: 7, writable: true, enumerable: true, configurable: true });
         assert.equal(Object.getPrototypeOf(j), Object.prototype, 'a plain {} (an own data key, not a prototype swap or a null-proto object)');
@@ -710,4 +711,31 @@ test('b76 R5 LaneGates: checks / skips / scenario 2^53, read once, warm on this.
         assert.throws(() => L4.push(r4), /residentMB/);
         assert.equal(L4.cycles, 1);
         assert.throws(() => new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'a'] }), TypeError);
+    });
+
+test('b79 B1 LaneGates: boundary.trackerSize / weakAlive, rec.cycle and rec.memory are read once (a 2nd read throws)',
+    () => {
+        const once = (o, k, v) => {
+            let n = 0;
+            Object.defineProperty(o, k, {
+                enumerable: true, get() { if (++n >= 2) throw new Error('reread-' + k); return v; },
+            });
+            return o;
+        };
+        const L = new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'b'] });
+        for (let c = 0; c < 2; c++) {
+            const r = rec('GRAPH', c);
+            once(r.boundary, 'trackerSize', 0);
+            once(r.boundary, 'weakAlive', 0);
+            once(r, 'cycle', c);
+            once(r, 'memory', { residentMB: 10 });
+            L.push(r);
+        }
+        assert.equal(L.cycles, 2, 'both records fold');
+        assert.equal(L.post, 1, 'cycle 1 (post-warm-up) read memory.residentMB');
+        assert.equal(L.unmeasured, 0);
+        assert.equal(L.bad, 0);
+        assert.equal(G.boundaryState(once(once({}, 'trackerSize', 1), 'weakAlive', 0)), 'bad');
+        assert.equal(G.boundaryState(once(once({}, 'trackerSize', 0), 'weakAlive', 0)), 'ok');
+        assert.equal(G.boundaryState(once(once({}, 'trackerSize', 0), 'weakAlive', -1)), 'unmeasured');
     });

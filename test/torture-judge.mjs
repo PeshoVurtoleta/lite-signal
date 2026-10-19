@@ -11,7 +11,7 @@
  * Why the 2nd-smallest odd: with Dhi = min odd (the b72-b77 rule, ord 1) ONE odd batch that dipped to the
  * even floor passed a retainer (b77; vector V1). No single bad batch (an odd dip, an odd spike, an even spike,
  * an even dip) passes a retainer now; an R2' pass is always an R1 pass. Blind: two odd dips in one attempt,
- * each >= the retainer's per-batch bytes (vector B1), and a spike on every measured even batch.
+ * each dipping by >= the retainer's per-batch bytes (vector B1), and a spike on every measured even batch.
  *
  * Fail closed (null is not zero): measured only when ok === true (the caller's counter conjunction), bb is an
  * array, every entry is null (a skipped batch) or a finite number >= 0, each parity kept >= 4 batches, and

@@ -150,6 +150,22 @@ const callArgs = (s, at) => { // top-level comma count inside the call starting 
     }
     return -1;
 };
+const bodyOf = (s, name) => { // brace-matched body of the single `function <name>(` in s, else null
+    const ms = [...s.matchAll(new RegExp('\\bfunction\\s+' + name + '\\s*\\(', 'g'))];
+    if (ms.length !== 1) return null;
+    let i = ms[0].index + ms[0][0].length - 1, d = 0;
+    for (; i < s.length; i++) { // past the parameter list
+        if (s[i] === '(') d++;
+        else if (s[i] === ')' && --d === 0) break;
+    }
+    const open = s.indexOf('{', i);
+    if (i >= s.length || open < 0 || s.slice(i + 1, open).trim() !== '') return null;
+    for (let j = open; j < s.length; j++) {
+        if (s[j] === '{') d++;
+        else if (s[j] === '}' && --d === 0) return s.slice(open, j + 1);
+    }
+    return null;
+};
 const wiringProblems = (raw) => {
     const s = strip(raw), bad = [];
     if (!/import\s*\{[^}]*\bjudgeSlope\b[^}]*\}\s*from\s*['"]\.\/torture-judge\.mjs['"]/.test(s)) bad.push('import');
@@ -157,7 +173,13 @@ const wiringProblems = (raw) => {
     if (calls.length !== 2) bad.push('call count ' + calls.length);
     for (const m of calls) if (callArgs(s, m.index + m[0].length - 1) !== 1) bad.push('third argument / arity');
     if (/\bhi\s*<=\s*at\.lo\b/.test(s)) bad.push('hi <= at.lo');
-    if (/\bv\s*<\s*hi\b|\bhi\s*>\s*v\b|\bhi\s*=\s*v\b/.test(s)) bad.push('own min loop');
+    let own = false; // the private-rule shape, looked for only inside the two readers (fail closed if one is missing)
+    for (const name of ['alRead', 'qsRead']) {
+        const body = bodyOf(s, name);
+        if (body === null || /['"`\/]/.test(body)) bad.push(name + ' body');
+        else if (/\bv\s*<\s*hi\b|\bhi\s*>\s*v\b|\bhi\s*=\s*v\b/.test(body)) own = true;
+    }
+    if (own) bad.push('own min loop');
     return bad;
 };
 
@@ -172,6 +194,11 @@ test('wiring: test/torture.mjs imports and calls judgeSlope twice, default ord, 
     assert.equal(/\.pass\s*=[^=]/.test(s), false, 'no pass override');
 });
 
+const GOOD = "import { judgeSlope } from './torture-judge.mjs';\n" +
+    'const a = judgeSlope(r.batchBytes, ok); const b = judgeSlope(x.y(1, 2), z && w);\n' +
+    'function alRead(r, steps) { const ok = steps === 1; return { r, ok }; }\n' +
+    'function qsRead(r, n0) { const steps = n0 & 1; return { r, steps }; }\n';
+
 test('wiring check has teeth: the HEAD alRead shape and a 3-arg call are flagged', () => {
     const head = `function alRead(r) { let hi = null; for (let b = 0; b < n; b++) { const v = r[b];
         else { nHi++; if (hi === null || v < hi) hi = v; } } }
@@ -181,9 +208,17 @@ test('wiring check has teeth: the HEAD alRead shape and a 3-arg call are flagged
     const three = "import { judgeSlope } from './torture-judge.mjs';\n" +
         'const a = judgeSlope(r.batchBytes, ok, 1); const b = judgeSlope(r.batchBytes, ok);';
     assert.ok(wiringProblems(three).includes('third argument / arity'));
-    const good = "import { judgeSlope } from './torture-judge.mjs';\n" +
-        'const a = judgeSlope(r.batchBytes, ok); const b = judgeSlope(x.y(1, 2), z && w);';
-    assert.deepEqual(wiringProblems(good), []);
+    assert.deepEqual(wiringProblems(GOOD), []);
+});
+
+test('wiring: the own-min-loop check reads only the alRead / qsRead bodies; a missing body fails closed', () => {
+    assert.deepEqual(wiringProblems(GOOD + '\nconst v = 1; if (v < hi) {}\n'), []); // outside both bodies
+    const inQs = GOOD.replace('const steps = n0 & 1;', 'const steps = n0 & 1; if (v < hi) hi = v;');
+    assert.notEqual(inQs, GOOD);
+    assert.deepEqual(wiringProblems(inQs), ['own min loop']);
+    assert.ok(wiringProblems(GOOD.replace('function alRead(', 'function alReadX(')).includes('alRead body'));
+    assert.ok(wiringProblems(GOOD.replace('function qsRead(', 'function qsRead2(')).includes('qsRead body'));
+    assert.ok(wiringProblems(GOOD.replace('const ok = steps === 1;', "const ok = steps === 1; const t = '}'; if (v < hi) hi = v;")).includes('alRead body'), 'a } in a string cannot cut the body short');
 });
 
 // ---- purity ----

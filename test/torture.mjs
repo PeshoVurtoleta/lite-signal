@@ -36,7 +36,7 @@
 //     nowhere); (3) allocations that die young -- both lanes read the heap after
 //     a forced GC; the pinned child covers set only through the NEST / QS graphs
 //     and untrack not at all, so a transient per-op box passes (the old floor was
-//     equally blind to it); (4) two odd dips in one attempt, each >= the
+//     equally blind to it); (4) two odd dips in one attempt, each dipping by >= the
 //     retainer's per-batch bytes (vector B1); (5) a spike on every measured even
 //     batch masks a retainer up to its size. A k that grows with batch duration
 //     reads as per-step growth (fails closed). Must-fail: test/64 lanes aset / aun
@@ -103,10 +103,10 @@
 //     only, gated nowhere); (3) allocations that die young
 //     -- the child lane owns those at <= 0.05 B/op, so a transient 1-in-1000
 //     16 B box (0.016 B/op) passes both lanes; (4) two odd dips in one attempt,
-//     each >= the retainer's per-batch bytes; (5) a spike on every measured even
-//     batch masks a retainer up to its size. A k that grows with batch duration
-//     reads as per-step growth (fails closed). No single bad batch passes a
-//     retainer (see the set / untrack lanes above).
+//     each dipping by >= the retainer's per-batch bytes; (5) a spike on every
+//     measured even batch masks a retainer up to its size. A k that grows with
+//     batch duration reads as per-step growth (fails closed). No single bad
+//     batch passes a retainer (see the set / untrack lanes above).
 //   * F21 retention: 1e3 x {createRegistry({maxFlushPasses: 8}), the P3 shape
 //     (creation-time CycleError caught, then a new effect in a recycled slot),
 //     destroy()} -> lite-leak tracker.size() === 0 (a cycle's marker is released
@@ -353,7 +353,7 @@ const bpcLabel = allocMeasured
 // k is a per-batch constant only on a pass; a failed lane prints its Dlo under fail(), never as k.
 // A unit only follows a number: 16B/batch, fail(Dlo=640B), fail(unmeasured).
 const kLabel = (pass, shown) => pass !== null ? pass.lo + 'B/batch' :
-  'fail(' + (shown.lo === null ? 'unmeasured' : 'Dlo=' + shown.lo + 'B') + ')';
+  'fail(' + (Number.isFinite(shown.lo) ? 'Dlo=' + shown.lo + 'B' : 'unmeasured') + ')';
 const alKLabel = kLabel(setPass, setShown) + ',' + kLabel(unPass, unShown);
 const allocOk = setPass !== null && unPass !== null;
 

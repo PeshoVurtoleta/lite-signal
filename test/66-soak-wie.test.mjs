@@ -28,7 +28,8 @@
 // W1 has three fail-closed reasons, each pinned by its own regex: own transitive read set / not a signal /
 // not an earlier node (forward or self target). Four more W1 rows: strTarget (w is the string '0'), self (w === i),
 // negTarget (w -1) and fracTarget (w 0.5): only an integer 0 <= w < i reaches the read-set / signal arms.
-// Generated: 200 worlds of the WIE lane on live: 0 failures, 0 unmodelled, every wie-* scenario counted >= 1.
+// The not-a-signal arm has two rows: notSignal (a computed target) and notSignal2 (an effect target, read set disjoint).
+// Generated: 200 worlds of the WIE lane on live: 0 failures, 0 unmodelled, the EXACT scenario counter map (GEN_SCEN).
 //
 // Kernel binding: kernel.mjs reads SOAK_KERNEL once at import, so every row runs in a CHILD node process (the test/57
 // seam). live = no SOAK_KERNEL; preb33 = bench/soak/controls/preb33/Signal.js. A missing kernel is RED, never a skip.
@@ -80,6 +81,9 @@ const W1 = {
     transitive: [sig(0), comp(1, { k: 'sum', d: [0] }), comp(2, { k: 'sum', d: [1], w: 0, inc: 1 }), rd(2)],
     // target is a computed (not a signal)
     notSignal: [sig(0), comp(1, { k: 'sum', d: [0] }), comp(2, { k: 'sum', d: [0], w: 1, inc: 1 }), rd(2)],
+    // target is an EFFECT (not a signal), outside the writer's read set {2}: with the not-a-signal check dropped the
+    // read-set arm cannot catch it (a target IN the read set still throws 'not a signal' there, via the message ternary)
+    notSignal2: [sig(0), eff(1, { k: 'sum', d: [0] }), sig(2), comp(3, { k: 'sum', d: [2], w: 1, inc: 1 }), rd(3)],
     // target is a later node (forward reference)
     forward: [sig(0), comp(1, { k: 'sum', d: [0], w: 2, inc: 1 }), sig(2), rd(1)],
     // target is not an integer (string)
@@ -92,6 +96,7 @@ const W1 = {
 };
 const W1_RE = {
     direct: /own transitive read set/, transitive: /own transitive read set/, notSignal: /not a signal/,
+    notSignal2: /not a signal/,
     forward: /not an earlier node/, strTarget: /not an earlier node/, self: /not an earlier node/,
     negTarget: /not an earlier node/, fracTarget: /not an earlier node/,
 };
@@ -205,12 +210,23 @@ for (const kind of Object.keys(W1)) {
     });
 }
 
-test('WIE generated: 200 worlds on live -> 0 failures, 0 unmodelled, no other throw, every wie-* scenario counted', () => {
+// GEN_SCEN: the exact scenario counter map of the 200 generated worlds (base 0xC0FFEE, live kernel), CUT by running
+// the HEAD generator on these inputs (b79 B4: .handoff/b79-evidence/B4/cut-e1.mjs + cut-e1.log), never guessed. The
+// literals depend on gen.mjs / exec.mjs / scenarios.mjs (and lanes/wie.mjs, seeds.mjs) AND on the engine: a
+// calibration recut, a generator / harness change or an engine change RE-CUTS them (same script, same inputs).
+const GEN_SCEN = {
+    'wie-stale-effect': 14081, 'wie-stale-computed': 8062, 'wie-prewalk': 286609, 'wie-untrack': 5517,
+    'wie-write-before-read': 1193,
+    'equality-cutoff': 49415, 'second-invalidation': 169436, 'dep-set-flip': 39709, 'diamond-write': 26359,
+    'adversarial-equality': 590,
+};
+test('WIE generated: 200 worlds on live -> 0 failures, 0 unmodelled, no other throw, exact scenario counter map', () => {
     const o = child(null, { mode: 'gen', base: 0xC0FFEE, n: 200 });
     assert.equal(o.threw, undefined, o.threw);
     assert.equal(o.index, 4, 'WIE.index');
     assert.deepEqual(o.other, [], 'non-unmodelled throws');
     assert.equal(o.unmodelled, 0, 'unmodelled worlds');
     assert.equal(o.bad, 0, JSON.stringify(o.firstBad));
-    for (const s of SCENARIOS) assert.ok((o.scen[s] | 0) >= 1, s + ' never counted: ' + JSON.stringify(o.scen));
+    assert.deepEqual(o.scen, GEN_SCEN, 'scenario counters of the 200 generated worlds (re-cut on a gen / exec / scenarios / engine change)');
+    for (const s of SCENARIOS) assert.ok(GEN_SCEN[s] >= 1, 'GEN_SCEN never counts ' + s + ' (a re-cut must still cover every wie-* scenario)');
 });
