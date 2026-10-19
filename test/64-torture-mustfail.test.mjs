@@ -1,15 +1,17 @@
 // test/64-torture-mustfail.test.mjs -- burst 63 (PLAN-0w C1): must-fail control for test/torture.mjs.
 // The torture gate is only a gate if a known-bad engine turns it red. This test copies the engine under test
 // (LITE_SIGNAL_KERNEL, default ../Signal.js -- the WORKING-TREE engine, never git HEAD) into a temp dir together with
-// Watch.js, package.json, test/torture.mjs and a node_modules symlink, applies one text mutant, and runs
-// `node --expose-gc <tmp>/test/torture.mjs` in a child process (the torture spawns its own --nest-lane child).
+// Watch.js, package.json, test/torture.mjs, test/torture-judge.mjs (the slope verdict torture.mjs imports, b78)
+// and a node_modules symlink, applies one text mutant, and runs `node --expose-gc <tmp>/test/torture.mjs` in a
+// child process (the torture spawns its own --nest-lane child).
 // Lanes (recipe: .handoff/b61-evidence/qa/mkmut.mjs; b61 signatures in scratch-{slow,lslow,val-new}.log):
 //   live  -- unmutated: exit 0, GATE line ends `| ok`, every drain full, retention 0 (the control).
 //   slow  -- every 1000th disposal the node is not pushed to the free list -> `free=` nodes short (b61: 811/1021n).
 //   lslow -- every 1000th disposal the sub link is not pushed to the free list -> links short (b61: 4032/4095l).
 //   val   -- disposal stops clearing node.value -> `retention=` alive >= 1 (b61: 1/966).
 //   aset  -- read.set retains one { n } per 1000 calls -> GATE `| alloc=` > 0 + a `set alloc fail attempt` line
-//            (b72: the phase-2b retention-slope lane's must-fail; 0.032 B/op, Dlo=640 Dhi=3200).
+//            (b72: the phase-2b retention-slope lane's must-fail; 0.032 B/op, Dlo=640 Dhi=3200; since b78 Dhi is
+//            the 2nd-smallest odd batch, judgeSlope in test/torture-judge.mjs).
 //   aun   -- untrack retains one { n } per 1000 calls -> `| alloc=` > 0 + an `untrack alloc fail attempt` line.
 //            The alloc lanes catch down to 1 retained object per 1e5 steps (b72 teeth: N=100000 red, 200000 green).
 // Each mutant must exit 1 AND print a GATE line ending `| FAIL` AND show its own signature (a crash also exits 1,
@@ -32,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 const KPATH = process.env.LITE_SIGNAL_KERNEL ?? fileURLToPath(new URL('../Signal.js', import.meta.url));
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const TORTURE = fileURLToPath(new URL('./torture.mjs', import.meta.url));
+const JUDGE = fileURLToPath(new URL('./torture-judge.mjs', import.meta.url));
 const WATCH = existsSync(join(dirname(KPATH), 'Watch.js')) ? join(dirname(KPATH), 'Watch.js') : join(ROOT, 'Watch.js');
 const CHILD_TIMEOUT_MS = 60000;
 const sha8 = (p) => createHash('sha256').update(readFileSync(p)).digest('hex').slice(0, 8);
@@ -62,6 +65,7 @@ test('kernel under test', (t) => {
     t.diagnostic('kernel ' + KPATH + ' sha256/8 ' + sha8(KPATH));
     t.diagnostic('watch ' + WATCH + ' sha256/8 ' + sha8(WATCH));
     t.diagnostic('torture ' + TORTURE + ' sha256/8 ' + sha8(TORTURE));
+    t.diagnostic('judge ' + JUDGE + ' sha256/8 ' + sha8(JUDGE));
     assert.ok(existsSync(join(ROOT, 'node_modules')), 'package node_modules missing (npm install)');
 });
 
@@ -82,6 +86,7 @@ function runLane(kind) {
         copyFileSync(WATCH, join(dir, 'Watch.js'));
         copyFileSync(join(ROOT, 'package.json'), join(dir, 'package.json'));
         copyFileSync(TORTURE, join(dir, 'test', 'torture.mjs'));
+        copyFileSync(JUDGE, join(dir, 'test', 'torture-judge.mjs'));   // torture.mjs imports it (b78)
         symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'), 'dir');
         const env = { ...process.env };
         delete env.NODE_TEST_CONTEXT;

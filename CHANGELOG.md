@@ -15,6 +15,29 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
+### Changed -- test/torture.mjs slope lanes: 2nd-smallest odd batch (dev-only, not shipped)
+
+In the b77 closing npm test the test/64 aset must-fail row went red: the mutant exited 1 only via the untrack lane,
+while the set lane false-passed at k=640B/batch (GATE K=1,3). The old rule (Dhi = min odd batch, pass iff Dhi <= Dlo)
+let ONE odd batch that dipped to the even floor pass a retainer (one object per 1000 read.set calls); the b74 note had
+flagged the hole ("A dip on ONE odd batch masks a retainer up to its size"). The verdict now lives in a new pure cold
+module test/torture-judge.mjs (`judgeSlope`, `SLOPE_ORD` = 2) used by the set, untrack and QS slope lanes: Dlo = min
+even batch, Dhi = 2nd-smallest odd batch, pass iff Dhi <= Dlo. A new-rule pass is always an old-rule pass; no single bad
+batch (odd dip, odd spike, even spike, even dip) passes a retainer. Remaining blind spots: two odd dips in one attempt,
+each dipping by >= the retainer's per-batch bytes; plus the unchanged ones (a spike on every measured even batch, a
+retainer slower than ~1 per 1e5 steps, per-batch / per-GC retention, young-dying allocations). The detection floor is
+still 1 per 1e5 steps. The QS control (min paired difference >= 1280 B) is unchanged. Hot wrappers are byte-identical.
+
+The judge also fails closed on a non-finite, negative or non-number batch entry (the old inline judge passed NaN, -16,
+'0' and undefined slots; found by the b78 golden vectors). Trade-off: a pass now needs two clean odd batches, so a noisy
+live attempt can go red where the old rule passed (pinned vector C1); attempts K=3 are unchanged; false-red rate under
+load, b78 census (K=10 runs of test/64, Node v26.8.2, load 2.3-3.9): the live row passed 10/10 on its first attempt
+(K=1,1), aset and aun failed 10/10 with their own fail lines; not yet measured at the b77 load (3.3 -> 6.5 during the
+run). Tests: new test/69-torture-judge.test.mjs (13 tests: golden old-rule literals from HEAD, new-rule verdicts, the
+b77 teeth vector V1 (old PASS / new FAIL), fail-closed rows, and a wiring row pinning the counter conjunction, the 3
+pass sites and no pass override); test/64 copies the judge into each mutant tree and prints its sha8. npm test (b78
+closing run): 1705 tests / 1691 pass / 0 fail / 7 skip / 7 todo.
+
 ### Changed -- LEDGER #36 (F-MB) triaged: folded into DIV-F5 (docs only, not shipped)
 
 The four known=none BATCH-lane lines (BATCH:1:0xb08f012b, BATCH:2:0xfd8b9606) are F5 (a batch revert after a mid-batch

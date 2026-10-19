@@ -14,27 +14,33 @@
 //     0.0008 B/op = 16 B in the minimum 2e4-call batch, exit 1; `node --expose-gc
 //     --no-concurrent-osr test/torture.mjs` reproduced it on the b72 before-copy
 //     6/6). Both lanes use the QS estimator (phase 6): ONE measureAllocs call per
-//     attempt, pseudo-batches of 2e4 calls alternating 1 step per call (even,
-//     Dlo = min) and 5 (odd, Dhi = min), so k is shared by both parities and
-//     cancels. An attempt passes iff it settled, ran exactly 1080000 steps, every
-//     step fired the effect, it ended in the reset state, kept >= 4 batches per
-//     parity and Dhi <= Dlo; up to 3 attempts per lane, stop at the first pass.
+//     attempt, pseudo-batches of 2e4 calls alternating 1 step per call (even) and
+//     5 (odd), so k is shared by both parities and cancels. Verdict: judgeSlope
+//     (./torture-judge.mjs, b78 rule R2'): Dlo = min even batch, Dhi = 2nd-smallest
+//     odd batch. An attempt passes iff it settled, ran exactly 1080000 steps, every
+//     step fired the effect, it ended in the reset state, every batch reading is
+//     null or a finite number >= 0, it kept >= 4 batches per parity and Dhi <= Dlo;
+//     up to 3 attempts per lane, stop at the first pass.
 //     Catches a retainer down to 1 per 1e5 steps (the old floor: 1 per 2e4).
+//     No single bad batch passes a retainer: one odd dip is skipped by the
+//     2nd-smallest (b72-b77 read Dhi = min odd, so ONE odd batch dipped to the even
+//     floor passed a retainer -- b77, vector V1), one even spike is not the min, and
+//     a one-time upward step in k (b73: +6240 B on every batch after ~7) rides every
+//     batch (cancels) or misses batch 0, so it can only lift Dhi (red, retried).
+//     They keep Dhi <= Dlo: a min of paired differences (the QS control, b74) would
+//     pass a retainer on ONE pair whose even batch spiked. A live pass needs two
+//     clean odd batches, so a loaded host turns more attempts red (K=3 retries).
 //     Cannot see: (1) a retainer slower than ~1 per 1e5 steps; (2) retention once
 //     per batch or GC cycle, independent of step count (printed as k from a
 //     passing attempt only -- a failed lane prints fail(Dlo=<n>B) -- gated
 //     nowhere); (3) allocations that die young -- both lanes read the heap after
 //     a forced GC; the pinned child covers set only through the NEST / QS graphs
 //     and untrack not at all, so a transient per-op box passes (the old floor was
-//     equally blind to it). A k that grows with batch duration reads as per-step
-//     growth (fails closed); a spike riding every even batch masks a retainer up
-//     to its size. A one-time upward step in k (b73: +6240 B on every batch after ~7)
-//     cannot pass these lanes: it rides every batch (cancels) or misses batch 0,
-//     so it can only lift Dhi (red, retried). They keep Dhi <= Dlo: a min of paired
-//     differences (the QS control, b74) would pass a retainer on ONE pair whose
-//     even batch spiked. A dip on ONE odd batch masks a retainer up to its size
-//     (pre-existing, unchanged b74). Must-fail: test/64 lanes aset / aun (one retained object
-//     per 1000 calls in read.set / untrack -> alloc > 0, FAIL).
+//     equally blind to it); (4) two odd dips in one attempt, each >= the
+//     retainer's per-batch bytes (vector B1); (5) a spike on every measured even
+//     batch masks a retainer up to its size. A k that grows with batch duration
+//     reads as per-step growth (fails closed). Must-fail: test/64 lanes aset / aun
+//     (one retained object per 1000 calls in read.set / untrack -> alloc > 0, FAIL).
 //   * 1e4 create/dispose cycles           -> activeNodes/activeLinks back to baseline
 //   * effect self-disposes inside untrack -> gen-safe restore, no crash, baseline
 //   * NEST (SPEC-A A1.11): 1e5 nested recomputes effect -> computed -> computed
@@ -71,13 +77,15 @@
 //     still 0 B/op with gc minor=2).
 //     Slope (PLAN-0c addendum 1): ONE measureAllocs call per attempt over a
 //     wrapper that alternates pseudo-batches of 2e4 calls at 1 qsStep per call
-//     (even batches, Dlo = min non-null batchBytes) and 5 (odd batches, Dhi), so
-//     the instrument's per-batch constant k (CI read 16-72 B in every batch, a
-//     0.0008-0.0036 B/op min-over-batches false red; it also differs BETWEEN
-//     calls) is shared by both parities and cancels; a per-call retainer grows
-//     with the 8e4 extra steps. An attempt passes iff it settled, ran exactly
-//     1080000 steps, ended in the reset state, kept >= 4 batches per parity and
-//     Dhi <= Dlo; up to 3 attempts, stop at the first pass. Control: the same
+//     (even batches) and 5 (odd batches), so the instrument's per-batch constant
+//     k (CI read 16-72 B in every batch, a 0.0008-0.0036 B/op min-over-batches
+//     false red; it also differs BETWEEN calls) is shared by both parities and
+//     cancels; a per-call retainer grows with the 8e4 extra steps. Verdict: the
+//     same judgeSlope as the set / untrack lanes (b78: Dlo = min even, Dhi =
+//     2nd-smallest odd). An attempt passes iff it settled, ran exactly 1080000
+//     steps, ended in the reset state, every batch reading is null or a finite
+//     number >= 0, it kept >= 4 batches per parity and Dhi <= Dlo; up to 3
+//     attempts, stop at the first pass. Control: the same
 //     call shape with one object retained per 1000 qsSteps, read as the MIN OF
 //     PAIRED DIFFERENCES (b74): over the 8 pairs (even batch b - 1, odd batch b)
 //     min(odd - even) MUST be >= 1280 B with >= 4 measured pairs, or the slope
@@ -94,9 +102,11 @@
 //     cycle, independent of step count (reported as k from a passing attempt
 //     only, gated nowhere); (3) allocations that die young
 //     -- the child lane owns those at <= 0.05 B/op, so a transient 1-in-1000
-//     16 B box (0.016 B/op) passes both lanes. A k that grows with batch
-//     duration reads as per-step growth (fails closed); a spike riding every
-//     even batch masks a retainer up to its size.
+//     16 B box (0.016 B/op) passes both lanes; (4) two odd dips in one attempt,
+//     each >= the retainer's per-batch bytes; (5) a spike on every measured even
+//     batch masks a retainer up to its size. A k that grows with batch duration
+//     reads as per-step growth (fails closed). No single bad batch passes a
+//     retainer (see the set / untrack lanes above).
 //   * F21 retention: 1e3 x {createRegistry({maxFlushPasses: 8}), the P3 shape
 //     (creation-time CycleError caught, then a new effect in a recycled slot),
 //     destroy()} -> lite-leak tracker.size() === 0 (a cycle's marker is released
@@ -111,6 +121,8 @@ import { createLeakTracker } from '@zakkster/lite-leak';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getHeapSpaceStatistics } from 'node:v8';
+// Cold slope verdict (b78): a separate module because this file runs every phase on import.
+import { judgeSlope } from './torture-judge.mjs';
 
 // >>> WIRE: the engine under test -- the working-tree source, NOT node_modules.
 import { createRegistry, signal as defaultSignal, watch } from '../Signal.js';
@@ -304,18 +316,11 @@ const untrackPairStep = () => {
   if (bpOdd === 1) { untrackStepN(); untrackStepN(); untrackStepN(); untrackStepN(); }
 };
 // null is not zero: an attempt that did not settle, run exactly AL_STEPS steps, fire the effect
-// on every step, end in the reset state and keep >= 4 batches per parity is unmeasured, never a pass.
+// on every step, end in the reset state, read only null / finite >= 0 batches and keep >= 4 batches
+// per parity is unmeasured, never a pass. Verdict: judgeSlope (Dlo = min even, Dhi = 2nd-smallest odd).
 function alRead(r, steps, fires, endOk) {
-  let lo = null, hi = null, nLo = 0, nHi = 0;
-  for (let b = 0; b < r.batchBytes.length; b++) {
-    const v = r.batchBytes[b];
-    if (v === null) continue;
-    if ((b & 1) === 0) { nLo++; if (lo === null || v < lo) lo = v; }
-    else { nHi++; if (hi === null || v < hi) hi = v; }
-  }
-  return { r, lo, hi, nLo, nHi, steps, fires, endOk,
-    measured: r.settled && endOk && steps === AL_STEPS && fires === AL_STEPS &&
-      nLo >= 4 && nHi >= 4 && lo !== null && hi !== null };
+  const ok = r.settled && endOk && steps === AL_STEPS && fires === AL_STEPS;
+  return { r, steps, fires, endOk, ...judgeSlope(r.batchBytes, ok) };
 }
 const alOpts = { iterations: AL_ITER, batches: AL_BATCHES, warmup: AL_WARM };
 const setAttempts = [];
@@ -326,7 +331,7 @@ for (let a = 0; a < AL_K && setPass === null; a++) {
   const r = measureAllocs(setPairStep, alOpts);
   const at = alRead(r, (aN - n0) & 0x3FFFFFFF, aRuns - f0, apLeft === 0 && apOdd === 1);
   setAttempts.push(at);
-  if (at.measured && at.hi <= at.lo) setPass = at;
+  if (at.pass) setPass = at;
 }
 const unAttempts = [];
 let unPass = null;
@@ -336,7 +341,7 @@ for (let a = 0; a < AL_K && unPass === null; a++) {
   const r = measureAllocs(untrackPairStep, alOpts);
   const at = alRead(r, (bN - n0) & 0x3FFFFFFF, sinkB - f0, bpLeft === 0 && bpOdd === 1);
   unAttempts.push(at);
-  if (at.measured && at.hi <= at.lo) unPass = at;
+  if (at.pass) unPass = at;
 }
 // Label: per lane the passing attempt, else the last one; a pass has Dhi <= Dlo, so it reads 0.
 const setShown = setPass !== null ? setPass : setAttempts[setAttempts.length - 1];
@@ -695,25 +700,15 @@ const qsPairStep = () => {
   if (qpOdd === 1) { qsStep(); qsStep(); qsStep(); qsStep(); }
 };
 // Fail closed: an attempt that did not run exactly QS_STEPS steps, end in the reset state,
-// settle, and keep >= 4 batches per parity is unmeasured, never a pass.
-// Also the control's min of paired differences: pmin = min over odd b of batchBytes[b] - batchBytes[b - 1]
-// (both halves non-null), nPair = the pairs counted. A one-time step in k lands inside at most one pair.
+// settle, read only null / finite >= 0 batches and keep >= 4 batches per parity is unmeasured,
+// never a pass. Verdict: judgeSlope (Dlo = min even, Dhi = 2nd-smallest odd).
+// Also the control's min of paired differences (from judgeSlope): pmin = min over odd b of
+// batchBytes[b] - batchBytes[b - 1] (both halves non-null), nPair = the pairs counted. A one-time
+// step in k lands inside at most one pair.
 function qsRead(r, n0, endOk) {
-  let lo = null, hi = null, nLo = 0, nHi = 0, pmin = null, nPair = 0;
-  const bb = r.batchBytes;
-  for (let b = 0; b < bb.length; b++) {
-    const v = bb[b];
-    if (v === null) continue;
-    if ((b & 1) === 0) { nLo++; if (lo === null || v < lo) lo = v; }
-    else {
-      nHi++; if (hi === null || v < hi) hi = v;
-      const ev = bb[b - 1];
-      if (ev !== null) { nPair++; const d = v - ev; if (pmin === null || d < pmin) pmin = d; }
-    }
-  }
   const steps = (qsN - n0) & 0x3FFFFFFF;
-  return { r, lo, hi, nLo, nHi, pmin, nPair, steps, endOk,
-    measured: r.settled && endOk && steps === QS_STEPS && nLo >= 4 && nHi >= 4 && lo !== null && hi !== null };
+  const ok = r.settled && endOk && steps === QS_STEPS;
+  return { r, steps, endOk, ...judgeSlope(r.batchBytes, ok) };
 }
 const qsAttempts = [];
 let qsPass = null;
@@ -723,7 +718,7 @@ for (let a = 0; a < QS_K && qsPass === null; a++) {
   const r = measureAllocs(qsPairStep, { iterations: QS_ITER, batches: QS_BATCHES, warmup: QS_WARM });
   const at = qsRead(r, n0, qpLeft === 0 && qpOdd === 1);
   qsAttempts.push(at);
-  if (at.measured && at.hi <= at.lo) qsPass = at;
+  if (at.pass) qsPass = at;
 }
 const qsAllocOk = qsPass !== null;
 // Control with teeth: drives qsPairStep itself (same call shape, one call per attempt), retaining one
@@ -865,7 +860,8 @@ if (!ok) {
     console.error('  qs: fired=' + qsFired + ' steps=' + qsN + ' runs=' + qsRuns + ' plain=' + qsPlain + ' sched=' + qsSched +
       ' alloc=' + qsBpcLabel + ' child=' + qsChildLabel + ' childFired=' + qsChildFired +
       (qsGcReport.ok ? '' : ' gc ' + qsGcReport.violations.map((v) => v.metric + '=' + v.actual).join(',')));
-    const show = (at) => 'Dlo=' + at.lo + ' Dhi=' + at.hi + ' (pass iff Dhi <= Dlo) batches ' +
+    const show = (at) => 'Dlo=' + at.lo + ' Dhi=' + at.hi + ' minOdd=' + at.hiMin +
+      ' (Dlo = min even, Dhi = 2nd-smallest odd; pass iff Dhi <= Dlo) batches ' +
       at.r.batchBytes.map((v, b) => ((b & 1) === 0 ? 'e' : 'o') + v).join(',') +
       ' measured=' + at.r.measuredBatches + ' inverted=' + at.r.invertedBatches + ' settled=' + at.r.settled +
       ' perParity=' + at.nLo + '/' + at.nHi + ' steps=' + at.steps + '/' + QS_STEPS + ' endState=' + at.endOk;
@@ -883,7 +879,8 @@ if (!ok) {
   }
   if (!f21Ok) console.error('  f21 retention: size=' + f21Live + ' fail=' + f21Fail + '/' + F21_CYCLES);
   for (const v of gcReport.violations) console.error('  gc violation ' + v.metric + ' limit=' + v.limit + ' actual=' + v.actual);
-  const alShow = (at) => 'Dlo=' + at.lo + ' Dhi=' + at.hi + ' (pass iff Dhi <= Dlo) batches ' +
+  const alShow = (at) => 'Dlo=' + at.lo + ' Dhi=' + at.hi + ' minOdd=' + at.hiMin +
+    ' (Dlo = min even, Dhi = 2nd-smallest odd; pass iff Dhi <= Dlo) batches ' +
     at.r.batchBytes.map((v, b) => ((b & 1) === 0 ? 'e' : 'o') + v).join(',') +
     ' measured=' + at.r.measuredBatches + ' inverted=' + at.r.invertedBatches + ' settled=' + at.r.settled +
     ' perParity=' + at.nLo + '/' + at.nHi + ' steps=' + at.steps + '/' + AL_STEPS + ' fires=' + at.fires +
