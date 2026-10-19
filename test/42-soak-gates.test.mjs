@@ -132,9 +132,9 @@ test('LaneGates evidence: coverage, performed-only check floor and per-oracle ta
     assert.ok(floor.causes.some((c) => c.cause === 'taint-skip' && c.oracle === 'O1e'), 'and its skip ratio is 1.0');
     // Synthetic ratios on both sides of TAINT_SKIP_MAX 0.35, calibrated in S1d B6 (bench/soak/calibration/
     // soak-calibration.json, headpatched fa2871f0, seed 0xC0FFEE, smoke shape): 0.44 / 0.26 are the S1d B6
-    // (pre-V1) cov-off and clean-max values; the b71 recut reads clean max 0.0663 and the NEST cov-off is the
-    // coverage gate's case (b70 D6 V1). Counts x10 so every oracle clears CHECK_FLOOR and only the taint gate
-    // decides; on the provisional 0.5 this row read PASS (over = []).
+    // (pre-V1) cov-off and clean-max values; the b71 recut reads sweep max 0.0663 (binding clean max 0.0579)
+    // and the NEST cov-off is the coverage gate's case (b70 D6 V1). Counts x10 so every oracle clears CHECK_FLOOR
+    // and only the taint gate decides; on the provisional 0.5 this row read PASS (over = []).
     const t = laneRun(11, () => ({ checks: Object.assign(rec('GRAPH', 0).checks, { O1c: 5600, O1e: 7400 }), skipTainted: Object.assign(rec('GRAPH', 0).skipTainted, { O1c: 4400, O1e: 2600 }) }));
     assert.equal(t.gates['check-floor'].verdict, 'PASS', 'precondition: only the taint gate decides');
     assert.deepEqual(t.gates['taint-skip'].over.map((o) => o.oracle), ['O1c']);

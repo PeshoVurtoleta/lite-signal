@@ -22,8 +22,8 @@
  *                ceiling lives in the test, not next to GAPS. Reads only the anchor files.
  *
  * NOT in the universe (each excluded on purpose):
- *   - REPORT_ONLY_GATES (gates.mjs:369): recorded, never judged; none can make a run FAIL or INCONCLUSIVE.
- *   - REASONS (gates.mjs:531): the verdict's input vocabulary (end / signal / fatal), a run fact and not a
+ *   - REPORT_ONLY_GATES (gates.mjs:373): recorded, never judged; none can make a run FAIL or INCONCLUSIVE.
+ *   - REASONS (gates.mjs:535): the verdict's input vocabulary (end / signal / fatal), a run fact and not a
  *     judgement; its outcomes are judged through cause:interrupted and test/46's verdict rows.
  *   - WRAP_CHECKS (config.mjs:105, W1-W5): the checks of ONE judged id, gate:wrap (wraprules.mjs WRAP_GATE, S2),
  *     not ids of their own. gate:wrap's teeth are L-REV-AUDIT-W5 (W5) and L-WRAP-TREE (W1-W4); its causes
@@ -160,11 +160,11 @@ export const GAPS = deepFreeze({
         until: 'S5 adapters', covers: ['oracle:OB', 'sig:OB:batch-early-run'],
     },
     'T-OB-nested-close': {
-        why: 'exec.mjs:381 marks only the OUTERMOST close (depth 1); no in-tree kernel flushes at a nested batch close, so only a reviewer mutant kernel reaches exec.mjs:387 did(\'OB\') that way',
+        why: 'exec.mjs:383 marks only the OUTERMOST close (depth 1); no in-tree kernel flushes at a nested batch close, so only a reviewer mutant kernel reaches exec.mjs:389 did(\'OB\') that way',
         until: 'a pinned nested-flush control kernel (controls.json)', covers: ['oracle:OB'],
     },
     'totals-e2e': {
-        why: 'gates.mjs:351 totals has teeth null: its unit must-fail (PipeZeroTotals, gates.mjs:275) runs at startup, but an end-to-end red needs a run total past 2^31',
+        why: 'gates.mjs:355 totals has teeth null: its unit must-fail (PipeZeroTotals, gates.mjs:279) runs at startup, but an end-to-end red needs a run total past 2^31',
         until: 'S2 NEARWRAP / long soak', covers: ['gate:totals'],
     },
     'T-O1c-err': {
@@ -179,7 +179,7 @@ export const GAPS = deepFreeze({
         why: 'equals-mutated (exec.mjs:346) and escape-empty (exec.mjs:211) have no known red kernel; no census row names them',
         until: 'a mutant kernel (equals throw that still writes; an empty escape leaf list)', covers: ['sig:O6:equals-mutated', 'sig:O6:escape-empty'],
     },
-    'T-no-lane': { why: 'lite with a SKIP exits 2 (gates.mjs:560) and SOAK_LANES never parses empty (config.mjs:242), so no-lane (gates.mjs:565) needs a non-lite engine', until: 'S5 adapters', covers: ['cause:no-lane'] },
+    'T-no-lane': { why: 'lite with a SKIP exits 2 (gates.mjs:564) and SOAK_LANES never parses empty (config.mjs:242), so no-lane (gates.mjs:569) needs a non-lite engine', until: 'S5 adapters', covers: ['cause:no-lane'] },
     'T-post-cycles': { why: 'config.mjs:364 floors SOAK_CYCLES at MIN_ACTIVE_CYCLES, so post-cycles fires only on an interrupted or forever (SOAK_CYCLES=0) run stopped early; no control pins that line', until: 'a forever-run SIGINT control', covers: ['cause:post-cycles'] },
     'R-kernel-identity': { why: 'kernel identity is self-reported: a consistent 5-field forgery of a scratch stream as a tree run exits 0 (SoakReport.mjs:70 RESIDUALS); signing is out of scope', until: 'S4 stream signing', covers: [] },
 });

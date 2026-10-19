@@ -78,12 +78,29 @@ test('roster: only skipping oracles are judged; empty roster passes; a duplicate
     assert.deepEqual(over(rule(0, 1, ['O1c', 'O1c'])), ['O1c', 'O1c']);
 });
 
-// Adversarial (qa b72): the exported rule trusts its counts. LaneGates.push validates every count first
-// (countMap: safe non-negative integers), so main.mjs cannot reach these; a direct caller can.
-test('QA adversarial taintSkipRule: a null skipped count must not read as zero skips', { todo: 'DEFECT gates.mjs taintSkipRule: null skipped with 100 performed -> ratio null/(100+null) = 0 -> PASS (null is not zero)' }, () => {
-    assert.deepEqual(over(rule(100, null)), ['O1c']);
+// Adversarial (qa b72; D-T68 fixed b73). LaneGates.push validates every count first (countMap: safe non-negative
+// integers), so main.mjs cannot reach these; a direct caller can. A present count that is not a safe non-negative
+// integer puts the oracle in over (INCONCLUSIVE, never PASS, never a throw). Revert-red on the b72 gates.mjs:
+// null skipped read 0/(100+0) = 0, -1 read -0.0101, "50" concatenated to 100+"50", 0/1.5 and 0/Infinity read 0.
+const assertOver = (r, what) => {
+    assert.deepEqual(over(r), ['O1c'], what + ' must be over');
+    assert.notEqual(r.verdict, 'PASS', what + ' must not PASS');
+    assert.equal(r.verdict, 'INCONCLUSIVE', what);
+    assert.deepEqual(Object.keys(r.over[0]), ['oracle', 'performed', 'skipped', 'ratio'], what + ' over-entry shape');
+};
+test('QA adversarial taintSkipRule: a null skipped count must not read as zero skips', () => {
+    const r = rule(100, null);
+    assertOver(r, 'skipped null');
+    assert.equal(r.over[0].skipped, null, 'the over entry reports the raw count');
+    assert.ok(Number.isNaN(r.ratios.O1c), 'ratio is NaN, not 0');
 });
-test('QA adversarial taintSkipRule: a negative or string skipped count must fail closed', { todo: 'DEFECT gates.mjs taintSkipRule: skipped -1 -> ratio -0.0101 PASS; skipped "50" -> string concat 100+"50" -> ratio 0.004975 PASS' }, () => {
-    assert.deepEqual(over(rule(100, -1)), ['O1c']);
-    assert.deepEqual(over(rule(100, '50')), ['O1c']);
+test('QA adversarial taintSkipRule: a negative, string, fractional or non-finite count must fail closed', () => {
+    for (const v of [-1, '50', 1.5, NaN, Infinity, -Infinity, 2 ** 53, '0', true, {}]) {
+        assertOver(rule(100, v), 'skipped ' + String(v));
+        assertOver(rule(v, 0), 'performed ' + String(v));
+    }
+    assertOver(rule(null, 0), 'performed null');
+    // controls: valid counts either side of the fix still judge normally
+    assert.deepEqual(over(rule(100, 0)), []);
+    assert.deepEqual(over(rule(2 ** 53 - 2, 1)), []);
 });

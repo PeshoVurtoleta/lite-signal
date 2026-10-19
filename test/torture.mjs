@@ -21,7 +21,8 @@
 //     parity and Dhi <= Dlo; up to 3 attempts per lane, stop at the first pass.
 //     Catches a retainer down to 1 per 1e5 steps (the old floor: 1 per 2e4).
 //     Cannot see: (1) a retainer slower than ~1 per 1e5 steps; (2) retention once
-//     per batch or GC cycle, independent of step count (printed as k, gated
+//     per batch or GC cycle, independent of step count (printed as k from a
+//     passing attempt only -- a failed lane prints fail(Dlo=<n>) -- gated
 //     nowhere); (3) allocations that die young -- both lanes read the heap after
 //     a forced GC; the pinned child covers set only through the NEST / QS graphs
 //     and untrack not at all, so a transient per-op box passes (the old floor was
@@ -73,9 +74,12 @@
 //     1080000 steps, ended in the reset state, kept >= 4 batches per parity and
 //     Dhi <= Dlo; up to 3 attempts, stop at the first pass. Control: the same
 //     estimator with one object retained per 1000 qsSteps MUST read Dhi - Dlo
-//     >= 1280 B, or the slope is blind. Cannot see: (1) a retainer slower than
-//     ~1 per 1e5 steps; (2) retention once per batch or GC cycle, independent of
-//     step count (reported as k, gated nowhere); (3) allocations that die young
+//     >= 1280 B, or the slope is blind; up to 3 attempts, each from the reset
+//     state with an empty ring, stop at the first pass, exhausted = red (b73: a
+//     single call went red under 8x parallel load, ctl=-3664B). Cannot see: (1) a
+//     retainer slower than ~1 per 1e5 steps; (2) retention once per batch or GC
+//     cycle, independent of step count (reported as k from a passing attempt
+//     only, gated nowhere); (3) allocations that die young
 //     -- the child lane owns those at <= 0.05 B/op, so a transient 1-in-1000
 //     16 B box (0.016 B/op) passes both lanes. A k that grows with batch
 //     duration reads as per-step growth (fails closed); a spike riding every
@@ -328,8 +332,10 @@ const allocMeasured = setShown.measured && unShown.measured;
 const bpcLabel = allocMeasured
   ? String(Math.max(0, (setShown.hi - setShown.lo) / (AL_ITER * 4), (unShown.hi - unShown.lo) / (AL_ITER * 4)))
   : 'unmeasured';
-const alKLabel = (setShown.lo === null ? 'unmeasured' : String(setShown.lo)) + ',' +
-  (unShown.lo === null ? 'unmeasured' : String(unShown.lo));
+// k is a per-batch constant only on a pass; a failed lane prints its Dlo under fail(), never as k.
+const kLabel = (pass, shown) => pass !== null ? String(pass.lo) :
+  'fail(' + (shown.lo === null ? 'unmeasured' : 'Dlo=' + shown.lo) + ')';
+const alKLabel = kLabel(setPass, setShown) + ',' + kLabel(unPass, unShown);
 const allocOk = setPass !== null && unPass !== null;
 
 stopA();
@@ -699,7 +705,7 @@ for (let a = 0; a < QS_K && qsPass === null; a++) {
   if (at.measured && at.hi <= at.lo) qsPass = at;
 }
 const qsAllocOk = qsPass !== null;
-// Control with teeth: drives qsPairStep itself (same estimator, one call), retaining one
+// Control with teeth: drives qsPairStep itself (same estimator, one call per attempt), retaining one
 // { v } per 1000 qsN steps, at most 1 per call (Smi mark, pre-sized ring: 1080 holds per
 // call; past the ring fails closed). Odd batches hold 100, even 20: Dhi - Dlo >= 1280 B or blind.
 const QS_HOLD_N = 2048;
@@ -709,12 +715,22 @@ const qsCtlPairStep = () => {
   qsPairStep();
   if (((qsN - qcMark) & 0x3FFFFFFF) >= 1000) { qcMark = (qcMark + 1000) & 0x3FFFFFFF; if (qh < QS_HOLD_N) QS_HOLD[qh] = { v: qh }; qh++; }
 };
-qpLeft = 0; qpOdd = 1; qcMark = qsN;
-const qcN0 = qsN;
-const qsCtl = qsRead(measureAllocs(qsCtlPairStep, { iterations: QS_ITER, batches: QS_BATCHES, warmup: QS_WARM }),
-  qcN0, qpLeft === 0 && qpOdd === 1);
-const qsCtlDelta = qsCtl.measured ? qsCtl.hi - qsCtl.lo : null;
-const qsCtlOk = qsCtlDelta !== null && qsCtlDelta >= 1280 && qh <= QS_HOLD_N;
+// Bounded fail-closed retry, as the lane above: up to QS_K attempts, stop at the first pass; each
+// starts from the reset state with an empty ring. An attempt passes iff measured, Dhi - Dlo >= 1280
+// and the ring never overflowed; exhausted -> red.
+const qsCtlAttempts = [];
+let qsCtlPass = null;
+for (let a = 0; a < QS_K && qsCtlPass === null; a++) {
+  qpLeft = 0; qpOdd = 1; qcMark = qsN; qh = 0;
+  QS_HOLD.fill(null);
+  const n0 = qsN;
+  const at = qsRead(measureAllocs(qsCtlPairStep, { iterations: QS_ITER, batches: QS_BATCHES, warmup: QS_WARM }),
+    n0, qpLeft === 0 && qpOdd === 1);
+  const c = { at, delta: at.measured ? at.hi - at.lo : null, holds: qh };
+  qsCtlAttempts.push(c);
+  if (c.delta !== null && c.delta >= 1280 && c.holds <= QS_HOLD_N) qsCtlPass = c;
+}
+const qsCtlOk = qsCtlPass !== null;
 QS_HOLD.fill(null);
 // Advisory only (never gates): on a red slope, sample where the qs steps allocate.
 let qsAttr = null;
@@ -728,8 +744,10 @@ const qsFired = qsN >= HOT && qsRuns === qsN + 1 && qsPlain === qsN + 1 && qsSch
 // Label: the passing attempt, else the last one. A pass has Dhi <= Dlo, so it reads 0.
 const qsShown = qsPass !== null ? qsPass : qsAttempts[qsAttempts.length - 1];
 const qsBpcLabel = qsShown.measured ? String(Math.max(0, (qsShown.hi - qsShown.lo) / (QS_ITER * 4))) : 'unmeasured';
-const qsKLabel = qsShown.lo === null ? 'unmeasured' : String(qsShown.lo);
-const qsCtlLabel = qsCtlDelta === null ? 'unmeasured' : String(qsCtlDelta);
+const qsKLabel = kLabel(qsPass, qsShown);
+// Control label: the passing attempt, else the last one.
+const qsCtlShown = qsCtlPass !== null ? qsCtlPass : qsCtlAttempts[qsCtlAttempts.length - 1];
+const qsCtlLabel = qsCtlShown.delta === null ? 'unmeasured' : String(qsCtlShown.delta);
 const qsOk = qsFired && qsGcReport.ok && qsAllocOk && qsCtlOk && qsChildOk;
 qsStop1();
 qsStop2();
@@ -789,7 +807,7 @@ console.log(
   ' free=' + nDrained + '/' + nD + 'n,' + (lMeasured ? lDrained + '/' + lD + 'l' : 'unmeasured') + ' res=' + nestResKB.toFixed(1) + 'KB(adv)' +
   ' | pin pool=+' + pinPoolDelta + ' major=' + ps.gc.major + ' deadOwner=' + deadOwnerFail + '/1000' +
   ' | qs gc major=' + qs.gc.major + ' minor=' + qs.gc.minor + ' alloc=' + qsBpcLabel + ' B/op child=' + qsChildLabel + ' B/op' +
-  ' k=' + qsKLabel + 'B/batch K=' + qsAttempts.length + ' ctl=' + qsCtlLabel + 'B' +
+  ' k=' + qsKLabel + 'B/batch K=' + qsAttempts.length + ' ctl=' + qsCtlLabel + 'B,K=' + qsCtlAttempts.length +
   ' | f21 size=' + f21Live + '/0 fail=' + f21Fail + '/' + F21_CYCLES +
   ' | ' + (ok ? 'ok' : 'FAIL')
 );
@@ -829,7 +847,10 @@ if (!ok) {
       ' measured=' + at.r.measuredBatches + ' inverted=' + at.r.invertedBatches + ' settled=' + at.r.settled +
       ' perParity=' + at.nLo + '/' + at.nHi + ' steps=' + at.steps + '/' + QS_STEPS + ' endState=' + at.endOk;
     for (let a = 0; a < qsAttempts.length; a++) console.error('  qs attempt ' + a + ': ' + show(qsAttempts[a]));
-    console.error('  qs control: delta=' + qsCtlDelta + ' (>= 1280) holds=' + qh + '/' + QS_HOLD_N + ' ' + show(qsCtl));
+    for (let a = 0; a < qsCtlAttempts.length; a++) {
+      const c = qsCtlAttempts[a];
+      console.error('  qs control attempt ' + a + ': delta=' + c.delta + ' (>= 1280) holds=' + c.holds + '/' + QS_HOLD_N + ' ' + show(c.at));
+    }
     if (qsAttr !== null) {
       const at = qsAttr.attribution;
       if (at === null || !at.available) console.error('  qs attribution (advisory): unavailable ' + (at === null ? 'null' : at.reason));

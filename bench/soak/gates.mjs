@@ -235,7 +235,9 @@ export function checkFloorRule(input) {
 
 /**
  * taint-skip (kind evidence; amendment 6): for each applicable oracle that skips tainted nodes, the skip
- * ratio skipped / (performed + skipped) stays <= TAINT_SKIP_MAX. 0/0 is NaN and fails closed. The
+ * ratio skipped / (performed + skipped) stays <= TAINT_SKIP_MAX. 0/0 is NaN and fails closed. A count that
+ * is missing or not a safe non-negative integer (null, -1, "50", 1.5, NaN, Infinity) reads as NaN, so the
+ * oracle is over and the verdict INCONCLUSIVE (null is not zero; b73 D-T68); it never throws. The
  * threshold is PROVISIONAL until B6 calibrates it (config.mjs).
  */
 export function taintSkipRule(input) {
@@ -248,7 +250,9 @@ export function taintSkipRule(input) {
         if (SKIP_NAMES.indexOf(o) === -1) continue;
         const p = own(performed, o) ? performed[o] : NaN;
         const k = own(skipped, o) ? skipped[o] : NaN;
-        const ratio = k / (p + k);
+        const pn = Number.isSafeInteger(p) && p >= 0 ? p : NaN;
+        const kn = Number.isSafeInteger(k) && k >= 0 ? k : NaN;
+        const ratio = kn / (pn + kn);
         ratios[o] = r3(ratio);
         if (!(ratio <= TAINT_SKIP_MAX)) over.push({ oracle: o, performed: p, skipped: k, ratio: r3(ratio) });
     }

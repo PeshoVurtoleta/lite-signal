@@ -188,7 +188,7 @@ one-call retention slope, a6c66a9: one `measureAllocs` call alternates pseudo-ba
 steps per call, the per-batch constant k cancels, and an attempt passes iff it settled, ran exactly 1080000 steps,
 ended in the reset state, kept >= 4 batches per parity and Dhi <= Dlo (up to 3 attempts, stop at the first pass);
 three local runs (node v26.8.2) read alloc=0 B/op
-k=0B/batch K=1 ctl=2560B, child 0.000 B/op, gc major 0; the retention control must read Dhi - Dlo >= 1280 B)
+k=0B/batch K=1 ctl=2560B, child 0.000 B/op, gc major 0; the retention control must read Dhi - Dlo >= 1280 B; b73: up to 3 fail-closed control attempts, ctl=<d>B,K=<n>)
 and phase F21 retention (1e3 x {`createRegistry({maxFlushPasses: 8})`, the P3 shape, `destroy()`} -> lite-leak
 tracker size 0); the pre-fix engine gives size 1000 there, and a QS-teeth control gives 135.972 B/op in the
 child lane. `npm test` at be0fe70: 1372 tests / 1356 pass / 0 fail / 7 skip / 9 todo.
@@ -270,7 +270,7 @@ Harness only; the engine (`Signal.js` d07e0b17) is unchanged. Every binding-kern
 lite-1.5.2) had been cut on fail-stopped worlds (30.0-32.8 ops/world vs 425 live), where sticky taint grows with world
 age; on the live tree 352343 of 352343 disposal-hit in-flight frames were blanket (never read the victim). `exec.mjs`
 `disposeIdx` now taints an in-flight run only if its reads so far hold a victim or a computed tainted after the kill
-(ruling D1, V1); the `:652` pre-skip is kept. Live NEST smoke O1c 0.577 -> 0.136, O1e 0.434 -> 0.220 (b70; 9 seeds max
+(ruling D1, V1); the `:653` pre-skip is kept. Live NEST smoke O1c 0.577 -> 0.136, O1e 0.434 -> 0.220 (b70; 9 seeds max
 0.142 / 0.232; 0 fail, 0 BREACH). `TAINT_SKIP_MAX` stays 0.35 (D3); the late/early bucket ratio is reported, not
 gated. The taint-skip must-fail is now P-NEST-TAINT-HALF (`gate:taint-skip` in `_mustfail.mjs`, `cause:taint-skip` in
 `test/67`); P-NEST-TRIGGERLESS is coverage-only and the cov-off taint leg is void (cov-off stays the coverage gate's
@@ -325,7 +325,7 @@ down to 1 per 1e5 steps (the old floor: 1 per 2e4). b72 adds `aset` / `aun` to t
 1000 calls in `read.set` / `untrack` must turn the phase-2b retention-slope lane red (`| alloc=` > 0 and a
 `set|untrack alloc fail attempt` line). New `test/68-soak-taint-boundary.test.mjs`: boundary rows for the soak
 taint-skip gate (the inclusive 0.35 edge, totals past 2^31 / 2^32 / 2^53, fail-closed inputs). `npm test`:
-test/64 5 -> 7, test/68 new: 5 pass + 2 todo.
+test/64 5 -> 7, test/68 new: 7 pass (b73: the 2 QA todo rows fixed -- a taint-skip count that is not a safe non-negative integer reads NaN -> INCONCLUSIVE, never PASS).
 
 ### Added -- test-gap gates: torture must-fail control, hot-body source pins, LEDGER #40 boundary probes (dev-only, not shipped)
 

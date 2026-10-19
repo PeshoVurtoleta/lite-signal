@@ -363,7 +363,7 @@ export const CONTROLS = deepFreeze([
     }, { patches: [[A_RETURN, A_RETURN.replace('    return {', '    const __soakApi = {') +
         '    (globalThis.__soakRegs ||= []).push(__soakApi);   // MUSTFAIL L-T-retain\n    return __soakApi;\n']] }),
     // L-I1 / L-I2: the kernel raises SIGINT / SIGTERM at its own process mid-cycle-0 -> INCONCLUSIVE, reason signal.
-    // Lines: gates.mjs:377 (interrupted), main.mjs:340 (NOTE), the stream summary reason (main.mjs:466).
+    // Lines: gates.mjs:381 (interrupted), main.mjs:340 (NOTE), the stream summary reason (main.mjs:466).
     M('L-I1', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 3, kind: 'nobreach', specs: ['INCONCLUSIVE run interrupted before its end'],
         lines: ['soak: INCONCLUSIVE -- run interrupted before its end', 'soak: NOTE -- SIGINT received; closing the current lane-cycle, then the summary', ARMED],
@@ -414,7 +414,7 @@ export const CONTROLS = deepFreeze([
     M('P-INTERIM-ERROR-clean', 'preb33', { SOAK_LANES: 'ERROR', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'explained', lines: [], specs: [], known: KNOWN_INTERIM_CLEAN,
     }),
-    // P-NEST-TRIGGERLESS: NEST without its trigger must not false-fail. Line: gates.mjs:380 (scenario). RE-MEASURED b71
+    // P-NEST-TRIGGERLESS: NEST without its trigger must not false-fail. Line: gates.mjs:384 (scenario). RE-MEASURED b71
     // (.handoff/b71-evidence/b2/t7a-*.log): under b70 D6 V1 its taint-skip line is gone (headpatched NEST cov-off O1c
     // 0.083-0.092, max oracle O1e 0.147-0.162 over 17 seeds, all <= TAINT_SKIP_MAX 0.35; the old 0.43-0.44 was ~80%
     // blanket in-flight frame taint), so it is the coverage gate's case only (PLAN-0s-d6 ADDENDUM 1 item 2).
@@ -424,14 +424,14 @@ export const CONTROLS = deepFreeze([
     }),
     // P-NEST-TAINT-HALF (b71; PLAN-0s-d6 ADDENDUM 1 item 2, THE taint-skip must-fail; test/67 runs the same patch on
     // live AND headpatched): a data: preload makes Model.prototype.tainted answer true for every odd node index, so
-    // ~half of every skipping oracle's checks are skipped and the taint-skip gate (gates.mjs:382) must trip. The
+    // ~half of every skipping oracle's checks are skipped and the taint-skip gate (gates.mjs:386) must trip. The
     // preload imports the SAME model.mjs URL main.mjs imports, so the patch lands on the live class. Tree base:
     // full-length clean NEST worlds (exit 3, no BREACH).
     M('P-NEST-TAINT-HALF', 'tree', { SOAK_LANES: 'NEST' }, ['--smoke'], {
         exit: 3, kind: 'nobreach', lines: [],
         specs: ['INCONCLUSIVE taint-skip lane=NEST oracle=O1c', 'INCONCLUSIVE taint-skip lane=NEST oracle=O1e'],
     }, { flags: GC_FLAGS.concat(['--import', HALF_PRELOAD]) }),
-    // T-cov-*: the coverage gate (gates.mjs:380), each at the smoke shape. BATCH's cov-off switch compares DECODED
+    // T-cov-*: the coverage gate (gates.mjs:384), each at the smoke shape. BATCH's cov-off switch compares DECODED
     // values with Object.is (lanes/batch.mjs put, the test scenarios.mjs:236 counts a revert by), so it leaves 0
     // revert-after-mid-read hits per smoke run (burst 13; the code compare it replaced leaked 18 through the
     // VALUE_POOL aliases 0 / -1 and 1 / -3, which forced the 11 x OPS_MIN shape this control ran at until then).
@@ -447,7 +447,7 @@ export const CONTROLS = deepFreeze([
     M('T-cov-ERROR', 'headpatched', { SOAK_LANES: 'ERROR', SOAK_MUSTFAIL: 'cov-off:throw-dep-effect-prewalk' }, ['--smoke'], {
         exit: 1, kind: 'explained', known: KNOWN_INTERIM, lines: [], specs: ['INCONCLUSIVE scenario lane=ERROR missing=throw-dep-effect-prewalk'],
     }),
-    // T-floor-BATCH: 11 x OPS_MIN performs BATCH OB 8295 < CHECK_FLOOR 10000 (config.mjs B6 note) -> gates.mjs:381.
+    // T-floor-BATCH: 11 x OPS_MIN performs BATCH OB 8295 < CHECK_FLOOR 10000 (config.mjs B6 note) -> gates.mjs:385.
     M('T-floor-BATCH', 'headpatched', { SOAK_LANES: 'BATCH', SOAK_CYCLES: CYC, SOAK_OPS: String(OPS_MIN) }, [], {
         exit: 3, kind: 'nobreach', lines: [], specs: ['INCONCLUSIVE checks lane=BATCH oracle=OB'],
     }),

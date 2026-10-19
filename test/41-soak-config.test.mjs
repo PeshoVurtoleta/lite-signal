@@ -140,7 +140,7 @@ test('positive control: the same entry with a valid env writes records and the E
     assert.equal(h.gates.CHECK_P, 0.4);
     assert.equal(h.gates.VERDICT.PARTIAL, 'PARTIAL');
     assert.equal(h.gates.EXIT_CODE.PARTIAL, 0);
-    assert.equal(h.seedRemapCollision, null, 'default base, 4 lanes, 11 cycles: the remap pair is out of reach');
+    assert.equal(h.seedRemapCollision, null, 'default base, 1 lane (GRAPH), 11 cycles: the remap pair is out of reach');
     assert.equal(r.stdout.trim().split('\n').pop(), 'soak: END verdict=INCONCLUSIVE exit=3 records=2');
 });
 
@@ -217,7 +217,8 @@ test('T-cfg SOAK_MUSTFAIL=cov-off:<scenario in SCENARIOS but not supported> exit
     // parser accepted it and the run would have soaked normally under a header claiming a teeth knob.
     assert.ok(SCENARIOS.includes('diamond-write'), 'precondition: a known scenario');
     assert.ok(!Object.values(COV_OFF_SUPPORTED).some((l) => l.includes('diamond-write')), 'precondition: no lane supports it');
-    assertConfigExit(run({ SOAK_MUSTFAIL: 'cov-off:diamond-write' }), ['SOAK_MUSTFAIL: cov-off:diamond-write is not supported on the selected lanes', '(supported: ']);
+    assertConfigExit(run({ SOAK_MUSTFAIL: 'cov-off:diamond-write' }),
+        ['SOAK_MUSTFAIL: cov-off:diamond-write is not supported on the selected lanes', '(supported: ']);
     // supported on NEST only: with SOAK_LANES=GRAPH it is outside the union of the SELECTED lanes
     assertConfigExit(run({ SOAK_LANES: 'GRAPH', SOAK_MUSTFAIL: 'cov-off:saved-cursor-hazard' }),
         ['cov-off:saved-cursor-hazard is not supported on the selected lanes GRAPH (supported: dep-set-flip, deep-pull)']);
@@ -283,7 +284,11 @@ test('T-cfg missing --expose-gc exits 2 (lite-pick exited 1: L22)', () => {
 // config and a fixed identity; commits go through plumbing (no hooks, no signing, no user config).
 function gitEnv() {
     const env = {};
-    for (const k of Object.keys(process.env)) if (k.indexOf('GIT_') !== 0 && k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
+    for (const k of Object.keys(process.env)) {
+        if (k.indexOf('GIT_') !== 0 && k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') {
+            env[k] = process.env[k];
+        }
+    }
     return Object.assign(env, { GIT_CONFIG_GLOBAL: join(TMP, 'no-global-gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
         GIT_AUTHOR_NAME: 'soak-cfg', GIT_AUTHOR_EMAIL: 'soak-cfg@invalid', GIT_COMMITTER_NAME: 'soak-cfg', GIT_COMMITTER_EMAIL: 'soak-cfg@invalid' });
 }
@@ -803,7 +808,7 @@ const B6_COV = B6_DOC.covOffSweep.cells['headpatched:NEST:saved-cursor-hazard'].
 // concurrently, folded per lane (cached: one set of spawns per file)
 let b6Live = null;
 function b6LiveRun() {
-    b6ProbeRun();   // the probe child runs concurrently with the smoke pair
+    b6ProbeRun();   // the probe child runs concurrently with the smoke runs
     if (b6Live === null) {
         const ks = b6KernelsOf(B6_ROSTER);
         b6Live = Promise.all(ks.map((k) => runMainSmoke(join(ROOT, b6KernelPath(k)), b6LanesFor(k, B6_ROSTER)))).then((runs) => {
@@ -824,7 +829,7 @@ function b6LiveRun() {
     }
     return b6Live;
 }
-// main.mjs on PROBE (headpatched GRAPH, 11 x PROBE.ops), started together with the smoke pair (cached)
+// main.mjs on PROBE (headpatched GRAPH, 11 x PROBE.ops), started together with the smoke runs (cached)
 // the run shape a probe must have: records, no fatal, the summary last, exit 0 with verdict PASS (pure: must-fail seam)
 const b6ProbeRunProblems = (m) => {
     if (m.recs === null || m.recs.length === 0) return ['no records (exit ' + m.status + '): ' + String(m.stderr).slice(0, 400)];

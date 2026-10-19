@@ -57,7 +57,7 @@
  * mustfail, config {SOAK_ENGINE, SOAK_SMOKE, SOAK_OPS, SOAK_CYCLES: {value}}} (provenance.mjs buildHeader; SoakReport.mjs:114);
  * cycle {lane, warmup, interrupted, throughput {opsPerSec}, latency {<class>: {p99Ns}} (schema 2, B-B4)}
  * (main.mjs:439-449); summary {verdict, exitCode, perLane {<lane>: {status, notRun, totals {failingWorlds},
- * drift {heap {late}}}}} (main.mjs:298-308, gates.mjs:505-519).
+ * drift {heap {late}}}}} (main.mjs:298-308, gates.mjs:509-523).
  *
  * The thresholds live here (BASELINE_*); B-B5 may move them into config.mjs CONSTANTS (header gates block).
  * COLD module.

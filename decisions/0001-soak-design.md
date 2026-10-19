@@ -23,12 +23,12 @@ against the engine AND the reference model (model.mjs, deliberately naive: no ca
 until SOAK_OPS ops ran, then closes a boundary (boundary.mjs:1-22): drop the world refs, time-bounded forced-GC drain,
 `tracker.size()` as the authority plus a WeakRef witness count, memory sampled after the drain.
 
-S1 lanes: GRAPH, BATCH, ERROR, NEST (S1 history; WIE, write-in-evaluation, joined the roster in unit 0s as a fifth lane by
-ruling D1, b63, roster flip 35bbf26, and is calibrated only on the tree kernel by the per-lane kernel map, ruling D7). Hard oracles
-(exec.mjs:49 CHECK_NAMES, oracles.mjs:26): O1c computed values, O1e
-effect observations, O2 glitch (inline), O4 dead effect, O5 node/link counts, O6 guarded escapes, O7a lifecycle
-callbacks, OB (section 6). O3 is report-only. Oracles are pure and property-based; no oracle re-walks the kernel
-(oracles that share the kernel's walk share its errors).
+S1 lanes: GRAPH, BATCH, ERROR, NEST (S1 history; WIE, write-in-evaluation, joined the roster in unit 0s as a fifth lane
+by ruling D1, b63, roster flip 35bbf26, and is calibrated only on the tree kernel by the per-lane kernel map, ruling
+D7). Hard oracles (exec.mjs:51 CHECK_NAMES, oracles.mjs:26): O1c computed values, O1e effect observations, O2 glitch
+(inline), O4 dead effect, O5 node/link counts, O6 guarded escapes, O7a lifecycle callbacks, OB (section 6). O3 is
+report-only. Oracles are pure and property-based; no oracle re-walks the kernel (oracles that share the kernel's walk
+share its errors).
 
 Defaults are calibrated, not guessed (section 8): DEFAULT_OPS 100000 per lane-cycle, 11 cycles (MIN_ACTIVE_CYCLES,
 config.mjs:21, :31). Smoke = 3 x 20000 and can only be SMOKE, never PASS.
@@ -37,7 +37,7 @@ config.mjs:21, :31). Smoke = 3 x 20000 and can only be SMOKE, never PASS.
 
 Every bench/soak module is COLD (each header says so): none is imported by Signal.js, none sits on a hot body. The
 harness may allocate freely. Two rules keep it honest anyway: run totals live in a Float64Array (gates.mjs:70 Totals,
-exact to 2^53; the startup self-check `totals` feeds 3 x 2^30 and demands 3221225472, gates.mjs:260) and SOAK_OPS is
+exact to 2^53; the startup self-check `totals` feeds 3 x 2^30 and demands 3221225472, gates.mjs:264) and SOAK_OPS is
 capped at 0x3FFFFFFF (config.mjs:35) so a per-lane counter stays a Smi on pointer-compressed V8 (the F20 class).
 Per-op 0 B/op stays owned by test/32-perf-gate and test/torture.mjs, not by the soak (GC_MAJOR_POLICY, config.mjs).
 
@@ -45,11 +45,13 @@ Per-op 0 B/op stays owned by test/32-perf-gate and test/torture.mjs, not by the 
 
 All S1 runs load the engine through one seam (kernel.mjs:1-20). By default the in-tree Signal.js; SOAK_KERNEL=<abs path
 to a Signal.js with a sibling Watch.js> swaps a control. The path is realpath-resolved once so the hashed files are the
-loaded files. controls.json pins two controls by sha256 [three since 2026-10-18: preb33 added, Amendment 2026-10-18]: `rev152` (the published 1.5.2, exact devDependency alias
-`lite-signal-1.5.2`) and `headpatched` (the audit patch build, frozen in bench/soak/controls/headpatched, because
-/audit/ is git-ignored). parity.json pins 23 files [33 since eb5acc2, 34 since 92c0020, Amendment 2026-10-18] (Signal.js, Watch.js, 21 bench/soak files, config.mjs and SoakReport.mjs among them); `npm run soak:parity`
-exits 1 on any drift, and a pin moves only through `parity.mjs --update` after review. The header records the kernel
-hashes and `controls.name`; a stream from a scratch kernel is consistent but is never release evidence (section 9).
+loaded files. controls.json pins two controls by sha256 [three since 2026-10-18: preb33 added, Amendment 2026-10-18]:
+`rev152` (the published 1.5.2, exact devDependency alias `lite-signal-1.5.2`) and `headpatched` (the audit patch build,
+frozen in bench/soak/controls/headpatched, because /audit/ is git-ignored). parity.json pins 23 files [33 since eb5acc2,
+34 since 92c0020, Amendment 2026-10-18] (Signal.js, Watch.js, 21 bench/soak files, config.mjs and SoakReport.mjs among
+them); `npm run soak:parity` exits 1 on any drift, and a pin moves only through `parity.mjs --update` after review. The
+header records the kernel hashes and `controls.name`; a stream from a scratch kernel is consistent but is never release
+evidence (section 9).
 
 ### 4. Verdicts and the INCONCLUSIVE evidence gates
 
@@ -106,8 +108,9 @@ b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer t
   last kernel before the F-b33-1 fix, so a write-cycle creation does not abort on it (creationAbort false), and it is
   POST-F21 (it carries A2-F21, qskip2). It is frozen without FIX-T (and FIX-R / the A2 batch-error fix); its F5 / F6 / F22
   lines never clear.
-- Parity (section 3 :48, section 12(b) :279): parity.json pins 33 files since eb5acc2 (34 since 92c0020: + bench/soak/lanes/wie.mjs) (PARITY_FILES 29 -> 33: adds
-  adapters/lite.mjs, controls.json, controls/preb33/Signal.js and Watch.js). The "23 pins" lines are history.
+- Parity (section 3 :48, section 12(b) :279): parity.json pins 33 files since eb5acc2 (34 since 92c0020: +
+  bench/soak/lanes/wie.mjs) (PARITY_FILES 29 -> 33: adds adapters/lite.mjs, controls.json, controls/preb33/Signal.js and
+  Watch.js). The "23 pins" lines are history.
 - P-INTERIM-ERROR-clean (section 5 :79-82, B39-D1 :87-88): re-pointed to base `preb33`, no patches (N17.2, burst 51-52).
   It is no longer a headpatched + A2-F21-hunk control: preb33 is already post-F21, so the expected set is exit 1,
   kind 'explained', known [DIV-F5, DIV-F6, DIV-F22]; a DIV-F21 label there is a MISS (A3': zero DIV-F21 on preb33).
@@ -150,7 +153,7 @@ b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer t
   history.
 
 Amendment 2026-10-19 (unit 0s, bursts 63-69: lane WIE; commits 92c0020, e1eca59, 35bbf26). The roster is five lanes:
-- Lane WIE (write-in-evaluation, rulings D1 b63) is the fifth ROSTER lane (roster flip 35bbf26; lanes/wie.mjs, oracle test/66).
+- Lane WIE (write-in-evaluation, ruling D1, b63) is the fifth ROSTER lane (roster flip 35bbf26; lanes/wie.mjs, oracle test/66).
   Per-lane kernel map (D7): WIE is cut only on the tree kernel (calibrate.mjs LANE_KERNELS, LANE_ONLY_KERNELS), whose files
   must equal parity.json; the 1.5.2 control predates F-b33-1. The "both kernels" cells in section 8 are 4-lane history.
 - DIV-B33 (lane WIE only; fixedIn F-b33-1) explains the WIE lost update on a controls.json kernel (preb33, rev152): O1e
@@ -168,7 +171,7 @@ taint rule (p8, model.mjs:24) is narrowed to V1:
   worlds (30.0-32.8 ops/world vs 425 live); sticky taint grows with world age. On the live tree 352343 of 352343
   disposal-hit in-flight frames were BLANKET (never read the victim).
 - V1 (ruling D1): exec.mjs disposeIdx taints an in-flight run only if its reads so far hold a victim or a live computed
-  tainted after the kill; the :652 pre-skip is kept; the orphan 'na' (D2) is dropped. Live NEST smoke O1c
+  tainted after the kill; the :653 pre-skip is kept; the orphan 'na' (D2) is dropped. Live NEST smoke O1c
   0.577 -> 0.136, O1e 0.434 -> 0.220 (b70; 9 seeds max 0.142 / 0.232; 0 fail, 0 BREACH).
 - D3: TAINT_SKIP_MAX stays 0.35; the late/early bucket ratio is REPORTED only. D4: NEST floors re-cut on full-length
   worlds is DEFERRED (own item).
@@ -183,9 +186,9 @@ taint rule (p8, model.mjs:24) is narrowed to V1:
 
 ### 6. Oracle OB (F5, QA finding 5): batch-early-run -- adopted
 
-An effect that ALREADY ran must not re-run while a batch is open (exec.mjs:521). First runs are exempt (an effect
+An effect that ALREADY ran must not re-run while a batch is open (exec.mjs:533-536). First runs are exempt (an effect
 created inside a batch runs synchronously, p2). OB is PERFORMED once per outermost batch whose close-flush re-ran
->= 1 effect (exec.mjs:381-388), so a batch with nothing to defer is no evidence. It is checked inline, its counter is
+>= 1 effect (exec.mjs:383-390), so a batch with nothing to defer is no evidence. It is checked inline, its counter is
 capped at 0x3FFFFFFF, it needs `caps.batch` (bench/soak/adapters/contract.mjs:82), it is a hard oracle of BATCH (lanes/batch.mjs:117) and
 of ERROR (lanes/error.mjs:106), where it meets the same CHECK_FLOOR. Census (calibration/ob-census.json): 0 OB failures in 6000 worlds on headpatched, the
 tree and 1.5.2, so no divergence entry and no L-REV-152 change.
@@ -237,10 +240,9 @@ and the S1b "0.53" figure was not reproducible. On 1.5.2 the same cov-off reads 
 separate; the coverage gate catches it (asserted in test/41). Since b70 D6 V1 the cov-off design case is VOID: that
 ratio was mostly blanket in-flight frame taint (Amendment 2026-10-19, D6); under V1 cov-off reads maxTaint O1e
 0.147-0.162 (headpatched, 17 seeds) / 0.125-0.133 (1.5.2) in the b71 recut and stays the coverage gate's case. One
-scalar floor serves every oracle: at
-11 x OPS_MIN only GRAPH clears it (O5 14791 on both kernels); ERROR OB (2152 / 1227), BATCH OB (8295 / 1789) and
-NEST O7a (413 / 502) read INCONCLUSIVE (per-oracle floors stay deferred, decision (e)). The 1.5.2 ERROR smoke
-`aggregate` count (2) is seed-dependent; no action.
+scalar floor serves every oracle: at 11 x OPS_MIN only GRAPH clears it (O5 14791 on both kernels); ERROR OB (2152 /
+1227), BATCH OB (8295 / 1789) and NEST O7a (413 / 502) read INCONCLUSIVE (per-oracle floors stay deferred, decision
+(e)). The 1.5.2 ERROR smoke `aggregate` count (2) is seed-dependent; no action.
 Config comment: config.mjs:50-56 (the CHECK_FLOOR note).
 
 ### 9. SoakReport: integrity, release refusals, residuals
@@ -287,10 +289,10 @@ GAP-covered universe ids (exact set equality), CHECKS_MIN 35 (an exact floor), E
 the text its id would print (oracle=/sig= via oracleFamily, lane=, gate=, the INCONCLUSIVE head, a CONFIG line, test
 anchors). It also checks the ^L- / ^(?!L-) partition, validSpec for all controls, staleAnchors and a 1-byte anchor
 mutant ("2 matches" for the severTail anchor), and must-fail copies of every audit problem class.
-`_mustfail.mjs` (34 controls at 35bbf26: 18 non-config + 16 T-cfg) runs each through the REAL main.mjs on a scratch kernel
-directory: exactly-once anchors, exact exit, every spec on ONE BREACH/INCONCLUSIVE head, no CRASH, END sentinel last,
-and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short (^(?!L-)); `npm run soak:teeth:long` = ^L-;
-MUSTFAIL_LIST=1 builds all and runs none; MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=1 prints matched heads.
+`_mustfail.mjs` (34 controls at 35bbf26: 18 non-config + 16 T-cfg) runs each through the REAL main.mjs on a scratch
+kernel directory: exactly-once anchors, exact exit, every spec on ONE BREACH/INCONCLUSIVE head, no CRASH, END sentinel
+last, and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short (^(?!L-)); `npm run soak:teeth:long` =
+^L-; MUSTFAIL_LIST=1 builds all and runs none; MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=1 prints matched heads.
 
 ### 11. Deviations from SPEC-B section 9 (binding; also recorded as S1cd amendment 15)
 
