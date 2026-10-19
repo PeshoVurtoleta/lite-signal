@@ -580,3 +580,134 @@ test('QA boundary judgeRun: empty lanes, null lane, duplicate lane result, statu
         assert.throws(() => G.judgeRun({ ...base, lanes: [{ ...r, status: s }] }), G.GateInputError, 'status ' + String(s));
     }
 });
+
+/* ---- b76: a push is all-or-nothing (PLAN-0s-e2 TASK 5) --------------------------------------------- */
+
+// Every observable fold field of one lane; a refused push must leave it byte-identical.
+function laneState(L) {
+    return JSON.stringify([L.cycles, L.post, L.bad, L.unmeasured, L.totals.toJSON(), L.checks.toJSON(),
+        L.skips.toJSON(), L.scen.toJSON(), L.failures.toJSON(), L.failures.names.length, L.heap.total,
+        L.heap.earlyCount, Array.from(L.heap.early), Array.from(L.heap.lateRing)]);
+}
+function freshLane() {
+    const L = new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'b'] });
+    L.push(rec('GRAPH', 0));
+    return L;
+}
+const trapBoundary = () => new Proxy({ trackerSize: 0, weakAlive: 0 }, { get() { throw new Error('trap-b76'); } });
+
+test('b76 R1 LaneGates: a boundary getter that pushes cycle 1 or 2 into its own lane leaves the outer record un-folded',
+    () => {
+        for (const inner of [1, 2]) {
+            const L = freshLane();
+            const pre = laneState(L);
+            const outer = rec('GRAPH', 1);
+            let fired = false;
+            Object.defineProperty(outer, 'boundary', {
+                enumerable: true,
+                get() {
+                    if (!fired) { fired = true; L.push(rec('GRAPH', inner)); }
+                    return { trackerSize: 0, weakAlive: 0 };
+                },
+            });
+            assert.throws(() => L.push(outer), /re-entrant push/, 'inner cycle ' + inner);
+            assert.equal(laneState(L), pre, 'inner cycle ' + inner + ': the refused outer record half-folded');
+            L.push(rec('GRAPH', 1));
+            assert.equal(L.cycles, 2);
+            assert.equal(L.totals.get('worlds'), 500);
+            assert.equal(L.post, 1);
+            assert.equal(L.heap.total, 1);
+        }
+    });
+
+test('b76 R2 LaneGates: a boundary Proxy whose get trap throws leaves the record un-folded; a re-push folds', () => {
+    const L = freshLane();
+    const pre = laneState(L);
+    assert.throws(() => L.push(rec('GRAPH', 1, { boundary: trapBoundary() })), /trap-b76/);
+    assert.equal(laneState(L), pre, 'the refused record half-folded');
+    L.push(rec('GRAPH', 1));
+    assert.equal(L.cycles, 2);
+    assert.equal(L.totals.get('worlds'), 500);
+});
+
+test('b76 R3 LaneGates: a count-map getter / ownKeys trap is read once, so a later throw never lands mid-fold', () => {
+    const La = freshLane();
+    const outerA = rec('GRAPH', 1);
+    let reads = 0;
+    Object.defineProperty(outerA.checks, 'O1c', {
+        enumerable: true,
+        get() { if (++reads >= 3) throw new Error('read-' + reads); return 7; },
+    });
+    La.push(outerA);
+    assert.equal(La.cycles, 2, 'folds once');
+    assert.equal(La.checks.get('O1c'), 1007);
+    const Lb = freshLane();
+    let calls = 0;
+    const fc = new Proxy({ 'O1:x': 2 }, {
+        ownKeys(t) { if (++calls === 2) throw new Error('ownKeys-2'); return Reflect.ownKeys(t); },
+    });
+    Lb.push(rec('GRAPH', 1, { failureCounts: fc }));
+    assert.equal(Lb.cycles, 2, 'folds once');
+    assert.deepEqual(Lb.failures.toJSON(), { 'O1:x': 2 });
+});
+
+test('b76 R4 LaneGates: 100 refused cycle-1 pushes (2^53 overflow, empty failure key, trap) leave the lane as it was',
+    () => {
+        const L = new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'b'] });
+        L.push(rec('GRAPH', 0, { ops: 2 ** 53 - 1 }));
+        const pre = laneState(L);
+        for (let i = 0; i < 100; i++) {
+            const k = i % 3;
+            if (k === 0) assert.throws(() => L.push(rec('GRAPH', 1, { ops: 1 })), /exact range \(2\^53\)/);
+            else if (k === 1) {
+                const r = rec('GRAPH', 1, { ops: 0, failureCounts: { 'O1:y': 1, '': 1 } });
+                assert.throws(() => L.push(r), TypeError);
+            } else assert.throws(() => L.push(rec('GRAPH', 1, { ops: 0, boundary: trapBoundary() })), /trap-b76/);
+            assert.equal(laneState(L), pre, 'refused push ' + i + ' (kind ' + k + ') half-folded');
+        }
+        assert.equal(L.cycles, 1);
+        assert.equal(L.failures.names.length, 0);
+        L.push(rec('GRAPH', 1, { ops: 0 }));
+        assert.equal(L.cycles, 2);
+    });
+
+test('b76 R5 LaneGates: checks / skips / scenario 2^53, read once, warm on this.cycles, hidden keys, dup required',
+    () => {
+        const big = 2 ** 53 - 1;
+        for (const [m, k] of [['checks', 'O1c'], ['skipTainted', SKIP_NAMES[0]], ['scenarios', 'a']]) {
+            const L = new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'b'] });
+            const r0 = rec('GRAPH', 0);
+            r0[m][k] = big;
+            L.push(r0);
+            const pre = laneState(L);
+            const r1 = rec('GRAPH', 1);
+            r1[m][k] = 1;
+            assert.throws(() => L.push(r1), /exact range \(2\^53\)/, m);
+            assert.equal(laneState(L), pre, m + ': the refused record half-folded');
+        }
+        const L2 = freshLane();
+        const r2 = rec('GRAPH', 1);
+        for (const [m, k] of [['checks', 'O1c'], ['scenarios', 'a']]) {
+            let n = 0;
+            Object.defineProperty(r2[m], k, {
+                enumerable: true, get() { if (++n >= 2) throw new Error('reread-' + m); return 7; },
+            });
+        }
+        L2.push(r2);
+        assert.equal(L2.checks.get('O1c'), 1007);
+        assert.equal(L2.scen.get('a'), 15);
+        const L3 = freshLane();
+        const r3 = rec('GRAPH', 1);
+        Object.defineProperty(r3.checks, 'O1c', { value: 5, enumerable: false });
+        Object.defineProperty(r3.scenarios, 'a', { value: 5, enumerable: false });
+        L3.push(r3);
+        assert.equal(L3.checks.get('O1c'), 1005);
+        assert.equal(L3.scen.get('a'), 13);
+        const L4 = freshLane();
+        const r4 = rec('GRAPH', 1, { memory: { residentMB: NaN } });
+        let reads = 0;
+        Object.defineProperty(r4, 'cycle', { enumerable: true, get() { return ++reads <= 2 ? 1 : 0; } });
+        assert.throws(() => L4.push(r4), /residentMB/);
+        assert.equal(L4.cycles, 1);
+        assert.throws(() => new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'a'] }), TypeError);
+    });

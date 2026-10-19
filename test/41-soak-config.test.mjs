@@ -778,7 +778,10 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
     // -- a non-object exempt (null) is red, never a TypeError
     const exK = exempt !== null && typeof exempt === 'object' ? Reflect.ownKeys(exempt) : null;
     if (JSON.stringify(exK) !== '["ERROR"]' || JSON.stringify(exempt.ERROR) !== '["DIV-F5","DIV-F6","DIV-F22"]') {
-        p.push('(f) the exemption set ' + JSON.stringify(exempt) + ' != {"ERROR":["DIV-F5","DIV-F6","DIV-F22"]} (maintainer ruling b74: only ERROR, tied to DIV-F5 / F6 / F22)');
+        const shown = exK === null ? 'null'
+            : JSON.stringify(exK.map(String)) + ' ERROR=' + JSON.stringify(exempt.ERROR);
+        p.push('(f) the exemption set ' + shown + ' != ["ERROR"] ERROR=["DIV-F5","DIV-F6","DIV-F22"]'
+            + ' (maintainer ruling b74: only ERROR, tied to DIV-F5 / F6 / F22)');
     }
     for (const d of lanes) {
         let ok = false;
@@ -1074,6 +1077,9 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     const hidden = { ERROR: F_IDS.slice() };   // a non-enumerable own key is still an exemption (b6Has is hasOwnProperty)
     Object.defineProperty(hidden, 'GRAPH', { value: ['DIV-F7'] });
     red(B6_DOC, B6_C, '(f) the exemption set ', 'a non-enumerable GRAPH key on the exemption set', b6ShaOf, B6_PROBE, B6_DIVS, hidden);
+    const hiddenP = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, B6_DIVS, hidden);
+    assert.ok(hiddenP.some((x) => x.indexOf('(f) the exemption set ["ERROR","GRAPH"]') === 0),
+        'the (f) line names the hidden key (not the JSON of its enumerable keys): ' + JSON.stringify(hiddenP));
     // (e) b74 D4: a hollowVolume row counts only when full-length; every row failing -> the floor reads hollow
     const hvFail = b6Copy(B6_DOC);
     for (const k of Object.keys(hvFail.hollowVolume)) for (const l of Object.keys(hvFail.hollowVolume[k])) hvFail.hollowVolume[k][l].failingWorlds = 1;

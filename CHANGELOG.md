@@ -15,6 +15,17 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
+### Fixed -- soak gates.mjs: `LaneGates.push` is all-or-nothing (dev-only, not shipped)
+
+`LaneGates.push` reads a cycle record once and checks it whole before anything folds: the count maps are copied into
+Maps, the boundary state is taken before the fold, and every `Totals` refusal (a total leaving 2^53, an empty failure
+key) runs up front (`Totals.assertAdd`). Before, a throw after the fold began (a total overflow, a `failureCounts` key
+'', or a record getter / Proxy trap on `boundary` or a count map) left the lane half-folded (cycles counted, boundary
+and heap not). A throw anywhere in `push` now leaves the lane un-folded for that record. Output for valid records is
+byte-identical (golden compute smoke/full + judgeRun). test/42 gains 5 rows (R1-R5), red on the old gates.mjs;
+LaneGates refuses a duplicate opts.required name (TypeError). test/41: the (f) failure line prints the own keys of the
+exemption set (a non-enumerable key was invisible); must-fail row.
+
 ### Changed -- test/41 clause (f) hardened; exemption set spelled twice (dev-only, not shipped)
 
 The (f) exemption-set check now spells the ruled set `{ERROR: [DIV-F5, DIV-F6, DIV-F22]}` a second time, structurally
@@ -37,10 +48,9 @@ now backed by [L-WIE-preb33, L-WIE-rev152]; test/45 "teeth l" pins it. MUSTFAIL_
 plain object (`Object.defineProperty`); key order and JSON bytes are unchanged for every other key set (golden
 byte-identical). `LaneGates.push` throws GateInputError on a re-entrant push into the same lane (a record getter pushing
 mid-check); the guard resets in `finally`. test/42 todo rows 2 -> 0 (both now real tests, red on the old gates.mjs);
-parity.json re-pinned (gates.mjs line only), parity OK 34 files. Engine unchanged. OPEN: a getter that fires DURING the
-fold (after the cycle count moves, e.g. `rec.boundary`) can still leave a lane half-folded; it now throws GateInputError
-(before this change a same-cycle push there also threw, on the cycle-order check, and a next-cycle push folded silently
-inside the outer fold).
+parity.json re-pinned (gates.mjs line only), parity OK 34 files. Engine unchanged. A getter firing during the fold
+(after the cycle count moves, e.g. `rec.boundary`) still left the OUTER lane half-folded here; closed by the
+all-or-nothing entry above.
 
 ### Changed -- soak D4: NEST floors re-cut on full-length worlds; test/41 clause (f) (dev-only, not shipped)
 

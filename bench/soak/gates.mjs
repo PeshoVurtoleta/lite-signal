@@ -103,6 +103,20 @@ export class Totals {
         if (!(v <= Number.MAX_SAFE_INTEGER)) throw new RangeError('Totals.add(' + name + '): the total would leave the exact range (2^53)');
         this.slot[i] = v;
     }
+    /** add()'s refusals (and ensure()'s, for a new name) without the write: LaneGates checks a record whole first. */
+    assertAdd(name, n) {
+        if (!(Number.isSafeInteger(n) && n >= 0)) {
+            throw new RangeError('Totals.add(' + name + '): ' + n + ' is not a safe non-negative integer');
+        }
+        const i = this.ix.get(name);
+        if (i === undefined) {
+            if (typeof name !== 'string' || name.length === 0) {
+                throw new TypeError('Totals: a slot name must be a non-empty string');
+            }
+        } else if (!(this.slot[i] + n <= Number.MAX_SAFE_INTEGER)) {
+            throw new RangeError('Totals.add(' + name + '): the total would leave the exact range (2^53)');
+        }
+    }
     get(name) { return this.slot[this.index(name)]; }
     has(name) { return this.ix.has(name); }
     toJSON() {
@@ -407,15 +421,21 @@ function intField(rec, k, where) {
     if (!(Number.isSafeInteger(v) && v >= 0)) bad(where + ': ' + k + ' must be a safe non-negative integer, got ' + String(v));
     return v;
 }
-function countMap(obj, keys, where) {
+function countValue(v, at) {
+    if (!(Number.isSafeInteger(v) && v >= 0)) bad(at + ' must be a safe non-negative integer, got ' + String(v));
+    return v;
+}
+// Each key is read ONCE into a Map (Object.keys order, then any non-enumerable own key of `also`); #fold folds
+// from the copy, never the caller's object. Cold: one Map per count map per cycle.
+function countMap(obj, keys, where, also = keys) {
     if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) bad(where + ' must be an object');
     for (const k of keys) {
         if (!own(obj, k)) bad(where + '.' + k + ' is missing (null is not zero)');
     }
-    for (const k of Object.keys(obj)) {
-        if (!(Number.isSafeInteger(obj[k]) && obj[k] >= 0)) bad(where + '.' + k + ' must be a safe non-negative integer, got ' + String(obj[k]));
-    }
-    return obj;
+    const out = new Map();
+    for (const k of Object.keys(obj)) out.set(k, countValue(obj[k], where + '.' + k));
+    for (const k of also) if (!out.has(k) && own(obj, k)) out.set(k, countValue(obj[k], where + '.' + k));
+    return out;
 }
 
 /**
@@ -427,8 +447,10 @@ function countMap(obj, keys, where) {
  * A malformed record throws GateInputError (fail closed). Warm-up cycles (cycle < WARMUP_CYCLES) count
  * toward every total and do not feed the heap drift. Every cycle, warm-up included, must carry a measured
  * boundary: an unmeasured one FAILs retention; only a BAD warm-up boundary is ignored.
- * A re-entrant push (a record getter that pushes into this lane mid-fold) throws GateInputError; the guard
- * resets in a finally, so the next push folds normally.
+ * A push is all-or-nothing: the record is read once and checked whole (fields, count maps, boundary, every Totals
+ * refusal) before anything folds, so a throw anywhere in push -- a malformed field, a total leaving 2^53, a record
+ * getter or Proxy trap that throws or pushes into this lane (re-entry: GateInputError) -- leaves the lane un-folded
+ * for that record; the guard resets in a finally, so a later valid push of the same cycle folds normally.
  *   opts { lane, oracles: applicable hard oracles, required: applicable required scenarios }
  */
 export class LaneGates {
@@ -437,6 +459,9 @@ export class LaneGates {
     constructor(opts) {
         if (!opts || typeof opts.lane !== 'string') throw new TypeError('LaneGates: opts.lane must be a lane name');
         if (!Array.isArray(opts.oracles) || !Array.isArray(opts.required)) throw new TypeError('LaneGates: opts.oracles and opts.required must be arrays');
+        if (new Set(opts.required).size !== opts.required.length) {
+            throw new TypeError('LaneGates: opts.required names a scenario twice');
+        }
         for (const o of opts.oracles) oracleFamily(o);
         this.lane = opts.lane;
         this.oracles = opts.oracles.slice();
@@ -475,26 +500,34 @@ export class LaneGates {
         const fc = countMap(rec.failureCounts, [], where + '.failureCounts');
         const checks = countMap(rec.checks, CHECK_NAMES, where + '.checks');
         const skips = countMap(rec.skipTainted, SKIP_NAMES, where + '.skipTainted');
-        const scen = countMap(rec.scenarios, [], where + '.scenarios');
-        const warm = rec.cycle < WARMUP_CYCLES;
+        const scen = countMap(rec.scenarios, [], where + '.scenarios', this.required);
+        const warm = this.cycles < WARMUP_CYCLES;
         let resident = NaN;
         if (!warm) {
             resident = rec.memory && rec.memory.residentMB;
             if (!(typeof resident === 'number' && Number.isFinite(resident) && resident >= 0)) bad(where + ': memory.residentMB must be a finite MB value');
         }
-        // all checks passed: fold (no partial fold on a malformed record)
+        const st = boundaryState(rec.boundary);
+        // the record is never read below this line; every refusal a fold can meet runs first, in fold order
+        this.totals.assertAdd('worlds', worlds);
+        this.totals.assertAdd('ops', ops);
+        this.totals.assertAdd('failingWorlds', fw);
+        for (const [k, n] of fc) this.failures.assertAdd(k, n);
+        for (const o of CHECK_NAMES) this.checks.assertAdd(o, checks.get(o));
+        for (const o of SKIP_NAMES) this.skips.assertAdd(o, skips.get(o));
+        for (const s of this.required) if (scen.has(s)) this.scen.assertAdd(s, scen.get(s));
+        // all checks and refusals passed: fold from locals only (all-or-nothing)
         this.cycles++;
         this.totals.add('worlds', worlds);
         this.totals.add('ops', ops);
         this.totals.add('failingWorlds', fw);
-        for (const k of Object.keys(fc)) {
+        for (const [k, n] of fc) {
             this.failures.ensure(k);
-            this.failures.add(k, fc[k]);
+            this.failures.add(k, n);
         }
-        for (const o of CHECK_NAMES) this.checks.add(o, checks[o]);
-        for (const o of SKIP_NAMES) this.skips.add(o, skips[o]);
-        for (const s of this.required) if (own(scen, s)) this.scen.add(s, scen[s]);
-        const st = boundaryState(rec.boundary);
+        for (const o of CHECK_NAMES) this.checks.add(o, checks.get(o));
+        for (const o of SKIP_NAMES) this.skips.add(o, skips.get(o));
+        for (const s of this.required) if (scen.has(s)) this.scen.add(s, scen.get(s));
         if (st === 'unmeasured') this.unmeasured++;
         if (!warm) {
             this.post++;
