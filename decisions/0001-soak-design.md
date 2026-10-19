@@ -174,7 +174,7 @@ taint rule (p8, model.mjs:24) is narrowed to V1:
   tainted after the kill; the :653 pre-skip is kept; the orphan 'na' (D2) is dropped. Live NEST smoke O1c
   0.577 -> 0.136, O1e 0.434 -> 0.220 (b70; 9 seeds max 0.142 / 0.232; 0 fail, 0 BREACH).
 - D3: TAINT_SKIP_MAX stays 0.35; the late/early bucket ratio is REPORTED only. D4: NEST floors re-cut on full-length
-  worlds is DEFERRED (own item).
+  worlds was DEFERRED (superseded b74: RESOLVED, see the D4 bullet below).
 - Teeth: P-NEST-TAINT-HALF (patch Model.prototype.tainted -> true for odd i) is THE taint-skip must-fail, as a _mustfail
   control on the tree kernel (gate:taint-skip) and in test/67 (cause:taint-skip). P-NEST-TRIGGERLESS is coverage-only
   now; the cov-off taint leg is VOID (cov-off stays the coverage gate's case). test/67 pins the live NEST smoke
@@ -183,6 +183,15 @@ taint rule (p8, model.mjs:24) is narrowed to V1:
   the same step (headpatched 942/1832 worlds, 1.5.2 734/1998; b70).
 - b71 recut: clean max 0.2546 -> 0.0579 (binding cut), 8-seed sweep 0.2585 -> 0.0663; headpatched cov-off maxTaint O1e
   0.147-0.162 (17 seeds), 1.5.2 0.125-0.133 (.handoff/b71-evidence/b2/t9-provenance.txt, t9-recut.log).
+- D4 RESOLVED (b74, maintainer ruling, PLAN-0s-d4.md ADDENDUM 1: NEST now, ERROR exempt). The tree kernel (working-tree
+  engine) is added to NEST only (calibrate.mjs LANE_KERNELS): headpatched and 1.5.2 fail-stop EVERY NEST world (full
+  33885/33885 at 32.5 ops/world, 36726/36726 at 30.0) while the tree runs 425.0 ops/world. Recut (timed, 891 s,
+  quiet-lock, 2026-10-19): tree NEST full 2596 worlds / 1103300 ops / 0 failing, O7a 50367 (CHECK_FLOOR's binding cell,
+  5.0x 10000); smoke 144 / 61200, O7a 2704 (5.4x CHECK_FLOOR_SMOKE 500); rarest NEST scenario lifecycle-callback-dispose
+  11388 full / 621 smoke. test/41 clause (f): every rostered lane needs full-length evidence (full + smoke cells, 0
+  failing worlds) on a kernel that cuts it; the one exemption is ERROR (tree ERROR fails 17039/17050, DIV-F5/F6/F22),
+  valid only while one of those is open (fixedIn null) in divergences.json, up to A3 (DIV-F5 fixBy). The constants
+  CHECK_FLOOR / CHECK_FLOOR_SMOKE / SCEN_MIN / SCEN_MIN_SMOKE / TAINT_SKIP_MAX are unchanged.
 
 ### 6. Oracle OB (F5, QA finding 5): batch-early-run -- adopted
 
@@ -220,7 +229,8 @@ gitInfo('/nonexistent') fails closed but prints "spawnSync git ENOENT"; a root i
 
 ### 8. Calibration constants (bench/soak/calibration/soak-calibration.json, guard test/41)
 
-Cut: seed 0xC0FFEE, 11 x 100000 per lane plus smoke 3 x 20000, kernels headpatched and 1.5.2, one `--timed` run
+Cut: seed 0xC0FFEE, 11 x 100000 per lane plus smoke 3 x 20000, kernels headpatched and 1.5.2 (plus tree for NEST since
+b74 D4: recut 2026-10-19 UTC, 891 s, section 5 D4 bullet), one `--timed` run
 (734 s under quiet-lock, M4 Pro, node v26.8.2, sequential children one kernel at a time; loadavg 2.61/2.44/2.35
 before and 2.55/2.64/2.49 after the timed phase; throughput is REPORTED tier and decides no gate), the recut of
 2026-10-13 [recut again 2026-10-17 UTC, Amendment 2026-10-18]. `calibrate.mjs --write` dies unless main.mjs folds equal to the evidence, on the full cells and on the
@@ -232,18 +242,19 @@ scenarios, seeds, lanes, adapters, kinds.mjs and the torture helpers; it does NO
 |---|---|---|
 | DEFAULT_OPS | 100000 (kept) | rarest required scenario at 11 x 100000: 2724 hits (GRAPH deep-pull); worst cell 22 (1.5.2 ERROR aggregate) |
 | SCEN_MIN / SCEN_MIN_SMOKE | 8 / 1 (kept) | smoke minimum 156 (GRAPH deep-pull, both kernels); 1.5.2 smoke ERROR aggregate reads 2 (seed-dependent, masked because 1.5.2 always FAILs) |
-| CHECK_FLOOR | 10000 (was 1000) | least performed clean cell NEST O7a 41184 (4.1x); at 11 x OPS_MIN NEST O7a 413, BATCH OB 8295 and ERROR OB 2152 -> INCONCLUSIVE |
-| CHECK_FLOOR_SMOKE | 500 (was 250) | least clean smoke cell NEST O7a 2170 (4.3x); 8-seed smoke minimum 2174 |
-| TAINT_SKIP_MAX | 0.35 (was 0.5; kept b70 D3) | S1d: clean max 0.2585 over 8 seeds; headpatched NEST cov-off O1c 0.4314-0.4434 over 17 seeds (VOID design case under V1, b70 D6; b71 recut: clean max 0.0579 binding, sweep 0.0663; headpatched cov-off maxTaint O1e 0.147-0.162 over 17 seeds) |
+| CHECK_FLOOR | 10000 (was 1000) | least performed full-length clean cell tree NEST O7a 50367 (5.0x; b74 D4; was headpatched NEST O7a 41184, fail-stopped worlds); at 11 x OPS_MIN tree NEST O7a 672, BATCH OB 8295 and ERROR OB 2152 -> INCONCLUSIVE |
+| CHECK_FLOOR_SMOKE | 500 (was 250) | least full-length clean smoke cell tree NEST O7a 2704 (5.4x; b74 D4; was headpatched NEST O7a 2170, fail-stopped worlds) |
+| TAINT_SKIP_MAX | 0.35 (was 0.5; kept b70 D3) | S1d: clean max 0.2585 over 8 seeds; headpatched NEST cov-off O1c 0.4314-0.4434 over 17 seeds (VOID design case under V1, b70 D6; b71 recut: clean max 0.0579 binding, sweep 0.0663 (superseded b74 D4: full-length max tree NEST O1e 0.2222, smoke 0.2202, tree NEST sweep 0.2321); headpatched cov-off maxTaint O1e 0.147-0.162 over 17 seeds) |
 TAINT_SKIP_MAX was an ORCHESTRATOR decision on the reviewer's ruling: at 0.5 the gate did not trip its own design case,
 and the S1b "0.53" figure was not reproducible. On 1.5.2 the same cov-off reads 0.2425-0.2612, which taint-skip cannot
 separate; the coverage gate catches it (asserted in test/41). Since b70 D6 V1 the cov-off design case is VOID: that
 ratio was mostly blanket in-flight frame taint (Amendment 2026-10-19, D6); under V1 cov-off reads maxTaint O1e
 0.147-0.162 (headpatched, 17 seeds) / 0.125-0.133 (1.5.2) in the b71 recut and stays the coverage gate's case. One
-scalar floor serves every oracle: at 11 x OPS_MIN only GRAPH clears it (O5 14791 on both kernels); ERROR OB (2152 /
-1227), BATCH OB (8295 / 1789) and NEST O7a (413 / 502) read INCONCLUSIVE (per-oracle floors stay deferred, decision
-(e)). The 1.5.2 ERROR smoke `aggregate` count (2) is seed-dependent; no action.
-Config comment: config.mjs:50-56 (the CHECK_FLOOR note).
+scalar floor serves every oracle: at 11 x OPS_MIN only GRAPH (O5 14791 on both kernels) and tree WIE (O5 14323) clear
+it; ERROR OB (2152 / 1227), BATCH OB (8295 / 1789) and NEST O7a (tree 672; the fail-stopped headpatched / 1.5.2 rows
+read 413 / 502) read INCONCLUSIVE (per-oracle floors stay deferred, decision (e)). The 1.5.2 ERROR smoke
+`aggregate` count (2) is seed-dependent; no action.
+Config comment: config.mjs:54-65 (the CHECK_FLOOR note).
 
 ### 9. SoakReport: integrity, release refusals, residuals
 

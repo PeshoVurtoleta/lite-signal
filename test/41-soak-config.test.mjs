@@ -596,19 +596,26 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
 //   (c) every applicable oracle's PERFORMED count: >= CHECK_FLOOR at full, >= CHECK_FLOOR_SMOKE in smoke
 //   (d) every applicable skip ratio, computed EXACTLY from the counts as gates.mjs does, <= TAINT_SKIP_MAX
 //       (full and smoke); the stored ratio equals it; no crash in the binding cut
-//   (e) the gates are not toothless: at DEFAULT_CYCLES x OPS_MIN at least one lane falls below CHECK_FLOOR;
-//       CHECK_FLOOR_SMOKE >= 1/8 of the least clean smoke cell; every clean sweep cell's skip ratio stays at or
+//   (e) the gates are not toothless (b74 D4: global over kernelsOf(roster), FULL-LENGTH cells only -- failingWorlds 0,
+//       worlds > 0): at DEFAULT_CYCLES x OPS_MIN at least one full-length hollowVolume row falls below CHECK_FLOOR;
+//       CHECK_FLOOR_SMOKE >= 1/8 of the least full-length smoke cell; every clean sweep cell's skip ratio stays at or
 //       below TAINT_SKIP_MAX (the headpatched NEST cov-off sweep must hold exactly COVOFF_SEEDS; its skip ratio is
 //       REPORTED only since b70 D6 V1 -- it was ~80% blanket frame taint; PLAN-0s-d6 ADDENDUM 1 item 2: the
 //       taint-skip must-fail is P-NEST-TAINT-HALF in test/67, cov-off stays the coverage gate's case);
 //       every covOff cell and every BATCH covOffSweep cell (both kernels) has hits < SCEN_MIN_SMOKE (a cov-off
 //       switch that leaks hits lets the hollow run clear coverage)
+//   (f) b74 D4: every rostered lane has FULL-LENGTH evidence: >= 1 kernel of kernelsFor(lane) whose full AND smoke
+//       cells both have failingWorlds 0 (a count: null is not zero) and worlds > 0. A fail-stopped cell (every world
+//       fails early: headpatched NEST 33885/33885 at 32.5 ops/world) confounds every length-dependent count (O7a, the
+//       rare scenarios, taint). ONE exemption (maintainer ruling b74): ERROR, only while at least one of DIV-F5 /
+//       DIV-F6 / DIV-F22 is open (fixedIn === null) in bench/soak/divergences.json; all three closed (or absent) is
+//       red (cut ERROR on tree, drop the exemption); an exemption set other than exactly {ERROR: those three} is red
 //   (q) doc.probe is the calibrate.mjs PROBE (lane, kernel, cycles, ops); PROBE.cycles === MIN_ACTIVE_CYCLES (main
 //       rejects SOAK_CYCLES below it); every one of the probe's cycles ran >= 1 LARGE world
 // Per-lane kernel map (b67 B2a, D7): every kernel x lane check runs kernel-major over calibrate.mjs kernelsOf(roster),
 // each kernel on the lanes it is bound to (lanesFor); doc.kernels keys == kernelsOf (a); a cell on a lane its kernel
-// does not cut is red (a); a lane-only kernel (tree: WIE) must carry parity.json's shas (p) and gets (a) (p) (b)-(d)
-// and the clean-sweep taint check, never the (e) hollow-volume / smoke-floor checks (binding kernels only).
+// does not cut is red (a); a lane-only kernel (tree: NEST, WIE) must carry parity.json's shas (p) and gets (a) (p)
+// (b)-(d), the clean-sweep taint check and, since b74 D4, the global full-length (e) hollow / smoke-floor checks.
 // The live check spawns the REAL main.mjs --smoke on every kernel of kernelsOf(roster) (headpatched, lite-1.5.2,
 // tree; each on its lanesFor) and main.mjs on PROBE (all four concurrently) and folds their cycle records, which must equal kernels.<k>.smoke and probe.fold exactly: the
 // JSON was not hand-edited and neither main nor gen / exec / oracles drifted. Only the smoke cells and the
@@ -640,8 +647,22 @@ const B6_PROBE_KEYS = ['lane', 'kernel', 'cycles', 'ops'];
 const b6Count = (n) => Number.isSafeInteger(n) && n >= 0;   // null / undefined / NaN are not a count (null is not zero)
 // a cov-off sweep cell list must hold exactly COVOFF_SEEDS, in order (no duplicate, missing or extra seed)
 const b6SeedsOk = (cells) => JSON.stringify(cells.map((c) => (c || {}).seed)) === JSON.stringify(B6_COVOFF_SEEDS);
+// (f) b74 D4: a full-length cell ran every world to its end (no world failed) -- counts, never null
+const b6FullLength = (f) => f !== null && typeof f === 'object' && b6Count(f.failingWorlds) && f.failingWorlds === 0
+    && b6Count(f.worlds) && f.worlds > 0;
+// the ONE (f) exemption the maintainer ruled (b74): ERROR, while one of these divergences is open
+const B6_F_EXEMPT_RULED = '{"ERROR":["DIV-F5","DIV-F6","DIV-F22"]}';
+const B6_F_EXEMPT = Object.freeze(JSON.parse(B6_F_EXEMPT_RULED));
+const B6_DIVS = JSON.parse(readFileSync(join(SOAK, 'divergences.json'), 'utf8'));
+// the ids of `ids` still open in a divergences doc: an entry with fixedIn === null (absent = closed: fail closed)
+const b6DivOpen = (ids, divs) => {
+    const es = divs !== null && typeof divs === 'object' && Array.isArray(divs.entries) ? divs.entries : [];
+    return (Array.isArray(ids) ? ids : []).filter((id) => es.some((e) => e !== null && typeof e === 'object' && e.id === id && e.fixedIn === null));
+};
+// a lane exempt from (f) right now (b6Min feeds its fail-stopped cells while this holds: SCEN_MIN's ERROR binding)
+const b6FExempt = (lane, divs = B6_DIVS, exempt = B6_F_EXEMPT) => b6Has(exempt, lane) && b6DivOpen(exempt[lane], divs).length > 0;
 
-function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = B6_LANES, parity = B6_PARITY_FILES) {
+function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = B6_LANES, parity = B6_PARITY_FILES, divs = B6_DIVS, exempt = B6_F_EXEMPT) {
     const p = [];
     const names = lanes.map((d) => d.name);
     const ks = b6KernelsOf(names);   // kernel-major: binding kernels, then lane-only kernels some lane binds
@@ -726,29 +747,55 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
             const why = ': a cell no calibrate.mjs binding cuts (lane ' + lane + ' -> ' + JSON.stringify(by) + '); ';
             p.push('(a) ' + k + ' ' + sh + ' ' + lane + why + B6_RECUT);
         }
-        // (e) hollow volume + the smoke floor: binding kernels only (hollowVolume.<lane-only> is recorded by --write, not gated)
-        if (b6Has(B6_KERNELS, k)) {
-            const hv = (doc.hollowVolume || {})[k];
-            const hollow = (d) => hv[d.name] && hv[d.name].worst.leastPerformed.performed < C.CHECK_FLOOR;
-            const hollowLanes = hv ? lanes.filter(hollow).map((d) => d.name) : [];
-            if (hollowLanes.length === 0) {
-                const at = ': no lane at ' + C.DEFAULT_CYCLES + ' x OPS_MIN falls below CHECK_FLOOR=' + C.CHECK_FLOOR;
-                p.push('(e) ' + k + at + ' (the floor is hollow)');
-            }
-            let smokeMin = Infinity;
-            for (const d of lanes) if (bound.indexOf(d.name) !== -1) for (const o of d.hardOracles) {
-                const f = (K.smoke || {})[d.name];
-                if (f && b6Has(f.performed, o) && f.performed[o] < smokeMin) smokeMin = f.performed[o];
-            }
-            if (!(C.CHECK_FLOOR_SMOKE * 8 >= smokeMin)) {
-                const at = ': CHECK_FLOOR_SMOKE=' + C.CHECK_FLOOR_SMOKE + ' is below 1/8 of the least clean smoke cell ';
-                p.push('(e) ' + k + at + smokeMin);
-            }
-        }
         const clean = ((doc.seedSweep || {}).cells || {});
         for (const d of lanes) if (bound.indexOf(d.name) !== -1) for (const c of clean[k + ':' + d.name] || []) {
             if (!(c.maxTaint.ratio <= C.TAINT_SKIP_MAX)) p.push('(e) ' + k + ' clean sweep ' + d.name + ' seed ' + c.seed + ' taint ' + c.maxTaint.ratio + ' > ' + C.TAINT_SKIP_MAX);
         }
+    }
+    // (e) hollow volume + the smoke floor (b74 D4): global over kernelsOf(roster), each kernel on its bound lanes,
+    // FULL-LENGTH rows / cells only (a fail-stopped count is short because worlds fail, not because the volume is low)
+    let hollowAny = false, smokeMin = Infinity;
+    for (const k of ks) for (const d of lanes) {
+        if (b6LanesFor(k, names).indexOf(d.name) === -1) continue;
+        const h = ((doc.hollowVolume || {})[k] || {})[d.name];
+        const lp = b6FullLength(h) && h.worst && h.worst.leastPerformed ? h.worst.leastPerformed.performed : null;
+        if (b6Count(lp) && lp < C.CHECK_FLOOR) hollowAny = true;
+        const f = ((((doc.kernels || {})[k] || {}).smoke) || {})[d.name];
+        if (!b6FullLength(f)) continue;
+        for (const o of d.hardOracles) if (b6Has(f.performed, o) && f.performed[o] < smokeMin) smokeMin = f.performed[o];
+    }
+    if (!hollowAny) {
+        p.push('(e) no full-length lane at ' + C.DEFAULT_CYCLES + ' x OPS_MIN falls below CHECK_FLOOR=' + C.CHECK_FLOOR
+            + ' (the floor is hollow; a hollowVolume row counts only with failingWorlds 0)');
+    }
+    if (!(C.CHECK_FLOOR_SMOKE * 8 >= smokeMin)) {
+        p.push('(e) CHECK_FLOOR_SMOKE=' + C.CHECK_FLOOR_SMOKE + ' is below 1/8 of the least full-length smoke cell ' + smokeMin);
+    }
+    // (f) b74 D4: every rostered lane has full-length evidence on some kernel that cuts it (header); ERROR is exempt
+    // only while one of DIV-F5 / F6 / F22 is open, and the exemption set is exactly the ruled one
+    if (JSON.stringify(exempt) !== B6_F_EXEMPT_RULED) {
+        p.push('(f) the exemption set ' + JSON.stringify(exempt) + ' != ' + B6_F_EXEMPT_RULED + ' (maintainer ruling b74: only ERROR, tied to DIV-F5 / F6 / F22)');
+    }
+    for (const d of lanes) {
+        let ok = false;
+        const ev = [];
+        for (const k of b6KernelsFor(d.name)) {
+            const K = (doc.kernels || {})[k] || {};
+            const cells = ['full', 'smoke'].map((sh) => [sh, (K[sh] || {})[d.name]]);
+            if (cells.every(([, f]) => b6FullLength(f))) ok = true;
+            for (const [sh, f] of cells) {
+                ev.push(k + ' ' + sh + ' ' + (f !== null && typeof f === 'object'
+                    ? f.failingWorlds + '/' + f.worlds + ' failing, ' + (f.ops / f.worlds).toFixed(1) + ' ops/world' : 'missing'));
+            }
+        }
+        if (b6Has(exempt, d.name)) {
+            if (b6DivOpen(exempt[d.name], divs).length > 0) { if (!ok) continue; }
+            else {
+                p.push('(f) ' + d.name + ': the exemption expired (' + JSON.stringify(exempt[d.name]) + ' all closed or absent in divergences.json):'
+                    + ' cut ' + d.name + ' on tree (calibrate.mjs LANE_KERNELS) and drop the exemption; ' + B6_RECUT);
+            }
+        }
+        if (!ok) p.push('(f) ' + d.name + ': no full-length evidence -- ' + ev.join('; '));
     }
     const cov = (((doc.covOffSweep || {}).cells || {})['headpatched:NEST:saved-cursor-hazard']) || [];
     if (!b6SeedsOk(cov)) p.push('(e) the headpatched NEST cov-off sweep seeds ' + JSON.stringify(cov.map((c) => (c || {}).seed)) + ' != COVOFF_SEEDS');
@@ -783,12 +830,15 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
 const B6_C = Object.freeze(Object.assign({}, CFG));
 const b6With = (over) => Object.assign({}, B6_C, over);
 
-// the binding minima, read from the evidence (never typed in): mutants sit one step past them
+// the binding minima, read from the evidence (never typed in): mutants sit one step past them. b74 D4: full-length
+// cells only, plus the cells of a lane (f) exempts right now (ERROR, while DIV-F5 / F6 / F22 is open: its fail-stopped
+// cells keep feeding SCEN_MIN's binding, ERROR aggregate, until the ERROR recut). A missing cell is (a)'s, not b6Min's.
 function b6Min(sh, pick) {
     let best = null;
     for (const k of b6KernelsOf(B6_ROSTER)) for (const d of B6_LANES) {
         if (b6LanesFor(k, B6_ROSTER).indexOf(d.name) === -1) continue;   // a lane this kernel does not cut
-        const f = B6_DOC.kernels[k][sh][d.name];
+        const f = ((B6_DOC.kernels[k] || {})[sh] || {})[d.name];
+        if (!(b6FullLength(f) || (f && b6FExempt(d.name)))) continue;
         for (const [name, n] of pick(d, f)) if (best === null || n < best.n) best = { k, lane: d.name, name, n };
     }
     return best;
@@ -800,7 +850,9 @@ const B6_PERF_SMOKE = b6Min('smoke', (d, f) => d.hardOracles.map((o) => [o, f.pe
 let B6_TAINT_MAX = 0;
 for (const k of b6KernelsOf(B6_ROSTER)) for (const d of B6_LANES) for (const sh of ['full', 'smoke']) {
     if (b6LanesFor(k, B6_ROSTER).indexOf(d.name) === -1) continue;
-    for (const o of d.hardOracles) if (B6_SKIP_NAMES.indexOf(o) !== -1) B6_TAINT_MAX = Math.max(B6_TAINT_MAX, B6_DOC.kernels[k][sh][d.name].taintRatio[o]);
+    const f = ((B6_DOC.kernels[k] || {})[sh] || {})[d.name];
+    if (!f) continue;   // a missing cell (a JSON cut before b74 D4) is (a)'s problem
+    for (const o of d.hardOracles) if (B6_SKIP_NAMES.indexOf(o) !== -1) B6_TAINT_MAX = Math.max(B6_TAINT_MAX, f.taintRatio[o]);
 }
 const B6_COV = B6_DOC.covOffSweep.cells['headpatched:NEST:saved-cursor-hazard'].map((c) => c.maxTaint.ratio);
 
@@ -885,8 +937,8 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     // a mutant must add a NEW problem with its tag: a problem the evidence already carries (a stale JSON awaiting
     // its recut) is not the mutant's red
     const before = calibrationProblems(B6_DOC, B6_C);
-    const red = (doc, C, tag, why, shaOf, probe) => {
-        const got = calibrationProblems(doc, C, shaOf, probe);
+    const red = (doc, C, tag, why, shaOf, probe, divs, exempt) => {
+        const got = calibrationProblems(doc, C, shaOf, probe, undefined, undefined, divs, exempt);
         assert.ok(got.some((x) => x.indexOf(tag) === 0 && before.indexOf(x) === -1), why + ': expected a new ' + tag + ' problem, got ' + JSON.stringify(got));
     };
     red(B6_DOC, b6With({ SCEN_MIN: B6_SCEN_FULL.n + 1 }), '(b)', 'SCEN_MIN above the rarest full cell ' + B6_SCEN_FULL.name);
@@ -902,6 +954,7 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     red(B6_DOC, b6With({ GEN_VERSION: CFG.GEN_VERSION + 1 }), '(a)', 'generator version moved');
     red(B6_DOC, b6With({ CHECK_FLOOR: 100 }), '(e)', 'a floor no hollow run can fall below');
     red(B6_DOC, b6With({ CHECK_FLOOR_SMOKE: 1 }), '(e)', 'a smoke floor far below the clean cells');
+    red(B6_DOC, b6With({ CHECK_FLOOR_SMOKE: Math.ceil(B6_PERF_SMOKE.n / 8) - 1 }), '(e)', 'CHECK_FLOOR_SMOKE x 8 one step below the least full-length smoke cell ' + B6_PERF_SMOKE.lane);
     red(B6_DOC, b6With({ CHECK_FLOOR: CFG.CHECK_FLOOR - 1 }), '(a)', 'a constant moved inside its margin, JSON not recut');
     red(B6_DOC, B6_C, '(p)', 'kinds.mjs moved since the cut', (rel) => (rel === 'bench/soak/kinds.mjs' ? 'f'.repeat(64) : b6ShaOf(rel)));
     red(B6_DOC, B6_C, '(p)', 'the torture VALUE_POOL moved since the cut', (rel) => (rel === 'bench/torture/helpers/index.mjs' ? 'f'.repeat(64) : b6ShaOf(rel)));
@@ -975,6 +1028,33 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     const rounded = b6Copy(B6_DOC);
     rounded.kernels.headpatched.full.NEST.taintRatio.O1c = Math.round(rounded.kernels.headpatched.full.NEST.taintRatio.O1c * 1e4) / 1e4;
     red(rounded, B6_C, '(d)', 'a rounded stored ratio is not the exact one');
+    // (f) b74 D4: NEST's full-length evidence is tree's (headpatched + 1.5.2 fail-stop every NEST world)
+    const fFull = b6Copy(B6_DOC);
+    fFull.kernels.tree.full.NEST.failingWorlds = 1;
+    red(fFull, B6_C, '(f) NEST', 'one failing world in the tree full NEST cell');
+    const fNull = b6Copy(B6_DOC);
+    fNull.kernels.tree.smoke.NEST.failingWorlds = null;
+    red(fNull, B6_C, '(f) NEST', 'a null failingWorlds in the tree smoke NEST cell (null is not zero)');
+    const fGone = b6Copy(B6_DOC);   // the pre-b74 shape: NEST cut on the fail-stopped binding kernels only
+    delete fGone.kernels.tree.full.NEST;
+    delete fGone.kernels.tree.smoke.NEST;
+    red(fGone, B6_C, '(f) NEST', 'no tree NEST cells (the HEAD-shaped JSON)');
+    // (f) the ERROR exemption: it holds while ONE of DIV-F5 / F6 / F22 is open; all closed or absent -> red
+    const F_IDS = ['DIV-F5', 'DIV-F6', 'DIV-F22'];
+    const closeDivs = (ids) => { const d = b6Copy(B6_DIVS); for (const e of d.entries) if (ids.indexOf(e.id) !== -1) e.fixedIn = 'A2'; return d; };
+    red(B6_DOC, B6_C, '(f) ERROR: the exemption expired', 'DIV-F5 / F6 / F22 all closed (the exemption expired: recut ERROR)', b6ShaOf, B6_PROBE, closeDivs(F_IDS));
+    const absent = b6Copy(B6_DIVS);
+    absent.entries = absent.entries.filter((e) => F_IDS.indexOf(e.id) === -1);
+    red(B6_DOC, B6_C, '(f) ERROR: the exemption expired', 'DIV-F5 / F6 / F22 absent from divergences.json (absent is not open)', b6ShaOf, B6_PROBE, absent);
+    const oneOpen = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, closeDivs(['DIV-F6', 'DIV-F22']));
+    assert.deepEqual(oneOpen.filter((x) => x.indexOf('(f) ERROR') === 0), [], 'control: DIV-F5 alone open keeps ERROR exempt');
+    // (f) the exemption set must be exactly the ruled one: a second lane, or another divergence id -> red
+    red(B6_DOC, B6_C, '(f)', 'NEST added to the exemption', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: F_IDS.slice(), NEST: ['DIV-F15'] });
+    red(B6_DOC, B6_C, '(f)', 'the ERROR exemption tied to a never-closing divergence', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F7'] });
+    // (e) b74 D4: a hollowVolume row counts only when full-length; every row failing -> the floor reads hollow
+    const hvFail = b6Copy(B6_DOC);
+    for (const k of Object.keys(hvFail.hollowVolume)) for (const l of Object.keys(hvFail.hollowVolume[k])) hvFail.hollowVolume[k][l].failingWorlds = 1;
+    red(hvFail, B6_C, '(e)', 'every hollowVolume row failing (no full-length row below CHECK_FLOOR)');
 });
 
 test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing or off-parity lane-only kernel -> red', () => {
@@ -984,9 +1064,13 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     const roster5 = B6_ROSTER.slice();
     assert.deepEqual(b6KernelsFor('WIE'), ['tree']);
     assert.deepEqual(b6KernelsFor('GRAPH'), Object.keys(B6_KERNELS));
-    assert.deepEqual(b6KernelsOf(roster4), Object.keys(B6_KERNELS));
+    // b74 D4: NEST is cut on headpatched (first: covOff), 1.5.2 and tree; ERROR stays on the binding kernels
+    assert.deepEqual(b6KernelsFor('NEST'), Object.keys(B6_KERNELS).concat(['tree']));
+    assert.deepEqual(b6KernelsFor('ERROR'), Object.keys(B6_KERNELS));
+    assert.deepEqual(b6KernelsOf(['GRAPH', 'BATCH', 'ERROR']), Object.keys(B6_KERNELS));
+    assert.deepEqual(b6KernelsOf(roster4), Object.keys(B6_KERNELS).concat(['tree']));
     assert.deepEqual(b6KernelsOf(roster5), Object.keys(B6_KERNELS).concat(['tree']));
-    assert.deepEqual(b6LanesFor('tree', roster5), ['WIE']);
+    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE']);
     assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), roster4.slice());
     assert.equal(b6KernelPath('tree'), 'Signal.js');
     assert.throws(() => b6KernelPath('nope'), /unknown kernel nope/);
@@ -1002,7 +1086,7 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     // A3 (the WIE roster, live since the roster flip): tree carries WIE exactly at the floors, clean control
     const lanes5 = B6_LANES;
     const cell = (scenMin, floor) => {
-        const c = { crashes: 0, scenarios: {}, performed: {}, skipTainted: {}, taintRatio: {} };
+        const c = { worlds: 1, ops: 1, failingWorlds: 0, crashes: 0, scenarios: {}, performed: {}, skipTainted: {}, taintRatio: {} };
         for (const s of B6_WIE.required) c.scenarios[s] = scenMin;
         for (const o of B6_WIE.hardOracles) {
             c.performed[o] = floor;
@@ -1017,7 +1101,9 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     doc5.kernels.tree = {
         kernel: 'Signal.js', knownAs: null,
         files: ['Signal.js', 'Watch.js'].map((path) => ({ path, sha256: B6_PARITY_FILES[path] })),
-        full: { WIE: cell(B6_C.SCEN_MIN, B6_C.CHECK_FLOOR) }, smoke: { WIE: cell(B6_C.SCEN_MIN_SMOKE, B6_C.CHECK_FLOOR_SMOKE) },
+        // the recut NEST cells kept (b74 D4: tree cuts NEST too); WIE at the floors
+        full: Object.assign(b6Copy(B6_DOC.kernels.tree.full), { WIE: cell(B6_C.SCEN_MIN, B6_C.CHECK_FLOOR) }),
+        smoke: Object.assign(b6Copy(B6_DOC.kernels.tree.smoke), { WIE: cell(B6_C.SCEN_MIN_SMOKE, B6_C.CHECK_FLOOR_SMOKE) }),
     };
     const cp5 = (doc) => calibrationProblems(doc, B6_C, b6ShaOf, B6_PROBE, lanes5);
     assert.deepEqual(cp5(doc5), [], 'control: the synthetic WIE roster with tree at the floors is clean');
@@ -1104,12 +1190,12 @@ test('B6 drift guard live probe: main.mjs on PROBE runs a LARGE world every cycl
     assert.deepEqual(raw((m) => { m.recs.push(m.recs[1]); }), ['last record is cycle, not the summary', 'summary verdict undefined exitCode undefined != PASS 0']);
 });
 
-test('B6 TAINT_SKIP_MAX: every clean cell at or below it; the NEST cov-off (both kernels, 17 seeds) is left to coverage (b70 D6 V1)', () => {
+test('B6 TAINT_SKIP_MAX: every clean cell at or below it; the NEST cov-off (every NEST kernel, 17 seeds) is left to coverage (b70 D6 V1)', () => {
     assert.ok(B6_TAINT_MAX <= CFG.TAINT_SKIP_MAX, JSON.stringify([B6_TAINT_MAX, CFG.TAINT_SKIP_MAX]));
     assert.equal(B6_COV.length, 17);
     // under V1 the cov-off skip ratio is no taint tooth (ADDENDUM 1 item 2; REPORTED in covOffSweep): coverage catches
-    // it on both kernels (0 hits); the taint-skip must-fail is test/67 P-NEST-TAINT-HALF
-    for (const k of ['headpatched', 'lite-1.5.2']) {
+    // it on every NEST kernel (0 hits); the taint-skip must-fail is test/67 P-NEST-TAINT-HALF
+    for (const k of b6KernelsFor('NEST')) {
         for (const c of B6_DOC.covOffSweep.cells[k + ':NEST:saved-cursor-hazard']) assert.ok(c.hits < CFG.SCEN_MIN_SMOKE, k + ' ' + JSON.stringify(c));
     }
 });

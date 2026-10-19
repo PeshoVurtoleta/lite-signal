@@ -27,7 +27,11 @@ const CONSTANTS = Object.freeze({
     // volume (PLAN 2.5: set in operations, never seconds). DEFAULT_OPS, SCEN_MIN(_SMOKE) and the evidence
     // floors below are CALIBRATED (S1d B6): evidence bench/soak/calibration/soak-calibration.json (tool
     // calibration/calibrate.mjs), drift guard test/41. Rarest required scenario at 11 x DEFAULT_OPS, seed
-    // 0xC0FFEE: 2724 hits (GRAPH deep-pull, headpatched; 22 = ERROR aggregate on 1.5.2) vs SCEN_MIN 8.
+    // 0xC0FFEE, full-length cells (b74 D4: no failing world): 2724 hits (GRAPH deep-pull, both binding kernels;
+    // tree NEST rarest 11388, lifecycle-callback-dispose, b74 TASK 0b) vs SCEN_MIN 8. SCEN_MIN's binding cell is
+    // ERROR aggregate 22 (1.5.2; tree also 22, b74 0b), cut on FAIL-STOPPED worlds (1.5.2 17060/17071 failing, tree
+    // 17039/17050): exempt from test/41 (f) only while DIV-F5 / F6 / F22 is open (fixBy A3 / A2 / A2), then ERROR is
+    // recut on tree. Smoke: ERROR aggregate 2 vs SCEN_MIN_SMOKE 1 (same exemption).
     DEFAULT_OPS: 100000,
     OPS_MIN: 1000,
     // 2^30 - 1: SOAK_OPS is a per-lane-cycle counter target, so it stays inside [-2^30, 2^30 - 1] (Smi on
@@ -50,16 +54,23 @@ const CONSTANTS = Object.freeze({
     // evidence floors (gates.mjs; S1c amendment 6), calibrated in S1d B6 (soak-calibration.json):
     //   CHECK_FLOOR      a lane's run must PERFORM at least this many checks of each applicable hard oracle
     //                    (taint skips never count); below it the lane is INCONCLUSIVE, never PASS. The least-
-    //                    performed clean cell is NEST O7a: 41184 at 11 x DEFAULT_OPS (4.1x the floor) and 2170
-    //                    in smoke (4.3x CHECK_FLOOR_SMOKE). At 11 x OPS_MIN (headpatched / 1.5.2, burst 13 recut)
-    //                    NEST O7a 413 / 502, BATCH OB 8295 / 1789 and ERROR OB 2152 / 1227 read INCONCLUSIVE.
-    //                    One scalar for every oracle: only GRAPH at 11 x OPS_MIN (O5 14791 / 14791) clears it.
+    //                    performed FULL-LENGTH cell (b74 D4: NEST cut on tree, 425.0 ops/world, 0 failing worlds;
+    //                    b74 TASK 0b) is tree NEST O7a: 50367 at 11 x DEFAULT_OPS (5.0x the floor) and 2704 in
+    //                    smoke (5.4x CHECK_FLOOR_SMOKE; test/41 (e): CHECK_FLOOR_SMOKE x 8 = 4000 >= 2704). The
+    //                    headpatched / 1.5.2 NEST cells (O7a 41184 / 49458, smoke 2170 / 2618) fail-stop every
+    //                    world at 32.5 / 30.0 ops/world: (c) still checks them, they bind no calibration. At
+    //                    11 x OPS_MIN the full-length rows tree NEST O7a 672 and headpatched BATCH OB 8295 read
+    //                    INCONCLUSIVE (fail-stopped rows: NEST 413 / 502, 1.5.2 BATCH 1789, ERROR OB 2152 / 1227).
+    //                    One scalar for every oracle: only GRAPH (O5 14791, both binding kernels) and tree WIE
+    //                    (O5 14323) clear it at 11 x OPS_MIN.
     //   TAINT_SKIP_MAX   per oracle that skips tainted nodes: skipped / (performed + skipped) above this is
-    //                    hollow evidence -> INCONCLUSIVE. 0.35 kept (b70 D3). Binding-kernel clean max (b71 recut)
-    //                    0.0579 (headpatched NEST O1c smoke; 8-seed smoke sweep 0.0663). The old design case
+    //                    hollow evidence -> INCONCLUSIVE. 0.35 kept (b70 D3). Full-length max (b74 TASK 0b) 0.2222
+    //                    (tree NEST O1e at 11 x DEFAULT_OPS; smoke 0.2202). The fail-stopped headpatched NEST cells
+    //                    read 0.0579 (O1c smoke, b71 recut; 8-seed smoke sweep 0.0663). The old design case
     //                    (headpatched NEST cov-off:saved-cursor-hazard O1c 0.43-0.44 trips) is VOID under b70 D6
     //                    V1: that ratio was ~80% blanket in-flight frame taint; V1 reads O1c 0.083-0.092 over 17
-    //                    seeds (max oracle O1e 0.147-0.162; 1.5.2 0.125-0.133), so cov-off stays the COVERAGE
+    //                    seeds (b70 D6 TASK 0 REPORT only; soak-calibration.json does not record O1c there); its
+    //                    covOffSweep max oracle O1e 0.147-0.162 (1.5.2 0.125-0.133), so cov-off stays the COVERAGE
     //                    gate's case. The taint-skip must-fail is P-NEST-TAINT-HALF (test/67). Live NEST smoke
     //                    under V1 reads O1c 0.125-0.142 / O1e 0.218-0.232 over 9 seeds (b70 REPORT); the
     //                    late/early world-bucket ratio is REPORTED only.

@@ -23,9 +23,9 @@
  *                       --write dies unless the folds and largeWorldsPerCycle are equal and every cycle ran a
  *                       LARGE world. test/41 re-runs main.mjs on it live (main's large-world choice is gated live).
  *          hollowVolume DEFAULT_CYCLES x OPS_MIN, every kernel over its bound lanes (the smallest gated volume config
- *                       accepts)
+ *                       accepts); each row records failingWorlds (test/41 (e) counts full-length rows only)
  *          covOff       every supported cov-off at the smoke shape on the lane's first kernel (kernelsFor(lane)[0]:
- *                       headpatched for every unlisted lane) (hollow-evidence controls)
+ *                       headpatched for every unlisted lane and for NEST) (hollow-evidence controls)
  *          seedSweep    SWEEP_SEEDS at the smoke shape, every kernel over its bound lanes (REPORTED seed spread;
  *                       binds nothing)
  *          covOffSweep  every cov-off at the smoke shape over COVOFF_SEEDS, every kernel bound to the lane (taint
@@ -43,6 +43,11 @@
  * every KERNELS id. A lane-only kernel is never a binding kernel (cut.bindingKernels stays KERNELS); --write dies
  * unless its files' sha256 equal parity.json, and test/41 re-checks that pin. A lane's own descriptor file joins
  * the pinned list only while the lane is rostered (LANE_PINS, pinnedFor).
+ * NEST -> headpatched, lite-1.5.2, tree (b74 D4): both binding kernels fail-stop EVERY NEST world (headpatched
+ * 33885/33885 at 32.5 ops/world, 1.5.2 36726/36726 at 30.0, b71 cut), so tree (clean, 425.0 ops/world, b74 TASK 0b)
+ * carries NEST's full-length evidence (test/41 (f)). headpatched stays first: covOff and the headpatched NEST
+ * cov-off sweep are unchanged. ERROR stays on the binding kernels: it fail-stops on every kernel (tree 17039/17050,
+ * b74 0b; DIV-F5 / F6 / F22), exempt from (f) only while one of those three is open (maintainer ruling b74).
  */
 
 import { spawnSync } from 'node:child_process';
@@ -65,7 +70,11 @@ export const KERNELS = Object.freeze({
 // sha256 equal parity.json.
 export const LANE_ONLY_KERNELS = Object.freeze({ tree: 'Signal.js' });
 // lane -> the kernels that cut it; an unlisted lane runs on every KERNELS id (never on a lane-only kernel).
-export const LANE_KERNELS = Object.freeze({ WIE: Object.freeze(['tree']) });
+// NEST (b74 D4): the binding kernels fail-stop every NEST world; tree carries its full-length cells (header).
+export const LANE_KERNELS = Object.freeze({
+    WIE: Object.freeze(['tree']),
+    NEST: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
+});
 /** The kernel ids that cut `lane` (a fresh array). */
 export const kernelsFor = (lane) => (own(LANE_KERNELS, lane) ? LANE_KERNELS[lane].slice() : Object.keys(KERNELS));
 /** The ROOT-relative path of kernel id `k`; an unknown id throws (fail closed). */
@@ -463,7 +472,7 @@ async function write(outPath, timed, importFrom) {
         for (const name of Object.keys(hv[i].lanes)) {
             const L = hv[i].lanes[name];
             const f = foldLane(L, L.perCycle, SKIP_NAMES);
-            hollowVolume[k][name] = { cycles: f.cycles, ops: f.ops, worlds: f.worlds, performed: f.performed, worst: worstCells(L, f) };
+            hollowVolume[k][name] = { cycles: f.cycles, ops: f.ops, worlds: f.worlds, failingWorlds: f.failingWorlds, performed: f.performed, worst: worstCells(L, f) };
         }
     });
     note('hollow volume done');
@@ -508,7 +517,7 @@ async function write(outPath, timed, importFrom) {
         .concat(['--seed', String(sd)], smokeArgs, ['--cov-off', scen])), 4);
     const covOffSweep = {
         shape: CFG.SMOKE_CYCLES + ' x ' + CFG.SMOKE_OPS, seeds: COVOFF_SEEDS.slice(),
-        note: 'NEST cov-off on both kernels is the coverage gate\'s case since b70 D6 V1 (its skip ratio is REPORTED in cells[].maxTaint; no taint tooth): the coverage gate catches it (hits 0 < SCEN_MIN_SMOKE)',
+        note: 'NEST cov-off on every kernel bound to NEST is the coverage gate\'s case since b70 D6 V1 (its skip ratio is REPORTED in cells[].maxTaint; no taint tooth): the coverage gate catches it (hits 0 < SCEN_MIN_SMOKE)',
         cells: {},
     };
     coList.forEach(([k, lane, scen, sd], i) => {

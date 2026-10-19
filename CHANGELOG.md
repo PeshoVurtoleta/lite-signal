@@ -15,6 +15,29 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
+### Changed -- soak D4: NEST floors re-cut on full-length worlds; test/41 clause (f) (dev-only, not shipped)
+
+The tree kernel is added to the NEST calibration only (`calibrate.mjs` LANE_KERNELS): headpatched and lite-1.5.2
+fail-stop every NEST world (full 33885/33885 at 32.5 ops/world; 36726/36726 at 30.0) while the live engine runs 425.0.
+Recut (timed, 891 s, quiet-lock, 2026-10-19): tree NEST full 2596 worlds / 1103300 ops / 0 failing, O7a 50367 (now
+`CHECK_FLOOR`'s binding cell, 5.0x 10000); smoke 144 / 61200 / O7a 2704 (5.4x `CHECK_FLOOR_SMOKE` 500); rarest NEST
+scenario lifecycle-callback-dispose 11388 full / 621 smoke. `CHECK_FLOOR`, `CHECK_FLOOR_SMOKE`, `SCEN_MIN`,
+`SCEN_MIN_SMOKE` and `TAINT_SKIP_MAX` are unchanged (`SCEN_MIN`'s binding cell stays 1.5.2 ERROR aggregate 22).
+test/41 gains clause (f): every rostered lane needs full-length evidence (full + smoke cells, failingWorlds 0)
+on a kernel that cuts it. One exemption, ERROR (tree ERROR fails 17039/17050: DIV-F5/F6/F22), holds only while
+one of them is open (fixedIn null) in `divergences.json`; all three closed or absent turn (f) red and force the ERROR
+recut. Clause (e) counts full-length cells only; the mutant minima count full-length cells plus the exempt ERROR
+cells (`SCEN_MIN`'s binding). `TAINT_SKIP_MAX`'s binding cell moves to tree NEST O1e 0.2222 (smoke 0.2202; was
+headpatched NEST 0.0579). `hollowVolume` rows now record failingWorlds.
+
+### Changed -- `test/torture.mjs` QS retention control: paired-batch minimum (dev-only, not shipped)
+
+The blind-control gate reads the min over the 8 (even b-1, odd b) batch pairs of odd - even (>= 4 measured pairs,
+>= 1280 B) instead of Dhi - Dlo, so a one-time step in the per-batch constant cannot pass a blind control (b73 saw
++6240 B per batch from about batch 7-9; b74 saw it on the first QS attempt too). The phase-2b set / untrack lanes and
+the QS slope lane keep Dhi <= Dlo (an upward step can only redden them). GATE labels emit a unit only after
+a number: `k=<n>B/batch,<n>B/batch`, `k=fail(Dlo=<n>B)`, `ctl=unmeasured`.
+
 ### Fixed -- `watch()`: baseline committed before the callback; `stop()` releases the last value
 
 Two defects in `watch()` (Watch.js), both present through 1.5.2:
@@ -188,7 +211,9 @@ one-call retention slope, a6c66a9: one `measureAllocs` call alternates pseudo-ba
 steps per call, the per-batch constant k cancels, and an attempt passes iff it settled, ran exactly 1080000 steps,
 ended in the reset state, kept >= 4 batches per parity and Dhi <= Dlo (up to 3 attempts, stop at the first pass);
 three local runs (node v26.8.2) read alloc=0 B/op
-k=0B/batch K=1 ctl=2560B, child 0.000 B/op, gc major 0; the retention control must read Dhi - Dlo >= 1280 B; b73: up to 3 fail-closed control attempts, ctl=<d>B,K=<n>)
+k=0B/batch K=1 ctl=2560B, child 0.000 B/op, gc major 0; the retention control must read Dhi - Dlo >= 1280 B
+(superseded b74: it now gates on the min over the 8 (even b-1, odd b) batch pairs of odd - even, >= 4 measured
+pairs, >= 1280 B); b73: up to 3 fail-closed control attempts, ctl=<d>B,K=<n>)
 and phase F21 retention (1e3 x {`createRegistry({maxFlushPasses: 8})`, the P3 shape, `destroy()`} -> lite-leak
 tracker size 0); the pre-fix engine gives size 1000 there, and a QS-teeth control gives 135.972 B/op in the
 child lane. `npm test` at be0fe70: 1372 tests / 1356 pass / 0 fail / 7 skip / 9 todo.
@@ -276,7 +301,7 @@ gated. The taint-skip must-fail is now P-NEST-TAINT-HALF (`gate:taint-skip` in `
 `test/67`); P-NEST-TRIGGERLESS is coverage-only and the cov-off taint leg is void (cov-off stays the coverage gate's
 case). DIV-F15 is widened: it also explains O1e effect-stale on the effect that escaped the DIV-F15 TypeError in the
 same step. Recut (b71): clean max 0.2546 -> 0.0579 (binding cut), sweep 0.2585 -> 0.0663. NEST floors on full-length
-worlds (D4) are deferred.
+worlds (D4) were deferred (superseded b74: resolved, see "Changed -- soak D4" above).
 
 ### Added -- soak lane WIE (write-in-evaluation) joins the roster; per-lane kernel map (dev-only, not shipped)
 
@@ -507,7 +532,8 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
   and `SoakReport.mjs` (decision b; 23 pinned files then, 29 since 8c3eb9a, 33 since eb5acc2).
 - Calibration: `calibration/calibrate.mjs` + `soak-calibration.json` (seed 0xC0FFEE, 11 x 100000 + smoke, headpatched
   and 1.5.2): DEFAULT_OPS 100000 and SCEN_MIN 8 kept; CHECK_FLOOR 1000 -> 10000, CHECK_FLOOR_SMOKE 250 -> 500,
-  TAINT_SKIP_MAX 0.5 -> 0.35; drift guard in test/41.
+  TAINT_SKIP_MAX 0.5 -> 0.35; drift guard in test/41 (superseded b74: the binding NEST cells are now the tree kernel's,
+  see "Changed -- soak D4" above).
 - Teeth: `teeth.mjs` (CHECKS / GAPS, ceiling 26, may only shrink / UNREACHABLE, `audit()`) and `_mustfail.mjs` (30
   controls through the real `main.mjs` on pinned scratch kernels). `npm run soak:teeth` (short), `soak:teeth:long`
   (L-* controls); `MUSTFAIL_LIST=1`, `MUSTFAIL_ONLY=<regex>`, `MUSTFAIL_HEADS=1`. `soak:report` prints
@@ -519,7 +545,9 @@ of two power-of-two link-count boundaries. Exits 1 if any child fails. Not a gat
   `T-cov-BATCH` is back on `--smoke`.
 - soak: the ERROR lane gains OB in its hard oracles (decision e): a clean ERROR run performs OB 193019 (headpatched) /
   115043 (1.5.2) times at 11 x 100000, and OB is now each ERROR cell's least-performed oracle. At 11 x OPS_MIN ERROR
-  OB (2152 / 1227) joins BATCH OB (8295 / 1789) and NEST O7a (413 / 502) below `CHECK_FLOOR`; only GRAPH clears it.
+  OB (2152 / 1227) joins BATCH OB (8295 / 1789) and NEST O7a (413 / 502) below `CHECK_FLOOR`; only GRAPH clears it
+  (superseded b74: the NEST cells 413 / 502 are fail-stopped rows; tree NEST O7a at 11 x OPS_MIN reads 672, and tree WIE
+  O5 14323 also clears).
 - soak: test/41 (40 tests, now ~32 s on an M4 Pro) adds a live large-world probe (decision d): main.mjs
   runs GRAPH 11 x 33000 on headpatched and its fold must equal the recorded `probe.fold`, with one LARGE world in
   every
