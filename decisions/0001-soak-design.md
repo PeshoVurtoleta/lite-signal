@@ -143,7 +143,7 @@ b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer t
   (F5 shapes stay F5). N19.6 dropped throw-dep-computed-prewalk from them: the cached-rethrow fast path runs no body
   frame, so scenarios.mjs:151-154 never tags it (tagger gap, follow-up). Full enumeration of all 17039 failing preb33
   ERROR worlds: known=none 2 -> 0 (b53 t2). FAIL_CAP (16 per cycle, config.mjs:48) can still mask heads. Not F-MB:
-  the 4 BATCH known=none lines are a separate OPEN candidate (LEDGER #36).
+  the 4 BATCH known=none lines are LEDGER #36, triaged b77 and folded into DIV-F5 (F5, OPEN, fixBy A3).
 - Calibration (section 8, :185-188): recut again on 2026-10-17 23:39 UTC (calibrate.mjs --write --timed under
   quiet-lock, 737 s, node v26.8.2, M4 Pro, kernels headpatched and 1.5.2): every deterministic cell identical; only
   provenance and pinnedSha256 (exec / model / adapters/lite) moved. Throughput is PRELIMINARY: load 2.67 / 2.63 / 2.65

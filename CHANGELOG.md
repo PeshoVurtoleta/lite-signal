@@ -15,6 +15,16 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
+### Changed -- LEDGER #36 (F-MB) triaged: folded into DIV-F5 (docs only, not shipped)
+
+The four known=none BATCH-lane lines (BATCH:1:0xb08f012b, BATCH:2:0xfd8b9606) are F5 (a batch revert after a mid-batch
+read leaves downstream stale): an effect created mid-batch that reads the intermediate (a new path), and a classic
+revert-after-mid-read whose re-evaluation drops a dependency (an O4 effect-dead line DIV-F5 does not list). Both
+shrunk worlds (4 and 9 ops) fail on the tree, preb33 and 1.5.2
+and pass on the tree plus the FIX-R hunks only. No engine, harness or registry change: the lines stay known=none in the
+soak until FIX-R lands (A3). Contract ruling: a mid-batch effect re-runs at batch close iff a source it read changed
+after its first run; A3 amends the batch doc comment in Signal.js to match.
+
 ### Fixed -- soak gates.mjs: `LaneGates.push` is all-or-nothing (dev-only, not shipped)
 
 `LaneGates.push` reads a cycle record once and checks it whole before anything folds: the count maps are copied into
