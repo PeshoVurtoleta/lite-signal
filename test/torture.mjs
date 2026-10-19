@@ -7,8 +7,28 @@
 // nodes, so the steady-state hot path is signal.set -> propagate -> effect).
 //
 // Gates (fix the code, never widen a budget):
-//   * 1e5 set->propagate ops              -> 0 B/op, maxMajor 0
-//   * 1e5 untrack-in-effect ops           -> 0 B/op, maxMajor 0  (LEDGER #30 path)
+//   * 1e5 set->propagate ops              -> maxMajor 0; 0 B/op retention SLOPE
+//   * 1e5 untrack-in-effect ops           -> maxMajor 0; 0 B/op retention SLOPE  (LEDGER #30 path)
+//     Slope (b72, the test/64 flake): min-over-batches read the instrument's
+//     per-batch constant k as per-op bytes (b64 + b71 under load: untrack
+//     0.0008 B/op = 16 B in the minimum 2e4-call batch, exit 1; `node --expose-gc
+//     --no-concurrent-osr test/torture.mjs` reproduced it on the b72 before-copy
+//     6/6). Both lanes use the QS estimator (phase 6): ONE measureAllocs call per
+//     attempt, pseudo-batches of 2e4 calls alternating 1 step per call (even,
+//     Dlo = min) and 5 (odd, Dhi = min), so k is shared by both parities and
+//     cancels. An attempt passes iff it settled, ran exactly 1080000 steps, every
+//     step fired the effect, it ended in the reset state, kept >= 4 batches per
+//     parity and Dhi <= Dlo; up to 3 attempts per lane, stop at the first pass.
+//     Catches a retainer down to 1 per 1e5 steps (the old floor: 1 per 2e4).
+//     Cannot see: (1) a retainer slower than ~1 per 1e5 steps; (2) retention once
+//     per batch or GC cycle, independent of step count (printed as k, gated
+//     nowhere); (3) allocations that die young -- both lanes read the heap after
+//     a forced GC; the pinned child covers set only through the NEST / QS graphs
+//     and untrack not at all, so a transient per-op box passes (the old floor was
+//     equally blind to it). A k that grows with batch duration reads as per-step
+//     growth (fails closed); a spike riding every even batch masks a retainer up
+//     to its size. Must-fail: test/64 lanes aset / aun (one retained object per
+//     1000 calls in read.set / untrack -> alloc > 0, FAIL).
 //   * 1e4 create/dispose cycles           -> activeNodes/activeLinks back to baseline
 //   * effect self-disposes inside untrack -> gen-safe restore, no crash, baseline
 //   * NEST (SPEC-A A1.11): 1e5 nested recomputes effect -> computed -> computed
@@ -67,8 +87,9 @@
 //
 // The untrack path is the LEDGER #30 keystone: untrack() nulls currentObserver
 // for its window and restores it gen-safely (only if the observer survived the
-// window). This torture drives 1e5 of those windows at zero allocation.
-import { GcProfiler, checkNoGc, measureAllocs, checkAllocs } from '@zakkster/lite-gc-profiler';
+// window). This torture drives 1e5 of those windows with maxMajor 0 and a 0 B/op
+// retention slope (transients unmeasured; see the header).
+import { GcProfiler, checkNoGc, measureAllocs } from '@zakkster/lite-gc-profiler';
 import { createLeakTracker } from '@zakkster/lite-leak';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -209,8 +230,8 @@ const linksBaseline = afterCycles.activeLinks === base.activeLinks;
 // Path A: set -> propagate -> effect.
 const sa = signal(0);
 const ca = computed(() => sa() + 1);
-let sinkA = 0;
-const stopA = effect(() => { sinkA += ca(); });
+let sinkA = 0, aRuns = 0;
+const stopA = effect(() => { sinkA += ca(); aRuns++; });
 const setStep = (i) => { sa.set(i); };
 
 // Path B: untrack-in-effect (the LEDGER #30 hot window). The untracked body is
@@ -239,20 +260,77 @@ const s = gc.summary();
 const gcReport = checkNoGc(s, { maxMajor: 0, maxPauseMs: 4 });
 gc.stop();
 
-// 2b: per-op allocation floor (min-over-batches; requires --expose-gc).
-const allocSet = measureAllocs(setStep, { iterations: 20000, batches: 8, warmup: 20000 });
-const allocUn = measureAllocs(untrackStep, { iterations: 20000, batches: 8, warmup: 20000 });
-// null is not zero: an unmeasured (settled:false / no channel) bytesPerCall is
-// NOT a zero-allocation result. It prints as 'unmeasured' and fails the gate --
-// a measurement that did not happen must never read green.
-const allocMeasured = allocSet.bytesPerCall !== null && allocUn.bytesPerCall !== null;
+// 2b: per-op retention SLOPE (requires --expose-gc; the phase-6 QS estimator, see the header).
+// min-over-batches alone reads the instrument's per-batch constant k as k / iterations B/op
+// (b64, b71: untrack 0.0008 B/op = 16 B per batch, a false red). ONE measureAllocs call per
+// attempt alternates pseudo-batches of AL_ITER calls at 1 step per call (even) and 5 (odd):
+// k is shared by both parities and cancels; a per-step retainer grows with the 8e4 extra steps.
+// Steps drive Smi counters below 2^30 (a value never repeats: an equal set is a no-op). The
+// wrappers are hot (Smi state only); everything else is cold and may allocate.
+const AL_ITER = 20000, AL_BATCHES = 16, AL_WARM = 40000, AL_K = 3;
+// Warm-up = pseudo-batches 0 (even) and 1 (odd); measured batch b has parity b & 1.
+const AL_STEPS = ((AL_WARM + AL_ITER * AL_BATCHES) / AL_ITER / 2) * AL_ITER * 6;   // 1080000
+let aN = 0, apLeft = 0, apOdd = 1;
+const setStepN = () => { aN = (aN + 1) & 0x3FFFFFFF; sa.set(aN); };
+const setPairStep = () => {
+  if (apLeft === 0) { apLeft = AL_ITER; apOdd ^= 1; }
+  apLeft--;
+  setStepN();
+  if (apOdd === 1) { setStepN(); setStepN(); setStepN(); setStepN(); }
+};
+let bN = 0, bpLeft = 0, bpOdd = 1;
+const untrackStepN = () => { bN = (bN + 1) & 0x3FFFFFFF; sb.set(bN); };
+const untrackPairStep = () => {
+  if (bpLeft === 0) { bpLeft = AL_ITER; bpOdd ^= 1; }
+  bpLeft--;
+  untrackStepN();
+  if (bpOdd === 1) { untrackStepN(); untrackStepN(); untrackStepN(); untrackStepN(); }
+};
+// null is not zero: an attempt that did not settle, run exactly AL_STEPS steps, fire the effect
+// on every step, end in the reset state and keep >= 4 batches per parity is unmeasured, never a pass.
+function alRead(r, steps, fires, endOk) {
+  let lo = null, hi = null, nLo = 0, nHi = 0;
+  for (let b = 0; b < r.batchBytes.length; b++) {
+    const v = r.batchBytes[b];
+    if (v === null) continue;
+    if ((b & 1) === 0) { nLo++; if (lo === null || v < lo) lo = v; }
+    else { nHi++; if (hi === null || v < hi) hi = v; }
+  }
+  return { r, lo, hi, nLo, nHi, steps, fires, endOk,
+    measured: r.settled && endOk && steps === AL_STEPS && fires === AL_STEPS &&
+      nLo >= 4 && nHi >= 4 && lo !== null && hi !== null };
+}
+const alOpts = { iterations: AL_ITER, batches: AL_BATCHES, warmup: AL_WARM };
+const setAttempts = [];
+let setPass = null;
+for (let a = 0; a < AL_K && setPass === null; a++) {
+  apLeft = 0; apOdd = 1;
+  const n0 = aN, f0 = aRuns;
+  const r = measureAllocs(setPairStep, alOpts);
+  const at = alRead(r, (aN - n0) & 0x3FFFFFFF, aRuns - f0, apLeft === 0 && apOdd === 1);
+  setAttempts.push(at);
+  if (at.measured && at.hi <= at.lo) setPass = at;
+}
+const unAttempts = [];
+let unPass = null;
+for (let a = 0; a < AL_K && unPass === null; a++) {
+  bpLeft = 0; bpOdd = 1;
+  const n0 = bN, f0 = sinkB;   // sinkB counts untrackedBody runs (one per fired effect)
+  const r = measureAllocs(untrackPairStep, alOpts);
+  const at = alRead(r, (bN - n0) & 0x3FFFFFFF, sinkB - f0, bpLeft === 0 && bpOdd === 1);
+  unAttempts.push(at);
+  if (at.measured && at.hi <= at.lo) unPass = at;
+}
+// Label: per lane the passing attempt, else the last one; a pass has Dhi <= Dlo, so it reads 0.
+const setShown = setPass !== null ? setPass : setAttempts[setAttempts.length - 1];
+const unShown = unPass !== null ? unPass : unAttempts[unAttempts.length - 1];
+const allocMeasured = setShown.measured && unShown.measured;
 const bpcLabel = allocMeasured
-  ? String(Math.max(allocSet.bytesPerCall, allocUn.bytesPerCall, 0))
+  ? String(Math.max(0, (setShown.hi - setShown.lo) / (AL_ITER * 4), (unShown.hi - unShown.lo) / (AL_ITER * 4)))
   : 'unmeasured';
-const allocSetReport = checkAllocs(allocSet, { maxBytesPerCall: 0 });
-const allocUnReport = checkAllocs(allocUn, { maxBytesPerCall: 0 });
-const allocOk = allocMeasured &&
-  allocSetReport.verdict === 'pass' && allocUnReport.verdict === 'pass';
+const alKLabel = (setShown.lo === null ? 'unmeasured' : String(setShown.lo)) + ',' +
+  (unShown.lo === null ? 'unmeasured' : String(unShown.lo));
+const allocOk = setPass !== null && unPass !== null;
 
 stopA();
 stopB();
@@ -705,7 +783,7 @@ console.log(
   ' warnings=' + warns.length +
   ' | gc major=' + s.gc.major + ' minor=' + s.gc.minor +
   ' maxMs=' + s.gc.maxMs.toFixed(2) +
-  ' | alloc=' + bpcLabel + ' B/op' +
+  ' | alloc=' + bpcLabel + ' B/op k=' + alKLabel + 'B/batch K=' + setAttempts.length + ',' + unAttempts.length +
   ' | nest gc major=' + ns.gc.major + ' minor=' + ns.gc.minor + ' alloc=' + nestLabel + ' B/op' +
   ' watch=' + watchLabel + ' B/op control=' + ctlLabel + ' B/op retention=' + nestAlive + '/' + nestRefs.length +
   ' free=' + nDrained + '/' + nD + 'n,' + (lMeasured ? lDrained + '/' + lD + 'l' : 'unmeasured') + ' res=' + nestResKB.toFixed(1) + 'KB(adv)' +
@@ -760,8 +838,13 @@ if (!ok) {
   }
   if (!f21Ok) console.error('  f21 retention: size=' + f21Live + ' fail=' + f21Fail + '/' + F21_CYCLES);
   for (const v of gcReport.violations) console.error('  gc violation ' + v.metric + ' limit=' + v.limit + ' actual=' + v.actual);
-  if (allocSetReport.verdict !== 'pass') console.error('  set alloc ' + allocSetReport.verdict + ' bytesPerCall=' + allocSet.bytesPerCall);
-  if (allocUnReport.verdict !== 'pass') console.error('  untrack alloc ' + allocUnReport.verdict + ' bytesPerCall=' + allocUn.bytesPerCall);
+  const alShow = (at) => 'Dlo=' + at.lo + ' Dhi=' + at.hi + ' (pass iff Dhi <= Dlo) batches ' +
+    at.r.batchBytes.map((v, b) => ((b & 1) === 0 ? 'e' : 'o') + v).join(',') +
+    ' measured=' + at.r.measuredBatches + ' inverted=' + at.r.invertedBatches + ' settled=' + at.r.settled +
+    ' perParity=' + at.nLo + '/' + at.nHi + ' steps=' + at.steps + '/' + AL_STEPS + ' fires=' + at.fires +
+    ' endState=' + at.endOk;
+  if (setPass === null) for (let a = 0; a < setAttempts.length; a++) console.error('  set alloc fail attempt ' + a + ': ' + alShow(setAttempts[a]));
+  if (unPass === null) for (let a = 0; a < unAttempts.length; a++) console.error('  untrack alloc fail attempt ' + a + ': ' + alShow(unAttempts[a]));
   for (const f of findings) console.error('  finding ' + f.kind + ':' + f.reason);
   for (const l of leaks) console.error('  leak ' + l);
   process.exitCode = 1;

@@ -315,17 +315,31 @@ NEST sampled count is derived (161) and gated, an unmeasured link drain prints `
 what the census can and cannot see. Note: removing the unobserve's delete (M-OFF) is no longer visible to the
 torture NEST lane; `test/13` and `test/62` catch it.
 
+### Changed -- torture phase 2b alloc lanes -> retention slope; test/64 alloc mutants; test/68 (dev-only, not shipped)
+
+`test/torture.mjs` phase 2b (set, untrack): the min-over-batches 0 B/op floor read the instrument's per-batch
+constant k (16 B per 2e4-call batch, 0.0008 B/op) as per-op bytes and failed test/64's live lane under load
+(b64, b71); `--no-concurrent-osr` reproduces it 6/6. Both lanes now use phase QS's interleaved one-call
+retention slope (1 vs 5 steps per call, k cancels, up to 3 attempts, all fail-closed), which catches a retainer
+down to 1 per 1e5 steps (the old floor: 1 per 2e4). b72 adds `aset` / `aun` to test/64: one `{ n }` retained per
+1000 calls in `read.set` / `untrack` must turn the phase-2b retention-slope lane red (`| alloc=` > 0 and a
+`set|untrack alloc fail attempt` line). New `test/68-soak-taint-boundary.test.mjs`: boundary rows for the soak
+taint-skip gate (the inclusive 0.35 edge, totals past 2^31 / 2^32 / 2^53, fail-closed inputs). `npm test`:
+test/64 5 -> 7, test/68 new: 5 pass + 2 todo.
+
 ### Added -- test-gap gates: torture must-fail control, hot-body source pins, LEDGER #40 boundary probes (dev-only, not shipped)
 
-`test/64-torture-mustfail.test.mjs` (5 tests) runs `test/torture.mjs` under `--expose-gc` on the working-tree
-engine and on three mutant engines built in a temp dir. The live run must end `| ok` with full drains
+`test/64-torture-mustfail.test.mjs` (7 tests) runs `test/torture.mjs` under `--expose-gc` on the working-tree
+engine and on five mutant engines built in a temp dir. The live run must end `| ok` with full drains
 (1021/1021 nodes, 4095/4095 links) and retention 0/966. Each mutant must exit 1 with a `| FAIL` GATE line AND
 its own breach (observed): every 1000th disposal skipping the node free list -> `free=811/1021n`; skipping the
 link free list -> `4032/4095l`; disposal keeping `node.value` -> `retention=1/966`. A crashed child (no GATE
 line) fails the test, and a mutant whose anchor text is not found exactly once fails it (re-anchor). The
 unobserve-leaves-its-entry mutant of the NEST lane entry above is not in the set: since LEDGER #40 disposal
 drops the entry and torture cannot see it by design. Runs inside `npm test` (count verdicts; the torture's
-only timing term is its 4 ms cap on a GC pause inside a window).
+only timing term is its 4 ms cap on a GC pause inside a window). b72 adds `aset` / `aun`: one `{ n }` retained
+per 1000 calls in `read.set` / `untrack` must turn the phase-2b retention-slope lane red (`| alloc=` > 0 and a
+`set|untrack alloc fail attempt` line).
 
 `test/65-hot-body-pins.test.mjs` (14 tests) pins the sha256 (first 16 hex) and UTF-8 byte length of the source
 text of the 7 hot functions (`flushEffects`, `executeEffect`, `createNode`, `nodeMiss`, `disposeNode`,
@@ -415,7 +429,10 @@ it gen-safely -- the observer is put back only if it survived the window
 own observer inside `untrack` never re-seats a recycled slot. Equivalent to the measured
 `futureVersions/K1-candidate-30.diff` (0 per-test conformance diffs, cold-process bench
 2-10% faster). New standing witness `test/torture.mjs` (`npm run test:torture`) gates the
-two hot paths at 0 B/op with maxMajor 0, the create/dispose cycle back to baseline, and the
+two hot paths with maxMajor 0 and a 0 B/op retention slope (b72: the phase-6 QS estimator -- one
+measureAllocs call per attempt, 2e4-call pseudo-batches alternating 1 and 5 steps per call, up to 3 attempts;
+it replaced min-over-batches, which read a 16 B per-batch constant as 0.0008 B/op),
+the create/dispose cycle back to baseline, and the
 effect-self-disposes-inside-untrack case; `@zakkster/lite-leak` joins as a devDependency
 (runtime `dependencies` stay empty). Boundary suite `test/34-observer-fold.test.mjs` (24
 cases: the `isTracking()` truth table, untrack depth 0..64, throwing untrack, self-dispose

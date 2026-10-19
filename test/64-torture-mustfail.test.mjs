@@ -8,6 +8,10 @@
 //   slow  -- every 1000th disposal the node is not pushed to the free list -> `free=` nodes short (b61: 811/1021n).
 //   lslow -- every 1000th disposal the sub link is not pushed to the free list -> links short (b61: 4032/4095l).
 //   val   -- disposal stops clearing node.value -> `retention=` alive >= 1 (b61: 1/966).
+//   aset  -- read.set retains one { n } per 1000 calls -> GATE `| alloc=` > 0 + a `set alloc fail attempt` line
+//            (b72: the phase-2b retention-slope lane's must-fail; 0.032 B/op, Dlo=640 Dhi=3200).
+//   aun   -- untrack retains one { n } per 1000 calls -> `| alloc=` > 0 + an `untrack alloc fail attempt` line.
+//            The alloc lanes catch down to 1 retained object per 1e5 steps (b72 teeth: N=100000 red, 200000 green).
 // Each mutant must exit 1 AND print a GATE line ending `| FAIL` AND show its own signature (a crash also exits 1,
 // so the exit code alone proves nothing). A child that prints no GATE line fails every lane (fail closed).
 // A mutant whose anchor text does not occur EXACTLY once in the engine fails the test: re-anchor it, never skip it.
@@ -32,7 +36,10 @@ const WATCH = existsSync(join(dirname(KPATH), 'Watch.js')) ? join(dirname(KPATH)
 const CHILD_TIMEOUT_MS = 60000;
 const sha8 = (p) => createHash('sha256').update(readFileSync(p)).digest('hex').slice(0, 8);
 
-// [anchor, replacement] -- verbatim from the b61 qa recipe.
+// The alloc mutants' retainer: a module-free counter on globalThis, one { n } kept per 1000 calls.
+const LEAK = 'globalThis.__t64N = (globalThis.__t64N | 0) + 1; if (globalThis.__t64N % 1000 === 0) ' +
+    '(globalThis.__t64 || (globalThis.__t64 = [])).push({ n: globalThis.__t64N });\n';
+// [anchor, replacement] -- slow / lslow / val verbatim from the b61 qa recipe.
 const MUTANTS = {
     slow: ['            pinnedHead = node;\n        } else {\n            node.nextFree = freeNodeHead;',
         '            pinnedHead = node;\n        } else if ((statTotalDisposals % 1000) !== 999) {\n' +
@@ -42,6 +49,13 @@ const MUTANTS = {
             '            freeLinkHead = sLink; }\n'],
     val: ['        node.schedulerThunk = undefined;  // drop closure; recycle rebuilds it\n        node.value = undefined;\n',
         '        node.schedulerThunk = undefined;  // drop closure; recycle rebuilds it\n'],
+    // b72: one retained object per 1000 calls (recipe: .handoff/b72-evidence/t64/teeth.mjs).
+    aset: ['            markDownstream(node);\n            if (batchDepth === 0) flushEffects();\n        };\n        read.update = sharedUpdate;',
+        '            ' + LEAK + '            markDownstream(node);\n            if (batchDepth === 0) flushEffects();\n' +
+            '        };\n        read.update = sharedUpdate;'],
+    aun: ['    function untrack(fn) {\n        const po = currentObserver, pg = po !== null ? po.gen : 0;\n        currentObserver = null;\n',
+        '    function untrack(fn) {\n        const po = currentObserver, pg = po !== null ? po.gen : 0;\n        currentObserver = null;\n' +
+            '        ' + LEAK],
 };
 
 test('kernel under test', (t) => {
@@ -81,11 +95,14 @@ function runLane(kind) {
     }
 }
 
-// Parse the three signature fields off the GATE line; null when a field is absent (caller fails closed).
+// Parse the signature fields off the GATE line; null when a field is absent (caller fails closed).
+// alloc = the phase-2b field (the first `| alloc=`); 'unmeasured' parses as NaN (never 0, never > 0).
 function sig(gate) {
+    const al = /\| alloc=([0-9.e+-]+|unmeasured) B\/op/.exec(gate);
     const ret = /\bretention=(\d+)\/(\d+)\b/.exec(gate);
     const fr = /\bfree=(\d+)\/(\d+)n,(?:(\d+)\/(\d+)l|unmeasured)/.exec(gate);
     return {
+        alloc: al ? (al[1] === 'unmeasured' ? NaN : +al[1]) : null,
         alive: ret ? +ret[1] : null, refs: ret ? +ret[2] : null,
         nDrained: fr ? +fr[1] : null, nTotal: fr ? +fr[2] : null,
         lDrained: fr && fr[3] !== undefined ? +fr[3] : null, lTotal: fr && fr[4] !== undefined ? +fr[4] : null,
@@ -120,6 +137,7 @@ describe('torture must-fail control', () => {
         assert.ok(s.alive !== null && s.nDrained !== null && s.lDrained !== null,
             'live GATE line lacks retention= / free=...n,...l fields (parser out of date?) -- ' + r.gate);
         assert.equal(s.alive, 0, 'live retention alive');
+        assert.equal(s.alloc, 0, 'live phase-2b alloc must read 0 B/op -- ' + r.gate);
         assert.ok(s.refs > 0 && s.nTotal > 0 && s.lTotal > 0, 'live totals must be positive -- ' + r.gate);
         assert.equal(s.nDrained, s.nTotal, 'live node drain must be full');
         assert.equal(s.lDrained, s.lTotal, 'live link drain must be full');
@@ -161,5 +179,23 @@ describe('torture must-fail control', () => {
         const L = liveTotals();
         assert.equal(s.refs, L.refs, 'val retention refs must match live');
         assert.ok(s.alive >= 1, 'val signature: retention alive ' + s.alive + '/' + s.refs + ' must be >= 1');
+    });
+
+    it('aset (read.set retains one object per 1000 calls): FAIL with alloc > 0 and a set alloc fail line', (t) => {
+        const r = runLane('aset');
+        t.diagnostic('aset ' + r.gate);
+        const s = expectFail('aset', r);
+        assert.ok(s.alloc > 0, 'aset signature: alloc=' + s.alloc + ' B/op must be > 0 -- ' + r.gate);
+        assert.ok(/^ {2}set alloc fail attempt \d+: /m.test(r.stderr),
+            'aset signature: no `set alloc fail attempt` line -- ' + describeRun('aset', r));
+    });
+
+    it('aun (untrack retains one object per 1000 calls): FAIL with alloc > 0 and an untrack alloc fail line', (t) => {
+        const r = runLane('aun');
+        t.diagnostic('aun ' + r.gate);
+        const s = expectFail('aun', r);
+        assert.ok(s.alloc > 0, 'aun signature: alloc=' + s.alloc + ' B/op must be > 0 -- ' + r.gate);
+        assert.ok(/^ {2}untrack alloc fail attempt \d+: /m.test(r.stderr),
+            'aun signature: no `untrack alloc fail attempt` line -- ' + describeRun('aun', r));
     });
 });
