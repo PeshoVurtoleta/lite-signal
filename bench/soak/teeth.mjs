@@ -29,6 +29,9 @@
  *     not ids of their own. gate:wrap's teeth are L-REV-AUDIT-W5 (W5) and L-WRAP-TREE (W1-W4); its causes
  *     cause:wrap-crossing / cause:wrap-unmeasured are held by test/48's quoted rows. The fix-minus-one controls
  *     T-A3b/T-A3c/T-A4/T-A7a/T-A7b stay GAPS.
+ *   - SOAK_NEARWRAP (nearwrap.mjs, zero:k / sign:k): a kernel knob (it presets the census counters near a
+ *     ceiling), not a judged id. Its end-to-end tooth is L-NW-hp-zero, a second lane:GRAPH control (headpatched at
+ *     zero:8 breaches GRAPH through F29).
  *   - MUSTFAIL_MODES (config.mjs:106, cov-off): teeth knobs, the mechanism of the T-cov-* / P-NEST-TRIGGERLESS
  *     controls rather than a judged id; the parser is held by T-cfg-mustfail-unknown.
  *
@@ -70,7 +73,8 @@ const TEST67 = 'test/67-soak-taint.test.mjs';
 
 /** id -> the must-fail controls (by NAME; _mustfail.mjs CONTROLS owns them) that turn it red. */
 export const CHECKS = deepFreeze({
-    'lane:GRAPH': ['T-sever'],
+    // A-B3b (burst 84): L-NW-hp-zero heads `oracle=O1 lane=GRAPH` (headpatched + SOAK_NEARWRAP=zero:8: F29, gV hits 0)
+    'lane:GRAPH': ['T-sever', 'L-NW-hp-zero'],
     'lane:BATCH': ['L-REV-152'],
     'lane:ERROR': ['L-REV-152'],
     'lane:NEST': ['L-REV-AUDIT', 'L-REV-152'],
@@ -140,7 +144,8 @@ export const TEST_ANCHORS = deepFreeze({
 const SPEC = 'audit/2026-10-07/verification/SPEC-B.md';
 const S1CD = 'audit/2026-10-07/verification/SPEC-B-S1cd-batches.md';
 const F21 = 'bench/soak/calibration/f21-census.json';
-const fixMinusOne = (row, until) => ({ why: 'fix-minus-one control; the engine fix has not landed, so there is no anchor to revert (' + SPEC + ':' + row + ')', until, covers: [] });
+const fixMinusOne = (row, until, more) => ({ why: 'fix-minus-one control; the engine fix has not landed, so there is no anchor to revert (' + SPEC + ':' + row + ')' + (more === undefined ? '' : '; ' + more), until, covers: [] });
+const NEARWRAP_WHY = 'SOAK_NEARWRAP presets the counter near its ceiling, so the revert runs end to end once the fix lands';
 
 /** Controls the SPEC asks for that do not exist yet. covers = the universe ids whose ONLY teeth this would be. */
 export const GAPS = deepFreeze({
@@ -149,14 +154,14 @@ export const GAPS = deepFreeze({
     'T-A1': fixMinusOne(467, 'A1'),
     'T-A2': fixMinusOne(468, 'A2'),
     'T-A3a': fixMinusOne(469, 'A3'),
-    'T-A3b': fixMinusOne(470, 'A3 + S2 wrap.mjs'),
+    'T-A3b': fixMinusOne(470, 'A3 + S2 wrap.mjs', NEARWRAP_WHY),
     'T-A3c': fixMinusOne(471, 'A3 + S2 wrap.mjs'),
     'T-A4': fixMinusOne(472, 'A4 + S2 wrap.mjs'),
     'T-A5a': fixMinusOne(473, 'A5 + S3 LIFECYCLE lane'),
     'T-A5b': fixMinusOne(474, 'A5 + S3 HOOK lane'),
     'T-A6': fixMinusOne(475, 'A6 + S3 REGISTRY lane'),
-    'T-A7a': fixMinusOne(476, 'A7 + S2 wrap.mjs + S3 RECYCLE lane'),
-    'T-A7b': fixMinusOne(477, 'A7 + S2 wrap.mjs'),
+    'T-A7a': fixMinusOne(476, 'A7 + S2 wrap.mjs + S3 RECYCLE lane', NEARWRAP_WHY),
+    'T-A7b': fixMinusOne(477, 'A7 + S2 wrap.mjs', NEARWRAP_WHY),
     'T-d8pc-head': { why: 'the d8-pc engine lane is placed in S2 (' + S1CD + ':7, amendment 4)', until: 'S2', covers: [] },
     'T-mark': { why: 'performance-only NOTE control; the shape[GRAPH] markDedupe counter is S2 (' + SPEC + ':478)', until: 'S2', covers: [] },
     'T-OB-lying-adapter': {
@@ -169,7 +174,7 @@ export const GAPS = deepFreeze({
     },
     'totals-e2e': {
         why: 'gates.mjs:355 totals has teeth null: its unit must-fail (PipeZeroTotals, gates.mjs:279) runs at startup, but an end-to-end red needs a run total past 2^31',
-        until: 'S2 NEARWRAP / long soak', covers: ['gate:totals'],
+        until: 'long soak (NEARWRAP presets engine counters, not run totals)', covers: ['gate:totals'],
     },
     'T-O1c-err': {
         why: 'computed-err-mismatch fired in 4 unclassified 1.5.2 ERROR worlds of 4000 (' + F21 + ':32, seeds :37): too rare for a spec; no control pins it',

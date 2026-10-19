@@ -237,6 +237,18 @@ test('derive(): per-counter start values (sign 2^31-k; zero int32 -k / float64 2
     assert.notEqual(derive(SRC, { phase: 'sign', k: 8 }).derivedSha256, derive(SRC, { phase: 'zero', k: 8 }).derivedSha256, 'phase is part of the derivation');
 });
 
+// Literal counter-name pins (independent oracle, not derived from nearwrap.mjs): catches a dropped float64 entry
+// the int32 census guard cannot see. Order = REWRITES order (evalCount sits 4th, only on headpatched).
+const TREE_COUNTERS = ['globalVersion', 'batchEpoch', 'nodeSeq', 'statTotalAllocations', 'statTotalDisposals', 'gen'];
+const HP_COUNTERS = ['globalVersion', 'batchEpoch', 'nodeSeq', 'evalCount', 'statTotalAllocations', 'statTotalDisposals', 'gen'];
+
+test('derive(): rewrites[].counter are pinned literally (tree 6, headpatched 7 incl. evalCount), both phases', () => {
+    for (const phase of ['sign', 'zero']) {
+        assert.deepStrictEqual(derive(SRC, { phase, k: 8 }).rewrites.map((r) => r.counter), TREE_COUNTERS, 'tree/' + phase);
+        assert.deepStrictEqual(derive(HP_SRC, { phase, k: 8 }).rewrites.map((r) => r.counter), HP_COUNTERS, 'headpatched/' + phase);
+    }
+});
+
 test('derive(): an anchor removed or duplicated throws SoakConfigError on BOTH kernels (control: intact src does not)', () => {
     for (const [name, src] of KERNELS) {
         assert.doesNotThrow(() => derive(src, { phase: 'sign', k: 8 }), name + ' intact');

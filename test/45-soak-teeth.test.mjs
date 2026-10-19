@@ -597,3 +597,29 @@ test('teeth m: L-T-rss starts late -- no retention inside the band window, reten
     // b82 measured: 512 KB MISSed (late 0.96 x the limit), 1.5 MB tripped gate=rss at 1.83 x: no smaller size is proven
     assert.ok(Number(buf[1]) >= 1572864, 'a per-registry buffer of >= 1.5 MB (the measured size): ' + buf[1]);
 });
+
+test('teeth n: L-NW-hp-zero is pinned: headpatched unpatched + SOAK_NEARWRAP=zero:8, GRAPH x 11 at 20000 ops, long; lane:GRAPH pair', () => {
+    const c = CONTROLS.find((x) => x.name === 'L-NW-hp-zero');
+    assert.ok(c, 'the NEARWRAP control exists');
+    assert.ok(LONG_RE.test(c.name) && !SHORT_RE.test(c.name), 'long battery');
+    // the spec is not keyed on known= / sig= (a DIV-F29 entry must not move it); every boundary drained, run to its end
+    assert.deepEqual([c.run, c.base, c.env, c.argv, c.patches, c.arm, c.expect.exit, c.expect.kind, c.expect.specs,
+        c.expect.lines, c.expect.extra],
+        ['main', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: '20000', SOAK_NEARWRAP: 'zero:8' },
+            [], [], null, 1, 'match', ['oracle=O1 lane=GRAPH'], [], { boundaries: MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'FAIL' }]);
+    assert.deepEqual(validSpec(c), []);
+    assert.deepEqual(CHECKS['lane:GRAPH'], ['T-sever', 'L-NW-hp-zero']);
+    // its pairing is lane:GRAPH's: a NEARWRAP control whose spec names another lane does not back lane:GRAPH
+    const ctl = copy(CONTROLS);
+    ctl.find((x) => x.name === 'L-NW-hp-zero').expect.specs = ['oracle=O1 lane=BATCH'];
+    assert.deepEqual(pairing(CHECKS, ctl), ['lane:GRAPH: L-NW-hp-zero -- no BREACH spec naming lane=GRAPH']);
+    // the fix-minus-one GAPS that NEARWRAP will run end to end say so (and only those); totals-e2e no longer waits
+    // on it
+    const NW = '; SOAK_NEARWRAP presets the counter near its ceiling, so the revert runs end to end once the fix lands';
+    for (const g of ['T-A3b', 'T-A7a', 'T-A7b']) assert.ok(GAPS[g].why.endsWith(NW), g + ': ' + GAPS[g].why);
+    const NW_GAPS = ['T-A3b', 'T-A7a', 'T-A7b'];
+    for (const g of Object.keys(GAPS).filter((k) => !NW_GAPS.includes(k))) {
+        assert.equal(GAPS[g].why.indexOf('SOAK_NEARWRAP'), -1, g + ': ' + GAPS[g].why);
+    }
+    assert.equal(GAPS['totals-e2e'].until, 'long soak (NEARWRAP presets engine counters, not run totals)');
+});

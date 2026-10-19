@@ -25,8 +25,8 @@
  *   - no `soak: CRASH` line anywhere;
  *   - the END sentinel is the last stdout line, its exit equals the child's, its records equal the stream's;
  *   - SoakReport re-derives the stream to `soak:report: verdict <V> (consistent)` with V = the END verdict
- *     (exit 0, or exit 1 with a `NOT A RELEASE SOAK` refusal: a scratch kernel, smoke or SOAK_MUSTFAIL run is
- *     consistent but never release evidence).
+ *     (exit 0, or exit 1 with a `NOT A RELEASE SOAK` refusal: a scratch kernel, smoke or SOAK_MUSTFAIL run, or a
+ *     NEARWRAP run, is consistent but never release evidence).
  * A wrap control (run 'wrap', S2) drives the REAL bench/soak/wrap.mjs instead, with wrap.mjs's own flag trio
  * (--expose-gc --min-semi-space-size=4 --max-semi-space-size=4, never GC_FLAGS) and SOAK_WRAP as its only env
  * key. It passes on the same exit / spec / line / CRASH / END checks, and wrapJudge replaces the SoakReport step
@@ -436,6 +436,22 @@ export const CONTROLS = deepFreeze([
         lines: ['soak: INCONCLUSIVE -- run interrupted before its end', 'soak: NOTE -- SIGTERM received; closing the current lane-cycle, then the summary', ARMED],
         extra: { reason: 'signal', verdict: 'INCONCLUSIVE' },
     }, { arm: armAt2('process.kill(process.pid, "SIGTERM");') }),
+    // L-NW-hp-zero (A-B3b, burst 84; SPEC-S2-groupA DELTA 2 (a)): the NEARWRAP tooth, end to end. headpatched +
+    // SOAK_NEARWRAP=zero:8 (nearwrap.mjs derive() presets the census counters 8 steps below their zero crossing),
+    // GRAPH x CYC at SOAK_OPS 20000 (maintainer ruling, b84). headpatched bumps globalVersion without a 0-skip (its
+    // Signal.js :1328 / :1435), so the 8th write sets gV = 0 and the GRAPH oracles fire: 4 known=none heads, O1
+    // computed-mismatch, O1 effect-stale, O2 glitch, O4 effect-dead (b83 D-B8 rerun, .handoff/b83-evidence/db8, 7 s;
+    // b84 0b(i) 2/2 runs). The same kernel with the F29 0-skip at both sites
+    // (`globalVersion = ((globalVersion + 1) | 0) || 1;`) ran 0 GRAPH BREACH, exit 0, 2/2 (b84 0b(i),
+    // .handoff/b84-evidence/B1/0b): the heads are F29. So this control kills "the kernel ignores SOAK_NEARWRAP" and
+    // "derive() skips the gV rewrite" (gV never reaches 0: no BREACH, exit 0). The spec is not keyed on known= / sig=,
+    // so a DIV-F29 registry entry leaves it green. SoakReport refuses the stream (`NOT A RELEASE SOAK -- nearwrap:
+    // zero:8`, exit 1, verdict consistent: judgeMain accepts any one NOT A RELEASE SOAK line; test/46:356 pins the
+    // nearwrap reason); extra.boundaries holds every cycle boundary at trackerSize 0 / weakAlive 0. ~7 s.
+    M('L-NW-hp-zero', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: '20000', SOAK_NEARWRAP: 'zero:8' }, [], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O1 lane=GRAPH'],
+        extra: { boundaries: MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'FAIL' },
+    }),
     // L-REV-AUDIT-W5 (S2, SPEC-S2-groupA DELTA 2 (c), MD4): headpatched W5 must breach evalCount past 2^31 (F16:
     // burst 25 full size, `soak: BREACH gate=wrap check=W5 counter=evalCount bop=32.00 detail=class=set->computed->effect
     // pre=0.00 (post and post-pre >= 8)`). W5 exits 1 on every kernel (W5[gen] / W5[nodeSeq] create+dispose), so the
