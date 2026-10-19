@@ -48,7 +48,8 @@ test('LaneGates totals cross 2^31 and 2^32 on the way and still judge the exact 
             checks.O1c = 13 * base - (c === 10 ? extra : 0);
             skipTainted.O1c = 7 * base + (c === 10 ? extra : 0);
             L.push({ lane: 'GRAPH', cycle: c, worlds: 1, ops: 1, failingWorlds: 0, failureCounts: {}, checks, skipTainted,
-                scenarios: {}, memory: { residentMB: 10 }, boundary: { trackerSize: 0, weakAlive: 0 } });
+                scenarios: {}, memory: { residentMB: 10 }, rss: { samples: 1, p95MB: 10, maxMB: 10, stride: 1 },
+                boundary: { trackerSize: 0, weakAlive: 0 } });
         }
         return L.compute({ smoke: false }).gates['taint-skip'];
     };

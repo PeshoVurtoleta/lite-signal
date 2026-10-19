@@ -30,7 +30,9 @@
 import {
     GATE_N, WARMUP_CYCLES, HEAP_RATIO, HEAP_SLACK_MB, RETAIN_MAX, RETAIN_BAD_BOUNDARIES,
     SCEN_MIN, SCEN_MIN_SMOKE, CHECK_FLOOR, CHECK_FLOOR_SMOKE, TAINT_SKIP_MAX, VERDICT, EXIT_CODE,
+    RSS_RATIO, RSS_SLACK_MB, RSS_BUF,
 } from './config.mjs';
+import { p95, bandMedian } from './rss.mjs';
 import { CHECK_NAMES, SKIP_NAMES } from './exec.mjs';
 import { WRAP_GATE } from './wraprules.mjs';
 
@@ -195,6 +197,25 @@ export function heapRule(input) {
     };
 }
 
+/**
+ * rss (kind fail; LP section 7, B-B3): late p95 rss <= band median x RSS_RATIO + RSS_SLACK_MB, over the per-cycle
+ * rss.p95MB values of the lane's post-warm-up cycles. bandMB = the median of the first min(GATE_N, post) of them,
+ * lateMB = the p95 of the last k = min(max(1, floor(post / 4)), RSS_BUF) (D-B6; LaneGates.compute picks both).
+ * Active only at post >= 2N, like heap; below that a smoke run is SMOKE and any other run INCONCLUSIVE
+ * ('post-cycles'). `!(lateMB <= limit)` makes a NaN band or late a FAIL, never a PASS.
+ */
+export function rssRule(input) {
+    const need = 2 * GATE_N;
+    if (input.smoke === true) return { verdict: S, need, post: input.post };
+    if (!(input.post >= need)) return { verdict: I, cause: 'post-cycles', need, post: input.post };
+    const limit = input.bandMB * RSS_RATIO + RSS_SLACK_MB;
+    const red = !(input.lateMB <= limit);
+    return {
+        verdict: red ? F : P, band: r3(input.bandMB), late: r3(input.lateMB), limit: r3(limit), post: input.post,
+        detail: red ? 'late=' + r3(input.lateMB) + 'MB > limit=' + r3(limit) + 'MB (band=' + r3(input.bandMB) + 'MB x ' + RSS_RATIO + ' + ' + RSS_SLACK_MB + ')' : '',
+    };
+}
+
 /** One boundary's retention state: 'ok', 'bad' (something outlived its world) or 'unmeasured'. */
 export function boundaryState(b) {
     if (b === null || typeof b !== 'object') return 'unmeasured';
@@ -313,6 +334,7 @@ function deepFreeze(o) {
 }
 
 const HEAP_LIMIT_AT_10 = 10 * HEAP_RATIO + HEAP_SLACK_MB;
+const RSS_LIMIT_AT_100 = 100 * RSS_RATIO + RSS_SLACK_MB;
 const TAINT_K = Math.floor(TAINT_SKIP_MAX * 1000);
 
 export const GATES = Object.freeze([
@@ -333,6 +355,16 @@ export const GATES = Object.freeze([
             { input: { smoke: false, post: 2 * GATE_N, earlyMedian: 10, lateMedian: HEAP_LIMIT_AT_10 + 0.1 }, expect: F, why: 'late above early x ratio + slack' },
             { input: { smoke: false, post: 2 * GATE_N, earlyMedian: 10, lateMedian: NaN }, expect: F, why: 'a NaN median fails closed' },
             { input: { smoke: false, post: 2 * GATE_N - 1, earlyMedian: 10, lateMedian: 10 }, expect: I, why: 'below the 2N active floor' },
+        ]),
+    }),
+    Object.freeze({
+        id: 'rss', kind: 'fail', check: rssRule, teeth: 'L-T-rss',
+        pass: deepFreeze([{ smoke: false, post: 2 * GATE_N, bandMB: 100, lateMB: RSS_LIMIT_AT_100 - 0.1 }]),
+        mustFail: deepFreeze([
+            { input: { smoke: false, post: 2 * GATE_N, bandMB: 100, lateMB: RSS_LIMIT_AT_100 + 0.1 }, expect: F, why: 'late p95 above band x ratio + slack' },
+            { input: { smoke: false, post: 2 * GATE_N, bandMB: 100, lateMB: NaN }, expect: F, why: 'a NaN late p95 fails closed' },
+            { input: { smoke: false, post: 2 * GATE_N, bandMB: NaN, lateMB: 100 }, expect: F, why: 'a NaN band median fails closed' },
+            { input: { smoke: false, post: 2 * GATE_N - 1, bandMB: 100, lateMB: 100 }, expect: I, why: 'below the 2N active floor' },
         ]),
     }),
     Object.freeze({
@@ -441,13 +473,26 @@ function countMap(obj, keys, where, also = keys) {
 }
 
 /**
+ * The rssRule input of one lane (B-B3, D-B6): bandMB = median of the first min(GATE_N, post) post-warm-up
+ * rss.p95MB values, lateMB = p95 of the last k = min(max(1, floor(post / 4)), RSS_BUF) of them (the ring keeps
+ * the last RSS_BUF). An empty window is NaN (rss.mjs), which the rule fails closed. Cold: one copy per compute.
+ */
+function rssWindows(smoke, post, el) {
+    const k = Math.min(Math.max(1, Math.floor(post / 4)), RSS_BUF, el.lateCount);
+    const late = new Float64Array(k);
+    for (let j = 0; j < k; j++) late[j] = el.lateRing[(el.total - k + j) % el.n];
+    return { smoke, post, bandMB: bandMedian(el.early.subarray(0, Math.min(GATE_N, el.earlyCount))), lateMB: p95(late) };
+}
+
+/**
  * Streaming per-lane gate state. main.mjs pushes each cycle record of the lane in cycle order (0, 1, 2 ...)
  * and keeps no record array. A record must carry (SPEC-B section 7 cycle record, S1b counter shape):
  *   lane, cycle, worlds, ops, failingWorlds, failureCounts {"<family>:<sig>": n},
  *   checks {every exec CHECK_NAMES oracle: performed n}, skipTainted {every exec SKIP_NAMES oracle: n},
- *   scenarios {name: n}, memory.residentMB (after the drain), boundary {trackerSize, weakAlive}
+ *   scenarios {name: n}, memory.residentMB (after the drain), rss.p95MB (the p95 of the lane-cycle's world-end
+ *   RSS samples, B-B3), boundary {trackerSize, weakAlive}
  * A malformed record throws GateInputError (fail closed). Warm-up cycles (cycle < WARMUP_CYCLES) count
- * toward every total and do not feed the heap drift. Every cycle, warm-up included, must carry a measured
+ * toward every total and do not feed the heap or rss drift (their memory / rss are not read). Every cycle, warm-up included, must carry a measured
  * boundary: an unmeasured one FAILs retention; only a BAD warm-up boundary is ignored.
  * A push is all-or-nothing: the record is read once and checked whole (fields, count maps, boundary, every Totals
  * refusal) before anything folds, so a throw anywhere in push -- a malformed field, a total leaving 2^53, a record
@@ -471,6 +516,7 @@ export class LaneGates {
         this.cycles = 0;
         this.post = 0;
         this.heap = new EarlyLate(GATE_N);
+        this.rss = new EarlyLate(RSS_BUF);   // 2 x RSS_BUF doubles = 4 KB per lane: band = first GATE_N, late window <= RSS_BUF
         this.bad = 0;
         this.unmeasured = 0;
         this.totals = new Totals(['worlds', 'ops', 'failingWorlds']);
@@ -505,11 +551,14 @@ export class LaneGates {
         const skips = countMap(rec.skipTainted, SKIP_NAMES, where + '.skipTainted');
         const scen = countMap(rec.scenarios, [], where + '.scenarios', this.required);
         const warm = this.cycles < WARMUP_CYCLES;
-        let resident = NaN;
+        let resident = NaN, rssP95 = NaN;
         if (!warm) {
             const mem = rec.memory;
             resident = mem && mem.residentMB;
             if (!(typeof resident === 'number' && Number.isFinite(resident) && resident >= 0)) bad(where + ': memory.residentMB must be a finite MB value');
+            const rs = rec.rss;   // read once, like memory
+            rssP95 = rs !== null && typeof rs === 'object' ? rs.p95MB : undefined;
+            if (!(typeof rssP95 === 'number' && Number.isFinite(rssP95) && rssP95 >= 0)) bad(where + ': rss.p95MB must be a finite MB value');
         }
         const st = boundaryState(rec.boundary);
         // the record is never read below this line; every refusal a fold can meet runs first, in fold order
@@ -536,6 +585,7 @@ export class LaneGates {
         if (!warm) {
             this.post++;
             this.heap.push(resident);
+            this.rss.push(rssP95);
             if (st === 'bad') this.bad++;
         }
     }
@@ -549,6 +599,7 @@ export class LaneGates {
         const gates = {
             'oracle': oracleRule({ failingWorlds: this.totals.get('failingWorlds'), failureCounts }),
             'heap': heapRule({ smoke, post: this.post, earlyMedian: this.heap.earlyMedian(), lateMedian: this.heap.lateMedian() }),
+            'rss': rssRule(rssWindows(smoke, this.post, this.rss)),
             'retention': retentionRule({ bad: this.bad, unmeasured: this.unmeasured }),
             'coverage': coverageRule({ smoke, required: this.required, counts: this.scen.toJSON() }),
             'check-floor': checkFloorRule({ smoke, oracles: this.oracles, performed }),
@@ -564,13 +615,13 @@ export class LaneGates {
                 if (id !== 'oracle') breaches.push({ gate: id, lane: this.lane, detail: g.detail });   // oracle failures carry their own BREACH lines
             } else if (g.verdict === I) inc = true;
         }
-        if (gates.heap.verdict === I) causes.push({ cause: 'post-cycles', lane: this.lane, post: this.post, need: gates.heap.need });
+        if (gates.heap.verdict === I || gates.rss.verdict === I) causes.push({ cause: 'post-cycles', lane: this.lane, post: this.post, need: gates.heap.need });
         for (const m of gates.coverage.missing) causes.push({ cause: 'scenario', lane: this.lane, scenario: m.scenario });
         for (const b of gates['check-floor'].below) causes.push({ cause: 'check-floor', lane: this.lane, oracle: b.oracle, performed: b.performed, floor: gates['check-floor'].floor });
         if (gates['check-floor'].empty) causes.push({ cause: 'check-floor', lane: this.lane, oracle: 'none', performed: 0, floor: gates['check-floor'].floor });
         for (const o of gates['taint-skip'].over) causes.push({ cause: 'taint-skip', lane: this.lane, oracle: o.oracle, ratio: o.ratio, max: TAINT_SKIP_MAX });
         for (const c of causes) c.line = inconclusiveLine(c.cause, c);
-        const h = gates.heap;
+        const h = gates.heap, rs = gates.rss;
         return {
             lane: this.lane,
             status: fail ? F : (inc ? I : P),
@@ -579,7 +630,8 @@ export class LaneGates {
             totals: { worlds: this.totals.get('worlds'), ops: this.totals.get('ops'), failingWorlds: this.totals.get('failingWorlds'), checks: performed, skipTainted: skipped },
             failureCounts,
             scenarioMissing: gates.coverage.missing.map((m) => m.scenario),
-            drift: { heap: { early: h.early === undefined ? null : h.early, late: h.late === undefined ? null : h.late, limit: h.limit === undefined ? null : h.limit, status: h.verdict } },
+            drift: { heap: { early: h.early === undefined ? null : h.early, late: h.late === undefined ? null : h.late, limit: h.limit === undefined ? null : h.limit, status: h.verdict },
+                rss: { band: rs.band === undefined ? null : rs.band, late: rs.late === undefined ? null : rs.late, limit: rs.limit === undefined ? null : rs.limit, status: rs.verdict } },
             retention: { badBoundaries: this.bad, unmeasured: this.unmeasured },
             gates, causes, breaches,
         };

@@ -80,6 +80,7 @@ export const CHECKS = deepFreeze({
     'lane:WIE': ['L-WIE-preb33', 'L-WIE-rev152'],
     'gate:oracle': ['L-REV-152'],
     'gate:heap': ['L-T-leak'],
+    'gate:rss': ['L-T-rss'],
     'gate:retention': ['L-T-retain'],
     'gate:coverage': T_COV.slice(),
     'gate:check-floor': ['T-floor-BATCH'],

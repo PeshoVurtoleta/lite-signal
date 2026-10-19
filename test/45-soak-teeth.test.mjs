@@ -50,8 +50,8 @@ const GAP_COVERED = [
     'sig:O6:equals-mutated', 'sig:O6:escape-empty', 'cause:no-lane', 'cause:post-cycles',
 ];
 // CHECKS holds at least this many ids (31 at burst 10; 34 at burst 27: gate:wrap, cause:wrap-crossing,
-// cause:wrap-unmeasured; 35 at burst 68: lane:WIE). A dropped id is a lost tooth; raise it when one lands.
-const CHECKS_MIN = 35;
+// cause:wrap-unmeasured; 35 at burst 68: lane:WIE; 36 at burst 81: gate:rss). A dropped id is a lost tooth; raise it when one lands.
+const CHECKS_MIN = 36;
 
 const copy = (x) => structuredClone(x);
 const live = (over) => audit(Object.assign({ controls: CONTROL_NAMES.slice(), ceiling: GAPS_CEILING.slice(), max: GAPS_MAX }, over || {}));
@@ -70,7 +70,7 @@ test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 24-n
     assert.deepEqual(live(), []);
 });
 
-test('teeth a: GAPS cover exactly the literal 11 ids; CHECKS holds >= 35 ids (a tooth never quietly becomes a gap)', () => {
+test('teeth a: GAPS cover exactly the literal 11 ids; CHECKS holds >= 36 ids (a tooth never quietly becomes a gap)', () => {
     assert.equal(GAP_COVERED.length, 11);
     assert.deepEqual(coveredBy(GAPS), GAP_COVERED.slice().sort());
     assert.ok(Object.keys(CHECKS).length >= CHECKS_MIN, 'CHECKS ids ' + Object.keys(CHECKS).length + ' < ' + CHECKS_MIN);

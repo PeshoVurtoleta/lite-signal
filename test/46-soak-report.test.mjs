@@ -618,6 +618,10 @@ const TAMPERS = [
     }, I('breaches', /matches no stored failure/)],
     // keys
     ['a deleted cycle.throughput', 'rev', (r) => { delete cyclesOf(r)[0].throughput; }, I('missing-key', /lacks "throughput"/)],
+    // rss cycle key (B-B3a): pins the SoakReport key tables (RECORD_KEYS / SUB_KEYS) for the new key
+    ['an extra key inside cycle.rss', 'rev', (r) => { cyclesOf(r)[0].rss.forged = 1; }, I('unknown-key', /carries an unknown key "forged"/)],
+    ['a deleted cycle.rss', 'rev', (r) => { delete cyclesOf(r)[0].rss; }, I('missing-key', /lacks "rss"/)],
+    ['rss.p95MB not a number on cycle 2', 'rev', (r) => { cyclesOf(r).find((c) => c.cycle === 2).rss.p95MB = 'x'; }, I('malformed', /p95MB/)],
     // release refusals
     ['R-tamper 10: non-lite PARTIAL (engine alien, NEST skipped for a missing cap)', 'hp', nonLite, R('non-lite', /engine alien, skipped lanes NEST/)],
     ['a tree run under different code (scratch sha, review repro)', 'scratch', (r) => asTree(r), R('tree-parity', /tree Signal\.js sha256 differs from bench\/soak\/parity\.json: recorded under different code/)],

@@ -10,7 +10,7 @@
  * every failure record's known/tag/failKnown comes from divergences.classify, every cycle and world seed from
  * seeds.mjs; the header `gates` block must equal this code's gatesBlock(). A field the checks read that is
  * missing or non-numeric fails CLOSED (absent is never 0, S12), and every record (plus its failure, fail,
- * boundary, memory, gc, throughput and BREACH sub-objects) must carry EXACTLY the keys main/provenance emit:
+ * boundary, memory, rss, gc, throughput and BREACH sub-objects) must carry EXACTLY the keys main/provenance emit:
  * an unknown key is `unknown-key`, a missing one `missing-key`. Header sub-objects (os, engine.caps, ...)
  * are not key-checked.
  *
@@ -79,6 +79,8 @@
  *     counted, is admitted: an unstored world could have produced it (the stream keeps FAIL_CAP per cycle).
  *   - Stale vs tampered: gates-block, registry and tree-parity cannot tell an honest stream recorded under
  *     other code from a forged one; they refuse both and say so.
+ *   - The cycle rss sub-object (B-B3): only the post-warm-up rss.p95MB is judged (the rss gate, through
+ *     LaneGates); warm-up rss and samples / maxMB / stride are key-checked but not judged.
  *
  * Imports are kernel-free (never kernel.mjs / provenance.mjs / adapters/lite.mjs). COLD module.
  */
@@ -116,7 +118,7 @@ const RECORD_KEYS = {
         'controls', 'node', 'v8', 'execArgv', 'os', 'config', 'laneRoster', 'lanes', 'scenarios', 'oraclesNA', 'genRules', 'divergences',
         'mustfail', 'seedFormula', 'worldSeedFormula', 'seedRemapCollision', 'gates', 'timerFloorNs'].concat(STAMP),
     cycle: ['lane', 'laneIndex', 'cycle', 'warmup', 'seed', 'interrupted', 'worlds', 'largeWorlds', 'ops', 'opsByClass', 'checks', 'skipTainted',
-        'failures', 'failureCounts', 'failingWorlds', 'scenarios', 'gateHits', 'throughput', 'memory', 'boundary', 'gc'].concat(STAMP),
+        'failures', 'failureCounts', 'failingWorlds', 'scenarios', 'gateHits', 'throughput', 'memory', 'rss', 'boundary', 'gc'].concat(STAMP),
     summary: ['reason', 'cyclesRun', 'lanesRun', 'totals', 'perLane', 'breaches', 'inconclusive', 'skipped', 'smoke', 'verdict', 'exitCode'].concat(STAMP),
     fatal: ['kind', 'lane', 'cycle', 'world', 'worldSeed', 'message', 'stack'].concat(STAMP),
 };
@@ -126,6 +128,7 @@ const SUB_KEYS = {
     fail: ['oracle', 'sig', 'detail'],
     boundary: ['lane', 'cycle', 'worlds', 'tracked', 'witnessed', 'trackerSize', 'weakAlive', 'forcedGcTries', 'drainMs', 'heapSampledAfterGc'],
     memory: ['heapUsedMB', 'arrayBuffersMB', 'residentMB', 'rssMB'],
+    rss: ['samples', 'p95MB', 'maxMB', 'stride'],
     gc: ['major', 'minor', 'maxPauseMs'],
     throughput: ['wallMs', 'opsPerSec'],
     breach: ['oracle', 'lane', 'sig', 'known', 'replay', 'scen', 'detail'],
@@ -145,7 +148,7 @@ function keyedObjects(recs) {
         if (!own(RECORD_KEYS, r.type)) continue;
         out.push(['seq ' + r.seq + ' ' + r.type, r, RECORD_KEYS[r.type]]);
         if (r.type === 'cycle') {
-            for (const k of ['boundary', 'memory', 'gc', 'throughput']) if (isObj(r[k])) out.push(['seq ' + r.seq + ' cycle.' + k, r[k], SUB_KEYS[k]]);
+            for (const k of ['boundary', 'memory', 'rss', 'gc', 'throughput']) if (isObj(r[k])) out.push(['seq ' + r.seq + ' cycle.' + k, r[k], SUB_KEYS[k]]);
             for (const f of Array.isArray(r.failures) ? r.failures : []) {
                 if (!isObj(f)) continue;
                 out.push(['seq ' + r.seq + ' failure world ' + f.world, f, SUB_KEYS.failure]);

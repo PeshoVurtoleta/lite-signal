@@ -53,7 +53,7 @@ test('GATES: every gate is red on each must-fail control FIRST, then green on ea
 test('GATE_NAMES is derived from GATES; REPORT_ONLY_GATES never overlaps it; INCONCLUSIVE causes format', () => {
     assert.deepEqual(G.GATE_NAMES, G.GATES.map((g) => g.id));
     assert.equal(new Set(G.GATE_NAMES).size, G.GATE_NAMES.length, 'unique ids');
-    assert.deepEqual(G.GATE_NAMES, ['oracle', 'heap', 'retention', 'coverage', 'check-floor', 'taint-skip', 'totals', 'wrap']);
+    assert.deepEqual(G.GATE_NAMES, ['oracle', 'heap', 'rss', 'retention', 'coverage', 'check-floor', 'taint-skip', 'totals', 'wrap']);
     for (const r of G.REPORT_ONLY_GATES) assert.ok(!G.GATE_NAMES.includes(r), r + ' is report-only');
     assert.equal(G.inconclusiveLine('scenario', { lane: 'BATCH', scenario: 'revert-after-mid-read' }),
         'soak: INCONCLUSIVE -- scenario lane=BATCH missing=revert-after-mid-read', 'T-cov line (SPEC-B section 9)');
@@ -88,7 +88,8 @@ function rec(lane, cycle, over = {}) {
     for (const o of SKIP_NAMES) skipTainted[o] = 0;
     return Object.assign({
         lane, cycle, worlds: 250, ops: 100000, failingWorlds: 0, failureCounts: {}, checks, skipTainted,
-        scenarios: { a: 8, b: 8 }, memory: { residentMB: 10 }, boundary: { trackerSize: 0, weakAlive: 0 },
+        scenarios: { a: 8, b: 8 }, memory: { residentMB: 10 }, rss: { samples: 250, p95MB: 100, maxMB: 100, stride: 1 },
+        boundary: { trackerSize: 0, weakAlive: 0 },
     }, over);
 }
 function laneRun(n, perCycle, opts = {}) {
@@ -110,6 +111,51 @@ test('LaneGates heap: medians come from the per-lane early/late windows; warm-up
     assert.equal(short.postWarmup, 9);
     assert.equal(short.status, 'INCONCLUSIVE');
     assert.deepEqual(short.causes.map((c) => c.line), ['soak: INCONCLUSIVE -- lane GRAPH ran 9 post-warm-up cycles < 10']);
+});
+
+test('ASSERTION 2 rss end to end (pins gate id rss, drift.rss, breach, one cause line): FAIL on a 2x late p95, PASS at 190', () => {
+    // 11 cycles = 1 warm-up + 10 post; band = first 5 post cycles (100), late = last floor(10/4)=2 cycles (200); limit 100 x 1.75 + 16 = 191
+    const mk = (late) => (c) => ({ rss: { samples: 250, p95MB: c === 0 ? 900 : (c <= 5 ? 100 : (c >= 9 ? late : 150)), maxMB: 999, stride: 1 } });
+    const red = laneRun(11, mk(200));
+    assert.equal(red.gates.rss.verdict, 'FAIL');
+    assert.equal(red.status, 'FAIL');
+    assert.deepEqual([red.drift.rss.band, red.drift.rss.late, red.drift.rss.limit], [100, 200, 191]);
+    assert.ok(red.breaches.some((b) => b.gate === 'rss'), JSON.stringify(red.breaches));
+    const green = laneRun(11, mk(190));
+    assert.equal(green.gates.rss.verdict, 'PASS', JSON.stringify(green.causes));
+    assert.equal(green.status, 'PASS');
+    // 10 cycles = 9 post: exactly one post-cycles cause line (heap and rss share it)
+    const short = laneRun(10, () => ({}));
+    assert.equal(short.status, 'INCONCLUSIVE');
+    assert.deepEqual(short.causes.map((c) => c.line), ['soak: INCONCLUSIVE -- lane GRAPH ran 9 post-warm-up cycles < 10']);
+});
+
+test('LaneGates rss windows (D-B6): late = p95 of the last k = min(max(1, floor(post / 4)), 256) post cycles, ring-wrapped', () => {
+    const at = (n, f) => laneRun(n, (c) => ({ rss: { samples: 250, p95MB: c === 0 ? 900 : (c <= 5 ? 100 : f(c, n - 1)), maxMB: 999, stride: 1 } }));
+    // post 40 -> k 10 (cycles 31..40): one 250 in the window's FIRST slot FAILs (p95 of 10 = max; a median, k = 1 or a 5-cap passes)
+    assert.equal(at(41, (c) => (c === 31 ? 250 : 150)).gates.rss.verdict, 'FAIL');
+    // the cycle just before the window is not read (k = floor(post / 4) + 1 would FAIL)
+    assert.equal(at(41, (c) => (c === 30 ? 999 : 150)).gates.rss.verdict, 'PASS');
+    // post 300 -> k 75, ring wrapped (EarlyLate n 256): last 75 are 150, older 999 -> PASS (an unwrapped ring read or k = post FAILs)
+    assert.equal(at(301, (c, post) => (c > post - 75 ? 150 : 999)).gates.rss.verdict, 'PASS');
+    // post 1100 -> floor(post / 4) = 275, capped at RSS_BUF 256: last 256 are 150, the 19 before them 999 -> PASS (uncapped FAILs)
+    assert.equal(at(1101, (c, post) => (c > post - 256 ? 150 : 999)).gates.rss.verdict, 'PASS');
+});
+
+test('LaneGates rss: rec.rss is read once post-warm-up; non-finite or negative p95MB is a GateInputError', () => {
+    // pins the read-once contract for the new record key (mirrors the residentMB read-once rows)
+    const L = new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'b'] });
+    let reads = 0;
+    for (let c = 0; c < 3; c++) {
+        const r = rec('GRAPH', c);
+        if (c > 0) Object.defineProperty(r, 'rss', { enumerable: true, get() { reads++; return { samples: 250, p95MB: 100, maxMB: 100, stride: 1 }; } });
+        L.push(r);
+    }
+    assert.equal(reads, 2, 'one read per post-warm-up record, none for the warm-up');
+    for (const bad of [NaN, Infinity, -1, -0.5, 'x', null]) {
+        const L2 = new G.LaneGates({ lane: 'GRAPH', oracles: ORA, required: ['a', 'b'] });
+        assert.throws(() => L2.push(rec('GRAPH', 1, { rss: { samples: 250, p95MB: bad, maxMB: 100, stride: 1 } })), G.GateInputError, 'p95MB ' + String(bad));
+    }
 });
 
 test('LaneGates retention: 2 bad post-warm-up boundaries FAIL, 1 passes, a warm-up one is ignored, unmeasured FAILs', () => {

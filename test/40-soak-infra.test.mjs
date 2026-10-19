@@ -606,9 +606,11 @@ test('main: record obligations -- header extras + divergences digest; cycle chec
     assert.deepEqual(h.lanes, [{ name: 'GRAPH', status: 'run', missingCaps: [], engine: 'lite' }]);
     for (const c of r.recs.filter((x) => x.type === 'cycle')) {
         const keys = Object.keys(c);
-        const at = ['lane', 'cycle', 'checks', 'skipTainted', 'failures', 'memory', 'boundary'].map((k) => keys.indexOf(k));
+        const at = ['lane', 'cycle', 'checks', 'skipTainted', 'failures', 'memory', 'rss', 'boundary'].map((k) => keys.indexOf(k));
         assert.ok(at.every((i) => i !== -1), 'every field present: ' + keys);
         for (let i = 1; i < at.length; i++) assert.ok(at[i - 1] < at[i], 'field order: ' + keys);
+        assert.equal(c.rss.samples, Math.ceil(c.worlds / c.rss.stride), 'one rss push per world of THIS cycle (reset per lane-cycle), cycle ' + c.cycle);
+        assert.ok(c.rss.p95MB > 0 && c.rss.p95MB <= c.rss.maxMB, 'rss p95MB in (0, maxMB], cycle ' + c.cycle);
         assert.deepEqual(Object.keys(c.checks), EXQ.CHECK_NAMES.slice());
         assert.deepEqual(Object.keys(c.skipTainted), EXQ.SKIP_NAMES.slice());
         for (const k of EXQ.CHECK_NAMES) assert.ok(Number.isSafeInteger(c.checks[k]) && c.checks[k] >= 0);

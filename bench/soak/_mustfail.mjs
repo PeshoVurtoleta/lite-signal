@@ -360,6 +360,13 @@ export const CONTROLS = deepFreeze([
     M('L-T-leak', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'match', lines: [], specs: ['gate=heap lane=GRAPH'],
     }, { patches: [[A_CREATE_NODE, A_CREATE_NODE + '        (globalThis.__soakLeak ||= []).push(new Array(128));   // MUSTFAIL L-T-leak\n']] }),
+    // L-T-rss (B-B3a, burst 81): every registry retains a 64 KB off-heap Buffer (allocUnsafeSlow, filled so its pages
+    // are resident) in a global array -> the rss drift gate (main.mjs summarize gate BREACH line). PROVISIONAL size
+    // (64 KB x 11 x DEFAULT_OPS) until B-B3b sizes it on a quiet host. Off-heap bytes count in arrayBuffers, so the
+    // heap gate (residentMB) trips too: accepted, the spec pins the rss line (PLAN-0s-bb3 RISK).
+    M('L-T-rss', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 1, kind: 'match', lines: [], specs: ['gate=rss lane=GRAPH'],
+    }, { patches: [[A_RETURN, '    (globalThis.__soakRss ||= []).push(Buffer.allocUnsafeSlow(65536).fill(0x5a));   // MUSTFAIL L-T-rss\n' + A_RETURN]] }),
     // L-T-retain: every registry api is pushed to a global -> tracker.size() never drains (main.mjs:316 line).
     // Sized 11 x OPS_MIN: at 11 x DEFAULT_OPS the retained registries (~500 MB per GRAPH cycle) hit the V8 heap
     // limit at cycle 7 (burst 10 probe: residentMB=3534.27 after cycle 6, then "FATAL ERROR: Ineffective

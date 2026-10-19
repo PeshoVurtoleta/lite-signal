@@ -16,6 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RssSampler, RSS_BUF, p95, bandMedian } from '../bench/soak/rss.mjs';
+import { rssRule } from '../bench/soak/gates.mjs';
 
 /* seeded 32-bit-exact PRNG (mulberry32); independent streams for sizes and values */
 function prng(seed) {
@@ -188,4 +189,24 @@ test('RssSampler: push after reset() recomputes max() / p95() from scratch (no s
     assert.equal(r.p95(), 30, 'nearest-rank p95 of [10,20,30] is v[ceil(2.85)-1] = 30');
     assert.deepEqual(r.samples(), [10, 20, 30]);
     assert.equal(r.pushes, 3); assert.equal(r.stride, 1);
+});
+
+test('ASSERTION 1 rssRule: band 100 -> limit 191 (190.9 PASS, 191.1 FAIL, NaN fails closed, post 9 INCONCLUSIVE, smoke SMOKE)', () => {
+    // pins the new rssRule export; limit = 100 x 1.75 + 16 = 191 by hand (RSS_RATIO 1.75, RSS_SLACK_MB 16 per the plan SPEC)
+    const run = (o) => rssRule(Object.assign({ smoke: false, post: 10, bandMB: 100, lateMB: 100 }, o));
+    assert.equal(run({ lateMB: 190.9 }).verdict, 'PASS');
+    assert.equal(run({ lateMB: 191 }).verdict, 'PASS', 'late exactly at the limit passes (<=, not <)');
+    const red = run({ lateMB: 191.1 });
+    assert.equal(red.verdict, 'FAIL');
+    assert.equal(red.limit, 191);
+    assert.equal(red.band, 100);
+    assert.equal(red.late, 191.1);
+    assert.equal(red.detail, 'late=191.1MB > limit=191MB (band=100MB x 1.75 + 16)');
+    assert.equal(run({ lateMB: NaN }).verdict, 'FAIL', 'NaN late');
+    assert.equal(run({ bandMB: NaN }).verdict, 'FAIL', 'NaN band');
+    const p9 = run({ post: 9, lateMB: 999 });
+    assert.equal(p9.verdict, 'INCONCLUSIVE');
+    assert.equal(p9.cause, 'post-cycles');
+    assert.equal(p9.need, 10);
+    assert.equal(run({ smoke: true, post: 2, lateMB: 999 }).verdict, 'SMOKE');
 });

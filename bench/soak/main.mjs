@@ -10,7 +10,10 @@
  *
  * Records (jsonl.mjs, contiguous seq): header (provenance.mjs, REQUIRED_EXTRAS incl. the divergences
  * digest), cycle x (cycles x lanes), summary; a crash adds a fatal record. Cycle record field order, every
- * cycle: identity, volume, checks, skipTainted, failures, scenarios, throughput, memory, boundary, gc.
+ * cycle: identity, volume, checks, skipTainted, failures, scenarios, throughput, memory, rss, boundary, gc.
+ * rss (B-B3): one RssSampler (rss.mjs) per run, reset per lane-cycle, fed process.memoryUsage.rss() in MB at every
+ * world end (before the boundary drain): {samples (stored count), p95MB, maxMB, stride}; gates.mjs rssRule reads
+ * the post-warm-up p95MB values. Cold: <= 1 transient boxed double per world (the MB value passed to push).
  *
  * Failure records (amendment 13, B3 record obligations): one per failing world, at most FAIL_CAP per cycle
  * record (failureCounts and failingWorlds stay complete):
@@ -50,6 +53,7 @@ import {
 import {
     GATES, Totals, LaneGates, judgeRun, verdict as runVerdict, oracleFamily, totalsRule,
 } from './gates.mjs';
+import { RssSampler } from './rss.mjs';
 import { classify, digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences.mjs';
 import { CHECK_NAMES, SKIP_NAMES, runWorld } from './exec.mjs';
 import { generateWorld, GEN_RULES } from './gen.mjs';
@@ -210,6 +214,8 @@ export class BreachLog {
 
 const tick = () => new Promise((r) => setImmediate(r));
 const r1 = (x) => Math.round(x * 10) / 10;
+const r3 = (x) => Math.round(x * 1000) / 1000;
+const MB = 1048576;
 
 async function dispatch(cfg) {
     const file = cfg.shrink ? 'shrink.mjs' : 'replay.mjs';
@@ -354,6 +360,7 @@ async function main() {
         writeRecord(stream, 'header', header);
         const tracker = createLeakTracker({ name: 'soak' });
         const profiler = new GcProfiler().start();
+        const rssSampler = new RssSampler();   // one per run (two Float64Array(RSS_BUF)); reset per lane-cycle
         let lastBeat = performance.now();
         const limit = cfg.forever ? CYCLES_MAX : cfg.cycles;
 
@@ -387,6 +394,7 @@ async function main() {
                 const tc = performance.now();
                 let w = 0;
                 let script = null, r = null;
+                rssSampler.reset();
                 while (ct.get('ops') < cfg.ops && stopReason === null) {
                     if ((w & YIELD_MASK) === YIELD_MASK) {
                         await tick();
@@ -417,6 +425,7 @@ async function main() {
                         if (failures.length < FAIL_CAP) failures.push(rec);
                         breaches.noteWorld(rec, L.name, adapter.name);
                     }
+                    rssSampler.push(process.memoryUsage.rss() / MB);
                     w++;
                 }
                 const wallMs = performance.now() - tc;
@@ -452,6 +461,7 @@ async function main() {
                     scenarios: scen.toJSON(), gateHits: gateHits.toJSON(),
                     throughput: { wallMs: r1(wallMs), opsPerSec: wallMs > 0 ? Math.round(ops / (wallMs / 1000)) : null },
                     memory: closed.memory,
+                    rss: { samples: rssSampler.count, p95MB: r3(rssSampler.p95()), maxMB: r3(rssSampler.max()), stride: rssSampler.stride },
                     boundary,
                     gc: closed.gc,
                 };

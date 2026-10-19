@@ -54,6 +54,8 @@ export const PARITY_FILES = Object.freeze([
     'bench/soak/controls/preb33/Signal.js', 'bench/soak/controls/preb33/Watch.js',
     // unit 0s B1 (burst 64): the WIE lane decides its scripts and coverage (pinned before its roster flip, B2)
     'bench/soak/lanes/wie.mjs',
+    // B-B3 (burst 81): gates.mjs imports the rss sampler's p95 / bandMedian, which decide the rss gate
+    'bench/soak/rss.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

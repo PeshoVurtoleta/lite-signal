@@ -6,8 +6,8 @@
  * every world end; gates.mjs rssRule (B-B3) reads the per-cycle p95 values through p95() / bandMedian().
  *
  * Exports
- *   RSS_BUF = 256                the default sampler capacity (B-B3 moves the definition into config.mjs
- *                                CONSTANTS for the header gates block; this module then re-exports it)
+ *   RSS_BUF = 256                the default sampler capacity, re-exported from config.mjs CONSTANTS (B-B3:
+ *                                it sits in the header gates block and also caps the rss gate's late window)
  *   class RssSampler
  *     constructor(cap = RSS_BUF) cap: a power of two in [4, RSS_CAP_MAX]; anything else throws RangeError.
  *                                Allocates two Float64Array(cap) and one Float64Array(1) -- the ONLY allocations.
@@ -54,7 +54,9 @@
  * COLD module (one push per world end, one readout per lane-cycle).
  */
 
-export const RSS_BUF = 256;
+import { RSS_BUF } from './config.mjs';
+
+export { RSS_BUF };
 export const RSS_CAP_MAX = 65536;
 export const PUSH_MAX = 0x3FFFFFFF;
 
