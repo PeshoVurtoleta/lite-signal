@@ -213,14 +213,15 @@ export function openAnatomy(opts) {
                 throw new TypeError("anatomy: unknown option '" + k + "'" + (h === null ? ' (known: source)' : ' (did you mean ' + h + '?)'));
             }
         }
-        if (opts.source !== undefined && typeof opts.source !== 'string') {
+        if (Object.hasOwn(opts, 'source') && opts.source !== undefined && typeof opts.source !== 'string') {
             throw new TypeError('anatomy: openAnatomy source must be the engine source as a string');
         }
     }
     const fail = (why) => ({ lane: null, why: 'anatomy UNAVAILABLE: ' + why });
     if (globalThis.__VISIT__ !== undefined) return fail('globalThis.__VISIT__ is already defined (another instrumented engine is loaded)');
     let src;
-    if (opts !== undefined && opts.source !== undefined) {
+    // own key only: an inherited Object.prototype.source is not an option (an explicit source: undefined = absent)
+    if (opts !== undefined && Object.hasOwn(opts, 'source') && opts.source !== undefined) {
         src = opts.source;
     } else {
         const kf = KERNEL_FILES[0];
@@ -236,19 +237,26 @@ export function openAnatomy(opts) {
     } catch (e) {
         return fail(line(e) + (Array.isArray(e && e.drift) ? ': ' + e.drift.join('; ') : ''));
     }
-    let dir = null, mod, vc;
+    let dir = null, mod, vc, loadFailed = false, loadErr, rmFailed = false, rmErr;
     try {
         dir = mkdtempSync(join(tmpdir(), 'soak-anatomy-'));
         const p = join(dir, 'Signal.mjs');
         writeFileSync(p, gen);
         mod = requireEsm(p);
     } catch (e) {
-        return fail('the instrumented kernel failed to load: ' + line(e));
+        loadFailed = true;
+        loadErr = e;
     } finally {
         vc = globalThis.__VISIT__;
         delete globalThis.__VISIT__;
-        if (dir !== null) rmSync(dir, { recursive: true, force: true });
+        // a throwing rmSync must not escape openAnatomy (main.mjs does not catch it): it is an UNAVAILABLE lane
+        if (dir !== null) {
+            try { rmSync(dir, { recursive: true, force: true }); } catch (e) { rmFailed = true; rmErr = e; }
+        }
     }
+    const rmWhy = rmFailed ? 'cannot remove ' + dir + ': ' + line(rmErr) : null;
+    if (loadFailed) return fail('the instrumented kernel failed to load: ' + line(loadErr) + (rmWhy === null ? '' : '; ' + rmWhy));
+    if (rmWhy !== null) return fail(rmWhy);
     if (!(vc instanceof Int32Array) || vc.length !== VC_LENGTH) {
         return fail('the instrumented kernel did not install an Int32Array(' + VC_LENGTH + ') counter block');
     }

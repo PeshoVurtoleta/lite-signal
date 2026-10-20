@@ -21,18 +21,19 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OPS_MIN, MIN_ACTIVE_CYCLES, CHECK_P, DEFAULT_OPS, DEFAULT_CYCLES, SCHEMA_VERSION } from '../bench/soak/config.mjs';
+import { OPS_MIN, MIN_ACTIVE_CYCLES, CHECK_P, DEFAULT_OPS, DEFAULT_CYCLES, SCHEMA_VERSION, SHAPE_EVERY, LATENCY_METHODS } from '../bench/soak/config.mjs';
 import { COV_OFF_SUPPORTED, laneByName, ROSTER } from '../bench/soak/lanes/index.mjs';
 import { applicability } from '../bench/soak/adapters/contract.mjs';
 import { GATE_NAMES } from '../bench/soak/gates.mjs';
 import { ORACLES } from '../bench/soak/oracles.mjs';
 import { GAPS, CHECKS } from '../bench/soak/teeth.mjs';
-import { releaseRefusal } from '../bench/soak/SoakReport.mjs';
+import { releaseRefusal, rssStride } from '../bench/soak/SoakReport.mjs';   // import runs no CLI: isEntry() guard
+import { RssSampler } from '../bench/soak/rss.mjs';
 import { failureRecord } from '../bench/soak/main.mjs';   // kernel-free on import (main.mjs header): no Signal.js loads
 import { classify } from '../bench/soak/divergences.mjs';
 
@@ -170,6 +171,8 @@ before(async () => {
         gen('smoke', { SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' }, ['--smoke']),
         // B-B4b: the TREE kernel instruments (rev152 / headpatched anchors drift -> anatomy null), so the anatomy rows tamper this one
         gen('treesmoke', { SOAK_LANES: 'GRAPH' }, ['--smoke']),
+        // B-B5 CLI rows: a small honest TREE run (no override): consistent, refused as NOT A RELEASE SOAK (exit 1)
+        gen('treesmall', Object.assign({ SOAK_LANES: 'GRAPH' }, SMALL)),
         gen('fatal', Object.assign({ SOAK_KERNEL: join(TMP, 'kfatal', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
         gen('sigint', Object.assign({ SOAK_KERNEL: join(TMP, 'ksigint', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
     ]);
@@ -713,7 +716,23 @@ const TAMPERS = [
     // rss cycle key (B-B3a): pins the SoakReport key tables (RECORD_KEYS / SUB_KEYS) for the new key
     ['an extra key inside cycle.rss', 'rev', (r) => { cyclesOf(r)[0].rss.forged = 1; }, I('unknown-key', /carries an unknown key "forged"/)],
     ['a deleted cycle.rss', 'rev', (r) => { delete cyclesOf(r)[0].rss; }, I('missing-key', /lacks "rss"/)],
-    ['rss.p95MB not a number on cycle 2', 'rev', (r) => { cyclesOf(r).find((c) => c.cycle === 2).rss.p95MB = 'x'; }, I('malformed', /p95MB/)],
+    // B-B5: SoakReport's every-cycle rss check fires (cycle-field) before LaneGates; the row's intent (a non-number p95MB is refused) is kept
+    ['rss.p95MB not a number on cycle 2', 'rev', (r) => { cyclesOf(r).find((c) => c.cycle === 2).rss.p95MB = 'x'; }, I('cycle-field', /rss\.p95MB/)],
+    // B-B5 (PLAN-0s-bb5 ASSERTION 1): every cycle is field-checked, warm-up included; one tamper per new bad() statement
+    ['rss.p95MB not a number on the WARM-UP cycle 0', 'rev', (r) => { cyclesOf(r)[0].rss.p95MB = 'x'; }, I('cycle-field', /rss\.p95MB/)],
+    ['rss.samples + 1', 'rev', (r) => { cyclesOf(r)[3].rss.samples += 1; }, I('cycle-field', /rss\.samples \/ rss\.stride/)],
+    ['rss.stride 3 (not a power of 2)', 'rev', (r) => { cyclesOf(r)[3].rss.stride = 3; }, I('cycle-field', /rss\.samples \/ rss\.stride/)],
+    ['rss.p95MB > rss.maxMB', 'rev', (r) => { const e = cyclesOf(r)[3].rss; e.p95MB = e.maxMB + 1; }, I('cycle-field', /p95MB <= maxMB/)],
+    ['rss.samples 0 with p95MB 5 (no sample -> both null)', 'rev', (r) => { const e = cyclesOf(r)[0].rss; e.samples = 0; e.p95MB = 5; }, I('cycle-field', /rss\.samples 0 with/)],
+    // anatomy.worlds upper bound floor((worlds - 1) / SHAPE_EVERY) + 1: one world over it
+    ['anatomy.worlds = bound + 1', 'treesmoke', (r) => { const c = cyclesOf(r)[0]; c.anatomy.worlds = Math.floor((c.worlds - 1) / SHAPE_EVERY) + 2; }, I('cycle-field', /worlds/)],
+    // tree twin of M3: a TREE run (no override, nearwrap null) whose kernel.files[0] parent dir is <sha7>-<sha7> of its own two shas
+    ['M3 tree twin: a tree run whose kernel sits in a <sha7>-<sha7> pair dir', 'treesmoke', (r) => {
+        const h = r[0], k = h.kernel.files;
+        assert.equal(h.nearwrap, null); assert.equal(h.kernel.override, false); assert.equal(h.config.SOAK_NEARWRAP.value, null);
+        const dir = join(SOAK, 'out', 'nearwrap', k[0].sha256.slice(0, 7) + '-' + k[1].sha256.slice(0, 7));
+        k[0].path = join(dir, 'Signal.js'); k[1].path = join(dir, 'Watch.js'); mirrorEngine(h);
+    }, I('control', /derived nearwrap pair dir/)],
     // latency cycle key (B-B4a, PLAN-0s-bb4a ASSERTION 4): key tables + the four cycle-field statements
     ['an extra key inside cycle.latency', 'rev', (r) => { cyclesOf(r)[0].latency.forged = 1; }, I('unknown-key', /carries an unknown key "forged"/)],
     ['an extra key inside cycle.latency.read', 'rev', (r) => { cyclesOf(r)[0].latency.read.forged = 1; }, I('unknown-key', /carries an unknown key "forged"/)],
@@ -791,6 +810,104 @@ for (const [name, base, fn, want] of TAMPERS) {
         if (want.cls) { const r = expectIntegrity(p, want.cls); if (want.detail) assert.match(r.err[0], want.detail); } else { const r = expectRefusal(p, want.reason); if (want.detail) assert.match(r.err[0], want.detail); }
     });
 }
+
+/* ---- B-B5 CLI: --html, --baseline, argv misuse (PLAN-0s-bb5 ASSERTION 2, ADDENDUM 1: exit = max(head, baseline)) ---- */
+const blLines = (r) => r.out.filter((l) => l.indexOf('soak:report: baseline ') === 0);
+const verdictLast = (r) => /^soak:report: verdict \S+ \(consistent\)$/.test(r.out[r.out.length - 1]);
+function expectConfig(args, detail) {
+    const r = report(args);
+    assert.equal(r.status, 2, JSON.stringify(args) + ' ' + JSON.stringify(r));
+    assert.equal(r.err.length, 1, JSON.stringify(r));
+    assert.ok(r.err[0].startsWith('soak:report: CONFIG -- '), r.err[0]);
+    if (detail) assert.match(r.err[0], detail);
+    assert.deepEqual(r.out, []);
+    return r;
+}
+test('B-B5: --html gives the same exit / stdout / stderr as the plain run, and the file holds exactly one class="banner', () => {
+    const plain = report([S.treesmall.path]);
+    assert.equal(plain.status, 1, 'a small honest tree run is consistent and refused (exit 1): ' + JSON.stringify(plain));
+    const html = join(TMP, 'b5-plain.html');
+    const r = report([S.treesmall.path, '--html', html]);
+    assert.deepEqual(r, plain);
+    assert.ok(existsSync(html), 'the html file is written');
+    assert.equal(readFileSync(html, 'utf8').split('class="banner').length - 1, 1);
+});
+test('B-B5: --html is written for an INTEGRITY outcome too, with the same exit / stdout / stderr as the plain run', () => {
+    const bad = tamper('rev', (r) => { cyclesOf(r)[3].rss.stride = 3; });
+    const plain = report([bad]);
+    const html = join(TMP, 'b5-integrity.html');
+    const r = report([bad, '--html', html]);
+    assert.equal(plain.status, 1);
+    assert.deepEqual(r, plain);
+    assert.equal(readFileSync(html, 'utf8').split('class="banner').length - 1, 1);
+});
+test('B-B5: argv misuse -> CONFIG exit 2 (one line, empty stdout): no value, given twice, unknown --x, html out == stream, html out == baseline', () => {
+    const p = S.treesmall.path, h2 = join(TMP, 'b5-x1.html');
+    expectConfig([p, '--html']);
+    expectConfig([p, '--baseline']);
+    expectConfig([p, '--html', h2, '--html', join(TMP, 'b5-x2.html')], /twice/);
+    assert.ok(!existsSync(h2), 'a refused invocation writes no file');
+    expectConfig([p, '--baseline', p, '--baseline', p], /twice/);
+    expectConfig([p, '--htm', join(TMP, 'b5-x3.html')], /--htm/);
+    expectConfig([p, '--html', p], /input stream/);
+    expectConfig([p, '--baseline', S.hp.path, '--html', S.hp.path], /input stream/);
+});
+test('B-B5: --baseline with an override-kernel base -> REFUSED overridden, exit 2, on stdout (before the verdict) and stderr', () => {
+    const r = report([S.treesmall.path, '--baseline', S.hp.path]);
+    assert.equal(r.status, 2, JSON.stringify(r));
+    assert.ok(verdictLast(r), 'the verdict stays the last stdout line');
+    const b = blLines(r);
+    assert.ok(b.length >= 1 && b.every((l) => /REFUSED/.test(l)), JSON.stringify(b));
+    assert.ok(b.some((l) => /^soak:report: baseline REFUSED -- overridden/.test(l)), JSON.stringify(b));
+    assert.ok(r.err.some((l) => /^soak:report: baseline REFUSED -- overridden/.test(l)), JSON.stringify(r.err));
+});
+test('B-B5: --baseline with a tampered (INTEGRITY) base -> REFUSED base-integrity, exit 2', () => {
+    const base = tamper('treesmall', (r) => { cyclesOf(r)[2].rss.stride = 3; });
+    const r = report([S.treesmall.path, '--baseline', base]);
+    assert.equal(r.status, 2, JSON.stringify(r));
+    assert.ok(verdictLast(r));
+    assert.ok(blLines(r).some((l) => /^soak:report: baseline REFUSED -- base-integrity: /.test(l)), JSON.stringify(r.out));
+    assert.ok(r.err.some((l) => /^soak:report: baseline REFUSED -- base-integrity: /.test(l)), JSON.stringify(r.err));
+});
+test('B-B5: a head failing INTEGRITY prints no baseline line (exit 1)', () => {
+    const head = tamper('treesmall', (r) => { cyclesOf(r)[1].rss.samples += 1; });
+    const r = report([head, '--baseline', S.treesmall.path]);
+    assert.equal(r.status, 1, JSON.stringify(r));
+    assert.ok(r.err[0].startsWith('soak:report: INTEGRITY -- cycle-field: '), r.err[0]);
+    assert.equal(blLines(r).length, 0, JSON.stringify(r.out));
+});
+test('B-B5 D1: a tree-parity head vs itself -> baseline NOTE (all latency p99 null at OPS_MIN), a baseline line before the verdict, exit 1 (max of head and baseline), never PASS', () => {
+    const r = report([S.treesmall.path, '--baseline', S.treesmall.path]);
+    assert.equal(r.status, 1, JSON.stringify(r));
+    assert.ok(verdictLast(r));
+    const b = blLines(r);
+    // PLAN ADDENDUM 4: one p99-unmeasured note per latency method (12), regressions 0
+    assert.equal(b[0], 'soak:report: baseline NOTE regressions=0 notes=' + LATENCY_METHODS.length);
+    assert.ok(!b.some((l) => / PASS/.test(l)), JSON.stringify(b));
+    assert.ok(r.out.indexOf(b[0]) < r.out.length - 1, 'a baseline line precedes the verdict line');
+    assert.ok(r.err.length >= 1 && /tree-parity|NOT A RELEASE SOAK/.test(r.err.join('\n')), JSON.stringify(r.err));
+});
+
+test('B-B5: --html write error (target is a directory) -> CONFIG exit 2, stdout unchanged', () => { const plain = report([S.treesmall.path]); const r = report([S.treesmall.path, '--html', TMP]); assert.equal(r.status, 2, JSON.stringify(r)); assert.deepEqual(r.out, plain.out); assert.ok(r.err.some((l) => /^soak:report: CONFIG -- cannot write --html /.test(l)), JSON.stringify(r.err)); });
+test('B-B5 (r1 F4): rssStride(n) equals a real RssSampler replay (n pushes, as main.mjs feeds it) for n = 0..5000: .stride and .count', () => {
+    let bad = null;
+    for (let n = 0; n <= 5000 && bad === null; n++) {
+        const smp = new RssSampler();
+        for (let i = 0; i < n; i++) smp.push(100 + (i & 7));
+        const st = rssStride(n);
+        if (smp.stride !== st || smp.count !== Math.ceil(n / st)) bad = { n, stride: smp.stride, count: smp.count, rssStride: st };
+    }
+    assert.equal(bad, null, JSON.stringify(bad));
+});
+test('B-B5 (r1 F5): consistent head + tampered (INTEGRITY) base via --baseline --html -> the html banner is warn (the head\'s own lines), never bad', () => {
+    const base = tamper('treesmall', (r) => { cyclesOf(r)[2].rss.stride = 3; });
+    const html = join(TMP, 'b5-f5.html');
+    const r = report([S.treesmall.path, '--baseline', base, '--html', html]);
+    assert.equal(r.status, 2, JSON.stringify(r));
+    const h = readFileSync(html, 'utf8');
+    assert.ok(h.includes('class="banner warn"'), 'want the warn banner');
+    assert.ok(!h.includes('class="banner bad"'), 'a red base never paints the head bad');
+});
 
 test('B7: the NOTE line names exactly the gates and oracles whose only teeth are GAPS (teeth.mjs, by import), between the stream line and the verdict', () => {
     const r = expectConsistent('hp');

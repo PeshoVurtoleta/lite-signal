@@ -231,6 +231,8 @@ function child(src) {
     return JSON.parse(r.stdout.trim().split('\n').pop());
 }
 
+const slopeOk = (s) => Math.abs(s) <= 0.01;
+
 test('latency GC: observe() slope (delta(N) - delta(N/10)) / 0.9N <= 0.01 B/op, N = 1e6 (a fixed offset is not per-op); a per-op allocating control must exceed it', () => {
     const o = child(`
 import { LatencyLane } from './bench/soak/latency.mjs';
@@ -247,7 +249,7 @@ const c1 = run(bad, N / 10), c2 = run(bad, N);
 process.stdout.write(JSON.stringify({ slope: (d8 - d1) / (0.9 * N), ctl: (c2 - c1) / (0.9 * N) }));
 `);
     console.log('latency GC slope B/op: ' + o.slope + ' (control ' + o.ctl + ')');
-    assert.ok(o.slope <= 0.01, 'slope B/op ' + o.slope);
+    assert.ok(slopeOk(o.slope), 'slope B/op ' + o.slope);
     assert.ok(o.ctl > 8, 'the allocating control must exceed the bound, got ' + o.ctl);
 });
 
@@ -301,3 +303,61 @@ test('latency: a missing lite-sketch -> exit 2, soak: CONFIG -- latency lane una
         assert.equal(existsSync(out), false, 'no output created');
     } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('latency GC MUST-FAIL (b88, pure): slopeOk is two-sided -- -15.5 and 0.02 are rejected, -0.005 accepted (the old one-sided s <= 0.01 passes -15.5)', () => {
+    // The 208 B per-op child's measured slope -15.5 B/op lives in .handoff evidence b88 B0 d0d.txt; the child's
+    // negative band is V8-version dependent, so the gate is pure: it pins the predicate the GC slope row uses.
+    assert.equal(slopeOk(-15.5), false);
+    assert.equal(slopeOk(0.02), false);
+    assert.equal(slopeOk(-0.005), true);
+});
+
+test('latency (b88 NIT): a listed method with a rest parameter (a, ...r) -> TypeError at the armed open (HEAD accepts: length 1)', () => {
+    const lane = new LatencyLane({ floorNs: 40 });
+    const stub = Object.freeze({ name: 'stub', open() { return { set(a, ...r) { return a; } }; } });
+    lane.armed = true;
+    assert.throws(() => lane.wrap(stub).open(), TypeError);
+});
+
+test('latency (b88 NIT): a listed method with a default parameter (a, b, c = 1) -> TypeError at the armed open (HEAD accepts: length 2)', () => {
+    const lane = new LatencyLane({ floorNs: 40 });
+    const stub = Object.freeze({ name: 'stub', open() { return { set(a, b, c = 1) { return a; } }; } });
+    lane.armed = true;
+    assert.throws(() => lane.wrap(stub).open(), TypeError);
+});
+
+/* ---- b88 r1 F1: paramsHidden reads the parameter list up to the first `)` or `=>`; [native code] is refused ---- */
+
+const armOpen = (fn) => {
+    const lane = new LatencyLane({ floorNs: 40 });
+    const stub = Object.freeze({ name: 'stub', open() { return { set: fn }; } });
+    lane.armed = true;
+    return () => lane.wrap(stub).open();
+};
+const REFUSED_F1 = [
+    ['function (a, {x} = {}, c, d) {} (length 1)', function (a, {x} = {}, c, d) {}],
+    ['({x} = {}, ...r) => 0 (length 0)', ({x} = {}, ...r) => 0],
+    ['(a /* { */, ...r) => 0 (length 1)', (a /* { */, ...r) => 0],
+    ['a .bind(null) of a rest-param function (length 1)', (function (a, ...r) { return a; }).bind(null)],
+    ['a .bind(null) of a default-param function (length 1)', (function (a, b = 1) { return a; }).bind(null)],
+];
+for (const [name, fn] of REFUSED_F1) {
+    test('latency (b88 r1 F1): a listed method ' + name + ' -> TypeError at the armed open (the `{`-cut / native-skip paramsHidden accepts it)', () => {
+        assert.ok(fn.length <= 2, 'Function.length alone does not refuse it: ' + fn.length);
+        assert.throws(armOpen(fn), (e) => e instanceof TypeError && /rest or default parameter/.test(e.message));
+    });
+}
+const ACCEPTED_F1 = [
+    ['(a, b) => a', (a, b) => a],
+    ['x => x', (x) => x],
+    ['({a}) => a', ({a}) => a],
+    ['function (a) { const q = 1; return a; }', function (a) { const q = 1; return a; }],
+];
+for (const [name, fn] of ACCEPTED_F1) {
+    test('latency (b88 r1 F1 control): a listed method ' + name + ' is ACCEPTED at the armed open and stays callable', () => {
+        const w = armOpen(fn)();
+        assert.equal(typeof w.set, 'function');
+        const arg = { a: 7 };
+        assert.equal(w.set(arg, 8), fn(arg, 8), 'the wrapper forwards the call unchanged');
+    });
+}

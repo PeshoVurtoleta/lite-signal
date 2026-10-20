@@ -36,8 +36,9 @@
  * Allocation: the wrappers are closures built at the armed open (cold, once per armed world). An armed call
  * writes the duration into a Float64Array slot and records it with sketch.addFrom(S, 0) (the zero-box entry of
  * lite-sketch), so the recording path is 0 B/op; the two performance.now() reads per timed call are <= 4
- * transient boxes before tier-up, 2 in optimized code (a boxed double where the engine returns one). observe() takes ns as an argument:
- * a fractional value can box at that call boundary when V8 does not inline it (cold seam, disclosed).
+ * transient boxes before tier-up, 2 in optimized code (a boxed double where the engine returns one). observe()
+ * takes ns as an argument: a fractional value can box at that call boundary when V8 does not inline it (cold
+ * seam, disclosed).
  *
  * COLD module: main.mjs (B2) imports it; replay.mjs and shrink.mjs never do. No I/O, no process state.
  */
@@ -71,6 +72,26 @@ function timed(f, raw, sk, S) {
     };
 }
 
+/** World-method functions whose parameter-list text passed paramsHidden() (allocates only on first sight). */
+const ACCEPTED = new WeakSet();
+const FN_TO_STRING = Function.prototype.toString;
+
+/**
+ * The parameter-list text of fn (its source up to the first `)` or `=>`) when it has a rest (`...`) or a default
+ * (`=`) parameter -- Function.length counts neither, so a length <= 2 check alone accepts `(a, ...r)` and
+ * `(a, b, c = 1)` -- else null. A `[native code]` source (bound / native function) is refused as unverifiable.
+ * Runs at arm() (once per armed world open, per function not yet ACCEPTED), never per timed call.
+ */
+function paramsHidden(fn) {
+    const src = FN_TO_STRING.call(fn);
+    if (src.indexOf('[native code]') !== -1) return src;
+    const b = src.indexOf(')');
+    const a = src.indexOf('=>');
+    const end = b === -1 ? a : (a === -1 ? b : Math.min(a, b));
+    const head = end === -1 ? src : src.slice(0, end);
+    return head.indexOf('...') !== -1 || head.indexOf('=') !== -1 ? head : null;
+}
+
 /** Classify every own key of an opened world (read-only scan), then build the plain delegate. */
 function arm(raw, sks, S) {
     if (raw === null || typeof raw !== 'object') throw new TypeError('latency: adapter.open() returned a non-object world');
@@ -86,6 +107,13 @@ function arm(raw, sks, S) {
         }
         if (v.length > 2) {
             throw new TypeError('latency: world method ' + k + ' declares ' + v.length + ' parameters; the wrapper forwards at most 2');
+        }
+        if (!ACCEPTED.has(v)) {
+            const hidden = paramsHidden(v);
+            if (hidden !== null) {
+                throw new TypeError('latency: world method ' + k + ' has a rest or default parameter (' + hidden.trim() + '); Function.length hides it and the wrapper forwards at most 2');
+            }
+            ACCEPTED.add(v);
         }
     }
     const T = {};

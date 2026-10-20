@@ -348,3 +348,47 @@ test('diffBaseline: a base that is not a green tree release run is REFUSED (red 
         assert.equal(r.exitCode, 2, why);
     }
 });
+
+/* ---- b88 H2 (ASSERTION 3): the markDedupe sparkline, n/a never 0, latency p99 = max over classes ---------------------- */
+
+const graphRow = (html) => {
+    const re = /<tr>(.*?)<\/tr>/g; let m;
+    while ((m = re.exec(html)) !== null) {
+        const cells = [...m[1].matchAll(/<td>(.*?)<\/td>/g)].map((x) => x[1]);
+        if (cells.length >= 7 && cells[0] === 'GRAPH' && cells[1] === '12') return cells;
+    }
+    return null;
+};
+const NA = '<span class="na">n/a</span>';
+
+test('renderHtml b88: a cycle with anatomy.markDedupe 0.888 renders a <title>GRAPH markDedupe sparkline (HEAD has no markDedupe text)', () => {
+    const cycles = mkCycles(12, (l) => (l === 'GRAPH' ? { anatomy: { worlds: 100, counts: {}, markDedupe: 0.888 } } : null));
+    const s = stream(cycles);
+    const html = renderHtml({ header: s.header, cycles, summary: s.summary, lines: [], diff: null });
+    assert.ok(html.includes('<title>GRAPH markDedupe'), 'markDedupe sparkline title');
+    assert.ok(html.includes('last 0.888 min 0.888 max 0.888'), 'the plotted value is the cycle value');
+    const row = graphRow(html);
+    assert.ok(row, 'GRAPH sparkline row');
+    assert.equal(row.filter((c) => c === NA).length, 0, 'every series of GRAPH is finite -> no n/a cell');
+});
+
+test('renderHtml b88: all-null anatomy renders exactly one n/a cell in the GRAPH row (never 0, no markDedupe svg); a text(null) -> 0 mutant is red', () => {
+    const cycles = mkCycles(12, (l) => (l === 'GRAPH' ? { anatomy: { worlds: 0, counts: null, markDedupe: null } } : null));
+    const s = stream(cycles);
+    const html = renderHtml({ header: s.header, cycles, summary: s.summary, lines: [], diff: null });
+    assert.ok(!html.includes('<title>GRAPH markDedupe'), 'no sparkline for an all-null series');
+    const row = graphRow(html);
+    assert.ok(row, 'GRAPH sparkline row');
+    assert.equal(row.filter((c) => c === NA).length, 1, 'exactly the markDedupe cell is n/a: ' + JSON.stringify(row));
+    assert.ok(!/markDedupe[^<]*<\/title>[^]*last 0 /.test(html), 'never a 0 point');
+});
+
+test('renderHtml b88: latency p99 sparkline = MAX over classes (1000 / 300 / 5000 -> 5000; a min-taking renderer would show 300)', () => {
+    const lat = { set: { n: 100, p50Ns: 200, p99Ns: 1000, belowFloor: 0 }, read: { n: 100, p50Ns: 100, p99Ns: 300, belowFloor: 0 }, batch: { n: 100, p50Ns: 900, p99Ns: 5000, belowFloor: 0 } };
+    const cycles = mkCycles(12, () => ({ latency: lat }));
+    const s = stream(cycles);
+    const html = renderHtml({ header: s.header, cycles, summary: s.summary, lines: [], diff: null });
+    assert.ok(html.includes('last 5000 min 5000 max 5000'), 'max over classes is plotted');
+    assert.ok(!html.includes('last 300 min 300'), 'the min class is not plotted');
+    // regression pin: HEAD already takes the max; the row is the must-fail witness for a min-mutant.
+});

@@ -26,9 +26,11 @@
  * Sparklines (one row per lane, cycles in stream order, x = the lane's cycle index): residentMB
  * (cycle.memory.residentMB), rss p95 (cycle.rss.p95MB, schema 2), opsPerSec (cycle.throughput.opsPerSec),
  * gc maxPauseMs (cycle.gc.maxPauseMs; gc is null when no profiler ran), latency p99 (the max over classes of
- * cycle.latency[<class>].p99Ns, schema 2). A missing cycle value breaks the line (no point is drawn, never a 0);
- * a series with no finite value renders `n/a` instead of an svg. Shapes read: main.mjs:439-449 (cycle),
- * main.mjs:298-330 (summary), boundary.mjs:75/98 (gc, memory), SPEC-S2 group B TASK 6 (rss, latency).
+ * cycle.latency[<class>].p99Ns, schema 2), markDedupe (cycle.anatomy.markDedupe = markStamp / markEdge, stamp/edge;
+ * anatomy is null on an UNAVAILABLE / disabled lane and markDedupe null when markEdge is 0 -> n/a, never 0). A
+ * missing cycle value breaks the line (no point is drawn, never a 0); a series with no finite value renders `n/a`
+ * instead of an svg. Shapes read: main.mjs:439-449 (cycle), main.mjs:298-330 (summary), boundary.mjs:75/98 (gc,
+ * memory), SPEC-S2 group B TASK 6 (rss, latency), anatomy.mjs toJSON (anatomy, B-B4b).
  *
  * COLD module.
  */
@@ -107,6 +109,7 @@ const SERIES = [
     { name: 'opsPerSec', unit: 'ops/s', pick: (c) => get(c, 'throughput', 'opsPerSec') },
     { name: 'gc maxPauseMs', unit: 'ms', pick: (c) => get(c, 'gc', 'maxPauseMs') },
     { name: 'latency p99', unit: 'ns (max over classes)', pick: latencyP99Max },
+    { name: 'markDedupe', unit: 'stamp/edge', pick: (c) => get(c, 'anatomy', 'markDedupe') },
 ];
 
 function latencyP99Max(c) {

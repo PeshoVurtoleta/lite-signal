@@ -18,11 +18,11 @@
     "bench/soak/divergences.mjs": "f0edccea6f3209df661c4605091c30aada0227e7eef441f07faf2f597f6eb185",
     "bench/soak/divergences.json": "9fb8bd62e89ed15b7704a4b8008080804431d074e77e479ab0c0fcad81cd7593",
     "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",
-    "bench/soak/main.mjs": "2fe240cf6731cf1d9b225d18d3b3257113e573ceab93ac22a5dcb3d313bbb809",
+    "bench/soak/main.mjs": "0de9cf13934f732ea887e573c6addf4324cfce5f53d2edcacf5e4013722d0712",
     "bench/soak/replay.mjs": "3e2d635c46440eda14f79afbeab6e8477c93e97e2657e3672939e50b88400171",
     "bench/soak/shrink.mjs": "f38857d49b11544674f5e825096a9326034301c50ba8ee12e6fcbbb58d4985cc",
     "bench/soak/config.mjs": "57125c2c5a0a309c8b1d4ae0ca2a5da38dfe1096db96b963d6032098c0d3ae4b",
-    "bench/soak/SoakReport.mjs": "933f58f68f1c713a4afd2fb321d3c6385430ee4fb041c138cc47906573c0df93",
+    "bench/soak/SoakReport.mjs": "a2048364d0ca5fc05bab8f99b1f0908fbed483dac059627b9ce4700b1718c3b1",
     "bench/soak/wrap.mjs": "7279a0e5d2d58afa5c63558fe261747624b22a4e15488d6938626ff77adaf1d9",
     "bench/soak/wrap-repr.mjs": "6e21bc5be94ef62100e5d6c021e0d2d1e10365c22b35647968623249ee9e72e6",
     "bench/soak/wraprules.mjs": "de8293528e6535a628ef18d3ee41848b82a41562a23b2d7bf21871709c124275",
@@ -35,8 +35,10 @@
     "bench/soak/controls/preb33/Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/lanes/wie.mjs": "67aebd356665312b11c0f323e756485caf8cf50f8bec277322937bbf067a0e34",
     "bench/soak/rss.mjs": "2b4354b7ce6d35e47532517f2799a1a7c1306298fe32bf147704260d1c0e0831",
-    "bench/soak/latency.mjs": "59accef6214ff883e848493e7ef43b4b98e0dfc06e443e42d9ac5d53e00d59a2",
-    "bench/soak/anatomy.mjs": "5e75d6302a6fde919715d20c85f8371291de04f92e8a5708c05229660aa71335",
-    "harness/visit-anchors.mjs": "2acf86ec6ec1e4de811fd8baf229e88b3b1414aefa3049b9bba1a2d42bf45512"
+    "bench/soak/latency.mjs": "5615c127c4bc0bd82798880ee8b10c349655fbbfaca482442df965bcfd8c0da0",
+    "bench/soak/anatomy.mjs": "401df27000707f1de5ff0dbaaa26cfba7e9fe9aff1af9592223d87aee4d478f6",
+    "harness/visit-anchors.mjs": "2acf86ec6ec1e4de811fd8baf229e88b3b1414aefa3049b9bba1a2d42bf45512",
+    "bench/soak/report-html.mjs": "a58c79a8c80d20f8a119910518d8820e6bbda50e6ea165357f1484618b830654",
+    "bench/soak/baseline.mjs": "ab03666f2f59ee0f8e7acad3fc5eeafab304ae52cf73610dc83d4c93c51dec04"
   }
 }

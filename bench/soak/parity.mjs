@@ -60,6 +60,9 @@ export const PARITY_FILES = Object.freeze([
     'bench/soak/latency.mjs',
     // B-B4b (burst 86): the pinned main.mjs imports the anatomy lane, which loads the anchor table's instrumented copy
     'bench/soak/anatomy.mjs', 'harness/visit-anchors.mjs',
+    // B-B5 (burst 88): the pinned SoakReport.mjs imports the html renderer and the baseline diff, which decide the
+    // --html page and the --baseline verdict / exit
+    'bench/soak/report-html.mjs', 'bench/soak/baseline.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

@@ -352,3 +352,11 @@ process.stdout.write(JSON.stringify({ sizes, lives, ctl, reported }));
     assert.equal(o.reported, true, 'the lane really counted the shadow worlds');
     assert.ok(o.ctl >= 16, 'the retaining control must be seen, got ' + o.ctl);
 });
+
+test('anatomy load (b88 NIT): an inherited Object.prototype.source = junk does not leak into openAnatomy({}) -> non-null lane (HEAD: UNAVAILABLE)', () => {
+    Object.prototype.source = 'junk, not a kernel';
+    let o;
+    try { o = openAnatomy({}); } finally { delete Object.prototype.source; }
+    assert.ok(o.lane !== null, 'lane available despite the polluted prototype: ' + o.why);
+    assert.equal(globalThis.__VISIT__, undefined);
+});

@@ -5,7 +5,8 @@
  * only"; maintainer recommendation D-B4: a heap REGRESSION needs the same Node major AND runner class).
  *
  * PURE MODULE: no I/O, no process state, no clock. SoakReport.mjs `--baseline <stream>` (B-B5) loads and
- * RE-DERIVES both streams with its own integrity checks first, then calls diffBaseline(base, head). This module
+ * RE-DERIVES both streams with its own integrity checks first (a base ending INTEGRITY / CRASH / CONFIG is REFUSED
+ * base-integrity there), then calls diffBaseline(base, head) only when both are consistent. This module
  * re-derives nothing: it reads the records the re-derivation accepted.
  *
  *   diffBaseline(base, head) -> { verdict, exitCode, reason, detail, nodeMajor, runner, regressions, notes, lanes }
@@ -59,7 +60,8 @@
  * (main.mjs:439-449); summary {verdict, exitCode, perLane {<lane>: {status, notRun, totals {failingWorlds},
  * drift {heap {late}}}}} (main.mjs:298-308, gates.mjs:509-523).
  *
- * The thresholds live here (BASELINE_*); B-B5 may move them into config.mjs CONSTANTS (header gates block).
+ * The thresholds live here (BASELINE_*), NOT in config.mjs CONSTANTS (ruling B-B5): the header gates block stays
+ * unchanged, so b87 streams stay readable as a base.
  * COLD module.
  */
 

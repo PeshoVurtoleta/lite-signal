@@ -444,7 +444,6 @@ async function main() {
                 const ad = tapAdapter(latAdapter, tap);
                 // the shadow registries: same tracker, their OWN witness list and count (tracked === worlds stays the oracle's)
                 let sWitness = [];
-                let sTracked = 0;
                 const stap = {
                     escape: null,
                     onOpen(sw) {
@@ -452,7 +451,6 @@ async function main() {
                         if (reg === null || (typeof reg !== 'object' && typeof reg !== 'function')) throw new TypeError('main: the shadow world has no registry to track');
                         tracker.track(reg, null, L.name + '/anatomy');
                         sWitness.push(new WeakRef(reg));
-                        sTracked++;
                     },
                 };
                 const sad = anat === null ? null : tapAdapter(anat.adapter, stap);
@@ -503,7 +501,6 @@ async function main() {
                 const interrupted = ct.get('ops') < cfg.ops;   // a signal stopped it short of SOAK_OPS
                 ctx.world = null; ctx.worldSeed = null;
                 const witnessed = witness.length;
-                const sWitnessed = sWitness.length;
                 const closed = await closeBoundary({
                     tracker, witness: witness.concat(sWitness), profiler,
                     dropRefs: () => { script = null; r = null; },
@@ -513,10 +510,12 @@ async function main() {
                 const ops = ct.get('ops');
                 // A FRESH boundary object per lane-cycle, bound to it (lane, cycle). Retention is measured only
                 // when every world of the cycle was tracked AND witnessed; otherwise trackerSize / weakAlive
-                // are null = UNMEASURED, which FAILs retention (gates.mjs boundaryState; amendment 13).
+                // are null = UNMEASURED, which FAILs retention (gates.mjs boundaryState; amendment 13). The shadow
+                // registries need no count conjunct: one stap.onOpen tracks AND witnesses each (a count check was a
+                // tautology); a leaked shadow registry is caught by retention (test/40 row E, 'main: SHADOWLEAK').
                 const worldsRun = ct.get('worlds');
                 const cb = closed.boundary;
-                const measured = tracked === worldsRun && witnessed === worldsRun && sTracked === sWitnessed && Number.isSafeInteger(cb.trackerSize) && Number.isSafeInteger(cb.weakAlive);
+                const measured = tracked === worldsRun && witnessed === worldsRun && Number.isSafeInteger(cb.trackerSize) && Number.isSafeInteger(cb.weakAlive);
                 const boundary = {
                     lane: L.name, cycle, worlds: worldsRun, tracked, witnessed,
                     trackerSize: measured ? cb.trackerSize : null, weakAlive: measured ? cb.weakAlive : null,

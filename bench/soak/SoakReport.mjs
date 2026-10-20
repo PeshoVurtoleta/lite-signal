@@ -2,7 +2,24 @@
  * @zakkster/lite-signal soak -- SoakReport: integrity re-derivation of one burn-in JSONL stream
  * (SPEC-B v2 sections 7-9, row R-tamper x10; S1cd TASK 9).
  *
- *   node bench/soak/SoakReport.mjs <stream.jsonl>           (npm run soak:report -- <stream.jsonl>)
+ *   node bench/soak/SoakReport.mjs <stream.jsonl> [--html <out.html>] [--baseline <base.jsonl>]
+ *                                                           (npm run soak:report -- <stream.jsonl> ...)
+ *
+ * --html <out.html> (B-B5) also writes report-html.mjs renderHtml({header, cycles, summary, lines, diff}) of the
+ * run to <out.html>, for EVERY outcome (lines = the stdout lines then the stderr lines; header / cycles / summary
+ * null / [] when the stream did not pass the structure checks); stdout, stderr and the exit code stay those of
+ * the run without --html. A render that throws appends a CRASH line (exit >= 1); a write error a CONFIG line (exit 2).
+ *
+ * --baseline <base.jsonl> (B-B5) judges the base with the same checks, ONLY when the head stream is consistent
+ * (a head INTEGRITY / CRASH / CONFIG prints no baseline line). A base that is not consistent (INTEGRITY / CRASH /
+ * CONFIG) is REFUSED base-integrity (its first stderr line is quoted without its `soak:report: `prefix, ` -- ` as `: `,
+ * so the --html banner keys on the head's own lines only); else baseline.mjs diffBaseline(base, head) decides.
+ * stdout, BEFORE the verdict line (which stays the last stdout line):
+ *   `soak:report: baseline <V> regressions=<n> notes=<m>`   V = PASS | NOTE | REGRESSION | REFUSED | INCOMPATIBLE
+ *   `soak:report: baseline <V> -- <reason>: <detail>`   REFUSED / INCOMPATIBLE only; the same line also on stderr
+ *   `soak:report: baseline REGRESSION|NOTE <kind> <lane> -- <detail>`   one line per diff entry, regressions first
+ * Exit = max(the head's exit, baseline.mjs BASELINE_EXIT[V]) (maintainer ruling D1, b88): PASS / NOTE 0,
+ * REGRESSION 1, REFUSED / INCOMPATIBLE 2; a consistent head that is NOT A RELEASE SOAK still exits >= 1.
  *
  * load -> integrity -> re-derive -> print. Nothing in the stream is trusted that can be re-derived: the run
  * verdict, every perLane entry, the INCONCLUSIVE lines and the gate breaches come from gates.mjs (LaneGates +
@@ -24,7 +41,10 @@
  *   1  `soak:report: NOT A RELEASE SOAK -- <reason>: <detail>`   consistent (the verdict line is printed
  *      first) but not release evidence
  *   1  `soak:report: CRASH -- <stack>`   a report bug (never exit 0, never mistaken for INTEGRITY)
- *   2  `soak:report: CONFIG -- <msg>`   no path, an extra/unknown argument, a missing or unreadable file, or
+ *   2  `soak:report: CONFIG -- <msg>`   no path, an extra/unknown argument, a flag with no value or given twice,
+ *      an --html path that is one of the input streams, a missing or unreadable stream file (a missing --baseline
+ *      file is REFUSED base-integrity when the head is consistent and never read when the head is INTEGRITY),
+ *      an --html write error, or
  *      this tree's divergences.json is invalid (an environment problem, not a stream defect)
  *
  * INTEGRITY classes, in PRECEDENCE order (the first that fails is the one reported; within a class the
@@ -63,6 +83,9 @@
  * refused, fail closed), and nearwrap.baseSha256 must equal the sha256 of the base's utf8-decoded text (the hash
  * nearwrap.mjs records), kernel.files[1].sha256 the raw-byte sha256 of the sibling Watch.js (the derived Watch.js
  * is a byte copy of it). Only then is the stream consistent, and refused as nearwrap.
+ * The tree twin (B-B5, HISTORY M3): a TREE run (no override) with header.nearwrap null whose kernel.files[0] parent
+ * dir is named <Signal7>-<Watch7> of its own two sha256 values -- the derived pair dir, i.e. a NEARWRAP run with
+ * nearwrap and SOAK_NEARWRAP nulled -- is a control INTEGRITY failure, not merely tree-parity.
  *
  * Teeth (SPEC-B addendum 9a): the hard gates and oracles whose only teeth are GAPS come from ./teeth.mjs
  * gapTeeth() by import (never copied); a consistent stream prints them on one stdout line
@@ -94,7 +117,12 @@
  *   - Stale vs tampered: gates-block, registry and tree-parity cannot tell an honest stream recorded under
  *     other code from a forged one; they refuse both and say so.
  *   - The cycle rss sub-object (B-B3): only the post-warm-up rss.p95MB is judged (the rss gate, through
- *     LaneGates); warm-up rss and samples / maxMB / stride are key-checked but not judged.
+ *     LaneGates). Every cycle's rss (warm-up included, B-B5) is key-checked and field-checked (cycle-field: a
+ *     present rss that is not an object; samples and stride counts, stride a power of 2; stride re-derived from
+ *     worlds -- the RssSampler takes one push per world, so stride is the smallest power of 2 s with
+ *     ceil(worlds / s) <= RSS_BUF - 1 (rss.mjs:94-107; rss.mjs exports RSS_BUF, not the formula) -- and samples
+ *     === ceil(worlds / stride); samples 0 -> p95MB and maxMB both null, else both finite >= 0 and p95MB <= maxMB);
+ *     an absent rss or rss field is missing-key's. The MB values themselves are not re-derived (no replay).
  *   - The cycle latency sub-object (B-B4a, REPORT-ONLY): keyed by config.mjs LATENCY_METHODS, each entry
  *     {n, p50Ns, p99Ns, belowFloor}. Key-checked (an absent latency or entry is missing-key) and field-checked
  *     (cycle-field: counts, belowFloor <= n, each pXX null or a count, p50Ns <= p99Ns with p99Ns null -> p50Ns
@@ -102,21 +130,22 @@
  *   - The cycle anatomy sub-object (B-B4b, REPORT-ONLY): null, or {worlds, counts, markDedupe} with counts keyed by
  *     harness/visit-anchors.mjs NAMES (imported, never copied). Key-checked when an object (unknown / missing keys
  *     in anatomy and anatomy.counts); field-checked (cycle-field: a present value that is neither null nor an
- *     object, worlds a count >= 1, every present count a count, markStamp <= markEdge, markDedupe Object.is
+ *     object, worlds a count >= 1 and <= floor((cycle worlds - 1) / SHAPE_EVERY) + 1 (an UPPER bound: anatomy.mjs
+ *     skips a world whose oracle and shadow both fail), every present count a count, markStamp <= markEdge, markDedupe Object.is
  *     markStamp / markEdge, null when markEdge is 0); an absent key is missing-key's. Never judged; the counts
  *     are not re-derived (the shadow run is not replayed here).
  *
  * Imports are kernel-free (never kernel.mjs / provenance.mjs / adapters/lite.mjs). COLD module.
  */
 
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { normalize, dirname, join } from 'node:path';
+import { normalize, dirname, join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
     gatesBlock, writeLineSync, formatReplayKey, KNOWN_KEYS, SCHEMA_VERSION, GEN_VERSION, FAIL_CAP, WARMUP_CYCLES,
-    CYCLES_MAX, EXIT_CODE, ENGINES_KNOWN, DEFAULT_OPS, DEFAULT_CYCLES, NEARWRAP_K_MAX, LATENCY_METHODS,
+    CYCLES_MAX, EXIT_CODE, ENGINES_KNOWN, DEFAULT_OPS, DEFAULT_CYCLES, NEARWRAP_K_MAX, LATENCY_METHODS, SHAPE_EVERY,
 } from './config.mjs';
 import { LaneGates, judgeRun, oracleFamily, GateInputError, REASONS } from './gates.mjs';
 import { classify, digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences.mjs';
@@ -128,6 +157,9 @@ import { applicability } from './adapters/contract.mjs';
 import { RECORD_TYPES, FATAL_KINDS } from './jsonl.mjs';
 import { familyKeys, BreachLog } from './main.mjs';
 import { gapTeeth } from './teeth.mjs';
+import { RSS_BUF } from './rss.mjs';
+import { renderHtml } from './report-html.mjs';
+import { diffBaseline, BASELINE_EXIT, BASELINE_VERDICT } from './baseline.mjs';
 import { NAMES as ANATOMY_NAMES } from '../../harness/visit-anchors.mjs';
 
 const own = (o, k) => o !== null && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
@@ -356,6 +388,12 @@ function checkNearwrapKernel(n, k, value) {
     }
 }
 
+/** Is files[0]'s parent dir named <sha7>-<sha7> of the pair's own sha256 values (kernel.mjs's derived nearwrap dir)? */
+function inPairDir(files) {
+    const parts = files[0].path.split(/[\\/]/);
+    return parts.length >= 3 && parts[parts.length - 2].toLowerCase() === files[0].sha256.slice(0, 7) + '-' + files[1].sha256.slice(0, 7);
+}
+
 function checkHeader(h, cfg, registryText) {
     if (!isDeepStrictEqual(h.gates, gatesBlock())) {
         const want = gatesBlock();
@@ -371,6 +409,10 @@ function checkHeader(h, cfg, registryText) {
     if (h.nearwrap !== null) checkNearwrapKernel(h.nearwrap, k, cfg.kernel);   // the derived pair: N1-N5
     else if (k.override && !kernelPathMatches(k.files[0].path, cfg.kernel)) {
         bad('control', 'kernel path ' + k.files[0].path + ' is not the SOAK_KERNEL value ' + cfg.kernel);
+    }
+    else if (!k.override && inPairDir(k.files)) {   // the tree twin of M3 (see the file header)
+        bad('control', 'tree kernel ' + k.files[0].path + ' sits in a derived nearwrap pair dir (<Signal7>-<Watch7>) but ' +
+            'header.nearwrap is null (a NEARWRAP run with nearwrap / SOAK_NEARWRAP nulled)');
     }
     const names = k.files.map((f) => f.path.split(/[\\/]/).pop());
     if (names[0] !== 'Signal.js' || names[1] !== 'Watch.js') bad('control', 'kernel files must be Signal.js + Watch.js, got ' + names.join(','));
@@ -430,6 +472,13 @@ function checkCycles(cycles, cfg, lanes, summary, controlsName) {
         }
         if (Object.values(c.opsByClass).reduce((a, b) => a + b, 0) !== c.ops) bad('cycle-field', at + 'opsByClass does not sum to ops');
         if (!isObj(c.memory) || !(Number.isFinite(c.memory.residentMB) && c.memory.residentMB >= 0)) bad('cycle-field', at + 'memory.residentMB missing');
+        // rss (B-B3; every cycle, warm-up included, B-B5): an ABSENT rss / rss field is missing-key's (later class)
+        if (own(c, 'rss') && !isObj(c.rss)) bad('cycle-field', at + 'rss is not an object: ' + String(c.rss));
+        const rs = own(c, 'rss') && ['samples', 'stride', 'p95MB', 'maxMB'].every((k) => own(c.rss, k)) ? c.rss : null;
+        if (rs !== null && !(isCount(rs.samples) && isCount(rs.stride) && rs.stride >= 1 && rs.stride <= 0x40000000 && (rs.stride & (rs.stride - 1)) === 0)) bad('cycle-field', at + 'rss.samples / rss.stride = ' + String(rs.samples) + ' / ' + String(rs.stride) + ' (counts; stride a power of 2)');
+        if (rs !== null && rs.samples === 0 && !(rs.p95MB === null && rs.maxMB === null)) bad('cycle-field', at + 'rss.samples 0 with rss.p95MB / rss.maxMB = ' + String(rs.p95MB) + ' / ' + String(rs.maxMB) + ' (no sample -> both null)');
+        if (rs !== null && rs.samples > 0 && !(isMB(rs.p95MB) && isMB(rs.maxMB) && rs.p95MB <= rs.maxMB)) bad('cycle-field', at + 'rss.p95MB / rss.maxMB = ' + String(rs.p95MB) + ' / ' + String(rs.maxMB) + ' (finite MB >= 0, p95MB <= maxMB)');
+        if (rs !== null && (rs.stride !== rssStride(c.worlds) || rs.samples !== Math.ceil(c.worlds / rs.stride))) bad('cycle-field', at + 'rss.samples / rss.stride ' + rs.samples + ' / ' + rs.stride + ' do not re-derive from ' + c.worlds + ' worlds (one push per world, RssSampler cap ' + RSS_BUF + ': stride ' + rssStride(c.worlds) + ', samples ' + Math.ceil(c.worlds / rssStride(c.worlds)) + ')');
         const b = c.boundary;
         if (!isObj(b)) bad('cycle-field', at + 'boundary missing');
         if (b.lane !== c.lane || b.cycle !== c.cycle) bad('cycle-field', at + 'boundary belongs to ' + String(b.lane) + ' cycle ' + String(b.cycle));
@@ -451,6 +500,7 @@ function checkCycles(cycles, cfg, lanes, summary, controlsName) {
         const an = own(c, 'anatomy') ? c.anatomy : null;
         if (an !== null && !isObj(an)) bad('cycle-field', at + 'anatomy is neither null nor an object: ' + String(an));
         if (an !== null && own(an, 'worlds') && !(isCount(an.worlds) && an.worlds >= 1)) bad('cycle-field', at + 'anatomy.worlds = ' + String(an.worlds) + ' (a count >= 1; no folded world is anatomy null)');
+        if (an !== null && own(an, 'worlds') && an.worlds > Math.floor((c.worlds - 1) / SHAPE_EVERY) + 1) bad('cycle-field', at + 'anatomy.worlds ' + an.worlds + ' > ' + (Math.floor((c.worlds - 1) / SHAPE_EVERY) + 1) + ', the worlds w % SHAPE_EVERY (' + SHAPE_EVERY + ') === 0 of ' + c.worlds + ' (an upper bound)');
         if (an !== null && own(an, 'counts') && !isObj(an.counts)) bad('cycle-field', at + 'anatomy.counts is not an object');
         for (const n of an !== null && isObj(an.counts) ? ANATOMY_NAMES : []) {
             if (own(an.counts, n) && !isCount(an.counts[n])) bad('cycle-field', at + 'anatomy.counts.' + n + ' = ' + String(an.counts[n]) + ' (counts)');
@@ -524,6 +574,17 @@ function checkCycles(cycles, cfg, lanes, summary, controlsName) {
     }
 }
 function okOracle(x) { try { oracleFamily(x.oracle); return true; } catch (e) { return false; } }
+const isMB = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+/**
+ * The RssSampler stride after n pushes (rss.mjs:94-107; rss.mjs exports RSS_BUF but not this formula, so it is
+ * re-stated here): the smallest power of 2 s with ceil(n / s) <= RSS_BUF - 1 (n = 0 -> 1). B0 census
+ * (.handoff/b88-evidence/B0/census.txt) checked it against an RssSampler replay for every n in 0..300000.
+ */
+export function rssStride(n) {
+    let s = 1;
+    while (Math.ceil(n / s) > RSS_BUF - 1) s *= 2;
+    return s;
+}
 
 /* ---- summary --------------------------------------------------------------------------------------- */
 
@@ -684,16 +745,27 @@ function checkMissingKeys(recs) {
 
 /** Judge one stream. Returns { exitCode, out: [stdout lines], err: [stderr lines] }. Pure apart from reading files. */
 export function report(path) {
-    const config = (msg) => ({ exitCode: EXIT_CODE.CONFIG, out: [], err: ['soak:report: CONFIG -- ' + msg] });
+    const r = judge(path);
+    return { exitCode: r.exitCode, out: r.out, err: r.err };
+}
+
+/**
+ * report() plus st: the stream's { header, cycles, summary } once the structure checks passed (kept on a later
+ * INTEGRITY / CRASH, for --html and --baseline), else null. Pure apart from reading files.
+ */
+export function judge(path) {
+    const config = (msg) => ({ exitCode: EXIT_CODE.CONFIG, out: [], err: ['soak:report: CONFIG -- ' + msg], st: null });
     if (REGISTRY_PROBLEMS.length > 0) return config('this tree\'s divergences.json is invalid: ' + REGISTRY_PROBLEMS[0]);
     let text, registryText;
     try { text = readFileSync(path, 'utf8'); } catch (e) { return config('cannot read ' + path + ': ' + (e && e.code ? e.code : String(e))); }
     try { registryText = readFileSync(REGISTRY_URL, 'utf8'); } catch (e) { return config('cannot read divergences.json: ' + String(e && e.code)); }
     const registry = JSON.parse(registryText).entries;
     const out = [];
+    let view = null;
     try {
         const recs = parseStream(text);
         const st = checkStructure(recs);
+        view = { header: st.header, cycles: st.cycles, summary: st.summary };
         const cfg = readHeader(st.header);
         const lanes = checkHeader(st.header, cfg, registryText);
         checkCycles(st.cycles, cfg, lanes, st.summary, st.header.controls.name);
@@ -706,14 +778,107 @@ export function report(path) {
         const rel = checkRelease(st.header, st.cycles);
         if (st.header.controls.name !== null) out.push('soak:report: NOTE -- control kernel ' + st.header.controls.name + ', not release evidence');
         out.push('soak:report: verdict ' + v.verdict + ' (consistent)');
-        if (rel !== null) return { exitCode: 1, out, err: ['soak:report: NOT A RELEASE SOAK -- ' + rel.reason + ': ' + rel.detail] };
-        return { exitCode: 0, out, err: [] };
+        if (rel !== null) return { exitCode: 1, out, err: ['soak:report: NOT A RELEASE SOAK -- ' + rel.reason + ': ' + rel.detail], st: view };
+        return { exitCode: 0, out, err: [], st: view };
     } catch (e) {
-        if (e instanceof Integrity) return { exitCode: 1, out, err: ['soak:report: INTEGRITY -- ' + e.cls + ': ' + e.message] };
+        if (e instanceof Integrity) return { exitCode: 1, out, err: ['soak:report: INTEGRITY -- ' + e.cls + ': ' + e.message], st: view };
         // a malformed value that slipped past the field checks is still a stream defect, never a pass
-        if (e instanceof GateInputError || e instanceof TypeError || e instanceof RangeError) return { exitCode: 1, out, err: ['soak:report: INTEGRITY -- malformed: ' + e.message] };
-        return { exitCode: 1, out, err: ['soak:report: CRASH -- ' + (e && e.stack ? e.stack : String(e))] };
+        if (e instanceof GateInputError || e instanceof TypeError || e instanceof RangeError) return { exitCode: 1, out, err: ['soak:report: INTEGRITY -- malformed: ' + e.message], st: view };
+        return { exitCode: 1, out, err: ['soak:report: CRASH -- ' + (e && e.stack ? e.stack : String(e))], st: view };
     }
+}
+
+/* ---- the command line ------------------------------------------------------------------------------ */
+
+const USAGE = 'usage: node bench/soak/SoakReport.mjs <stream.jsonl> [--html <out.html>] [--baseline <base.jsonl>]';
+const FLAGS = ['--html', '--baseline'];
+/** realpath when the file exists, else the resolved path (an --html target usually does not exist yet). */
+const realOr = (p) => { try { return realpathSync(p); } catch (e) { return resolve(p); } };
+
+/** argv -> { path, html, baseline } (null = not given), or { error: <CONFIG msg> }. Reads no file but realpath. */
+function parseArgs(args) {
+    const o = { path: null, html: null, baseline: null }, pos = [];
+    const got = ' (got ' + args.length + ' argument(s)' + (args.length ? ': ' + args.join(' ') : '') + ')';
+    for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (FLAGS.indexOf(a) !== -1) {
+            const key = a.slice(2);
+            if (o[key] !== null) return { error: a + ' given twice; ' + USAGE + got };
+            const v = i + 1 < args.length ? args[i + 1] : null;
+            if (v === null || v === '' || v.indexOf('-') === 0) return { error: a + ' needs a value; ' + USAGE + got };
+            o[key] = v;
+            i++;
+        } else if (a.indexOf('-') === 0) {
+            const near = FLAGS.filter((f) => a.length >= 4 && f.slice(0, 4) === a.slice(0, 4));
+            return { error: 'unknown option ' + a + (near.length ? ' (did you mean ' + near[0] + '?)' : '') + '; ' + USAGE + got };
+        } else pos.push(a);
+    }
+    if (pos.length !== 1) return { error: USAGE + ' (exactly one path; ' + got.slice(2) };
+    o.path = pos[0];
+    if (o.html !== null && (realOr(o.html) === realOr(o.path) || (o.baseline !== null && realOr(o.html) === realOr(o.baseline)))) {
+        return { error: '--html ' + o.html + ' is one of the input streams (refusing to overwrite it)' };
+    }
+    return o;
+}
+
+/** --html: render the run (every outcome) and write it; mutates r on a render (CRASH) or write (CONFIG) error. */
+function writeHtml(r, diff, file) {
+    let html;
+    try {
+        html = renderHtml({ header: r.st === null ? null : r.st.header, cycles: r.st === null ? [] : r.st.cycles,
+            summary: r.st === null ? null : r.st.summary, lines: r.out.concat(r.err), diff });
+    } catch (e) {
+        r.err.push('soak:report: CRASH -- --html render: ' + (e && e.stack ? e.stack : String(e)));
+        r.exitCode = Math.max(r.exitCode, 1);
+        return;
+    }
+    try { writeFileSync(file, html); } catch (e) {
+        r.err.push('soak:report: CONFIG -- cannot write --html ' + file + ': ' + (e && e.code ? e.code : String(e)));
+        r.exitCode = Math.max(r.exitCode, EXIT_CODE.CONFIG);
+    }
+}
+
+/** The CLI run: argv -> { exitCode, out, err } (judge(), then --baseline, then --html). */
+function main(args) {
+    const a = parseArgs(args);
+    if (own(a, 'error')) return { exitCode: EXIT_CODE.CONFIG, out: [], err: ['soak:report: CONFIG -- ' + a.error], st: null };
+    const r = judge(a.path);
+    const diff = a.baseline !== null && consistent(r) ? withBaseline(r, a.baseline) : null;
+    if (a.html !== null) writeHtml(r, diff, a.html);
+    return r;
+}
+
+/** Did judge() reach the verdict line (a consistent stream: exit 0, or 1 with NOT A RELEASE SOAK)? */
+const consistent = (r) => r.out.length > 0 && r.out[r.out.length - 1].indexOf('soak:report: verdict ') === 0;
+
+/**
+ * --baseline on a consistent head r (see the file header): judge() the base, refuse an inconsistent one, else
+ * diffBaseline(base, head). Mutates r (baseline lines before the verdict line, REFUSED / INCOMPATIBLE also on
+ * stderr, exit = max(head, baseline): D1); returns the diff for --html (null when the diff itself threw: CRASH).
+ */
+function withBaseline(r, basePath) {
+    const b = judge(basePath);
+    let d;
+    if (!consistent(b)) {
+        const line = (b.err.length > 0 ? b.err[0] : 'no report line').replace(/\r?\n/g, ' | ').replace(/^soak:report: /, '').replace(' -- ', ': ');
+        d = { verdict: BASELINE_VERDICT.REFUSED, exitCode: BASELINE_EXIT.REFUSED, reason: 'base-integrity', detail: line,
+            nodeMajor: null, runner: null, regressions: [], notes: [], lanes: [] };
+    } else {
+        try { d = diffBaseline(b.st, r.st); } catch (e) {
+            r.err.push('soak:report: CRASH -- --baseline diff: ' + (e && e.stack ? e.stack : String(e)));
+            r.exitCode = Math.max(r.exitCode, 1);
+            return null;
+        }
+    }
+    const lines = ['soak:report: baseline ' + d.verdict + ' regressions=' + d.regressions.length + ' notes=' + d.notes.length];
+    const stop = d.reason !== null ? 'soak:report: baseline ' + d.verdict + ' -- ' + d.reason + ': ' + d.detail : null;
+    if (stop !== null) lines.push(stop);
+    for (const x of d.regressions) lines.push('soak:report: baseline REGRESSION ' + x.kind + ' ' + x.lane + ' -- ' + x.detail);
+    for (const x of d.notes) lines.push('soak:report: baseline NOTE ' + x.kind + ' ' + x.lane + ' -- ' + x.detail);
+    r.out.splice(r.out.length - 1, 0, ...lines);
+    if (stop !== null) r.err.push(stop);
+    r.exitCode = Math.max(r.exitCode, d.exitCode);
+    return d;
 }
 
 function isEntry() {
@@ -722,11 +887,7 @@ function isEntry() {
 }
 
 if (isEntry()) {
-    const args = process.argv.slice(2);
-    let r;
-    if (args.length !== 1 || args[0].indexOf('-') === 0) {
-        r = { exitCode: EXIT_CODE.CONFIG, out: [], err: ['soak:report: CONFIG -- usage: node bench/soak/SoakReport.mjs <stream.jsonl> (exactly one path; got ' + args.length + ' argument(s)' + (args.length ? ': ' + args.join(' ') : '') + ')'] };
-    } else r = report(args[0]);
+    const r = main(process.argv.slice(2));
     for (const l of r.out) writeLineSync(1, l);
     for (const l of r.err) writeLineSync(2, l.replace(/\r?\n/g, ' | '));
     process.exitCode = r.exitCode;
