@@ -15,6 +15,130 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md` and `llms.txt`.
 
+### Changed -- soak latency lane refuses an unreadable parameter list (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/latency.mjs (re-pinned in parity.json, still 40
+files), test/71, test/46, and comment-only changes in bench/soak/_mustfail.mjs and teeth.mjs.
+Closing run (quiet-lock, Node v26.8.2, 1-min load 3.12-3.19, 2.22 after): npm run verify exit 0; npm test 1860 / 1846
+pass / 0 fail / 7 skip / 7 todo; torture GATE ok (alloc=0 B/op, retention=0/966); soak:parity OK 40.
+- arm()'s paramsHidden() now accepts a world method only when its parameter-list head (the source up to the first
+  `)` or `=>`) holds nothing but identifier characters, whitespace, `,`, `(`, `{`, `}`, `:` (SAFE_HEAD). Any other
+  character refuses it as "a rest, default or unreadable parameter list (...)": a computed or string key (whose `)`
+  can precede the list's own `)`), a comment, a default `=`, a rest `...`. Fail-closed by construction: array-
+  destructure parameters and generators are refused too (no adapter uses them). The 15 lite adapter world methods
+  are all still accepted. Cold path only: arm(), once per armed open per new function, never per timed call.
+- test/71 29 -> 36: 5 refusal rows (computed key, comment, no-space `async[k]`, string key `')'`, computed key in
+  a destructuring parameter), each red on the earlier patch or the base, plus 2 over-refusal guards.
+  test/46 249 -> 250: an UPPER-case `<SHA7>-<SHA7>` pair dir row for the M3 tree twin (fails with
+  inPairDir's toLowerCase() removed).
+
+### Changed -- soak must-fail control T-flushdrop; retired torture scenarios graph-fuzzer and torture-soak (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/_mustfail.mjs, teeth.mjs, test/45, and
+bench/torture (run.mjs, MANIFEST.txt, README.md, two scenario files deleted), bench/package.json, bench/README.md,
+README.md (two runnable command lines). No PARITY_FILES or calibration-pinned file touched (no re-pin, no recut).
+Closing run (quiet-lock, Node v26.8.2, 1-min load 1.31-2.66): npm run verify exit 0; npm test 1852 / 1838 pass /
+0 fail / 7 skip / 7 todo; torture GATE ok (alloc=0 B/op, retention=0/966); soak:parity OK 40.
+- T-flushdrop (new control, 41st; headpatched GRAPH --smoke): a patch at the flushEffects inner loop skips every 64th
+  flushed effect (FLAG_QUEUED cleared, one-off drop). Expected exit 1 with O4 GRAPH effect-dead + O1 GRAPH
+  effect-stale; red 3/3 with identical heads, about 2 s. The revert, a never-drop patch and a drop-then-execute patch
+  all MISS. Limit: the drop counter is process-global, so the O1 head depends on flush phase; a GRAPH op-mix change
+  may drop it and the control then MISSes (fails loud, never a silent pass).
+- Retirement: run.mjs SCENARIOS 26 -> 24; graph-fuzzer.mjs and torture-soak.mjs deleted (absorbed by the bench/soak
+  GRAPH lane; the MANIFEST RETIRED block records the absorbed-by map and `git show 1dea069:` blobs 8c4b5f8f /
+  f8494263). The control went in first so the GRAPH lane's coverage was proven before the deletion.
+- Accepted loss: single-registry aging (the long one-registry run torture-soak did), see the MANIFEST RETIRED block.
+- Coverage note: scheduler-bench's high-water witness is NOT mutant-proven against deferred-sever (a sever mutant
+  does not trip it: links 7823 / 13008); the deferred-sever mutant was run on torture-soak. Coverage of deferred
+  sever now rests on soak T-sever / O5.
+
+### Added -- soak:report --html / --baseline and an every-cycle rss check (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/SoakReport.mjs, anatomy.mjs, baseline.mjs
+(comments), latency.mjs, main.mjs, report-html.mjs, parity.mjs / parity.json, plus test/46, 50, 71, 72.
+Closing run (quiet-lock, Node v26.8.2, 1-min load 4.71-2.02, noisy host): npm run verify exit 0; npm test 1851 /
+1837 pass / 0 fail / 7 skip / 7 todo; torture GATE ok (alloc=0 B/op, retention=0/966); soak:parity OK 40.
+- soak:report <stream> [--html <out>] [--baseline <stream>]: --html writes a self-contained page for every outcome
+  (a write error is CONFIG, exit 2). --baseline judges the base stream only when the head is consistent; an
+  inconsistent base is REFUSED and an incomparable pair INCOMPATIBLE (both exit 2); the
+  exit is max(head, baseline). On a short stream (OPS_MIN) the baseline line reads NOTE (p99-unmeasured per latency
+  class), not PASS. The baseline thresholds (+2 MB late heap, -15% throughput, +25% p99) live in baseline.mjs and
+  are REPORTED-tier: unverified against a real same-code release pair.
+- New INTEGRITY checks: every-cycle rss values (warm-up included; samples === ceil(worlds / stride), stride re-derived
+  by the exported rssStride), an anatomy.worlds upper bound, and the tree twin of M3 (`<sha7>-<sha7>` dir).
+- report-html: a markDedupe sparkline. The latency lane rejects world methods with a rest or default parameter
+  (Function.length hides them); openAnatomy ignores an inherited `source`, and an rmSync failure is an UNAVAILABLE lane.
+- Parity pins 38 -> 40 (main, SoakReport, latency, anatomy re-pinned; report-html and baseline added). npm test
+  +33 (1818 -> 1851); no-flag SoakReport output is byte-identical to HEAD on 8 streams.
+
+### Added -- soak T-mark must-fail control and the NOTE spec kind (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/_mustfail.mjs, config.mjs, main.mjs, teeth.mjs,
+parity.json, plus test/45 and the new test/73.
+Closing run (quiet-lock, Node v26.8.2, 1-min load 2.71-2.67, noisy host): npm run verify exit 0; npm test 1818 /
+1804 pass / 0 fail / 7 skip / 7 todo; torture GATE ok (alloc=0 B/op, retention=0/966); soak:parity OK 38.
+- T-mark (new control, 40th; base tree, GRAPH --smoke): two patches on the live markDownstream turn the markEpoch
+  dedupe off. The shape lane's markDedupe reads 1.000 on the mutant against 0.880-0.918 on the head (3 smoke
+  cycles each); the control is judged by a NOTE spec (`shape[GRAPH] markDedupe>=`), not a BREACH.
+- NOTE spec kind: main.mjs prints a report-only `soak: NOTE -- shape[<LANE>] markDedupe=<x.xxx|null> cycle=<c>
+  worlds=<n>` line per non-null anatomy cycle; _mustfail judges a NOTE spec over every selected line, with the count
+  equal to the lane's cycle records. config.mjs MARK_DEDUPE_NOTE = 0.99 (in the stream header gates block).
+  teeth GAPS 24 -> 23.
+- test/73 (9 tests): head GRAPH markDedupe 0.873 (71529 stamps / 81913 edges) < 0.99; the control's patches 1.000;
+  a patches [] control must-fail.
+- Parity pins stay 38 (main.mjs and config.mjs re-pinned only).
+
+### Added -- soak report-only anatomy lane (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/anatomy.mjs (new), adapters/lite.mjs,
+SoakReport.mjs, gates.mjs, main.mjs, parity.mjs / parity.json, calibration/soak-calibration.json (recut), plus test/40,
+42, 46 and the new test/72.
+Closing run (quiet-lock, Node v26.8.2, 1-min load 4.84-3.05, noisy host): npm run verify exit 0; npm test 1809 /
+1795 pass / 0 fail / 7 skip / 7 todo; torture GATE ok (alloc=0 B/op, retention=0/966); soak:parity OK 38.
+- anatomy.mjs: the resolved kernel instrumented with harness/visit-anchors into a temp copy; shape worlds
+  (w % 16 = 0) are re-run on that shadow engine. Cycle key `anatomy` {worlds, counts, markDedupe} | null, validated
+  by SoakReport. A divergent, overflowed or unavailable shadow gives null plus a NOTE, never 0. openAnatomy never
+  throws for an unavailable lane (a foreign __VISIT__ or a sha mismatch is refused). adapters/lite.mjs gains
+  liteAdapterFor(kernel).
+- Transparency: per-cycle worlds..weakAlive deepStrictEqual to before, 15/15 cycles, default and SOAK_SEED=1.
+  opsPerSec before -> after (REPORTED, PRELIMINARY, one run each): GRAPH -4.2..-5.0%, BATCH -4.4..-5.4%, ERROR
+  -2.1..-11.1%, NEST -5.4..-5.9%, WIE -4.2..-6.1% (the shadow re-run of 1 world in 16).
+- Calibration recut (adapters/lite.mjs pin only; every deterministic count identical); throughput is imported from
+  the 2026-10-19 timed run and the kernels' throughput reads PENDING. Parity pins 36 -> 38. npm test +32
+  (1777 -> 1809).
+
+### Added -- soak report-only latency lane; devDependency @zakkster/lite-sketch 1.2.0 (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/latency.mjs (new), config.mjs, gates.mjs,
+main.mjs, SoakReport.mjs, parity.mjs / parity.json, package.json (devDependencies), package-lock.json, plus test/40,
+42, 46 and the new test/71. package.json `dependencies` stays empty; bench/ is not in files[].
+Closing run (quiet-lock, Node v26.8.2, 1-min load 3.25-4.82, noisy host): npm run verify exit 0; npm test 1777 /
+1763 pass / 0 fail / 7 skip / 7 todo; torture GATE ok (alloc=0 B/op, retention=0/966); soak:parity OK 36.
+- package.json devDependencies += "@zakkster/lite-sketch": "1.2.0" (exact); the lockfile diff is the lite-sketch
+  entries only. A missing or wrong-version lite-sketch exits 2 (CONFIG) before any record is written.
+- latency.mjs: one DDSketch (alpha 0.01) per world method, armed on worlds w % 16 = 8, returning calls only; cycle key
+  `latency` {n, p50Ns, p99Ns, belowFloor} per method, validated by SoakReport; a 0 or NaN quantile is null. An
+  unclassified function key or a method with length > 2 is a TypeError (fail closed). Report-only, gates nothing.
+- config.mjs SKETCH_ALPHA 0.01, LATENCY_METHODS (12), LATENCY_UNTIMED (3) enter the stream header gates block, so a
+  pre-b85 stream is refused by the new SoakReport (gates-block mismatch; expected). Parity pins 35 -> 36.
+- npm test +29 (1748 -> 1777): test/71 17 (64-seed transparency over GRAPH / BATCH / ERROR / NEST; GC slope
+  -0.0000622 B/op against a 32.0 B/op transient control), test/46 12.
+
+### Added -- soak teeth: L-NW-hp-zero, the end-to-end NEARWRAP control (dev-only, not shipped)
+
+Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/_mustfail.mjs, teeth.mjs, plus test/45 and
+test/48. No PARITY_FILES or calibration-pinned file touched (no re-pin, no recut).
+Closing run (quiet-lock, Node v26.8.2, 1-min load 2.76-2.46): npm run verify exit 0; npm test 1748 / 1734 pass /
+0 fail / 7 skip / 7 todo; torture GATE ok (alloc=0 B/op, retention=0/966).
+- L-NW-hp-zero (new long control, 39th; headpatched + SOAK_NEARWRAP=zero:8, GRAPH x 11 at 20000 ops): the first
+  end-to-end NEARWRAP tooth and a second lane:GRAPH control (teeth CHECKS lane:GRAPH = [T-sever, L-NW-hp-zero]).
+  headpatched's globalVersion bump has no 0-skip (F29), so globalVersion reaches 0 and O1 / O2 / O4 fire: exit 1,
+  4 known=none GRAPH heads (O1 computed-mismatch, O1 effect-stale, O2 glitch, O4 effect-dead), 2/2. With the 0-skip
+  patched in, the same run is clean (exit 0, 0 BREACH). The spec is keyed on `oracle=O1 lane=GRAPH`, not known= / sig=.
+- teeth.mjs: T-A3b / T-A7a / T-A7b note NEARWRAP; totals-e2e no longer waits on NEARWRAP.
+- test/45 "teeth n" (+1) and test/48 literal counter-rewrite pins (+1): npm test +2 (1746 -> 1748).
+- A drafted second control, L-NW-rebase (clampSweep no-op'd, sign:8), was NOT red (0/3) and was dropped.
+
 ### Fixed -- soak:report accepts a NEARWRAP kernel only on verified sha256 (dev-only, not shipped)
 
 Engine unchanged (Signal.js d07e0b17, Watch.js 065f21bd); bench/soak/SoakReport.mjs only (checkNearwrapKernel,

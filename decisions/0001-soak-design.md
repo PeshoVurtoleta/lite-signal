@@ -1,10 +1,11 @@
 # ADR 0001 -- The soak harness (bench/soak): design, gates, teeth
 
-Status: ACCEPTED for the 1.6.0 line (S1a-S1d, bursts through 13, 2026-10-10 .. 2026-10-13; amended through burst 55,
-2026-10-18: see Amendment 2026-10-18 in section 5). Dev-only tooling:
+Status: ACCEPTED for the 1.6.0 line (S1a-S1d, bursts through 13, 2026-10-10 .. 2026-10-13; amended through burst 89,
+2026-10-20: see Amendments 2026-10-18 and 2026-10-20 in section 5). Dev-only tooling:
 nothing under bench/soak/ is in package.json `files[]`, and Signal.js / Watch.js are not touched by it.
 Open items are listed in "Consequences". The longer design record is audit/2026-10-07/verification/SPEC-B.md plus
-SPEC-B-S1cd-batches.md (git-ignored); this ADR is the part that has to outlive them. File:line cites are HEAD 3f169dd.
+SPEC-B-S1cd-batches.md (git-ignored); this ADR is the part that has to outlive them. File:line cites were re-pointed to the burst-90 tree (HEAD 66b6a50 + B-B7) on 2026-10-20;
+a count with no `at <sha>` / `since <sha>` (e.g. test/46 (177 tests)) is as of HEAD 3f169dd.
 
 ## Context
 
@@ -31,14 +32,14 @@ report-only. Oracles are pure and property-based; no oracle re-walks the kernel 
 share its errors).
 
 Defaults are calibrated, not guessed (section 8): DEFAULT_OPS 100000 per lane-cycle, 11 cycles (MIN_ACTIVE_CYCLES,
-config.mjs:21, :31). Smoke = 3 x 20000 and can only be SMOKE, never PASS.
+config.mjs:21, :35). Smoke = 3 x 20000 and can only be SMOKE, never PASS.
 
 ### 2. Cold-path policy
 
 Every bench/soak module is COLD (each header says so): none is imported by Signal.js, none sits on a hot body. The
-harness may allocate freely. Two rules keep it honest anyway: run totals live in a Float64Array (gates.mjs:70 Totals,
-exact to 2^53; the startup self-check `totals` feeds 3 x 2^30 and demands 3221225472, gates.mjs:264) and SOAK_OPS is
-capped at 0x3FFFFFFF (config.mjs:35) so a per-lane counter stays a Smi on pointer-compressed V8 (the F20 class).
+harness may allocate freely. Two rules keep it honest anyway: run totals live in a Float64Array (gates.mjs:74 Totals,
+exact to 2^53; the startup self-check `totals` feeds 3 x 2^30 and demands 3221225472, gates.mjs:307) and SOAK_OPS is
+capped at 0x3FFFFFFF (config.mjs:39) so a per-lane counter stays a Smi on pointer-compressed V8 (the F20 class).
 Per-op 0 B/op stays owned by test/32-perf-gate and test/torture.mjs, not by the soak (GC_MAJOR_POLICY, config.mjs).
 
 ### 3. Frozen kernels (SOAK_KERNEL)
@@ -47,29 +48,29 @@ All S1 runs load the engine through one seam (kernel.mjs:1-20). By default the i
 to a Signal.js with a sibling Watch.js> swaps a control. The path is realpath-resolved once so the hashed files are the
 loaded files. controls.json pins two controls by sha256 [three since 2026-10-18: preb33 added, Amendment 2026-10-18]:
 `rev152` (the published 1.5.2, exact devDependency alias `lite-signal-1.5.2`) and `headpatched` (the audit patch build,
-frozen in bench/soak/controls/headpatched, because /audit/ is git-ignored). parity.json pins 23 files [33 since eb5acc2,
-34 since 92c0020, Amendment 2026-10-18; 35 since 2b87bfb: + bench/soak/rss.mjs] (Signal.js, Watch.js, 21 bench/soak
-files, config.mjs and SoakReport.mjs among
-them); `npm run soak:parity` exits 1 on any drift, and a pin moves only through `parity.mjs --update` after review. The
+frozen in bench/soak/controls/headpatched, because /audit/ is git-ignored). parity.json pins 23 files [33 since eb5acc2, 34 since 92c0020, Amendment 2026-10-18; 35 since 2b87bfb: +
+bench/soak/rss.mjs; 36 since 3ef853a: + bench/soak/latency.mjs; 38 since 85d02e8: + bench/soak/anatomy.mjs,
+harness/visit-anchors.mjs; 40 since 1dea069: + bench/soak/report-html.mjs, bench/soak/baseline.mjs; 4f5f200 re-pinned
+main.mjs and config.mjs only] (Signal.js, Watch.js, 21 bench/soak files, config.mjs and SoakReport.mjs among them); `npm run soak:parity` exits 1 on any drift, and a pin moves only through `parity.mjs --update` after review. The
 header records the kernel hashes and `controls.name`; a stream from a scratch kernel is consistent but is never release
 evidence (section 9).
 
 ### 4. Verdicts and the INCONCLUSIVE evidence gates
 
-Gates are data: `GATES = [{id, kind, check, pass, mustFail[], teeth}]` (gates.mjs:292); GATE_NAMES derives from it, so a
+Gates are data: `GATES = [{id, kind, check, pass, mustFail[], teeth}]` (gates.mjs:340); GATE_NAMES derives from it, so a
 gate and its must-fail control land in one edit. Kinds: fail (oracle, heap, rss, retention), evidence (coverage,
-check-floor, taint-skip), startup (totals). Verdict ladder (gates.mjs:539-566, first match wins): config/expose-gc/
+check-floor, taint-skip), startup (totals), wrap (the S2 wrap job's gate, WRAP_GATE from wraprules.mjs, judged by wrap.mjs). Verdict ladder (gates.mjs:660-687, first match wins): config/expose-gc/
 provenance error -> 2; any FAIL gate, BREACH or fatal -> FAIL 1 (a crash is never PASS or INCONCLUSIVE); any
 INCONCLUSIVE cause -> 3; smoke -> SMOKE 0; a skip on a non-lite engine -> PARTIAL 0 (never the string PASS); else
 PASS 0. lite must SKIP nothing (a roster bug exits 2).
 
 Evidence gates exist so thin evidence cannot pass (the S1b review reported a NEST cov-off run skipping 53% of its effect checks
 while green; not reproduced, section 8). They turn a run INCONCLUSIVE, never PASS and never FAIL:
-- check-floor (gates.mjs:221): every applicable hard oracle PERFORMED >= CHECK_FLOOR checks; taint skips never count.
-- taint-skip (:239): per skipping oracle, skipped / (performed + skipped) <= TAINT_SKIP_MAX; 0/0 is NaN and fails closed.
-- coverage (:204): every required scenario >= SCEN_MIN hits (smoke: SCEN_MIN_SMOKE).
-Causes (gates.mjs:371): interrupted, no-lane, post-cycles, scenario, check-floor, taint-skip, lane-status. Retention
-FAILs on an UNMEASURED boundary at once (null is not zero); only a BAD warm-up boundary is ignored (gates.mjs:192).
+- check-floor (gates.mjs:264): every applicable hard oracle PERFORMED >= CHECK_FLOOR checks; taint skips never count.
+- taint-skip (:284): per skipping oracle, skipped / (performed + skipped) <= TAINT_SKIP_MAX; 0/0 is NaN and fails closed.
+- coverage (:247): every required scenario >= SCEN_MIN hits (smoke: SCEN_MIN_SMOKE).
+Causes (gates.mjs:434): interrupted, no-lane, post-cycles, scenario, check-floor, taint-skip, lane-status. Retention
+FAILs on an UNMEASURED boundary at once (null is not zero); only a BAD warm-up boundary is ignored (gates.mjs:235).
 
 ### 5. Divergence registry
 
@@ -104,16 +105,17 @@ Amendment 2026-10-14 (burst 39, F21 B3, be0fe70):
 
 Amendment 2026-10-18 (bursts 46-55: F-b33-1, the R2-M1 creation abort, the b53 triage, the b54 re-pin; commits f4f9475,
 b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer to this paragraph; the rulings stay.
-- Controls (section 3, :46-47): controls.json now pins THREE controls: `rev152`, `headpatched` and `preb33`
+- Controls (section 3, :48-50): controls.json now pins THREE controls: `rev152`, `headpatched` and `preb33`
   (1.6.0-dev@7c65afd: Signal.js a5c64df9 + Watch.js 065f21bd, byte-frozen in bench/soak/controls/preb33/). preb33 is the
   last kernel before the F-b33-1 fix, so a write-cycle creation does not abort on it (creationAbort false), and it is
   POST-F21 (it carries A2-F21, qskip2). It is frozen without FIX-T (and FIX-R / the A2 batch-error fix); its F5 / F6 / F22
   lines never clear.
-- Parity (section 3 :48, section 12(b) :279): parity.json pins 33 files since eb5acc2 (34 since 92c0020: +
-  bench/soak/lanes/wie.mjs; 35 since 2b87bfb: + bench/soak/rss.mjs) (PARITY_FILES 29 -> 33: adds adapters/lite.mjs,
+- Parity (section 3 :50, section 12(b) :361): parity.json pins 33 files since eb5acc2 (34 since 92c0020: +
+  bench/soak/lanes/wie.mjs; 35 since 2b87bfb: + bench/soak/rss.mjs; 36 since 3ef853a: + bench/soak/latency.mjs; 38 since 85d02e8: + bench/soak/anatomy.mjs,
+  harness/visit-anchors.mjs; 40 since 1dea069: + bench/soak/report-html.mjs, bench/soak/baseline.mjs) (PARITY_FILES 29 -> 33: adds adapters/lite.mjs,
   controls.json, controls/preb33/Signal.js and
   Watch.js). The "23 pins" lines are history.
-- P-INTERIM-ERROR-clean (section 5 :79-82, B39-D1 :87-88): re-pointed to base `preb33`, no patches (N17.2, burst 51-52).
+- P-INTERIM-ERROR-clean (section 5 :82-87, B39-D1 :92-98): re-pointed to base `preb33`, no patches (N17.2, burst 51-52).
   It is no longer a headpatched + A2-F21-hunk control: preb33 is already post-F21, so the expected set is exit 1,
   kind 'explained', known [DIV-F5, DIV-F6, DIV-F22]; a DIV-F21 label there is a MISS (A3': zero DIV-F21 on preb33).
   It stays 'explained' at exit 1 PERMANENTLY (N18.2, N19.4, N19.5): no FIX-T kernel, so the F5 / F6 / F22 lines
@@ -121,7 +123,7 @@ b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer t
   MISS (DIV-F6 x2, DIV-F22 x1, DIV-F5 x4 and 3 known=none recovery-after-throw lines, 2 heads); the b53 triage
   (N19) classified them as DIV-F6 (below). The B39-D1 reasoning about the tree base (headpatched + hunk, 4077 worlds)
   is history. test/46's F21 wiring gate is now unit rows on the classify path (N18.1), not a scratch-kernel run.
-- includeFixed (B39 NIT, :94-95): the NIT said the "any control" boolean is safe only while controls.json holds
+- includeFixed (B39 NIT, :99-100): the NIT said the "any control" boolean is safe only while controls.json holds
   rev152 / headpatched and that a post-fix control added later would fail open. preb33 IS that post-fix control.
   What holds it closed: A3' pins ZERO DIV-F21 labels on preb33 (P-INTERIM-ERROR-clean MISSes on one; smoke on live and
   preb33 shows 0 DIV-F21, eb5acc2), and the includeFixed boolean was kept (maintainer D50-1, N16.1). Per-control
@@ -143,12 +145,12 @@ b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer t
   were added: O4 effect-dead with ERR(computed:N) on the ENGINE side, O1 computed-err-mismatch and O2 glitch with
   engine=ERR(computed:N), each with worldScen [recovery-after-throw] and notWorldScen [revert-after-mid-read]
   (F5 shapes stay F5). N19.6 dropped throw-dep-computed-prewalk from them: the cached-rethrow fast path runs no body
-  frame, so scenarios.mjs:151-154 never tags it (tagger gap, follow-up). Full enumeration of all 17039 failing preb33
-  ERROR worlds: known=none 2 -> 0 (b53 t2). FAIL_CAP (16 per cycle, config.mjs:52) caps the stored failure records
-  only; every failing world reaches the BREACH log (main.mjs:417-418; b80 census: the 12 L- controls at FAIL_CAP 16
+  frame, so scenarios.mjs:194-197 never tags it (tagger gap, follow-up). Full enumeration of all 17039 failing preb33
+  ERROR worlds: known=none 2 -> 0 (b53 t2). FAIL_CAP (16 per cycle, config.mjs:59) caps the stored failure records
+  only; every failing world reaches the BREACH log (main.mjs:492-493; b80 census: the 12 L- controls at FAIL_CAP 16
   vs 1e9 print the same BREACH keys). Not F-MB: the 4 BATCH known=none lines are LEDGER #36, triaged b77 and folded
   into DIV-F5 (F5, OPEN, fixBy A3).
-- Calibration (section 8, :185-188): recut again on 2026-10-17 23:39 UTC (calibrate.mjs --write --timed under
+- Calibration (section 8, :247-251): recut again on 2026-10-17 23:39 UTC (calibrate.mjs --write --timed under
   quiet-lock, 737 s, node v26.8.2, M4 Pro, kernels headpatched and 1.5.2): every deterministic cell identical; only
   provenance and pinnedSha256 (exec / model / adapters/lite) moved. Throughput is PRELIMINARY: load 2.67 / 2.63 / 2.65
   at start and 9.30 / 5.62 / 3.93 at the end, with two other node processes listed
@@ -198,6 +200,15 @@ taint rule (p8, model.mjs:24) is narrowed to V1:
   valid only while one of those is open (fixedIn null) in divergences.json, up to A3 (DIV-F5 fixBy). The constants
   CHECK_FLOOR / CHECK_FLOOR_SMOKE / SCEN_MIN / SCEN_MIN_SMOKE / TAINT_SKIP_MAX are unchanged.
 
+Amendment 2026-10-20 (bursts 84-89; commits c11abf0, 3ef853a, 85d02e8, 4f5f200, 1dea069, 66b6a50; harness only):
+- Report-only lanes (REPORT_ONLY_GATES, gates.mjs:427; neither gates): latency (3ef853a: one DDSketch alpha 0.01 per world
+  method, worlds w%16=8; devDependency lite-sketch 1.2.0) and anatomy (85d02e8: the resolved kernel instrumented into a
+  temp copy, shape worlds re-run on it; cycle key `anatomy` or null).
+- T-mark (4f5f200): markDedupe >= MARK_DEDUPE_NOTE (0.99, config.mjs:54, in the header gates block), a NOTE spec kind.
+- T-flushdrop (66b6a50, the 41st control): headpatched GRAPH smoke, every 64th flushed effect dropped -> O4 effect-dead
+  and O1 effect-stale. graph-fuzzer and torture-soak are retired (absorbed by the bench/soak GRAPH lane; accepted loss =
+  single-registry aging; bench/torture/MANIFEST.txt RETIRED block).
+
 ### 6. Oracle OB (F5, QA finding 5): batch-early-run -- adopted
 
 An effect that ALREADY ran must not re-run while a batch is open (exec.mjs:533-536). First runs are exempt (an effect
@@ -239,9 +250,9 @@ b74 D4: recut 2026-10-19 UTC, 891 s, section 5 D4 bullet), one `--timed` run
 (734 s under quiet-lock, M4 Pro, node v26.8.2, sequential children one kernel at a time; loadavg 2.61/2.44/2.35
 before and 2.55/2.64/2.49 after the timed phase; throughput is REPORTED tier and decides no gate), the recut of
 2026-10-13 [recut again 2026-10-17 UTC, Amendment 2026-10-18]. `calibrate.mjs --write` dies unless main.mjs folds equal to the evidence, on the full cells and on the
-large-world probe (PROBE: GRAPH, headpatched, 11 cycles x 33000 ops, calibrate.mjs:69; main.mjs rejects fewer than 11
+large-world probe (PROBE: GRAPH, headpatched, 11 cycles x 33000 ops, calibrate.mjs:154; main.mjs rejects fewer than 11
 cycles). test/41 fails when a constant, the generator version, a (p) PINNED file sha, a live smoke re-measure or the
-live probe fold moves without a recut. PINNED (calibrate.mjs:56) covers the generator, executor, oracles, model,
+live probe fold moves without a recut. PINNED (calibrate.mjs:136) covers the generator, executor, oracles, model,
 scenarios, seeds, lanes, adapters, kinds.mjs and the torture helpers; it does NOT cover main.mjs or calibrate.mjs.
 | constant | value | evidence (soak-calibration.json) |
 |---|---|---|
@@ -259,26 +270,32 @@ scalar floor serves every oracle: at 11 x OPS_MIN only GRAPH (O5 14791 on both k
 it; ERROR OB (2152 / 1227), BATCH OB (8295 / 1789) and NEST O7a (tree 672; the fail-stopped headpatched / 1.5.2 rows
 read 413 / 502) read INCONCLUSIVE (per-oracle floors stay deferred, decision (e)). The 1.5.2 ERROR smoke
 `aggregate` count (2) is seed-dependent; no action.
-Config comment: config.mjs:54-65 (the CHECK_FLOOR note).
+Config comment: config.mjs:61-72 (the CHECK_FLOOR note).
 
 ### 9. SoakReport: integrity, release refusals, residuals
 
-`node bench/soak/SoakReport.mjs <stream>` re-derives the verdict, perLane, INCONCLUSIVE lines, BREACH entries, totals,
+`node bench/soak/SoakReport.mjs <stream> [--html <out>] [--baseline <stream>]` re-derives the verdict, perLane, INCONCLUSIVE lines, BREACH entries, totals,
 cycle and world seeds and every failure's known tag with the SAME code that judged the run (gates.mjs, divergences,
-main's BreachLog, seeds). Exact key sets per record type are checked (SoakReport.mjs:1-83, the header comment). Exit 0 = consistent
+main's BreachLog, seeds). Exact key sets per record type are checked (SoakReport.mjs:1-139, the header comment). Exit 0 = consistent
 (`verdict <V> (consistent)`, any V); exit 1 = `INTEGRITY -- <class>` in fixed precedence (stream, header, cycles,
 summary), or consistent but `NOT A RELEASE SOAK -- mustfail|smoke|non-lite|nearwrap|overridden-kernel|tree-parity|lane-subset|volume|provenance`; CRASH is a
 report bug; exit 2 = CONFIG. Control kernels (controls.json pins) re-derive consistent, print `NOTE -- control kernel
 <name>, not release evidence`; a pinned control skips the tree release policy (tree-parity, lane-subset, volume,
-provenance) and exits 0 unless mustfail / smoke / non-lite refuses it first (SoakReport.mjs:510-514). Release
+provenance) and exits 0 unless mustfail / smoke / non-lite refuses it first (SoakReport.mjs:702-707). Release
 definition (maintainer decision (c), pure exported
-`releaseRefusal()`, SoakReport.mjs:495): a tree run is release evidence only for the full roster at default volume
+`releaseRefusal()`, SoakReport.mjs:688): a tree run is release evidence only for the full roster at default volume
 (SOAK_OPS >= DEFAULT_OPS and >= DEFAULT_CYCLES completed cycles per lane; interrupted cycles do not count) from a
 clean committed tree (gitSha a commit sha, gitDirty false, gitError null). test/46 (177 tests) generates
 every stream at test time from frozen kernels; its tamper classes: cycle-grid, failure-count, seq-gap,
 fatal-after-summary, gates-block, verdict, scenario-counts, summary-missing, overridden-kernel, non-lite, known-tag,
 malformed.
-Residuals, stated plainly (SoakReport.mjs:67-80): kernel identity is SELF-REPORTED (a consistent five-field forgery of a
+Flags (B-B5, 1dea069; SoakReport.mjs:5-22 header, argv :793-822): `--html <out>` writes a self-contained page for every
+outcome (a write error is CONFIG, exit 2; stdout, stderr and the exit code stay those of the run without it).
+`--baseline <stream>` judges the base with the same checks, only when the head is consistent: a base that is not
+consistent is REFUSED, and baseline.mjs diffBaseline can say INCOMPATIBLE (both exit 2); the diff runs only when both are
+consistent. Exit = max(head, baseline) (maintainer ruling D1, burst 88). On a short stream (OPS_MIN) the baseline line
+reads NOTE, not PASS (b88 note: p99-unmeasured per latency class).
+Residuals, stated plainly (SoakReport.mjs:101-118): kernel identity is SELF-REPORTED (a consistent five-field forgery of a
 RELEASE-SIZE scratch stream, plus clean git fields, as a tree run exits 0; signing is out of scope until S4, GAP R-kernel-identity); a forged null-known
 BREACH on a lane with a capped cycle is admitted (FAIL_CAP keeps only 16 failures per cycle); gates-block, registry and
 tree-parity cannot tell a stale stream from a forged one and refuse both; extra config keys, engine.version,
@@ -295,39 +312,44 @@ bench/soak/teeth.mjs holds, by import and never by copy:
 - `CHECKS` (35 ids at 35bbf26, 36 since 2b87bfb: + gate:rss): id -> controls that turn it red. `T-cfg-*` must resolve
   every config control (>= 16);
   `report` maps to test/46's TEST_ANCHORS.
-- `GAPS` (24 at 35bbf26): controls the SPEC asks for that cannot exist yet, each with why (file:line), until, and `covers`
+- `GAPS` (24 at 35bbf26, 23 since 4f5f200: T-mark left it): controls the SPEC asks for that cannot exist yet, each with why (file:line), until, and `covers`
   (the universe ids it stands in for). GAPS may only shrink.
 - `UNREACHABLE` (4): cause:lane-status, replay-ops-guard, report-crash, report-registry-config, each with a proof and
   an anchor that must occur EXACTLY once. The last two are "unreachable from argv or a stream; reachable only from a
   corrupted checkout (untested)".
 - `audit({controls, ceiling, max})` REQUIRES all three (never defaulted); returns the problem list.
-test/45 (22 tests at 35bbf26, 25 at c5cf442, no child process) holds the shrink-only literals: the 24-name GAPS
-ceiling and max 24, the 11
-GAP-covered universe ids (exact set equality), CHECKS_MIN 35 (an exact floor; 36 since 2b87bfb), EVIDENCE_CAUSE
-{coverage: 'scenario'}
-(interim: the coverage cause is still built inside LaneGates), and a pairing check: EVERY mapped control must expect
-the text its id would print (oracle=/sig= via oracleFamily, lane=, gate=, the INCONCLUSIVE head, a CONFIG line, test
-anchors). It also checks the ^L- / ^(?!L-) partition, validSpec for all controls, staleAnchors and a 1-byte anchor
-mutant ("2 matches" for the severTail anchor), and must-fail copies of every audit problem class.
-`_mustfail.mjs` (34 controls at 35bbf26: 18 non-config + 16 T-cfg; 38 at c5cf442: 22 non-config + 16 T-cfg, by
-MUSTFAIL_LIST=1) runs each through the REAL main.mjs on a scratch
-kernel directory: exactly-once anchors, exact exit, every spec on ONE BREACH/INCONCLUSIVE head, no CRASH, END sentinel
-last, and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short (^(?!L-)); `npm run soak:teeth:long` =
-^L-; MUSTFAIL_LIST=1 builds all and runs none; MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=1 prints matched heads.
+test/45 (22 tests at 35bbf26, 25 at c5cf442, 27 at 66b6a50, no child process) holds the shrink-only literals: the
+24-name GAPS ceiling and max 24 (23 and 23 since 4f5f200), the 11 GAP-covered universe ids (exact set equality),
+CHECKS_MIN 35 (an exact floor; 36 since 2b87bfb), EVIDENCE_CAUSE {coverage: 'scenario'} (interim: the coverage cause
+is still built inside LaneGates), and a pairing check: EVERY mapped control must expect the text its id would print
+(oracle=/sig= via oracleFamily, lane=, gate=, the INCONCLUSIVE head, a CONFIG line, test anchors). It also checks the
+^L- / ^(?!L-) partition, validSpec for all controls, staleAnchors and a 1-byte anchor mutant ("2 matches" for the
+severTail anchor), and must-fail copies of every audit problem class. The c5cf442 rows: gate:heap has two teeth,
+L-T-leak and L-T-graveyard, and the graveyard kernel = base with exactly the freeLink push replaced; L-T-rss starts
+late (no retention before the band window ends, retention >= 2 cycles before the late window), is ONE patch, and
+retains a per-registry buffer of >= 1.5 MB (1572864 B, the size b82 measured).
+`_mustfail.mjs` (34 controls at 35bbf26: 18 non-config + 16 T-cfg; 38 at c5cf442: 22 non-config + 16 T-cfg; 39 at
+c11abf0: 23 + 16, + L-NW-hp-zero; 40 at 4f5f200: 24 + 16, + T-mark; 41 at 66b6a50: 25 + 16, + T-flushdrop; all by
+MUSTFAIL_LIST=1) runs each through the REAL main.mjs on a scratch kernel directory: exactly-once anchors, exact exit,
+every spec on ONE BREACH/INCONCLUSIVE head, no CRASH, END sentinel last, and SoakReport re-derivation `(consistent)`.
+`npm run soak:teeth` = short (^(?!L-)); `npm run soak:teeth:long` = ^L-; MUSTFAIL_LIST=1 builds all and runs none;
+MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=1 prints matched heads.
+NEARWRAP teeth (b84, c11abf0): L-NW-hp-zero (lane:GRAPH) kills "kernel ignores SOAK_NEARWRAP" and "derive() skips the
+gV rewrite"; its spec is not keyed on known= / sig=, so a DIV-F29 entry leaves it green.
 
 ### 11. Deviations from SPEC-B section 9 (binding; also recorded as S1cd amendment 15)
 
 - L-REV-152 has 9 specs: the 4 SPEC ones plus O1 computed-mismatch, O1 effect-stale, O2 glitch (BATCH), O4 effect-dead
-  and O6 expected-escape-missing (ERROR); each is a unique tooth (_mustfail.mjs:324-351).
+  and O6 expected-escape-missing (ERROR); each is a unique tooth (_mustfail.mjs:344-371).
 - L-P-INTERIM = GRAPH,BATCH at 11 x DEFAULT_OPS, exit 0, 22 clean boundaries; L-P-INTERIM-ERROR is kind `explained`
   (exit 1, every BREACH known in {DIV-F21, DIV-F22}; still true because headpatched is a pre-fix control kernel, so
   includeFixed is true there). Amendment 13.
-- T-cov-BATCH runs --smoke like T-cov-GRAPH (_mustfail.mjs:503); T-cov-ERROR is `explained` at exit 1
+- T-cov-BATCH runs --smoke like T-cov-GRAPH (_mustfail.mjs:539); T-cov-ERROR is `explained` at exit 1
   because a headpatched ERROR run always shows F21/F22 BREACHes, and FAIL outranks INCONCLUSIVE.
 - T-cfg is 16 rows (the S5 polyfill row is deferred); the provenance row uses a zero-commit repo copy under
   bench/soak/out, not `GIT_DIR=/nonexistent` (gitInfo scrubs GIT_DIR).
 - L-I1 / L-I2 arm at the 2nd registry, not "after the first heartbeat" (the kernel raises its own signal).
-- L-T-retain runs 11 x OPS_MIN (_mustfail.mjs:416-426). At 11 x DEFAULT_OPS the retained registries (~500 MB per GRAPH
+- L-T-retain runs 11 x OPS_MIN (_mustfail.mjs:436-446). At 11 x DEFAULT_OPS the retained registries (~500 MB per GRAPH
   cycle) reached the V8 heap limit at cycle 6-7 (residentMB 3534.27, SIGABRT, no END). At 11 x OPS_MIN: exit 1,
   `gate=retention lane=GRAPH`, badBoundaries 10; the heap gate trips too, accepted.
 - T-floor-BATCH (new): 11 x OPS_MIN performs BATCH OB 8295 < 10000 -> `INCONCLUSIVE checks lane=BATCH oracle=OB`.
@@ -338,7 +360,7 @@ last, and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short 
 - (a) OB: a fail check for every batch engine; the OB evidence floor only where a close-flush is observable (native
   batch). Accepted, not built (the S5 adapter pass narrows ORACLE_CAPS for BATCH and ERROR alike).
 - (b) parity.json also pins config.mjs and SoakReport.mjs (built: 23 pins; 33 since 2026-10-18, 34 since 92c0020, 35
-  since 2b87bfb, Amendment 2026-10-18).
+  since 2b87bfb, 36 since 3ef853a, 38 since 85d02e8, 40 since 1dea069, Amendment 2026-10-18 and Amendment 2026-10-20).
 - (c) Release policy: the full roster at default volume from a clean committed tree (section 9; built).
 - (d) test/41 stops pinning main.mjs and calibrate.mjs; a live smoke fold and a live large-world probe guard main.mjs
   (section 8; built). The probe cost is accepted as built (measured 2026-10-13, M4 Pro: the probe run standalone 25.7
@@ -357,7 +379,7 @@ last, and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short 
   expected 1.2.0), static import, fail closed; D-B2 the rss tier is a `fail` kind inside the soak only (like heap), the
   unit rule is deterministic and never runs in npm test; D-B3 the HTML report is an argv-only CLI (CI wiring is an S4
   follow-up, since test/47 pins the workflow sha); D-B4 a baseline heap +2 MB is a REGRESSION FAIL only on the same Node
-  major and runner class, else a NOTE; D-B5 the two retired files are deleted (the pointer cites `git show 8b9c013:`),
+  major and runner class, else a NOTE; D-B5 the two retired files are deleted (the pointer cites `git show 1dea069:`; first written as 8b9c013, and both retired files are blob-identical at the two commits),
   not just unlisted.
 - Orchestrator rulings: test numbering is test/48 (group A), test/49 and test/50 (group B); spinVersion lives in a new
   helpers/spin.mjs, not helpers/index.mjs (that file is pinned by calibrate.mjs, so an edit forces a recut); one
@@ -370,7 +392,8 @@ last, and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short 
   missing-lane regressions still FAIL. A forever run (SOAK_CYCLES 0) on either side states no volume and is never
   volume-comparable (heap NOTE).
 - S2 modules (spin, wraprules, nearwrap, rss, report-html, baseline) are built (test/48-50 run them in npm test) but not yet wired into a soak run or CI at this
-  date; no number in this addendum is a measurement.
+  date [since then: rss is wired into the soak run (2b87bfb: main.mjs RssSampler, gate:rss); report-html and baseline into
+  SoakReport (1dea069: --html / --baseline)]; no number in this addendum is a measurement.
 
 ### 13. CI (S4-min, SPEC-B addendum item 11; dated 2026-10-13)
 
@@ -399,7 +422,7 @@ last, and SoakReport re-derivation `(consistent)`. `npm run soak:teeth` = short 
 ## Consequences
 
 - The BATCH cov-off switch is closed: lanes/batch.mjs:42 compares DECODED values with Object.is, as the detector does
-  (scenarios.mjs:236); soak-calibration.json records 0 cov-off hits on every covOff cell and every covOffSweep cell
+  (scenarios.mjs:278-279); soak-calibration.json records 0 cov-off hits on every covOff cell and every covOffSweep cell
   (5 cov-off scenarios x 17 seeds x 2 kernels = 170 cells).
 - Maintenance trap resolved (decision (d)): test/41 no longer pins main.mjs or calibrate.mjs; a live smoke fold and a
   live large-world probe fold guard main.mjs instead. Residual (accepted): a COVOFF_SEEDS content change plus a

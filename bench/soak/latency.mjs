@@ -75,11 +75,15 @@ function timed(f, raw, sk, S) {
 /** World-method functions whose parameter-list text passed paramsHidden() (allocates only on first sight). */
 const ACCEPTED = new WeakSet();
 const FN_TO_STRING = Function.prototype.toString;
+/** The only characters a readable parameter-list head may hold; any other character refuses (unreadable). */
+const SAFE_HEAD = /^[\w$\s,({}:]*$/;
 
 /**
  * The parameter-list text of fn (its source up to the first `)` or `=>`) when it has a rest (`...`) or a default
  * (`=`) parameter -- Function.length counts neither, so a length <= 2 check alone accepts `(a, ...r)` and
- * `(a, b, c = 1)` -- else null. A `[native code]` source (bound / native function) is refused as unverifiable.
+ * `(a, b, c = 1)` -- else null. Refused as unreadable (that cut may not be the parameter list): a `[native code]`
+ * source (bound / native function); and a head holding any character outside SAFE_HEAD (key, string, comment,
+ * default, rest: the only ways a `)` can precede the list's own `)`). Refusing more is fail-closed.
  * Runs at arm() (once per armed world open, per function not yet ACCEPTED), never per timed call.
  */
 function paramsHidden(fn) {
@@ -89,7 +93,7 @@ function paramsHidden(fn) {
     const a = src.indexOf('=>');
     const end = b === -1 ? a : (a === -1 ? b : Math.min(a, b));
     const head = end === -1 ? src : src.slice(0, end);
-    return head.indexOf('...') !== -1 || head.indexOf('=') !== -1 ? head : null;
+    return SAFE_HEAD.test(head) ? null : head;
 }
 
 /** Classify every own key of an opened world (read-only scan), then build the plain delegate. */
@@ -111,7 +115,7 @@ function arm(raw, sks, S) {
         if (!ACCEPTED.has(v)) {
             const hidden = paramsHidden(v);
             if (hidden !== null) {
-                throw new TypeError('latency: world method ' + k + ' has a rest or default parameter (' + hidden.trim() + '); Function.length hides it and the wrapper forwards at most 2');
+                throw new TypeError('latency: world method ' + k + ' has a rest, default or unreadable parameter list (' + hidden.trim() + '); Function.length hides it and the wrapper forwards at most 2');
             }
             ACCEPTED.add(v);
         }

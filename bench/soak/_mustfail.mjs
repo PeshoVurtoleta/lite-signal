@@ -557,7 +557,7 @@ export const CONTROLS = deepFreeze([
     }, { patches: [[A_SEVER, '                    /* MUSTFAIL T-sever: severTail(node) removed */\n                    node.flags &= ~FLAG_COMPUTING;\n']] }),
     // T-flushdrop (b89, PLAN-0s-bb6 ADDENDUM 1): flushEffects drops every 64th flushed effect (clears FLAG_QUEUED,
     // executeEffect's job :1070, so the drop is one-off, not a :980 wedge) -> a sink effect misses a delivery -> O4
-    // effect-dead. The sentinel-delivery witness torture-soak carried (MANIFEST.txt:107); this shape is new.
+    // effect-dead. The sentinel-delivery witness torture-soak carried (MANIFEST RETIRED block); this shape is new.
     // b89 0b (.handoff/b89-evidence/flushdrop/, quiet-lock, load 2.1-2.4): --smoke 2/2 exit 1, identical heads O4
     // effect-dead (scen=dep-set-flip replay=GRAPH:0:0xe8c9e280) + O1 effect-stale (replay=GRAPH:0:0x8b2a6a48), END
     // verdict=FAIL, wall 1.6-2 s each, trackerSize 0 every boundary; 0c patches [] -> exit 0, 0 BREACH, END verdict=SMOKE

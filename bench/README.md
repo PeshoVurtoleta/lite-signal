@@ -134,9 +134,7 @@ Not benchmarks — crash-detection soaks. Each runs for a configurable duration 
 
 | File | Stresses |
 | :--- | :--- |
-| `graph-fuzzer.mjs` | 1,500-node random DAG; mixed writes, rewiring, nested batch + untrack. |
 | `scheduler-bench.mjs` | 1,500 microtask-scheduled effects; concurrent writes during drains. |
-| `torture-soak.mjs` | 7,500-node graph; continuous writes + rewiring; pool-growth + free-list recycle. |
 
 ```sh
 TORTURE_SECONDS=30 node --expose-gc bench/torture/scheduler-bench.mjs

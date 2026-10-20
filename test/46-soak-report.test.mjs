@@ -733,6 +733,17 @@ const TAMPERS = [
         const dir = join(SOAK, 'out', 'nearwrap', k[0].sha256.slice(0, 7) + '-' + k[1].sha256.slice(0, 7));
         k[0].path = join(dir, 'Signal.js'); k[1].path = join(dir, 'Watch.js'); mirrorEngine(h);
     }, I('control', /derived nearwrap pair dir/)],
+    // b90 C3: the same twin with an UPPER-case <SHA7>-<SHA7> dir (sha256 values stay lower-case): inPairDir lower-cases
+    // the dir, so a case-insensitive filesystem's spelling of the pair dir is still refused
+    ['M3 tree twin: an UPPER-case <SHA7>-<SHA7> pair dir (sha256 values lower-case)', 'treesmoke', (r) => {
+        const h = r[0], k = h.kernel.files;
+        assert.equal(h.nearwrap, null); assert.equal(h.kernel.override, false); assert.equal(h.config.SOAK_NEARWRAP.value, null);
+        const up = (k[0].sha256.slice(0, 7) + '-' + k[1].sha256.slice(0, 7)).toUpperCase();
+        assert.match(up, /[A-F]/, 'the pair name must hold a hex letter, or upper-casing changes nothing');
+        assert.match(k[0].sha256 + k[1].sha256, /^[0-9a-f]{128}$/);
+        const dir = join(SOAK, 'out', 'nearwrap', up);
+        k[0].path = join(dir, 'Signal.js'); k[1].path = join(dir, 'Watch.js'); mirrorEngine(h);
+    }, I('control', /derived nearwrap pair dir/)],
     // latency cycle key (B-B4a, PLAN-0s-bb4a ASSERTION 4): key tables + the four cycle-field statements
     ['an extra key inside cycle.latency', 'rev', (r) => { cyclesOf(r)[0].latency.forged = 1; }, I('unknown-key', /carries an unknown key "forged"/)],
     ['an extra key inside cycle.latency.read', 'rev', (r) => { cyclesOf(r)[0].latency.read.forged = 1; }, I('unknown-key', /carries an unknown key "forged"/)],

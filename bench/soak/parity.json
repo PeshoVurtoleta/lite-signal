@@ -35,7 +35,7 @@
     "bench/soak/controls/preb33/Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/lanes/wie.mjs": "67aebd356665312b11c0f323e756485caf8cf50f8bec277322937bbf067a0e34",
     "bench/soak/rss.mjs": "2b4354b7ce6d35e47532517f2799a1a7c1306298fe32bf147704260d1c0e0831",
-    "bench/soak/latency.mjs": "5615c127c4bc0bd82798880ee8b10c349655fbbfaca482442df965bcfd8c0da0",
+    "bench/soak/latency.mjs": "1a37b7aed5f1bd8ea8aba9f4698272a2a46ea01b781082b0a3d867ff99dac8f1",
     "bench/soak/anatomy.mjs": "401df27000707f1de5ff0dbaaa26cfba7e9fe9aff1af9592223d87aee4d478f6",
     "harness/visit-anchors.mjs": "2acf86ec6ec1e4de811fd8baf229e88b3b1414aefa3049b9bba1a2d42bf45512",
     "bench/soak/report-html.mjs": "a58c79a8c80d20f8a119910518d8820e6bbda50e6ea165357f1484618b830654",

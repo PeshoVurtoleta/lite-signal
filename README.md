@@ -868,23 +868,29 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds the complete **22-scenario suite (19 semantic + 3
-soak)** in two groups, behind one runner -- full parity with 1.4.4. They are not
+`bench/torture/` holds the complete **24-scenario suite (22 semantic + 2
+soak, one of them opt-in)** in two groups, behind one runner (`run.mjs`
+SCENARIOS; 22 at the 1.4.4-parity RC, 26 after the 2026-08 audit added
+`retrack-dispose-torture`, `contract-torture`, `interop-torture` and
+`wraparound-torture`, 24 since the resource soaks `graph-fuzzer` and
+`torture-soak` were retired on 2026-10-20). They are not
 perf benchmarks: the ops/sec figures reflect random workload composition, not
 engine throughput -- `bench/benchmark.mjs` remains the canonical perf harness.
 
 Every scenario feature-detects and **skips cleanly** below the engine version
 that introduces its feature, so the whole set is safe to ship on the 1.5.0 engine
-and stays green from 1.4.x forward. On this engine the runner executes **15
+and stays green from 1.4.x forward. On this engine the runner executes **18
 semantic scenarios** -- including `owner-torture`, `error-torture`,
 `deep-chain-torture`, `zerogc-torture` (its `churn-box` signalBox lane),
 `introspect-torture` and `lifecycle-torture`, which EXECUTE here for the first
 time via signalBox and the getOwner/runWithOwner/createRoot surface -- and
 reports a clean SKIP for the four later-version ones (`scope-torture` 1.7.0,
 `flush-torture` 1.8.0, `cleanup-return-torture` 1.9.0, `dispose-torture` 1.10.0).
-Each soak carries an `Int32Array` value-correctness oracle: one allocation up
+`scheduler-bench` carries an `Int32Array` value-correctness oracle: one allocation up
 front, a rotating sampled window per tick (zero per-tick allocation), a full
-sweep at teardown. Verified green: **22/22 passed**.
+sweep at teardown. At the 1.5.0 RC, when the suite was 22 scenarios (19 semantic + 3 soak: `graph-fuzzer`,
+`scheduler-bench`, `torture-soak`), it was verified green: **22/22 passed**
+(a dated verification, kept as history).
 
 ```bash
 npm run torture              # everything
@@ -931,7 +937,8 @@ the engine version that introduces their feature.
 Why this group exists: the resource soaks below pass green on an engine whose
 computeds return stale values. Flipping the clean short-circuit in `pullComputed`
 from `<= 0` to `<= 1` keeps the pool perfectly balanced and throws nothing --
-`oracle-fuzzer` catches it on 400/400 seeds, and all three soaks report PASS.
+`oracle-fuzzer` catches it on 400/400 seeds, and all three soaks of the time (`graph-fuzzer`, `scheduler-bench`,
+`torture-soak`; the first and last since retired) report PASS.
 Separately, removing the `node.gen === gen` guard from the cached scheduler thunk
 is caught by `scheduler-storm` and **missed by every unit test** (462 in the full
 workspace). And a `computedBox` that silently downgrades its default equality from
@@ -944,9 +951,10 @@ so at the scenario, rather than asserting an invented one.
 
 #### `soak` -- wall-clock bound, asserts on **resources**
 
-Run these nightly or pre-publish. Large randomised graphs (1,500 / 7,500 / 3,300
+Run these nightly or pre-publish. A large randomised graph (3,300
 nodes) under mixed fuzz -- leaf writes, batched writes, computed and effect
-rewires, nested-batch and untrack reads, microtask-scheduled async flushes. Each
+rewires (random dependency re-tracking on every re-run), untrack reads,
+microtask-scheduled async flushes. It
 exits non-zero unless:
 
 - zero exceptions were thrown during the run,
@@ -958,18 +966,19 @@ exits non-zero unless:
 node --expose-gc bench/torture/scheduler-bench.mjs  # 10s microtask-scheduled, 3300 nodes
 ```
 
-Any of them takes `TORTURE_SECONDS=N` for a longer soak (the runner's `--seconds`
-sets it for all three). Indicative numbers from a development host:
+`scheduler-bench` takes `TORTURE_SECONDS=N` for a longer soak (the runner's
+`--seconds` sets it). The second soak, `wraparound-torture`, is opt-in
+(`TORTURE_WRAPAROUND=1`, ~30 s). The former `graph-fuzzer` and `torture-soak`
+were retired on 2026-10-20: the `bench/soak` GRAPH lane absorbs them (see the
+RETIRED block in `bench/torture/MANIFEST.txt`). Indicative numbers from a development host:
 
 |                       | duration | ops      | errors | post-teardown nodes / links | floor    |
 | --------------------- | --------:| --------:| ------:| --------------------------- | -------- |
-| graph-fuzzer          |    10 s  |  7.6 M   |    0   | 500  / 0                    | <= 508   |
-| torture-soak          |     5 s  |  1.2 M   |    0   | 2500 / 0                    | <= 2508  |
 | scheduler-bench       |    10 s  | 28.8 M   |    0   | 1000 / 0                    | <= 1008  |
 
 The floor is the assertion; the pre-soak figure is not. Teardown disposes the
 computeds and effects and leaves the signals alive, so post-teardown is *supposed*
-to sit far below the pre-soak node count. Each soak prints the floor it asserted
+to sit far below the pre-soak node count. The soak prints the floor it asserted
 against so the verdict can be checked against the numbers.
 
 ```bash
@@ -1390,7 +1399,7 @@ Yes, if your computeFn reads its deps in the same order each invocation. The `cu
 npm test          # behavior suite, ~1.3s
 npm run test:gc   # zero-gc suite, requires --expose-gc, ~3s
 npm run bench     # microscope + mirror comparative benches (rb.txt / r.txt), ~5min
-npm run torture          # full torture suite, all 9 scenarios (6 semantic + 3 soak)
+npm run torture          # full torture suite, all 24 scenarios (22 semantic + 2 soak)
 npm run torture:semantic # correctness scenarios only, ~10s
 npm run torture:soak     # resource soaks only, wall-clock bound
 node --expose-gc bench/benchmarkReactive.mjs  # DEPRECATED pre-v3 reactivity suite (removed after 1.5.1)

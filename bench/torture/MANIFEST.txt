@@ -107,7 +107,8 @@ SOAK: scheduler-bench, wraparound-torture
     Mutant-verified vs a flush-loop drop (on the retired torture-soak; its
     bench/soak successor is T-flushdrop, see RETIRED). Random SUB-sentinel
     drops are caught probabilistically (the drop must land on a sentinel node);
-    systematic wedges deterministically.
+    systematic wedges deterministically. scheduler-bench's OWN delivery
+    sentinel is also mutant-verified both ways (scheduler-bench.mjs:19).
 
 RETIRED (2026-10-20, burst 89): graph-fuzzer, torture-soak
   Authority: SPEC-S2-groupB task 11 / D-B5 (maintainer 2026-10-13). Precondition

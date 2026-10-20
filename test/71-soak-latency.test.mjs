@@ -344,7 +344,7 @@ const REFUSED_F1 = [
 for (const [name, fn] of REFUSED_F1) {
     test('latency (b88 r1 F1): a listed method ' + name + ' -> TypeError at the armed open (the `{`-cut / native-skip paramsHidden accepts it)', () => {
         assert.ok(fn.length <= 2, 'Function.length alone does not refuse it: ' + fn.length);
-        assert.throws(armOpen(fn), (e) => e instanceof TypeError && /rest or default parameter/.test(e.message));
+        assert.throws(armOpen(fn), (e) => e instanceof TypeError && /rest, default or unreadable parameter list/.test(e.message));
     });
 }
 const ACCEPTED_F1 = [
@@ -355,6 +355,34 @@ const ACCEPTED_F1 = [
 ];
 for (const [name, fn] of ACCEPTED_F1) {
     test('latency (b88 r1 F1 control): a listed method ' + name + ' is ACCEPTED at the armed open and stays callable', () => {
+        const w = armOpen(fn)();
+        assert.equal(typeof w.set, 'function');
+        const arg = { a: 7 };
+        assert.equal(w.set(arg, 8), fn(arg, 8), 'the wrapper forwards the call unchanged');
+    });
+}
+
+/* ---- b90 C2 (b88 r2 NITs): the first `)` sits inside a computed key or a comment, so the cut misses the `...` ---- */
+const keyOf = (x) => x;
+const REFUSED_R2 = [
+    ['[keyOf(\'set\')](a, ...r) {} (computed-key method, length 1)', ({ [keyOf('set')](a, ...r) { return a; } }).set],
+    ['(a /* ) */, ...r) => 0 (length 1)', (a /* ) */, ...r) => 0],
+    ['async[keyOf(\'set\')](a, ...r) {} (no-space async computed key, length 1)', ({ async[keyOf('set')](a, ...r) { return a; } }).set],
+    ['\')\'(a, ...r) {} (string-literal key holding a paren, length 1)', ({ ')'(a, ...r) { return a; } })[')']],
+    ['({ [keyOf(\'q\')]: x }, ...r) => 0 (computed key in a destructuring pattern, length 1)', ({ [keyOf('q')]: x }, ...r) => 0],
+];
+for (const [name, fn] of REFUSED_R2) {
+    test('latency (b90 C2): a listed method ' + name + ' -> TypeError at the armed open (the first-`)` cut accepts it)', () => {
+        assert.ok(fn.length <= 2, 'Function.length alone does not refuse it: ' + fn.length);
+        assert.throws(armOpen(fn), (e) => e instanceof TypeError && /rest, default or unreadable parameter list/.test(e.message));
+    });
+}
+const ACCEPTED_R2 = [
+    ['(a, b) => a (plain arrow)', (a, b) => a],
+    ['set(a, b) { return a; } (plain method)', ({ set(a, b) { return a; } }).set],
+];
+for (const [name, fn] of ACCEPTED_R2) {
+    test('latency (b90 C2 control): a listed method ' + name + ' is ACCEPTED at the armed open (no over-refusal)', () => {
         const w = armOpen(fn)();
         assert.equal(typeof w.set, 'function');
         const arg = { a: 7 };

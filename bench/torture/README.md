@@ -475,7 +475,7 @@ allocation against the JS heap?"
 
 ## Torture soaks (`bench/torture/`)
 
-`torture/` holds twenty-five scenarios in two groups, a shared `helpers/` module and a
+`torture/` holds twenty-four scenarios (22 semantic + 2 soak) in two groups, a shared `helpers/` module and a
 runner. **None are benchmarks.**
 
 ```bash
@@ -494,7 +494,10 @@ the default registry, so running two in one process would let the first one's
 residue poison the second's baseline. Each file also stays directly executable
 for when you are iterating on one.
 
-### Resource soaks (`graph-fuzzer`, `scheduler-bench`, `torture-soak`)
+### Resource soaks (`scheduler-bench`; `wraparound-torture` is opt-in)
+
+`graph-fuzzer` and `torture-soak` were retired on 2026-10-20 (absorbed by the
+`bench/soak` GRAPH lane; see the RETIRED block in `MANIFEST.txt`).
 
 These are
 crash-detection soaks: they run for a configurable number of seconds and
@@ -509,16 +512,14 @@ failure. The ops/sec number is reported for context only.
 
 | File | What it stresses |
 | :--- | :--- |
-| `graph-fuzzer.mjs` | 1,500-node random DAG. Mixed fuzz operations: leaf writes, batched writes, mid/top/effect rewiring, nested batch + untrack reads. Targets the L1 graph-topology layer. |
 | `scheduler-bench.mjs` | 1,500 effects all using a microtask scheduler. Concurrent writes during pending microtask drains. Targets the scheduler-thunk caching + ABA-guard path (1.1.4+). |
-| `torture-soak.mjs` | 7,500-node graph with continuous writes, effect rewiring, and computed rewiring. Targets the pool-growth + LIFO free-list recycle path. |
 
-Each soak uses an **explicit registry with `onCapacityExceeded: "grow"`**
+The soak uses an **explicit registry with `onCapacityExceeded: "grow"`**
 because the default top-level surface uses a fixed-capacity default
 registry (1,024 nodes) and the soak shapes intentionally exceed that.
 
 ```sh
-# Default 10 seconds each
+# Default 10 seconds
 node --expose-gc bench/torture/scheduler-bench.mjs
 
 # Semantic torture (fast, deterministic, CI-friendly)
@@ -597,13 +598,14 @@ The harness is intentionally small (under 400 lines) and intentionally portable 
 
 The soaks above share a single oracle: nothing threw, and the pool came back to
 baseline. Both are liveness questions. Neither reads a value and asks whether it
-is *right* — so an engine that returns stale values from every computed passes
-all three green.
+is *right* — so an engine that returns stale values from every computed passed
+all three soaks of the time green.
 
 That is not hypothetical. Flipping the clean short-circuit in `pullComputed`
 from `<= 0` to `<= 1` — a one-character off-by-one of exactly the kind a perf
 tweak makes — throws nothing, keeps the pool perfectly balanced, and is
-invisible to all three soaks. The unit suite catches it, but only on small
+invisible to all three soaks of the time (`graph-fuzzer`, `scheduler-bench`,
+`torture-soak`; the first and last since retired). The unit suite catches it, but only on small
 hand-written graphs; the soaks are the only thing exploring large random
 topologies, which is precisely where a versioned push-pull engine with
 short-circuits is most likely to be wrong.
