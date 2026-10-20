@@ -541,6 +541,8 @@ async function main() {
                     gc: closed.gc,
                 };
                 if (anat !== null && rec.anatomy === null) protocol('soak: NOTE -- anatomy lane=' + L.name + ' cycle=' + cycle + ' null: ' + anat.why);
+                // T-mark (_mustfail.mjs) reads this line; report-only, the stream record is unchanged. null prints null.
+                else if (rec.anatomy !== null) protocol('soak: NOTE -- shape[' + L.name + '] markDedupe=' + (rec.anatomy.markDedupe === null ? 'null' : rec.anatomy.markDedupe.toFixed(3)) + ' cycle=' + cycle + ' worlds=' + rec.anatomy.worlds);
                 writeRecord(stream, 'cycle', rec);
                 cyclesRun++;
                 L.gates.push(rec);

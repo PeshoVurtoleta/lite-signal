@@ -19,9 +19,12 @@
  * A control PASSES (OK) only when ALL of these hold; anything else is a MISS:
  *   - the base's sha256 pins verify first (controls.json for headpatched / rev152, parity.json for tree);
  *   - the exact exit code;
- *   - every spec matches ONE `soak: BREACH` or `soak: INCONCLUSIVE --` line (hasToken); every exact line is
- *     present; kind 'nobreach' sees ZERO BREACH lines; kind 'explained' sees >= 1 BREACH line and every one is
- *     an oracle BREACH whose known tag (split on '+') lies inside expect.known;
+ *   - every BREACH / INCONCLUSIVE spec matches ONE `soak: BREACH` or `soak: INCONCLUSIVE --` line (hasToken); a
+ *     NOTE spec (`soak: NOTE --` lines, e.g. main.mjs's shape[<LANE>] markDedupe line) is judged over ALL the lines
+ *     its non-`>=` tokens select: >= 1 line, as many lines as the stream has cycle records for its lane
+ *     (shape[<LANE>] or lane=<LANE>; every cycle record when it names none), and EVERY line passes every token;
+ *     every exact line is present; kind 'nobreach' sees ZERO BREACH lines; kind 'explained' sees >= 1 BREACH line
+ *     and every one is an oracle BREACH whose known tag (split on '+') lies inside expect.known;
  *   - no `soak: CRASH` line anywhere;
  *   - the END sentinel is the last stdout line, its exit equals the child's, its records equal the stream's;
  *   - SoakReport re-derives the stream to `soak:report: verdict <V> (consistent)` with V = the END verdict
@@ -48,6 +51,7 @@
  *   verifyControls  the sha256 pin check of every base
  *   BASES           base name -> { dir, pins, pinName }
  *   parseHead       one protocol line -> { kind, words, pairs } (the head hasToken matches)
+ *   judgeMain       the main-run judgement of one finished child (problem strings pushed into `problems`)
  *   wrapJudge       the wrap-control stream checks (pure: problem strings of a parsed wrap stream)
  *   runControl      run ONE control: verifies its base pins itself unless the caller passes the problems map
  *                   of a verifyControls() it already ran; removes its scratch dir (and zero-commit copy) on return
@@ -62,7 +66,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB, GATE_N, WARMUP_CYCLES } from './config.mjs';
+import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB, GATE_N, WARMUP_CYCLES, MARK_DEDUPE_NOTE } from './config.mjs';
 import { wrapRule, wrapStreamProblems } from './wraprules.mjs';
 import { inconclusiveLine } from './gates.mjs';
 
@@ -185,6 +189,8 @@ export function patch(src, anchor, repl) {
 
 const BREACH_PFX = 'soak: BREACH ';
 const INC_PFX = 'soak: INCONCLUSIVE -- ';
+const NOTE_PFX = 'soak: NOTE -- ';
+const KIND_WORDS = Object.freeze(['BREACH', 'INCONCLUSIVE', 'NOTE']);
 
 /** Parse a protocol line's head (text before ` detail=`) -> { kind, words: Set, pairs: Map(key -> [values]) } or null. */
 export function parseHead(line) {
@@ -192,6 +198,7 @@ export function parseHead(line) {
     if (typeof line !== 'string') return null;
     if (line.startsWith(BREACH_PFX)) { kind = 'BREACH'; rest = line.slice(BREACH_PFX.length); }
     else if (line.startsWith(INC_PFX)) { kind = 'INCONCLUSIVE'; rest = line.slice(INC_PFX.length); }
+    else if (line.startsWith(NOTE_PFX)) { kind = 'NOTE'; rest = line.slice(NOTE_PFX.length); }
     else return null;
     const d = rest.indexOf(' detail=');
     if (d !== -1) rest = rest.slice(0, d);
@@ -210,7 +217,7 @@ export function parseHead(line) {
 
 /**
  * Does ONE protocol line satisfy `spec`? A spec is space-separated tokens: an optional leading kind (BREACH, the
- * default, or INCONCLUSIVE), then
+ * default, INCONCLUSIVE or NOTE; a spec of one kind never matches a line of another), then
  *   k=v      the head carries key k and every comma entry of v is one of k's comma entries (scen=a,b needs both)
  *   k>=n     the head carries a numeric k >= n
  *   word     a bare head word (the INCONCLUSIVE cause: scenario, checks, taint-skip ...)
@@ -221,7 +228,7 @@ export function hasToken(line, spec) {
     if (h === null || typeof spec !== 'string') return false;
     const toks = spec.split(' ').filter((t) => t.length > 0);
     let kind = 'BREACH';
-    if (toks.length > 0 && (toks[0] === 'BREACH' || toks[0] === 'INCONCLUSIVE')) kind = toks.shift();
+    if (toks.length > 0 && KIND_WORDS.indexOf(toks[0]) !== -1) kind = toks.shift();
     if (toks.length === 0 || h.kind !== kind) return false;
     for (const t of toks) {
         const ge = t.indexOf('>=');
@@ -284,6 +291,16 @@ const A_FREE_LINK = '        link.nextFree = freeLinkHead;\n        freeLinkHead
     '        activeLinks = (activeLinks - 1) | 0;\n';
 // :1975 the createRegistry return (the public api object main tracks as world.registry).
 const A_RETURN = '    return {getOwner, runWithOwner, signal, computed, effect, signalBox, computedBox, dispose, batch, untrack, createRoot, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};\n';
+
+// T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
+// has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
+const A_TMARK_VISIT = '                const t = link.target;\n                if (t.markEpoch !== gv) {\n                    t.markEpoch = gv;\n                    const flags = t.flags;\n';
+const P_TMARK_1 = Object.freeze([A_TMARK_VISIT, '                const t = link.target;\n' +
+    '                const tmRe = t.markEpoch === gv; if (tmRe) t.markEpoch = (gv - 1) | 0;   // T-mark\n' +
+    A_TMARK_VISIT.slice('                const t = link.target;\n'.length)]);
+const A_TMARK_PUSH = '// Intrusive push: t.nextMark holds the prior head\n                        t.nextMark = markHead;\n                        markHead = t;\n';
+const P_TMARK_2 = Object.freeze([A_TMARK_PUSH, '// Intrusive push: t.nextMark holds the prior head\n' +
+    '                        if (!tmRe || t.nextMark === null) { t.nextMark = markHead; markHead = t; }\n']);
 
 // amendment 13 (TASK 10 amended). headpatched is a PRE-fix controls.json kernel: DIV-F21 (fixedIn A2-F21) still
 // explains there, because main / SoakReport classify with includeFixed = (controls.name !== null).
@@ -535,6 +552,14 @@ export const CONTROLS = deepFreeze([
     M('T-sever', 'headpatched', { SOAK_LANES: 'GRAPH' }, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O5 lane=GRAPH sig=link-count'],
     }, { patches: [[A_SEVER, '                    /* MUSTFAIL T-sever: severTail(node) removed */\n                    node.flags &= ~FLAG_COMPUTING;\n']] }),
+    // T-mark (burst 87, PLAN-0s-bb4c ADDENDUM 1-4): markDownstream's markEpoch dedupe turned off on a copy of the live
+    // tree (P1 re-opens an already-stamped target; P2 guards the intrusive push so a node still on the mark stack is
+    // never re-pushed, which would drop the stack's tail -> missed marks, an O1 BREACH). Same answers, every walked edge
+    // stamped: shape[GRAPH] markDedupe reads 1.000 on every smoke cycle vs head 0.888 / 0.880 / 0.918 (b87 0b), so the
+    // NOTE spec (every cycle >= MARK_DEDUPE_NOTE) is red on the unpatched tree. Performance-only: exit 0, no BREACH.
+    M('T-mark', 'tree', { SOAK_LANES: 'GRAPH' }, ['--smoke'], {
+        exit: 0, kind: 'nobreach', lines: [], specs: ['NOTE shape[GRAPH] markDedupe>=' + MARK_DEDUPE_NOTE], extra: { verdict: 'SMOKE' },
+    }, { patches: [P_TMARK_1, P_TMARK_2] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375
@@ -568,6 +593,8 @@ export const SHORT_RE = /^(?!L-)/;
 const KINDS = Object.freeze(['match', 'nobreach', 'explained']);
 const CFG_KERNELS = Object.freeze(['scratch', 'missing', 'basename', 'nowatch', 'none']);
 const isStrArr = (a) => Array.isArray(a) && a.every((x) => typeof x === 'string' && x.length > 0);
+/** A `k>=n` spec token with a non-empty key and a finite numeric bound. */
+const isGe = (t) => { const i = t.indexOf('>='); return i > 0 && t.slice(i + 2).length > 0 && Number.isFinite(Number(t.slice(i + 2))); };
 
 /** Shape problems of one control; [] when it is valid. */
 export function validSpec(c) {
@@ -586,7 +613,11 @@ export function validSpec(c) {
     if (e === null || typeof e !== 'object') return p.concat(['expect']);
     if (!(Number.isInteger(e.exit) && e.exit >= 0 && e.exit <= 3)) p.push('expect.exit');
     if (KINDS.indexOf(e.kind) === -1) p.push('expect.kind must be ' + KINDS.join('|'));
-    if (!Array.isArray(e.specs) || !e.specs.every((s) => typeof s === 'string' && s.split(' ').filter((t) => t && t !== 'BREACH' && t !== 'INCONCLUSIVE').length > 0)) p.push('expect.specs');
+    if (!Array.isArray(e.specs) || !e.specs.every((s) => typeof s === 'string' && s.split(' ').filter((t) => t && KIND_WORDS.indexOf(t) === -1).length > 0)) p.push('expect.specs');
+    else for (const s of e.specs) {
+        if (s !== s.trim() || s.indexOf('  ') !== -1) p.push('expect.specs: a leading, trailing or double space in ' + JSON.stringify(s));
+        else if (s.split(' ')[0] === 'NOTE' && !s.split(' ').some(isGe)) p.push('a NOTE spec needs >= 1 k>=n token: ' + s);
+    }
     if (!Array.isArray(e.lines) || !e.lines.every((s) => typeof s === 'string' && s.length > 0)) p.push('expect.lines');
     if (e.kind === 'explained' && !(isStrArr(e.known) && e.known.length > 0)) p.push('expect.known (explained needs the tolerated ids)');
     if (e.kind !== 'explained' && e.known !== undefined) p.push('expect.known only belongs to kind explained');
@@ -782,12 +813,36 @@ export function runControl(c, pinProblems) {
     return fin();
 }
 
+/**
+ * One NOTE spec over ALL its lines: the spec minus its `k>=n` tokens selects the lines; >= 1 must be selected and
+ * EVERY selected line must pass the whole spec (a single sub-floor cycle is a problem). The selected count goes to
+ * `notes` for judgeMain's per-lane stream count check. Its lane: a shape[<LANE>] word or a lane=<LANE> pair, else null.
+ */
+function judgeNote(sp, err, problems, matched, notes) {
+    const toks = sp.split(' ').filter((t) => t.length > 0);
+    const sel = toks.filter((t) => !isGe(t)).join(' ');
+    let lane = null;
+    for (const t of toks) {
+        const sh = /^shape\[([A-Z][A-Z0-9]*)\]$/.exec(t);
+        if (sh !== null) lane = sh[1];
+        else if (t.indexOf('lane=') === 0) lane = t.slice(5);
+    }
+    const hits = err.filter((l) => hasToken(l, sel));
+    notes.push({ spec: sp, lane, n: hits.length });
+    if (hits.length === 0) { problems.push('no line matches spec [' + sp + ']'); return; }
+    const bad = hits.filter((l) => !hasToken(l, sp));
+    if (bad.length > 0) problems.push('NOTE spec [' + sp + '] fails on ' + bad.length + ' of ' + hits.length + ' line(s), first: ' + bad[0].slice(0, 140));
+    else matched.push({ spec: sp, head: headOf(hits[0]) });
+}
+
 /** A protocol line's head: the text before ` detail=` (the part hasToken matches). */
 const headOf = (l) => { const d = l.indexOf(' detail='); return d === -1 ? l : l.slice(0, d); };
 
-function judgeMain(c, r, err, so, out, problems, matched) {
+export function judgeMain(c, r, err, so, out, problems, matched) {
     const e = c.expect;
+    const notes = [];   // [{ spec, lane, n }]: each NOTE spec's selected-line count, checked against the stream below
     for (const sp of e.specs) {
+        if (sp.split(' ')[0] === 'NOTE') { judgeNote(sp, err, problems, matched, notes); continue; }
         const hit = err.find((l) => hasToken(l, sp));
         if (hit === undefined) problems.push('no line matches spec [' + sp + ']');
         else matched.push({ spec: sp, head: headOf(hit) });
@@ -814,6 +869,10 @@ function judgeMain(c, r, err, so, out, problems, matched) {
     let recs = [];
     try { recs = readFileSync(out, 'utf8').split('\n').filter((l) => l.length > 0).map((l) => JSON.parse(l)); } catch (x) { problems.push('stream unreadable: ' + x.message); return; }
     if (recs.length !== Number(m[3])) problems.push('END records=' + m[3] + ' != stream ' + recs.length);
+    for (const q of notes) {
+        const want = recs.filter((x) => x.type === 'cycle' && (q.lane === null || x.lane === q.lane)).length;
+        if (q.n !== want) problems.push('NOTE spec [' + q.spec + '] selected ' + q.n + ' line(s) != ' + want + ' stream cycle record(s)' + (q.lane === null ? '' : ' of lane ' + q.lane));
+    }
     const summary = recs.length ? recs[recs.length - 1] : null;
     if (!summary || summary.type !== 'summary') problems.push('stream does not end with its summary');
     const x = e.extra;

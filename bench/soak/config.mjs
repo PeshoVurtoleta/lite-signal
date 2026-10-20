@@ -45,6 +45,13 @@ const CONSTANTS = Object.freeze({
     WORLD_STEPS: 400,
     LARGE_WORLD_EVERY: 64,
     SHAPE_EVERY: 16,
+    // T-mark (_mustfail.mjs, burst 87, PLAN-0s-bb4c): the shape[<LANE>] markDedupe floor a markEpoch-dedupe-off mutant
+    // must reach on every smoke cycle (main.mjs prints the report-only `soak: NOTE -- shape[<LANE>]` line; no burn-in
+    // gate reads it). markDedupe = markStamp / markEdge (anatomy.mjs), <= 1; 1.000 = every walked edge stamped.
+    // MEASURED (b87 0a, .handoff/b87-evidence/B0/tmark-0a.txt, 2 runs, identical counts, untimed): GRAPH worlds 0..31
+    // of seedFor(0xC0FFEE, GRAPH.index, 0): head 71529 / 81913 = 0.873, the P1+P2 mutant 111762 / 111762 = 1.000.
+    // b87 0b GRAPH --smoke (default seed, 3 cycles): head 0.888 / 0.880 / 0.918, mutant 1.000 x 3.
+    MARK_DEDUPE_NOTE: 0.99,
     MAX_DEPTH: 200,
     // coverage and failures
     SCEN_MIN: 8,
@@ -137,7 +144,7 @@ const CONSTANTS = Object.freeze({
 export const {
     GATE_N, WARMUP_CYCLES, MIN_ACTIVE_CYCLES, DEFAULT_CYCLES, CYCLES_MAX,
     DEFAULT_OPS, OPS_MIN, OPS_MAX, SMOKE_CYCLES, SMOKE_OPS, DEFAULT_SEED,
-    CHECK_P, WORLD_STEPS, LARGE_WORLD_EVERY, SHAPE_EVERY, MAX_DEPTH,
+    CHECK_P, WORLD_STEPS, LARGE_WORLD_EVERY, SHAPE_EVERY, MARK_DEDUPE_NOTE, MAX_DEPTH,
     SCEN_MIN, SCEN_MIN_SMOKE, FAIL_CAP, DETAIL_MAX, CHECK_FLOOR, CHECK_FLOOR_SMOKE, TAINT_SKIP_MAX,
     HEAP_RATIO, HEAP_SLACK_MB, RSS_RATIO, RSS_SLACK_MB, RSS_BUF, SKETCH_ALPHA, LATENCY_METHODS, LATENCY_UNTIMED,
     DRAIN_MS, DRAIN_TRIES, RETAIN_MAX, RETAIN_BAD_BOUNDARIES,

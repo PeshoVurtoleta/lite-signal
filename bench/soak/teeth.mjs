@@ -163,7 +163,6 @@ export const GAPS = deepFreeze({
     'T-A7a': fixMinusOne(476, 'A7 + S2 wrap.mjs + S3 RECYCLE lane', NEARWRAP_WHY),
     'T-A7b': fixMinusOne(477, 'A7 + S2 wrap.mjs', NEARWRAP_WHY),
     'T-d8pc-head': { why: 'the d8-pc engine lane is placed in S2 (' + S1CD + ':7, amendment 4)', until: 'S2', covers: [] },
-    'T-mark': { why: 'performance-only NOTE control; the shape[GRAPH] markDedupe counter is S2 (' + SPEC + ':478)', until: 'S2', covers: [] },
     'T-OB-lying-adapter': {
         why: 'OB fired in 0/6000 census worlds on headpatched, tree and 1.5.2 (bench/soak/calibration/ob-census.json); the red case is an adapter whose batch is fn => fn(), and main.mjs:249 loads only liteAdapter (no second adapter seam in S1)',
         until: 'S5 adapters', covers: ['oracle:OB', 'sig:OB:batch-early-run'],

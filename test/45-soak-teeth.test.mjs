@@ -38,11 +38,11 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const GAPS_CEILING = [
     'P-TREE', 'P-NEST',
     'T-A1', 'T-A2', 'T-A3a', 'T-A3b', 'T-A3c', 'T-A4', 'T-A5a', 'T-A5b', 'T-A6', 'T-A7a', 'T-A7b',
-    'T-d8pc-head', 'T-mark',
+    'T-d8pc-head',
     'T-OB-lying-adapter', 'T-OB-nested-close', 'totals-e2e',
     'T-O1c-err', 'T-O5-counts', 'T-O6-shape', 'T-no-lane', 'T-post-cycles', 'R-kernel-identity',
 ];
-const GAPS_MAX = 24;   // 25 -> 24 at burst 39: P-INTERIM-ERROR-clean landed as a _mustfail control (A2-F21)
+const GAPS_MAX = 23;   // 25 -> 24 at burst 39: P-INTERIM-ERROR-clean landed as a _mustfail control (A2-F21); 24 -> 23 at burst 87: T-mark landed
 // The universe ids whose only teeth are GAPS (the union of GAPS[].covers), exactly. Moving an id from CHECKS into a
 // GAP's covers (a tooth quietly turned into a gap) fails until this literal is edited.
 const GAP_COVERED = [
@@ -66,7 +66,7 @@ function hasProblem(probs, want) {
 
 const coveredBy = (gaps) => [...new Set(Object.keys(gaps).flatMap((g) => gaps[g].covers))].sort();
 
-test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 24-name GAPS ceiling and max 24 is []', () => {
+test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 23-name GAPS ceiling and max 23 is []', () => {
     assert.equal(GAPS_CEILING.length, GAPS_MAX, 'the literal ceiling and its literal size agree');
     assert.deepEqual(live(), []);
 });
@@ -95,11 +95,11 @@ test('teeth b: an unknown gate id in the universe is uncovered; a CHECKS id outs
 
 test('teeth b: a GAP that covers a CHECKS id is stale; a GAP named as a CHECKS control is stale', () => {
     const g = copy(GAPS);
-    g['T-mark'].covers = ['gate:heap'];
-    hasProblem(live({ gaps: g }), 'stale GAP: T-mark covers gate:heap, which has CHECKS');
+    g['T-d8pc-head'].covers = ['gate:heap'];
+    hasProblem(live({ gaps: g }), 'stale GAP: T-d8pc-head covers gate:heap, which has CHECKS');
     const c = copy(CHECKS);
-    c['gate:heap'] = ['L-T-leak', 'T-mark'];
-    hasProblem(live({ checks: c }), 'stale GAP: T-mark is a CHECKS control');
+    c['gate:heap'] = ['L-T-leak', 'T-d8pc-head'];
+    hasProblem(live({ checks: c }), 'stale GAP: T-d8pc-head is a CHECKS control');
 });
 
 test('teeth b: GAPS may only shrink -- a GAP outside the ceiling, a ceiling naming a deleted GAP, a stale max', () => {
@@ -108,8 +108,8 @@ test('teeth b: GAPS may only shrink -- a GAP outside the ceiling, a ceiling nami
     grown['T-new'] = { why: 'x', until: 'y', covers: [] };
     const pg = live({ gaps: grown });
     hasProblem(pg, 'GAP T-new is not in the ceiling (GAPS may only shrink)');
-    hasProblem(pg, 'GAPS holds 25 entries > max 24 (GAPS may only shrink)');
-    hasProblem(live({ ceiling: GAPS_CEILING.filter((n) => n !== 'T-mark'), max: 23 }), 'GAP T-mark is not in the ceiling (GAPS may only shrink)');
+    hasProblem(pg, 'GAPS holds 24 entries > max 23 (GAPS may only shrink)');
+    hasProblem(live({ ceiling: GAPS_CEILING.filter((n) => n !== 'T-d8pc-head'), max: 22 }), 'GAP T-d8pc-head is not in the ceiling (GAPS may only shrink)');
     // the ceiling with an extra name
     hasProblem(live({ ceiling: GAPS_CEILING.concat(['T-gone']) }), 'ceiling lists T-gone, which is no GAP any more: shrink the ceiling literal');
     // a deleted GAP without shrinking the literals
@@ -117,16 +117,16 @@ test('teeth b: GAPS may only shrink -- a GAP outside the ceiling, a ceiling nami
     delete shrunk['P-TREE'];
     const ps = live({ gaps: shrunk });
     hasProblem(ps, 'ceiling lists P-TREE, which is no GAP any more: shrink the ceiling literal');
-    hasProblem(ps, 'GAPS holds 23 entries < max 24: decrement the max literal');
+    hasProblem(ps, 'GAPS holds 22 entries < max 23: decrement the max literal');
     hasProblem(live({ ceiling: GAPS_CEILING.concat(['P-TREE']) }), 'ceiling lists a GAP twice');
 });
 
 test('teeth b: max must be the exact safe-integer GAPS size; NaN, a string and missing are problems, never a skip', () => {
     hasProblem(live({ max: NaN }), 'max must be a safe integer (the literal GAPS size), got NaN');
-    hasProblem(live({ max: '24' }), 'max must be a safe integer (the literal GAPS size), got 24');
+    hasProblem(live({ max: '23' }), 'max must be a safe integer (the literal GAPS size), got 23');
     hasProblem(live({ max: undefined }), 'max must be a safe integer (the literal GAPS size), got undefined');
-    hasProblem(live({ max: 25 }), 'GAPS holds 24 entries < max 25: decrement the max literal');
-    hasProblem(live({ max: 23 }), 'GAPS holds 24 entries > max 23 (GAPS may only shrink)');
+    hasProblem(live({ max: 24 }), 'GAPS holds 23 entries < max 24: decrement the max literal');
+    hasProblem(live({ max: 22 }), 'GAPS holds 23 entries > max 22 (GAPS may only shrink)');
     hasProblem(live({ ceiling: undefined }), 'ceiling must be the literal array of GAPS names (GAPS may only shrink), got undefined');
 });
 
@@ -248,9 +248,9 @@ function causeHead(c) {
 const EVIDENCE_CAUSE = Object.freeze({ coverage: 'scenario' });
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const sigOk = (tok, sig) => (sig.endsWith('*') ? tok.indexOf('sig=' + sig.slice(0, -1)) === 0 : tok === 'sig=' + sig);
-/** BREACH specs of a control (a spec with no leading kind word is BREACH), as token arrays. */
-const breachSpecs = (c) => c.expect.specs.map((s) => s.split(' ').filter((t) => t.length > 0)).filter((t) => t[0] !== 'INCONCLUSIVE' && t.length > 0).map((t) => (t[0] === 'BREACH' ? t.slice(1) : t));
-/** INCONCLUSIVE texts a control expects (specs minus the kind word, lines minus the prefix). */
+/** BREACH specs of a control (a spec with no leading kind word is BREACH; INCONCLUSIVE and NOTE specs are skipped), as token arrays. */
+const breachSpecs = (c) => c.expect.specs.map((s) => s.split(' ').filter((t) => t.length > 0)).filter((t) => t[0] !== 'INCONCLUSIVE' && t[0] !== 'NOTE' && t.length > 0).map((t) => (t[0] === 'BREACH' ? t.slice(1) : t));
+/** INCONCLUSIVE texts a control expects (INCONCLUSIVE specs minus the kind word -- BREACH and NOTE specs are skipped -- lines minus the prefix). */
 const incTexts = (c) => c.expect.specs.filter((s) => s.indexOf('INCONCLUSIVE ') === 0).map((s) => s.slice('INCONCLUSIVE '.length))
     .concat(c.expect.lines.filter((l) => l.indexOf(INC_PFX) === 0).map((l) => l.slice(INC_PFX.length)));
 const incOk = (c, cause) => own(INCONCLUSIVE_CAUSES, cause) && incTexts(c).some((t) => t.indexOf(causeHead(cause)) === 0);
