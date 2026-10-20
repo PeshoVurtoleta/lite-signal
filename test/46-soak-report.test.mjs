@@ -168,6 +168,8 @@ before(async () => {
             SOAK_LANES: 'GRAPH' }, SMALL)),
         gen('mustfail', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH', SOAK_MUSTFAIL: 'cov-off:' + COV_OFF_SUPPORTED.GRAPH[0] }, SMALL)),
         gen('smoke', { SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' }, ['--smoke']),
+        // B-B4b: the TREE kernel instruments (rev152 / headpatched anchors drift -> anatomy null), so the anatomy rows tamper this one
+        gen('treesmoke', { SOAK_LANES: 'GRAPH' }, ['--smoke']),
         gen('fatal', Object.assign({ SOAK_KERNEL: join(TMP, 'kfatal', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
         gen('sigint', Object.assign({ SOAK_KERNEL: join(TMP, 'ksigint', 'Signal.js'), SOAK_LANES: 'GRAPH' }, LONG), [], ARMED_KILL_MS),
     ]);
@@ -725,6 +727,17 @@ const TAMPERS = [
     ['latency.read.n not a count (-1)', 'rev', (r) => { const e = cyclesOf(r)[0].latency.read; e.n = -1; e.belowFloor = 0; }, I('cycle-field', /counts/)],
     ['cycle.latency not an object', 'rev', (r) => { cyclesOf(r)[0].latency = 5; }, I('cycle-field', /latency is not an object/)],
     ['cycle.latency.read null', 'rev', (r) => { cyclesOf(r)[0].latency.read = null; }, I('cycle-field', /latency\.read is not an object/)],
+    // anatomy cycle key (B-B4b, PLAN-0s-bb4b ASSERTION 5): key tables + the cycle-field statements (red until B2 lands SoakReport)
+    ['an extra key inside cycle.anatomy', 'treesmoke', (r) => { cyclesOf(r)[0].anatomy.forged = 1; }, I('unknown-key', /carries an unknown key "forged"/)],
+    ['an extra key inside cycle.anatomy.counts', 'treesmoke', (r) => { cyclesOf(r)[0].anatomy.counts.forged = 1; }, I('unknown-key', /carries an unknown key "forged"/)],
+    ['a deleted cycle.anatomy', 'treesmoke', (r) => { delete cyclesOf(r)[0].anatomy; }, I('missing-key', /lacks "anatomy"/)],
+    ['a deleted cycle.anatomy.counts.markEdge', 'treesmoke', (r) => { delete cyclesOf(r)[0].anatomy.counts.markEdge; }, I('missing-key', /lacks "markEdge"/)],
+    ['anatomy.counts.markStamp > markEdge', 'treesmoke', (r) => { const a = cyclesOf(r)[0].anatomy; a.counts.markStamp = a.counts.markEdge + 1; a.markDedupe = a.counts.markStamp / a.counts.markEdge; }, I('cycle-field', /markStamp \d+ > markEdge/)],
+    ['anatomy.markDedupe 0 with markEdge 0 (null is not zero)', 'treesmoke', (r) => { const a = cyclesOf(r)[0].anatomy; a.counts.markStamp = 0; a.counts.markEdge = 0; a.markDedupe = 0; }, I('cycle-field', /markDedupe/)],
+    ['anatomy.markDedupe edited (does not re-derive as markStamp / markEdge)', 'treesmoke', (r) => { const a = cyclesOf(r)[0].anatomy; a.markDedupe = a.markDedupe === 0.5 ? 0.25 : 0.5; }, I('cycle-field', /markDedupe/)],
+    ['anatomy.worlds 0', 'treesmoke', (r) => { cyclesOf(r)[0].anatomy.worlds = 0; }, I('cycle-field', /worlds/)],
+    ['anatomy.counts.recompute fractional (1.5)', 'treesmoke', (r) => { cyclesOf(r)[0].anatomy.counts.recompute = 1.5; }, I('cycle-field', /recompute/)],
+    ['cycle.anatomy not an object (5)', 'treesmoke', (r) => { cyclesOf(r)[0].anatomy = 5; }, I('cycle-field', /anatomy/)],
     // release refusals
     ['R-tamper 10: non-lite PARTIAL (engine alien, NEST skipped for a missing cap)', 'hp', nonLite, R('non-lite', /engine alien, skipped lanes NEST/)],
     ['a tree run under different code (scratch sha, review repro)', 'scratch', (r) => asTree(r), R('tree-parity', /tree Signal\.js sha256 differs from bench\/soak\/parity\.json: recorded under different code/)],

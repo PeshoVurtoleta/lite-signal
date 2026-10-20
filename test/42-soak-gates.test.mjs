@@ -54,7 +54,7 @@ test('GATE_NAMES is derived from GATES; REPORT_ONLY_GATES never overlaps it; INC
     assert.deepEqual(G.GATE_NAMES, G.GATES.map((g) => g.id));
     assert.equal(new Set(G.GATE_NAMES).size, G.GATE_NAMES.length, 'unique ids');
     assert.deepEqual(G.GATE_NAMES, ['oracle', 'heap', 'rss', 'retention', 'coverage', 'check-floor', 'taint-skip', 'totals', 'wrap']);
-    assert.deepEqual(G.REPORT_ONLY_GATES, ['throughput', 'shape', 'O3', 'gcMajor', 'gcPause', 'latency'], 'latency is report-only (B-B4a)');
+    assert.deepEqual(G.REPORT_ONLY_GATES, ['throughput', 'shape', 'O3', 'gcMajor', 'gcPause', 'latency', 'anatomy'], 'latency (B-B4a) and anatomy (B-B4b) are report-only');
     for (const r of G.REPORT_ONLY_GATES) assert.ok(!G.GATE_NAMES.includes(r), r + ' is report-only');
     assert.equal(G.inconclusiveLine('scenario', { lane: 'BATCH', scenario: 'revert-after-mid-read' }),
         'soak: INCONCLUSIVE -- scenario lane=BATCH missing=revert-after-mid-read', 'T-cov line (SPEC-B section 9)');

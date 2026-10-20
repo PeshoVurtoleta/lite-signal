@@ -10,7 +10,7 @@
  *
  * Records (jsonl.mjs, contiguous seq): header (provenance.mjs, REQUIRED_EXTRAS incl. the divergences
  * digest), cycle x (cycles x lanes), summary; a crash adds a fatal record. Cycle record field order, every
- * cycle: identity, volume, checks, skipTainted, failures, scenarios, throughput, memory, rss, latency, boundary, gc.
+ * cycle: identity, volume, checks, skipTainted, failures, scenarios, throughput, memory, rss, latency, anatomy, boundary, gc.
  * rss (B-B3): one RssSampler (rss.mjs) per run, reset per lane-cycle, fed process.memoryUsage.rss() in MB at every
  * world end (before the boundary drain): {samples (stored count), p95MB, maxMB, stride}; gates.mjs rssRule reads
  * the post-warm-up p95MB values. Cold: <= 1 transient boxed double per world (the MB value passed to push).
@@ -18,6 +18,14 @@
  * wrapped adapter composed once under tapAdapter; reset per lane-cycle; armed on worlds (w & 15) === 8 only,
  * disarmed after the world loop and on the fatal path: {<LATENCY_METHODS entry>: {n, p50Ns, p99Ns, belowFloor}}.
  * Returning calls only (a throwing call is not timed); a null timerFloorNs leaves it disarmed (every n 0).
+ * anatomy (B-B4b, REPORT-ONLY): engine lite only. ONE openAnatomy() lane per run (anatomy.mjs: the resolved kernel
+ * instrumented with harness/visit-anchors.mjs and loaded as a SHADOW engine); unavailable (anchor drift, ...) or a
+ * non-lite engine -> one run NOTE and anatomy null on every cycle. Worlds w % SHAPE_EVERY === 0 (16; disjoint from the
+ * latency worlds) re-run a FRESH generateWorld() of the same world on the shadow, after the world's rss sample; the
+ * shadow registries go into the same tracker under tag <lane>/anatomy with their OWN witness list and count (the
+ * boundary drains both; measured also needs every shadow registry witnessed). Reset per lane-cycle:
+ * {worlds, counts: {<visit-anchors NAMES>}, markDedupe} | null (+ one per-cycle NOTE with the why: divergent,
+ * overflow, shadow threw, nothing folded).
  *
  * Failure records (amendment 13, B3 record obligations): one per failing world, at most FAIL_CAP per cycle
  * record (failureCounts and failingWorlds stay complete):
@@ -53,7 +61,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-    readConfig, configExit, formatReplayKey, CYCLES_MAX, WARMUP_CYCLES, FAIL_CAP, DETAIL_MAX, VERDICT, SKETCH_ALPHA,
+    readConfig, configExit, formatReplayKey, CYCLES_MAX, WARMUP_CYCLES, FAIL_CAP, DETAIL_MAX, VERDICT, SKETCH_ALPHA, SHAPE_EVERY,
 } from './config.mjs';
 import {
     GATES, Totals, LaneGates, judgeRun, verdict as runVerdict, oracleFamily, totalsRule,
@@ -277,6 +285,16 @@ async function main() {
         configExit('latency lane unavailable (bench/soak/latency.mjs needs the exact devDep @zakkster/lite-sketch 1.2.0; npm ci): ' +
             String(e && e.message ? e.message : e).split('\n')[0]);
     }
+    // the anatomy lane (B-B4b) loads here too (lite only; anatomy.mjs imports kernel.mjs + the lite adapter): a module
+    // that fails to load is exit 2, no record. An instrumentation that fails is NOT: openAnatomy() reports it (NOTE).
+    let openAnatomy = null;
+    if (cfg.engine === 'lite') {
+        try {
+            ({ openAnatomy } = await import('./anatomy.mjs'));
+        } catch (e) {
+            configExit('anatomy lane unavailable (bench/soak/anatomy.mjs failed to load): ' + String(e && e.message ? e.message : e).split('\n')[0]);
+        }
+    }
 
     // applicability (SPEC 3.3): a lite SKIP or a requested lane that would SKIP is exit 2
     const lanesHdr = [], scenHdr = {}, naHdr = {}, skipped = [], run = [];
@@ -381,6 +399,17 @@ async function main() {
         protocol(header.timerFloorNs === null
             ? 'soak: NOTE -- latency UNMEASURED: timerFloorNs null'
             : 'soak: NOTE -- latency report-only: worlds w%16=8, alpha=' + SKETCH_ALPHA + ', floorNs=' + header.timerFloorNs + ', returning calls only');
+        // anatomy (B-B4b): ONE shadow lane per run; null = every cycle's anatomy is null (the NOTE says why)
+        let anat = null;
+        if (openAnatomy === null) {
+            protocol('soak: NOTE -- anatomy n/a: engine=' + cfg.engine + ' (the lite kernel only)');
+        } else {
+            const an = openAnatomy();
+            anat = an.lane;
+            protocol(anat === null
+                ? 'soak: NOTE -- ' + an.why
+                : 'soak: NOTE -- anatomy report-only: worlds w%' + SHAPE_EVERY + '=0 re-run on a counter-instrumented shadow engine');
+        }
         const tracker = createLeakTracker({ name: 'soak' });
         const profiler = new GcProfiler().start();
         const rssSampler = new RssSampler();   // one per run (two Float64Array(RSS_BUF)); reset per lane-cycle
@@ -413,12 +442,27 @@ async function main() {
                     },
                 };
                 const ad = tapAdapter(latAdapter, tap);
+                // the shadow registries: same tracker, their OWN witness list and count (tracked === worlds stays the oracle's)
+                let sWitness = [];
+                let sTracked = 0;
+                const stap = {
+                    escape: null,
+                    onOpen(sw) {
+                        const reg = sw.registry;
+                        if (reg === null || (typeof reg !== 'object' && typeof reg !== 'function')) throw new TypeError('main: the shadow world has no registry to track');
+                        tracker.track(reg, null, L.name + '/anatomy');
+                        sWitness.push(new WeakRef(reg));
+                        sTracked++;
+                    },
+                };
+                const sad = anat === null ? null : tapAdapter(anat.adapter, stap);
                 ctx.lane = L.name; ctx.cycle = cycle;
                 const tc = performance.now();
                 let w = 0;
                 let script = null, r = null;
                 rssSampler.reset();
                 lat.reset();
+                if (anat !== null) anat.reset();
                 while (ct.get('ops') < cfg.ops && stopReason === null) {
                     if ((w & YIELD_MASK) === YIELD_MASK) {
                         await tick();
@@ -451,6 +495,7 @@ async function main() {
                         breaches.noteWorld(rec, L.name, adapter.name);
                     }
                     rssSampler.push(process.memoryUsage.rss() / MB);
+                    if (sad !== null && w % SHAPE_EVERY === 0) anat.shape(sad, generateWorld(desc, ws, { large, covOff }), r);
                     w++;
                 }
                 lat.armed = false;
@@ -458,18 +503,20 @@ async function main() {
                 const interrupted = ct.get('ops') < cfg.ops;   // a signal stopped it short of SOAK_OPS
                 ctx.world = null; ctx.worldSeed = null;
                 const witnessed = witness.length;
+                const sWitnessed = sWitness.length;
                 const closed = await closeBoundary({
-                    tracker, witness, profiler,
+                    tracker, witness: witness.concat(sWitness), profiler,
                     dropRefs: () => { script = null; r = null; },
                 });
                 witness = null;
+                sWitness = null;
                 const ops = ct.get('ops');
                 // A FRESH boundary object per lane-cycle, bound to it (lane, cycle). Retention is measured only
                 // when every world of the cycle was tracked AND witnessed; otherwise trackerSize / weakAlive
                 // are null = UNMEASURED, which FAILs retention (gates.mjs boundaryState; amendment 13).
                 const worldsRun = ct.get('worlds');
                 const cb = closed.boundary;
-                const measured = tracked === worldsRun && witnessed === worldsRun && Number.isSafeInteger(cb.trackerSize) && Number.isSafeInteger(cb.weakAlive);
+                const measured = tracked === worldsRun && witnessed === worldsRun && sTracked === sWitnessed && Number.isSafeInteger(cb.trackerSize) && Number.isSafeInteger(cb.weakAlive);
                 const boundary = {
                     lane: L.name, cycle, worlds: worldsRun, tracked, witnessed,
                     trackerSize: measured ? cb.trackerSize : null, weakAlive: measured ? cb.weakAlive : null,
@@ -489,9 +536,11 @@ async function main() {
                     memory: closed.memory,
                     rss: { samples: rssSampler.count, p95MB: r3(rssSampler.p95()), maxMB: r3(rssSampler.max()), stride: rssSampler.stride },
                     latency: lat.toJSON(),
+                    anatomy: anat === null ? null : anat.toJSON(),
                     boundary,
                     gc: closed.gc,
                 };
+                if (anat !== null && rec.anatomy === null) protocol('soak: NOTE -- anatomy lane=' + L.name + ' cycle=' + cycle + ' null: ' + anat.why);
                 writeRecord(stream, 'cycle', rec);
                 cyclesRun++;
                 L.gates.push(rec);

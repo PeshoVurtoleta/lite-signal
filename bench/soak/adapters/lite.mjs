@@ -6,6 +6,12 @@
  * (lane, worldSeed). The adapter remembers every handle it hands out, so close() can dispose everything
  * and report the residue O5 checks (0 nodes, 0 links).
  *
+ * liteAdapterFor(kernel) builds the same adapter over ANOTHER kernel module (anatomy.mjs: the counter-
+ * instrumented shadow engine). It keeps name 'lite' and shares version / files / knownAs / caps with liteAdapter:
+ * exec.mjs keys the O6 creation prediction on name === 'lite' + knownAs(), so a shadow under any other name (or
+ * with its own identity) would predict differently and diverge from the oracle world. openWorld(kernel, opts) is
+ * the one world factory both use (liteAdapter = liteAdapterFor(K)).
+ *
  * COLD module: never on a measured path (zero-box law: the adapter is not a hot body).
  */
 
@@ -32,25 +38,25 @@ function kernelVersion() {
 /** Escape normalization is engine-agnostic and lives in kinds.mjs (kernel-free, unit-tested). */
 export { normalizeEscape };
 
-export const liteAdapter = Object.freeze({
-    name: 'lite',
-    version: kernelVersion,
-    files() { return KERNEL_FILES; },
-    /**
-     * The loaded kernel's controls.json name (kernel.mjs KERNEL_KNOWN_AS), or null for the tree / a scratch
-     * kernel. exec.mjs keys the O6 creation prediction on it (exec stays kernel-free on import). Fails closed:
-     * an unreadable controls.json throws, never reads as "not a control".
-     */
-    knownAs() {
-        if (CONTROLS_ERROR !== null) throw new Error('lite adapter: kernel identity unknown -- ' + CONTROLS_ERROR);
-        return KERNEL_KNOWN_AS;
-    },
-    caps: CAPS_LITE,
-    open(opts) {
+function files() { return KERNEL_FILES; }
+
+/**
+ * The loaded kernel's controls.json name (kernel.mjs KERNEL_KNOWN_AS), or null for the tree / a scratch
+ * kernel. exec.mjs keys the O6 creation prediction on it (exec stays kernel-free on import). Fails closed:
+ * an unreadable controls.json throws, never reads as "not a control". ONE function object, shared by every
+ * adapter liteAdapterFor() builds (a shadow engine reports the base kernel's identity).
+ */
+function knownAs() {
+    if (CONTROLS_ERROR !== null) throw new Error('lite adapter: kernel identity unknown -- ' + CONTROLS_ERROR);
+    return KERNEL_KNOWN_AS;
+}
+
+/** One world over `kernel` (a module namespace exporting createRegistry). The former liteAdapter.open() body. */
+export function openWorld(kernel, opts) {
         const o = opts || {};
         const cfg = { maxNodes: 4096, onCapacityExceeded: 'grow' };
         if (o.maxFlushPasses !== undefined && o.maxFlushPasses !== null) cfg.maxFlushPasses = o.maxFlushPasses;
-        const r = K.createRegistry(cfg);
+        const r = kernel.createRegistry(cfg);
         const handles = [];
         const offs = [];
         return {
@@ -76,5 +82,24 @@ export const liteAdapter = Object.freeze({
                 return { nodes: s.activeNodes, links: s.activeLinks, signals: s.signals, computeds: s.computeds, effects: s.effects };
             },
         };
-    },
-});
+}
+
+/**
+ * The lite adapter over `kernel`. Throws TypeError (before building anything) when kernel exports no
+ * createRegistry(). Frozen; name 'lite'; version / files / knownAs / caps are liteAdapter's own.
+ */
+export function liteAdapterFor(kernel) {
+    if (kernel === null || (typeof kernel !== 'object' && typeof kernel !== 'function') || typeof kernel.createRegistry !== 'function') {
+        throw new TypeError('lite adapter: liteAdapterFor(kernel) needs a kernel module exporting createRegistry()');
+    }
+    return Object.freeze({
+        name: 'lite',
+        version: kernelVersion,
+        files,
+        knownAs,
+        caps: CAPS_LITE,
+        open(opts) { return openWorld(kernel, opts); },
+    });
+}
+
+export const liteAdapter = liteAdapterFor(K);

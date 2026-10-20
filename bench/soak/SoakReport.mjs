@@ -10,7 +10,8 @@
  * every failure record's known/tag/failKnown comes from divergences.classify, every cycle and world seed from
  * seeds.mjs; the header `gates` block must equal this code's gatesBlock(). A field the checks read that is
  * missing or non-numeric fails CLOSED (absent is never 0, S12), and every record (plus its failure, fail,
- * boundary, memory, rss, latency (+ each latency.<method> entry), gc, throughput and BREACH sub-objects) must carry EXACTLY
+ * boundary, memory, rss, latency (+ each latency.<method> entry), anatomy (+ anatomy.counts), gc, throughput and BREACH
+ * sub-objects) must carry EXACTLY
  * the keys main/provenance emit:
  * an unknown key is `unknown-key`, a missing one `missing-key`. Header sub-objects (os, engine.caps, ...)
  * are not key-checked.
@@ -98,6 +99,12 @@
  *     {n, p50Ns, p99Ns, belowFloor}. Key-checked (an absent latency or entry is missing-key) and field-checked
  *     (cycle-field: counts, belowFloor <= n, each pXX null or a count, p50Ns <= p99Ns with p99Ns null -> p50Ns
  *     null; a present non-object latency or entry, or an absent field, fails cycle-field first); never judged.
+ *   - The cycle anatomy sub-object (B-B4b, REPORT-ONLY): null, or {worlds, counts, markDedupe} with counts keyed by
+ *     harness/visit-anchors.mjs NAMES (imported, never copied). Key-checked when an object (unknown / missing keys
+ *     in anatomy and anatomy.counts); field-checked (cycle-field: a present value that is neither null nor an
+ *     object, worlds a count >= 1, every present count a count, markStamp <= markEdge, markDedupe Object.is
+ *     markStamp / markEdge, null when markEdge is 0); an absent key is missing-key's. Never judged; the counts
+ *     are not re-derived (the shadow run is not replayed here).
  *
  * Imports are kernel-free (never kernel.mjs / provenance.mjs / adapters/lite.mjs). COLD module.
  */
@@ -121,6 +128,7 @@ import { applicability } from './adapters/contract.mjs';
 import { RECORD_TYPES, FATAL_KINDS } from './jsonl.mjs';
 import { familyKeys, BreachLog } from './main.mjs';
 import { gapTeeth } from './teeth.mjs';
+import { NAMES as ANATOMY_NAMES } from '../../harness/visit-anchors.mjs';
 
 const own = (o, k) => o !== null && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
 const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -136,7 +144,7 @@ const RECORD_KEYS = {
         'controls', 'node', 'v8', 'execArgv', 'os', 'config', 'laneRoster', 'lanes', 'scenarios', 'oraclesNA', 'genRules', 'divergences',
         'mustfail', 'seedFormula', 'worldSeedFormula', 'seedRemapCollision', 'gates', 'timerFloorNs'].concat(STAMP),
     cycle: ['lane', 'laneIndex', 'cycle', 'warmup', 'seed', 'interrupted', 'worlds', 'largeWorlds', 'ops', 'opsByClass', 'checks', 'skipTainted',
-        'failures', 'failureCounts', 'failingWorlds', 'scenarios', 'gateHits', 'throughput', 'memory', 'rss', 'latency', 'boundary', 'gc'].concat(STAMP),
+        'failures', 'failureCounts', 'failingWorlds', 'scenarios', 'gateHits', 'throughput', 'memory', 'rss', 'latency', 'anatomy', 'boundary', 'gc'].concat(STAMP),
     summary: ['reason', 'cyclesRun', 'lanesRun', 'totals', 'perLane', 'breaches', 'inconclusive', 'skipped', 'smoke', 'verdict', 'exitCode'].concat(STAMP),
     fatal: ['kind', 'lane', 'cycle', 'world', 'worldSeed', 'message', 'stack'].concat(STAMP),
 };
@@ -149,6 +157,8 @@ const SUB_KEYS = {
     rss: ['samples', 'p95MB', 'maxMB', 'stride'],
     latency: LATENCY_METHODS.slice(),
     latencyEntry: ['n', 'p50Ns', 'p99Ns', 'belowFloor'],
+    anatomy: ['worlds', 'counts', 'markDedupe'],
+    anatomyCounts: ANATOMY_NAMES.slice(),
     gc: ['major', 'minor', 'maxPauseMs'],
     throughput: ['wallMs', 'opsPerSec'],
     breach: ['oracle', 'lane', 'sig', 'known', 'replay', 'scen', 'detail'],
@@ -170,6 +180,10 @@ function keyedObjects(recs) {
         if (r.type === 'cycle') {
             for (const k of ['boundary', 'memory', 'rss', 'latency', 'gc', 'throughput']) if (isObj(r[k])) out.push(['seq ' + r.seq + ' cycle.' + k, r[k], SUB_KEYS[k]]);
             if (isObj(r.latency)) for (const m of LATENCY_METHODS) if (isObj(r.latency[m])) out.push(['seq ' + r.seq + ' cycle.latency.' + m, r.latency[m], SUB_KEYS.latencyEntry]);
+            if (isObj(r.anatomy)) {
+                out.push(['seq ' + r.seq + ' cycle.anatomy', r.anatomy, SUB_KEYS.anatomy]);
+                if (isObj(r.anatomy.counts)) out.push(['seq ' + r.seq + ' cycle.anatomy.counts', r.anatomy.counts, SUB_KEYS.anatomyCounts]);
+            }
             for (const f of Array.isArray(r.failures) ? r.failures : []) {
                 if (!isObj(f)) continue;
                 out.push(['seq ' + r.seq + ' failure world ' + f.world, f, SUB_KEYS.failure]);
@@ -433,6 +447,17 @@ function checkCycles(cycles, cfg, lanes, summary, controlsName) {
             if (e.p50Ns !== null && !(e.p99Ns !== null && e.p50Ns <= e.p99Ns)) bad('cycle-field', at + 'latency.' + m + '.p50Ns ' + e.p50Ns + ' with p99Ns ' + e.p99Ns + ' (p50Ns <= p99Ns; p99Ns null -> p50Ns null)');
             if (e.n === e.belowFloor && (e.p50Ns !== null || e.p99Ns !== null)) bad('cycle-field', at + 'latency.' + m + ' has no timed mass above the floor but pXX non-null');
         }
+        // anatomy (B-B4b, report-only): null, or an object; an ABSENT anatomy / key is missing-key's (later class)
+        const an = own(c, 'anatomy') ? c.anatomy : null;
+        if (an !== null && !isObj(an)) bad('cycle-field', at + 'anatomy is neither null nor an object: ' + String(an));
+        if (an !== null && own(an, 'worlds') && !(isCount(an.worlds) && an.worlds >= 1)) bad('cycle-field', at + 'anatomy.worlds = ' + String(an.worlds) + ' (a count >= 1; no folded world is anatomy null)');
+        if (an !== null && own(an, 'counts') && !isObj(an.counts)) bad('cycle-field', at + 'anatomy.counts is not an object');
+        for (const n of an !== null && isObj(an.counts) ? ANATOMY_NAMES : []) {
+            if (own(an.counts, n) && !isCount(an.counts[n])) bad('cycle-field', at + 'anatomy.counts.' + n + ' = ' + String(an.counts[n]) + ' (counts)');
+        }
+        const ac = an !== null && isObj(an.counts) && own(an.counts, 'markStamp') && own(an.counts, 'markEdge') ? an.counts : null;
+        if (ac !== null && ac.markStamp > ac.markEdge) bad('cycle-field', at + 'anatomy.counts.markStamp ' + ac.markStamp + ' > markEdge ' + ac.markEdge);
+        if (ac !== null && own(an, 'markDedupe') && !Object.is(an.markDedupe, ac.markEdge === 0 ? null : ac.markStamp / ac.markEdge)) bad('cycle-field', at + 'anatomy.markDedupe ' + String(an.markDedupe) + ' is not markStamp / markEdge (' + ac.markStamp + ' / ' + ac.markEdge + '; null when markEdge is 0)');
     }
     for (const c of cycles) {
         const at = 'seq ' + c.seq + ' (' + c.lane + ' cycle ' + c.cycle + '): ';

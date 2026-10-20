@@ -58,6 +58,8 @@ export const PARITY_FILES = Object.freeze([
     'bench/soak/rss.mjs',
     // B-B4a (burst 85): the pinned main.mjs imports the latency lane, whose wrapper sits between exec and the world
     'bench/soak/latency.mjs',
+    // B-B4b (burst 86): the pinned main.mjs imports the anatomy lane, which loads the anchor table's instrumented copy
+    'bench/soak/anatomy.mjs', 'harness/visit-anchors.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

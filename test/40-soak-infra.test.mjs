@@ -606,7 +606,7 @@ test('main: record obligations -- header extras + divergences digest; cycle chec
     assert.deepEqual(h.lanes, [{ name: 'GRAPH', status: 'run', missingCaps: [], engine: 'lite' }]);
     for (const c of r.recs.filter((x) => x.type === 'cycle')) {
         const keys = Object.keys(c);
-        const at = ['lane', 'cycle', 'checks', 'skipTainted', 'failures', 'memory', 'rss', 'latency', 'boundary'].map((k) => keys.indexOf(k));
+        const at = ['lane', 'cycle', 'checks', 'skipTainted', 'failures', 'memory', 'rss', 'latency', 'anatomy', 'boundary'].map((k) => keys.indexOf(k));
         assert.ok(at.every((i) => i !== -1), 'every field present: ' + keys);
         for (let i = 1; i < at.length; i++) assert.ok(at[i - 1] < at[i], 'field order: ' + keys);
         assert.equal(c.rss.samples, Math.ceil(c.worlds / c.rss.stride), 'one rss push per world of THIS cycle (reset per lane-cycle), cycle ' + c.cycle);
@@ -619,6 +619,23 @@ test('main: record obligations -- header extras + divergences digest; cycle chec
         assert.equal(c.warmup, c.cycle === 0);
         assert.equal(c.interrupted, false);
     }
+});
+
+const smokeTreeGraph = memo(() => soak({ SOAK_LANES: 'GRAPH' }, ['--smoke']));
+
+// B-B4b ASSERTION 5 (red until B2 wires main.mjs): the tree kernel instruments, so every cycle carries an anatomy object.
+test('main: anatomy -- tree GRAPH smoke: per cycle anatomy.worlds === floor((worlds - 1) / 16) + 1, 12 counts, no divergent / UNAVAILABLE NOTE', () => {
+    const r = smokeTreeGraph();
+    assert.equal(r.status, 0, r.stderr);
+    const cyc = r.recs.filter((x) => x.type === 'cycle');
+    assert.equal(cyc.length, 3);
+    for (const c of cyc) {
+        assert.ok(c.anatomy !== null && typeof c.anatomy === 'object', 'anatomy object, cycle ' + c.cycle + ': ' + JSON.stringify(c.anatomy));
+        assert.equal(c.anatomy.worlds, Math.floor((c.worlds - 1) / 16) + 1, 'every 16th world is a shape world (w % 16 === 0), cycle ' + c.cycle);
+        assert.equal(Object.keys(c.anatomy.counts).length, 12);
+        assert.ok(c.anatomy.counts.markStamp <= c.anatomy.counts.markEdge);
+    }
+    assert.equal(/anatomy[^\n]*(divergent|UNAVAILABLE)/i.test(r.stderr), false, r.stderr);
 });
 
 test('main: SIGINT after the first heartbeat -> exit 3, summary reason signal, END verdict=INCONCLUSIVE', async () => {
@@ -784,6 +801,7 @@ function scratchSoak(name, patch, files) {
     mkdirSync(join(dir, 'bench'), { recursive: true });
     cpSync(SOAK, join(dir, 'bench', 'soak'), { recursive: true, filter: (p) => !/[\\/](out|replay\.mjs|shrink\.mjs)$/.test(p) });
     cpSync(join(ROOT, 'bench', 'torture', 'helpers'), join(dir, 'bench', 'torture', 'helpers'), { recursive: true });
+    mkdirSync(join(dir, 'harness'), { recursive: true }); copyFileSync(join(ROOT, 'harness', 'visit-anchors.mjs'), join(dir, 'harness', 'visit-anchors.mjs'));
     symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'));
     const cli = join(dir, 'bench', 'soak', 'main.mjs');
     if (patch) {
@@ -844,6 +862,14 @@ test('main: retention must-fail -- a registry leaked behind main\'s back FAILs e
     }
     assert.equal(recs[4].perLane.GRAPH.retention.badBoundaries, 2);
     assert.equal(recs[4].verdict, 'FAIL');
+});
+
+test('main: SHADOWLEAK a shadow registry the anatomy lane leaks is SEEN -- retention FAIL (shadow registries are tracked + witnessed)', () => {
+    const cli = scratchSoak('shadow-leak', ['onOpen(sw) {', 'onOpen(sw) { (globalThis.__sleak ||= []).push(sw.registry);']);
+    const { env } = soakEnv({ SOAK_KERNEL: join(ROOT, 'Signal.js'), SOAK_LANES: 'GRAPH' });
+    const r = spawnSync(process.execPath, ['--expose-gc', cli, '--smoke'], { encoding: 'utf8', timeout: 300000, env });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /^soak: BREACH gate=retention lane=GRAPH /m);
 });
 
 test('main: failureRecord -- failKnown is per fail, in fail order (two fails explained by two registry entries)', () => {

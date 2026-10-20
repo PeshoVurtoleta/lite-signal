@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "task": "SPEC-B-S1cd TASK 11 (burst 8 B6): soak calibration -- DEFAULT_OPS, SCEN_MIN(_SMOKE), CHECK_FLOOR(_SMOKE), TAINT_SKIP_MAX",
- "tool": "node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --timed",
+ "tool": "node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --import-throughput <the earlier timed run>",
  "guard": "test/41-soak-config.test.mjs (B6 drift guard): config values == cut, every binding cell clears its constant, live smoke re-measure == kernels.<k>.smoke, live main.mjs probe fold == probe.fold",
  "cut": {
   "seed": 12648430,
@@ -152,41 +152,49 @@
   }
  },
  "provenance": {
-  "date": "2026-10-19T02:53:24.490Z",
-  "gitHead": "45de5e1ac1cdf894f50580d50845b6ad9eaed49e",
+  "date": "2026-10-20T01:26:56.851Z",
+  "gitHead": "3ef853adabd5f5a823ddf240c3fbdabb9df9aab9",
   "gitDirty": [
-   "M bench/soak/calibration/calibrate.mjs",
-   " M bench/soak/config.mjs",
-   " M test/41-soak-config.test.mjs",
-   " M test/torture.mjs",
+   " M bench/soak/SoakReport.mjs",
+   " M bench/soak/adapters/lite.mjs",
+   " M bench/soak/calibration/soak-calibration.json",
+   " M bench/soak/gates.mjs",
+   " M bench/soak/main.mjs",
+   " M bench/soak/parity.json",
+   " M bench/soak/parity.mjs",
+   " M test/40-soak-infra.test.mjs",
+   " M test/42-soak-gates.test.mjs",
+   " M test/46-soak-report.test.mjs",
    "?? BRIEF.md",
-   "?? bench/bench-runs/"
+   "?? bench/bench-runs/",
+   "?? bench/soak/anatomy.mjs",
+   "?? test/72-soak-anatomy.test.mjs"
   ],
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   2.74,
-   2.79,
-   2.62
+   4.3,
+   5.84,
+   4.82
   ],
   "loadavgAfterTimed": [
-   2.43,
-   2.74,
-   2.7
+   1.93,
+   2.72,
+   3.63
   ],
   "loadavgAfter": [
-   5.95,
-   4.67,
-   3.65
+   5.84,
+   4.66,
+   4.2
   ],
   "busyNodeBefore": [
-   "1540 0.0 node",
-   "26332 0.0 /opt/homebrew/bin/node"
+   "26332 0.0 /opt/homebrew/bin/node",
+   "83125 0.0 node"
   ],
   "seconds": 891,
-  "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
+  "timing": "PENDING (untimed run; throughput decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
    "bench/soak/exec.mjs": "ba2d86b403d0384922bb17d9aa771aa2894dfda9caffa63279e28de690d5634e",
@@ -199,7 +207,7 @@
    "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
    "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
-   "bench/soak/adapters/lite.mjs": "1aa463afac307918b424f6eb406ba2d950f763e1943c516def9e40428359db0f",
+   "bench/soak/adapters/lite.mjs": "b5fdfcc9b614db980b88d57772e4527cceb8b14eb9bbe76da397c121b281c683",
    "bench/soak/adapters/contract.mjs": "7cdd3c5d985f22b6ec91f8d6acb42bd83bdd790fb197f53f163ad3a77a732bb3",
    "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
    "bench/torture/helpers/index.mjs": "0f58faf5f553716bf5059cdfeae7fe887ea07fe3e853d8cba0e75106e54cb119",
@@ -905,78 +913,10 @@
     }
    },
    "throughput": {
-    "GRAPH": {
-     "opsPerSecPerCycle": [
-      13733,
-      13544,
-      13503,
-      13809,
-      13051,
-      13312,
-      13720,
-      13677,
-      13455,
-      13102,
-      13383
-     ],
-     "min": 13051,
-     "median": 13503,
-     "max": 13809
-    },
-    "BATCH": {
-     "opsPerSecPerCycle": [
-      48344,
-      49770,
-      50123,
-      48524,
-      48437,
-      48651,
-      49063,
-      48400,
-      48339,
-      48117,
-      47768
-     ],
-     "min": 47768,
-     "median": 48437,
-     "max": 50123
-    },
-    "ERROR": {
-     "opsPerSecPerCycle": [
-      45354,
-      45778,
-      45468,
-      46874,
-      48638,
-      47523,
-      47846,
-      49284,
-      47546,
-      48377,
-      47800
-     ],
-     "min": 45354,
-     "median": 47546,
-     "max": 49284
-    },
-    "NEST": {
-     "opsPerSecPerCycle": [
-      31645,
-      33876,
-      34074,
-      34136,
-      34154,
-      34184,
-      33804,
-      34024,
-      34108,
-      34605,
-      34473
-     ],
-     "min": 31645,
-     "median": 34108,
-     "max": 34605
-    }
+    "GRAPH": "PENDING",
+    "BATCH": "PENDING",
+    "ERROR": "PENDING",
+    "NEST": "PENDING"
    }
   },
   "lite-1.5.2": {
@@ -1377,78 +1317,10 @@
     }
    },
    "throughput": {
-    "GRAPH": {
-     "opsPerSecPerCycle": [
-      12833,
-      13098,
-      13101,
-      13441,
-      12759,
-      12849,
-      13246,
-      13097,
-      13111,
-      12838,
-      12990
-     ],
-     "min": 12759,
-     "median": 13097,
-     "max": 13441
-    },
-    "BATCH": {
-     "opsPerSecPerCycle": [
-      18662,
-      19924,
-      20059,
-      19992,
-      19862,
-      20032,
-      20039,
-      20100,
-      20008,
-      20206,
-      19968
-     ],
-     "min": 18662,
-     "median": 20008,
-     "max": 20206
-    },
-    "ERROR": {
-     "opsPerSecPerCycle": [
-      46712,
-      63997,
-      64860,
-      64989,
-      65769,
-      65487,
-      65136,
-      65404,
-      64984,
-      65703,
-      65364
-     ],
-     "min": 46712,
-     "median": 65136,
-     "max": 65769
-    },
-    "NEST": {
-     "opsPerSecPerCycle": [
-      31090,
-      34135,
-      34337,
-      34454,
-      34039,
-      33627,
-      34179,
-      34282,
-      34225,
-      34513,
-      34499
-     ],
-     "min": 31090,
-     "median": 34225,
-     "max": 34513
-    }
+    "GRAPH": "PENDING",
+    "BATCH": "PENDING",
+    "ERROR": "PENDING",
+    "NEST": "PENDING"
    }
   },
   "tree": {
@@ -1661,42 +1533,8 @@
     }
    },
    "throughput": {
-    "NEST": {
-     "opsPerSecPerCycle": [
-      47412,
-      48763,
-      49988,
-      49114,
-      49143,
-      49304,
-      49389,
-      49034,
-      49254,
-      49119,
-      48827
-     ],
-     "min": 47412,
-     "median": 49119,
-     "max": 49988
-    },
-    "WIE": {
-     "opsPerSecPerCycle": [
-      10438,
-      10087,
-      10018,
-      10204,
-      10551,
-      9981,
-      10189,
-      10079,
-      10508,
-      10271,
-      10240
-     ],
-     "min": 9981,
-     "median": 10204,
-     "max": 10551
-    }
+    "NEST": "PENDING",
+    "WIE": "PENDING"
    }
   }
  },
@@ -5129,6 +4967,217 @@
      }
     }
    ]
+  }
+ },
+ "throughputRun": {
+  "note": "REPORTED tier, decides no gate: an earlier timed run of the same child loop (same seed / cycles / ops), held under quiet-lock; its counts were identical to kernels.*",
+  "date": "2026-10-19T02:53:24.490Z",
+  "gitHead": "45de5e1ac1cdf894f50580d50845b6ad9eaed49e",
+  "node": "v26.8.2",
+  "cpu": "Apple M4 Pro",
+  "loadavgBefore": [
+   2.74,
+   2.79,
+   2.62
+  ],
+  "loadavgAfter": [
+   5.95,
+   4.67,
+   3.65
+  ],
+  "busyNodeBefore": [
+   "1540 0.0 node",
+   "26332 0.0 /opt/homebrew/bin/node"
+  ],
+  "seconds": 891,
+  "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
+  "perKernel": {
+   "headpatched": {
+    "GRAPH": {
+     "opsPerSecPerCycle": [
+      13733,
+      13544,
+      13503,
+      13809,
+      13051,
+      13312,
+      13720,
+      13677,
+      13455,
+      13102,
+      13383
+     ],
+     "min": 13051,
+     "median": 13503,
+     "max": 13809
+    },
+    "BATCH": {
+     "opsPerSecPerCycle": [
+      48344,
+      49770,
+      50123,
+      48524,
+      48437,
+      48651,
+      49063,
+      48400,
+      48339,
+      48117,
+      47768
+     ],
+     "min": 47768,
+     "median": 48437,
+     "max": 50123
+    },
+    "ERROR": {
+     "opsPerSecPerCycle": [
+      45354,
+      45778,
+      45468,
+      46874,
+      48638,
+      47523,
+      47846,
+      49284,
+      47546,
+      48377,
+      47800
+     ],
+     "min": 45354,
+     "median": 47546,
+     "max": 49284
+    },
+    "NEST": {
+     "opsPerSecPerCycle": [
+      31645,
+      33876,
+      34074,
+      34136,
+      34154,
+      34184,
+      33804,
+      34024,
+      34108,
+      34605,
+      34473
+     ],
+     "min": 31645,
+     "median": 34108,
+     "max": 34605
+    }
+   },
+   "lite-1.5.2": {
+    "GRAPH": {
+     "opsPerSecPerCycle": [
+      12833,
+      13098,
+      13101,
+      13441,
+      12759,
+      12849,
+      13246,
+      13097,
+      13111,
+      12838,
+      12990
+     ],
+     "min": 12759,
+     "median": 13097,
+     "max": 13441
+    },
+    "BATCH": {
+     "opsPerSecPerCycle": [
+      18662,
+      19924,
+      20059,
+      19992,
+      19862,
+      20032,
+      20039,
+      20100,
+      20008,
+      20206,
+      19968
+     ],
+     "min": 18662,
+     "median": 20008,
+     "max": 20206
+    },
+    "ERROR": {
+     "opsPerSecPerCycle": [
+      46712,
+      63997,
+      64860,
+      64989,
+      65769,
+      65487,
+      65136,
+      65404,
+      64984,
+      65703,
+      65364
+     ],
+     "min": 46712,
+     "median": 65136,
+     "max": 65769
+    },
+    "NEST": {
+     "opsPerSecPerCycle": [
+      31090,
+      34135,
+      34337,
+      34454,
+      34039,
+      33627,
+      34179,
+      34282,
+      34225,
+      34513,
+      34499
+     ],
+     "min": 31090,
+     "median": 34225,
+     "max": 34513
+    }
+   },
+   "tree": {
+    "NEST": {
+     "opsPerSecPerCycle": [
+      47412,
+      48763,
+      49988,
+      49114,
+      49143,
+      49304,
+      49389,
+      49034,
+      49254,
+      49119,
+      48827
+     ],
+     "min": 47412,
+     "median": 49119,
+     "max": 49988
+    },
+    "WIE": {
+     "opsPerSecPerCycle": [
+      10438,
+      10087,
+      10018,
+      10204,
+      10551,
+      9981,
+      10189,
+      10079,
+      10508,
+      10271,
+      10240
+     ],
+     "min": 9981,
+     "median": 10204,
+     "max": 10551
+    }
+   }
   }
  }
 }
