@@ -608,7 +608,7 @@ test('teeth n: L-NW-hp-zero is pinned: headpatched unpatched + SOAK_NEARWRAP=zer
         ['main', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: '20000', SOAK_NEARWRAP: 'zero:8' },
             [], [], null, 1, 'match', ['oracle=O1 lane=GRAPH'], [], { boundaries: MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'FAIL' }]);
     assert.deepEqual(validSpec(c), []);
-    assert.deepEqual(CHECKS['lane:GRAPH'], ['T-sever', 'L-NW-hp-zero']);
+    assert.deepEqual(CHECKS['lane:GRAPH'], ['T-sever', 'L-NW-hp-zero', 'T-flushdrop']);
     // its pairing is lane:GRAPH's: a NEARWRAP control whose spec names another lane does not back lane:GRAPH
     const ctl = copy(CONTROLS);
     ctl.find((x) => x.name === 'L-NW-hp-zero').expect.specs = ['oracle=O1 lane=BATCH'];
@@ -622,4 +622,34 @@ test('teeth n: L-NW-hp-zero is pinned: headpatched unpatched + SOAK_NEARWRAP=zer
         assert.equal(GAPS[g].why.indexOf('SOAK_NEARWRAP'), -1, g + ': ' + GAPS[g].why);
     }
     assert.equal(GAPS['totals-e2e'].until, 'long soak (NEARWRAP presets engine counters, not run totals)');
+});
+
+test('teeth o: T-flushdrop is pinned: headpatched GRAPH smoke, flushEffects drops every 64th effect; lane / O4 / O1e pairs', () => {
+    const c = CONTROLS.find((x) => x.name === 'T-flushdrop');
+    assert.ok(c, 'the flush-drop control exists');
+    assert.ok(SHORT_RE.test(c.name) && !LONG_RE.test(c.name), 'short battery');
+    assert.deepEqual([c.run, c.base, c.env, c.argv, c.arm, c.expect.exit, c.expect.kind, c.expect.specs, c.expect.lines],
+        ['main', 'headpatched', { SOAK_LANES: 'GRAPH' }, ['--smoke'], null, 1, 'match',
+            ['oracle=O4 lane=GRAPH sig=effect-dead', 'oracle=O1 lane=GRAPH sig=effect-stale'], []]);
+    assert.deepEqual(validSpec(c), []);
+    assert.equal(c.patches.length, 1);
+    // the anchor is the flushEffects non-scheduler run (28-space indent); the :1577 twin carries `node.gen === gen &&`
+    const RUN = ' '.repeat(28) + 'if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n';
+    assert.equal(c.patches[0][0], RUN);
+    const base = readFileSync(join(ROOT, 'bench/soak/controls/headpatched/Signal.js'), 'utf8');
+    assert.equal(base.split(RUN).length - 1, 1, 'the flush-loop run occurs once in headpatched');
+    const repl = c.patches[0][1];
+    // one-off drop: every 64th flushed effect is skipped AND un-queued (executeEffect's FLAG_QUEUED clear), never wedged
+    assert.ok(repl.indexOf('& 63) === 0) node.flags &= ~FLAG_QUEUED;') > 0, repl);
+    assert.ok(repl.indexOf('else executeEffect(node);') > 0, repl);
+    assert.equal(buildKernel(c).src, base.replace(RUN, repl), 'the kernel = base with exactly the flush-loop run replaced');
+    for (const id of ['lane:GRAPH', 'oracle:O4', 'sig:O4:effect-dead', 'oracle:O1e', 'sig:O1e:effect-stale']) {
+        assert.ok(CHECKS[id].includes('T-flushdrop'), id);
+    }
+    assert.deepEqual(pairing(CHECKS, CONTROLS), []);
+    // must-fail: a flush-drop control whose specs name another lane does not back lane:GRAPH
+    const ctl = copy(CONTROLS);
+    const fd = ctl.find((x) => x.name === 'T-flushdrop');
+    fd.expect.specs = fd.expect.specs.map((s) => s.replace('lane=GRAPH', 'lane=BATCH'));
+    assert.deepEqual(pairing(CHECKS, ctl), ['lane:GRAPH: T-flushdrop -- no BREACH spec naming lane=GRAPH']);
 });

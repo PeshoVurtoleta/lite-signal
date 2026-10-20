@@ -291,6 +291,9 @@ const A_FREE_LINK = '        link.nextFree = freeLinkHead;\n        freeLinkHead
     '        activeLinks = (activeLinks - 1) | 0;\n';
 // :1975 the createRegistry return (the public api object main tracks as world.registry).
 const A_RETURN = '    return {getOwner, runWithOwner, signal, computed, effect, signalBox, computedBox, dispose, batch, untrack, createRoot, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};\n';
+// :1026 the flushEffects inner loop, the non-scheduler branch (28-space indent); the :1577 twin carries
+// `node.gen === gen &&` and does not match.
+const A_FLUSH_RUN = ' '.repeat(28) + 'if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n';
 
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
@@ -552,6 +555,20 @@ export const CONTROLS = deepFreeze([
     M('T-sever', 'headpatched', { SOAK_LANES: 'GRAPH' }, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O5 lane=GRAPH sig=link-count'],
     }, { patches: [[A_SEVER, '                    /* MUSTFAIL T-sever: severTail(node) removed */\n                    node.flags &= ~FLAG_COMPUTING;\n']] }),
+    // T-flushdrop (b89, PLAN-0s-bb6 ADDENDUM 1): flushEffects drops every 64th flushed effect (clears FLAG_QUEUED,
+    // executeEffect's job :1070, so the drop is one-off, not a :980 wedge) -> a sink effect misses a delivery -> O4
+    // effect-dead. The sentinel-delivery witness torture-soak carried (MANIFEST.txt:107); this shape is new.
+    // b89 0b (.handoff/b89-evidence/flushdrop/, quiet-lock, load 2.1-2.4): --smoke 2/2 exit 1, identical heads O4
+    // effect-dead (scen=dep-set-flip replay=GRAPH:0:0xe8c9e280) + O1 effect-stale (replay=GRAPH:0:0x8b2a6a48), END
+    // verdict=FAIL, wall 1.6-2 s each, trackerSize 0 every boundary; 0c patches [] -> exit 0, 0 BREACH, END verdict=SMOKE
+    // (MISS). No O5 spec.
+    M('T-flushdrop', 'headpatched', { SOAK_LANES: 'GRAPH' }, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O4 lane=GRAPH sig=effect-dead', 'oracle=O1 lane=GRAPH sig=effect-stale'],
+    }, { patches: [[A_FLUSH_RUN,
+        ' '.repeat(28) + 'if ((node.flags & FLAG_EFFECT) !== 0) {   // MUSTFAIL T-flushdrop: every 64th flushed effect skipped\n' +
+        ' '.repeat(32) + 'if ((globalThis.__soakFlushDrop = ((globalThis.__soakFlushDrop | 0) + 1) & 63) === 0) node.flags &= ~FLAG_QUEUED;\n' +
+        ' '.repeat(32) + 'else executeEffect(node);\n' +
+        ' '.repeat(28) + '}\n']] }),
     // T-mark (burst 87, PLAN-0s-bb4c ADDENDUM 1-4): markDownstream's markEpoch dedupe turned off on a copy of the live
     // tree (P1 re-opens an already-stamped target; P2 guards the intrusive push so a node still on the mark stack is
     // never re-pushed, which would drop the stack's tail -> missed marks, an O1 BREACH). Same answers, every walked edge

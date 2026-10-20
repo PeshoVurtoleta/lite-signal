@@ -10,10 +10,8 @@
     "report": "node report.mjs",
     "vs-andrii": "node vs-andrii.mjs",
     "selftest": "node --expose-gc lib/_selftest.mjs",
-    "graph-fuzzer": "node --expose-gc torture/graph-fuzzer.mjs",
     "dispose-recycle": "node --expose-gc dispose-recycle.mjs",
     "scheduler-bench": "node --expose-gc torture/scheduler-bench.mjs",
-    "torture-soak": "node --expose-gc torture/torture-soak.mjs",
     "bench-reactive-legacy": "node --expose-gc benchmarkReactive.mjs"
   },
   "dependencies": {

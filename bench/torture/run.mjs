@@ -79,9 +79,8 @@ const SCENARIOS = [
     { name: "op-accounting", group: "semantic", file: "op-accounting.mjs", floor: "1.4.0", about: "structural work via onGraphMutation opcode lane" },
     { name: "introspect-torture", group: "semantic", file: "introspect-torture.mjs", floor: "1.4.0", about: "describe/forEach*/hasObservers/ownerOf + ABA gen-stamp guard" },
     { name: "lifecycle-torture", group: "semantic", file: "lifecycle-torture.mjs", floor: "1.4.0", about: "createRoot detachment + destroy registry reset" },
-    { name: "graph-fuzzer", group: "soak", file: "graph-fuzzer.mjs", floor: "1.4.0", about: "1.5k-node random DAG churn" },
+    // graph-fuzzer + torture-soak RETIRED 2026-10-20 (absorbed by bench/soak GRAPH): see the RETIRED block in MANIFEST.txt.
     { name: "scheduler-bench", group: "soak", file: "scheduler-bench.mjs", floor: "1.4.0", about: "microtask scheduler saturation" },
-    { name: "torture-soak", group: "soak", file: "torture-soak.mjs", floor: "1.4.0", about: "7.5k-node continuous rewiring" },
     { name: "wraparound-torture", group: "soak", file: "wraparound-torture.mjs", floor: "1.4.0", about: "2^31 dormancy band at full distance (opt-in: TORTURE_WRAPAROUND=1, ~30s)" },
 ];
 

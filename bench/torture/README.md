@@ -519,9 +519,7 @@ registry (1,024 nodes) and the soak shapes intentionally exceed that.
 
 ```sh
 # Default 10 seconds each
-node --expose-gc bench/torture/graph-fuzzer.mjs
 node --expose-gc bench/torture/scheduler-bench.mjs
-node --expose-gc bench/torture/torture-soak.mjs
 
 # Semantic torture (fast, deterministic, CI-friendly)
 node --expose-gc bench/torture/oracle-fuzzer.mjs
@@ -532,7 +530,7 @@ node --expose-gc bench/torture/work-accounting.mjs
 npm run torture
 
 # Override the per-soak duration
-TORTURE_SECONDS=30 node --expose-gc bench/torture/torture-soak.mjs
+TORTURE_SECONDS=30 node --expose-gc bench/torture/scheduler-bench.mjs
 ```
 
 These exist because a benchmark can report perfect numbers while still

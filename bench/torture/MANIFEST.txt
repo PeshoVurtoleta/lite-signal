@@ -1,7 +1,7 @@
-lite-signal torture suite — complete set (26 scenarios)
+lite-signal torture suite — complete set (24 scenarios)
 ========================================================
 
-22 semantic (deterministic, fast, CI) + 4 soak (one opt-in). Full superset through 1.10
+22 semantic (deterministic, fast, CI) + 2 soak (one opt-in). Full superset through 1.10
 (candidate-line numbering after the 2026-10-10 re-pin: see FEATURE GATES).
 Every scenario feature-detects and skips cleanly below its feature; runs green
 from 1.4.x forward. Skips use exit 77 and the runner enforces version floors:
@@ -74,7 +74,7 @@ SEMANTIC (listed in run.mjs registration order)
                            gen-stamp guard
   lifecycle-torture        createRoot detachment + destroy registry reset (1.5.0+)
 
-SOAK: graph-fuzzer, scheduler-bench, torture-soak, wraparound-torture
+SOAK: scheduler-bench, wraparound-torture
   wraparound-torture (2026-08 Phase 4, OPT-IN via TORTURE_WRAPAROUND=1, ~30s;
   exits 78 otherwise): pins the 2^31 dormancy band at FULL DISTANCE (~2.1B
   real version spins per crossing). Pinned truth on 1.5.0: below the band
@@ -87,26 +87,43 @@ SOAK: graph-fuzzer, scheduler-bench, torture-soak, wraparound-torture
   These pins document ACTUAL behavior; an engine that closes the band flips
   them deliberately. NOTE: the "indefinite uptime" doc claim is crash-true
   but needs the dormancy caveat.
-  2026-08 Phase 2 -- every soak now carries three witnesses the post-teardown
+  2026-08 Phase 2 -- scheduler-bench carries three witnesses the post-teardown
   checks are structurally blind to:
   - MID-RUN HIGH-WATER: activeNodes/activeLinks sampled per tick, gated against
-    the topology's theoretical maxima (mutant-verified vs a deferred-sever
-    engine: fires on tick 1).
+    the topology's theoretical maxima (mutant-verified 2026-08 on the retired
+    torture-soak only: a deferred-sever engine fired on tick 1, 836k links vs
+    its 35k ceiling; not mutant-proven on scheduler-bench).
   - POST-GC resident (heapUsed + arrayBuffers, 2026-09): forced-GC high-water
     within a fixed slack of the
     post-build baseline -- retention the pool counters cannot see
-    (mutant-verified vs a full link graveyard: +151 MB in 2s).
+    (mutant-verified 2026-08 vs a full link graveyard: +151 MB in 2s, on a
+    soak the record does not name; not re-run on scheduler-bench).
   - SENTINEL DELIVERY: dedicated effects record the values they OBSERVE (the
     shadow oracles peek() storage only, so a flush/scheduler path that stopped
-    DELIVERING passed forever). torture-soak/graph-fuzzer check synchronous
-    delivery immediately after each write with exact run counts;
-    scheduler-bench pins DELIVERY-BY-NEXT-TICK for its microtask sentinels
-    (a dropped thunk or wedged drain fails; a delivery merely moved to a
-    later-but-still-prior event-loop turn passes by design) plus exact
-    counts at teardown.
-    Mutant-verified vs a flush-loop drop. Random SUB-sentinel drops are caught
-    probabilistically (the drop must land on a sentinel node); systematic
-    wedges deterministically.
+    DELIVERING passed forever). scheduler-bench pins DELIVERY-BY-NEXT-TICK for
+    its microtask sentinels (a dropped thunk or wedged drain fails; a
+    delivery merely moved to a later-but-still-prior event-loop turn passes
+    by design) plus exact counts at teardown.
+    Mutant-verified vs a flush-loop drop (on the retired torture-soak; its
+    bench/soak successor is T-flushdrop, see RETIRED). Random SUB-sentinel
+    drops are caught probabilistically (the drop must land on a sentinel node);
+    systematic wedges deterministically.
+
+RETIRED (2026-10-20, burst 89): graph-fuzzer, torture-soak
+  Authority: SPEC-S2-groupB task 11 / D-B5 (maintainer 2026-10-13). Precondition
+  0c evidence (b89): tree bench/soak GRAPH 11 x 100k, exit 0, verdict PASS,
+  failingWorlds 0. Absorbed by bench/soak GRAPH (bench/soak/_mustfail.mjs +
+  teeth.mjs controls):
+  - mid-run high-water -> T-sever / O5 (per-op link-count oracle)
+  - post-GC resident   -> the heap gate + L-T-leak / L-T-graveyard
+  - sentinel delivery  -> O1e / O4 + T-flushdrop (b89; flush-loop drop)
+  Accepted loss: single-registry aging. torture-soak kept 7.5k live nodes on ONE
+  registry for ~1.2M ops; GRAPH plays 400-step worlds on fresh registries of
+  ~40-60 nodes (every 64th world ~1.6k nodes: lanes/graph.mjs worldShape), so
+  free-list recycling is witnessed only across worlds (heap gate).
+  Source (last tree that carried them):
+    git show 1dea069:bench/torture/graph-fuzzer.mjs   blob 8c4b5f8f79acb8aee6a5a00620a8962cd401cab8
+    git show 1dea069:bench/torture/torture-soak.mjs   blob f8494263097f5daee91ad1aa49044e1c66a5c4c3
 
 op-accounting uses the engine's OWN opcode counters instead of wall-clock — the
 lesson from the 1.13 mark-lane review: count deterministic work, don't time it.

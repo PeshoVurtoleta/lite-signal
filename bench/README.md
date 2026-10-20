@@ -139,7 +139,7 @@ Not benchmarks — crash-detection soaks. Each runs for a configurable duration 
 | `torture-soak.mjs` | 7,500-node graph; continuous writes + rewiring; pool-growth + free-list recycle. |
 
 ```sh
-TORTURE_SECONDS=30 node --expose-gc bench/torture/torture-soak.mjs
+TORTURE_SECONDS=30 node --expose-gc bench/torture/scheduler-bench.mjs
 ```
 
 ---

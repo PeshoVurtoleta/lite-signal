@@ -74,7 +74,9 @@ const TEST67 = 'test/67-soak-taint.test.mjs';
 /** id -> the must-fail controls (by NAME; _mustfail.mjs CONTROLS owns them) that turn it red. */
 export const CHECKS = deepFreeze({
     // A-B3b (burst 84): L-NW-hp-zero heads `oracle=O1 lane=GRAPH` (headpatched + SOAK_NEARWRAP=zero:8: F29, gV hits 0)
-    'lane:GRAPH': ['T-sever', 'L-NW-hp-zero'],
+    // b89 (PLAN-0s-bb6 ADDENDUM 1): T-flushdrop (flushEffects drops every 64th effect) heads `oracle=O4 lane=GRAPH
+    // sig=effect-dead` + `oracle=O1 lane=GRAPH sig=effect-stale` (2/2 smoke runs, .handoff/b89-evidence/flushdrop/)
+    'lane:GRAPH': ['T-sever', 'L-NW-hp-zero', 'T-flushdrop'],
     'lane:BATCH': ['L-REV-152'],
     'lane:ERROR': ['L-REV-152'],
     'lane:NEST': ['L-REV-AUDIT', 'L-REV-152'],
@@ -98,20 +100,20 @@ export const CHECKS = deepFreeze({
     // `oracle=O2 lane=BATCH sig=glitch` (f21-census.json:96, every 1.5.2 BATCH world); the O1 family is told
     // apart by its sig (oracles.mjs:30-31)
     'oracle:O1c': ['L-REV-152'],
-    'oracle:O1e': ['L-REV-152'],
+    'oracle:O1e': ['L-REV-152', 'T-flushdrop'],
     'oracle:O2': ['L-REV-152'],
     // L-REV-152 ERROR heads `oracle=O4 lane=ERROR sig=effect-dead` (f21-census.json:23-24) and
     // `oracle=O6 lane=ERROR sig=expected-escape-missing` (f21-census.json:25, :28-29)
-    'oracle:O4': ['L-REV-152'],
+    'oracle:O4': ['L-REV-152', 'T-flushdrop'],
     // a future second O5 tooth: rev152 / headpatched NEST also emit O5 link-count (the planned L-REV-AUDIT spec,
     // SPEC-B.md:454); not mapped until its 3/3 calibration lands
     'oracle:O5': ['T-sever'],
     'oracle:O6': ['L-REV-152'],
     'oracle:O7a': ['L-REV-152'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
-    'sig:O1e:effect-stale': ['L-REV-152'],
+    'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
-    'sig:O4:effect-dead': ['L-REV-152'],
+    'sig:O4:effect-dead': ['L-REV-152', 'T-flushdrop'],
     'sig:O6:expected-escape-missing': ['L-REV-152'],
     'sig:O5:link-count': ['T-sever'],
     'sig:O6:escape-*': ['L-REV-152'],   // `oracle=O6 lane=ERROR sig=escape-computed`

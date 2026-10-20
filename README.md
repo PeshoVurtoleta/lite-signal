@@ -955,8 +955,6 @@ exits non-zero unless:
 - the JIT sink advanced -- proving the accumulator loops were not optimised away.
 
 ```bash
-node --expose-gc bench/torture/graph-fuzzer.mjs     # 10s random-DAG fuzz, 1500 nodes
-node --expose-gc bench/torture/torture-soak.mjs     #  5s high-volume churn, 7500 nodes
 node --expose-gc bench/torture/scheduler-bench.mjs  # 10s microtask-scheduled, 3300 nodes
 ```
 
