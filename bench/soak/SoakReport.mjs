@@ -10,7 +10,8 @@
  * every failure record's known/tag/failKnown comes from divergences.classify, every cycle and world seed from
  * seeds.mjs; the header `gates` block must equal this code's gatesBlock(). A field the checks read that is
  * missing or non-numeric fails CLOSED (absent is never 0, S12), and every record (plus its failure, fail,
- * boundary, memory, rss, gc, throughput and BREACH sub-objects) must carry EXACTLY the keys main/provenance emit:
+ * boundary, memory, rss, latency (+ each latency.<method> entry), gc, throughput and BREACH sub-objects) must carry EXACTLY
+ * the keys main/provenance emit:
  * an unknown key is `unknown-key`, a missing one `missing-key`. Header sub-objects (os, engine.caps, ...)
  * are not key-checked.
  *
@@ -93,6 +94,10 @@
  *     other code from a forged one; they refuse both and say so.
  *   - The cycle rss sub-object (B-B3): only the post-warm-up rss.p95MB is judged (the rss gate, through
  *     LaneGates); warm-up rss and samples / maxMB / stride are key-checked but not judged.
+ *   - The cycle latency sub-object (B-B4a, REPORT-ONLY): keyed by config.mjs LATENCY_METHODS, each entry
+ *     {n, p50Ns, p99Ns, belowFloor}. Key-checked (an absent latency or entry is missing-key) and field-checked
+ *     (cycle-field: counts, belowFloor <= n, each pXX null or a count, p50Ns <= p99Ns with p99Ns null -> p50Ns
+ *     null; a present non-object latency or entry, or an absent field, fails cycle-field first); never judged.
  *
  * Imports are kernel-free (never kernel.mjs / provenance.mjs / adapters/lite.mjs). COLD module.
  */
@@ -104,7 +109,7 @@ import { normalize, dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
     gatesBlock, writeLineSync, formatReplayKey, KNOWN_KEYS, SCHEMA_VERSION, GEN_VERSION, FAIL_CAP, WARMUP_CYCLES,
-    CYCLES_MAX, EXIT_CODE, ENGINES_KNOWN, DEFAULT_OPS, DEFAULT_CYCLES, NEARWRAP_K_MAX,
+    CYCLES_MAX, EXIT_CODE, ENGINES_KNOWN, DEFAULT_OPS, DEFAULT_CYCLES, NEARWRAP_K_MAX, LATENCY_METHODS,
 } from './config.mjs';
 import { LaneGates, judgeRun, oracleFamily, GateInputError, REASONS } from './gates.mjs';
 import { classify, digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences.mjs';
@@ -131,7 +136,7 @@ const RECORD_KEYS = {
         'controls', 'node', 'v8', 'execArgv', 'os', 'config', 'laneRoster', 'lanes', 'scenarios', 'oraclesNA', 'genRules', 'divergences',
         'mustfail', 'seedFormula', 'worldSeedFormula', 'seedRemapCollision', 'gates', 'timerFloorNs'].concat(STAMP),
     cycle: ['lane', 'laneIndex', 'cycle', 'warmup', 'seed', 'interrupted', 'worlds', 'largeWorlds', 'ops', 'opsByClass', 'checks', 'skipTainted',
-        'failures', 'failureCounts', 'failingWorlds', 'scenarios', 'gateHits', 'throughput', 'memory', 'rss', 'boundary', 'gc'].concat(STAMP),
+        'failures', 'failureCounts', 'failingWorlds', 'scenarios', 'gateHits', 'throughput', 'memory', 'rss', 'latency', 'boundary', 'gc'].concat(STAMP),
     summary: ['reason', 'cyclesRun', 'lanesRun', 'totals', 'perLane', 'breaches', 'inconclusive', 'skipped', 'smoke', 'verdict', 'exitCode'].concat(STAMP),
     fatal: ['kind', 'lane', 'cycle', 'world', 'worldSeed', 'message', 'stack'].concat(STAMP),
 };
@@ -142,6 +147,8 @@ const SUB_KEYS = {
     boundary: ['lane', 'cycle', 'worlds', 'tracked', 'witnessed', 'trackerSize', 'weakAlive', 'forcedGcTries', 'drainMs', 'heapSampledAfterGc'],
     memory: ['heapUsedMB', 'arrayBuffersMB', 'residentMB', 'rssMB'],
     rss: ['samples', 'p95MB', 'maxMB', 'stride'],
+    latency: LATENCY_METHODS.slice(),
+    latencyEntry: ['n', 'p50Ns', 'p99Ns', 'belowFloor'],
     gc: ['major', 'minor', 'maxPauseMs'],
     throughput: ['wallMs', 'opsPerSec'],
     breach: ['oracle', 'lane', 'sig', 'known', 'replay', 'scen', 'detail'],
@@ -161,7 +168,8 @@ function keyedObjects(recs) {
         if (!own(RECORD_KEYS, r.type)) continue;
         out.push(['seq ' + r.seq + ' ' + r.type, r, RECORD_KEYS[r.type]]);
         if (r.type === 'cycle') {
-            for (const k of ['boundary', 'memory', 'rss', 'gc', 'throughput']) if (isObj(r[k])) out.push(['seq ' + r.seq + ' cycle.' + k, r[k], SUB_KEYS[k]]);
+            for (const k of ['boundary', 'memory', 'rss', 'latency', 'gc', 'throughput']) if (isObj(r[k])) out.push(['seq ' + r.seq + ' cycle.' + k, r[k], SUB_KEYS[k]]);
+            if (isObj(r.latency)) for (const m of LATENCY_METHODS) if (isObj(r.latency[m])) out.push(['seq ' + r.seq + ' cycle.latency.' + m, r.latency[m], SUB_KEYS.latencyEntry]);
             for (const f of Array.isArray(r.failures) ? r.failures : []) {
                 if (!isObj(f)) continue;
                 out.push(['seq ' + r.seq + ' failure world ' + f.world, f, SUB_KEYS.failure]);
@@ -414,6 +422,17 @@ function checkCycles(cycles, cfg, lanes, summary, controlsName) {
         if (b.worlds !== c.worlds) bad('cycle-field', at + 'boundary.worlds ' + String(b.worlds) + ' != worlds');
         if (!(isCount(b.tracked) && isCount(b.witnessed))) bad('cycle-field', at + 'boundary tracked/witnessed not counts');
         if (!own(b, 'trackerSize') || !own(b, 'weakAlive')) bad('cycle-field', at + 'boundary trackerSize/weakAlive missing (null is not zero)');
+        // latency (B-B4a, report-only): an ABSENT latency / entry is missing-key's (later class); a present one is checked here
+        const lat = own(c, 'latency') ? c.latency : null;
+        for (const m of own(c, 'latency') ? LATENCY_METHODS : []) {
+            if (isObj(lat) && !own(lat, m)) continue;
+            const e = isObj(lat) ? lat[m] : null;
+            if (!(isObj(e) && isCount(e.n) && isCount(e.belowFloor))) bad('cycle-field', at + (!isObj(lat) ? 'latency is not an object' : !isObj(e) ? 'latency.' + m + ' is not an object' : 'latency.' + m + ' n/belowFloor = ' + String(e.n) + '/' + String(e.belowFloor) + ' (counts)'));
+            if (e.belowFloor > e.n) bad('cycle-field', at + 'latency.' + m + '.belowFloor ' + e.belowFloor + ' > n ' + e.n);
+            for (const p of ['p50Ns', 'p99Ns']) if (!(e[p] === null || isCount(e[p]))) bad('cycle-field', at + 'latency.' + m + '.' + p + ' = ' + String(e[p]) + ' (null or a non-negative integer ns)');
+            if (e.p50Ns !== null && !(e.p99Ns !== null && e.p50Ns <= e.p99Ns)) bad('cycle-field', at + 'latency.' + m + '.p50Ns ' + e.p50Ns + ' with p99Ns ' + e.p99Ns + ' (p50Ns <= p99Ns; p99Ns null -> p50Ns null)');
+            if (e.n === e.belowFloor && (e.p50Ns !== null || e.p99Ns !== null)) bad('cycle-field', at + 'latency.' + m + ' has no timed mass above the floor but pXX non-null');
+        }
     }
     for (const c of cycles) {
         const at = 'seq ' + c.seq + ' (' + c.lane + ' cycle ' + c.cycle + '): ';

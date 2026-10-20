@@ -85,6 +85,16 @@ const CONSTANTS = Object.freeze({
     // RSS_BUF (B-B3): the RssSampler capacity (rss.mjs re-exports it) AND the cap of the rss gate's late window,
     // k = min(max(1, floor(post / 4)), RSS_BUF) post-warm-up cycles (maintainer ruling D-B6, burst 81)
     RSS_BUF: 256,
+    // latency (B-B4a, REPORT-ONLY; bench/soak/latency.mjs): one DDSketch (@zakkster/lite-sketch 1.2.0, relative
+    // error SKETCH_ALPHA, default maxBins 2048) per LATENCY_METHODS entry, armed on worlds w % 16 === 8.
+    // LATENCY_METHODS are the TIMED world methods (record key order); LATENCY_UNTIMED are the world methods passed
+    // through untimed. Together they classify every function-valued key of an opened world (adapters/lite.mjs
+    // open(): 15 functions + the non-function 'registry'); an armed open that meets any other function key, or a
+    // listed method whose .length > 2, throws TypeError (fail closed: the wrapper forwards at most two arguments).
+    SKETCH_ALPHA: 0.01,
+    LATENCY_METHODS: Object.freeze(['signal', 'computed', 'effect', 'set', 'read', 'peek', 'batch', 'untrack', 'dispose',
+        'lifecycle', 'settle', 'close']),
+    LATENCY_UNTIMED: Object.freeze(['normalizeEscape', 'stats', 'links']),
     // retention
     DRAIN_MS: 2000,
     DRAIN_TRIES: 8,
@@ -129,7 +139,7 @@ export const {
     DEFAULT_OPS, OPS_MIN, OPS_MAX, SMOKE_CYCLES, SMOKE_OPS, DEFAULT_SEED,
     CHECK_P, WORLD_STEPS, LARGE_WORLD_EVERY, SHAPE_EVERY, MAX_DEPTH,
     SCEN_MIN, SCEN_MIN_SMOKE, FAIL_CAP, DETAIL_MAX, CHECK_FLOOR, CHECK_FLOOR_SMOKE, TAINT_SKIP_MAX,
-    HEAP_RATIO, HEAP_SLACK_MB, RSS_RATIO, RSS_SLACK_MB, RSS_BUF,
+    HEAP_RATIO, HEAP_SLACK_MB, RSS_RATIO, RSS_SLACK_MB, RSS_BUF, SKETCH_ALPHA, LATENCY_METHODS, LATENCY_UNTIMED,
     DRAIN_MS, DRAIN_TRIES, RETAIN_MAX, RETAIN_BAD_BOUNDARIES,
     W5_BOP_FAIL, W5_ITER, W5_BATCHES, W5_WARMUP,
     SEMI_SPACE_MB, WRAP_CHUNK, NS_K_CYCLE, WRAP_MAX_NODES, W4_SAMPLE_MASK, REPR_TIMEOUT_MS, BASELINE_MAX_BYTES, NEARWRAP_K_MAX,

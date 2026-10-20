@@ -420,9 +420,10 @@ const LANE_GATES = Object.freeze(GATES.filter((g) => g.kind !== 'startup' && g.k
 
 /**
  * Recorded but NEVER judged (SPEC-B section 8 report-only). None of them can make a run FAIL or
- * INCONCLUSIVE; per-op 0 B/op is owned by test/32-perf-gate (ADR 0014 S1). S2 adds DDSketch and REPR.
+ * INCONCLUSIVE; per-op 0 B/op is owned by test/32-perf-gate (ADR 0014 S1). S2 adds REPR; B-B4a added 'latency'
+ * (the per-method DDSketch record of latency.mjs, cycle key latency).
  */
-export const REPORT_ONLY_GATES = Object.freeze(['throughput', 'shape', 'O3', 'gcMajor', 'gcPause']);
+export const REPORT_ONLY_GATES = Object.freeze(['throughput', 'shape', 'O3', 'gcMajor', 'gcPause', 'latency']);
 
 /**
  * Why a run can be INCONCLUSIVE (exit 3), cause id -> the text after `soak: INCONCLUSIVE -- `. The wrap

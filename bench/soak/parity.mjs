@@ -56,6 +56,8 @@ export const PARITY_FILES = Object.freeze([
     'bench/soak/lanes/wie.mjs',
     // B-B3 (burst 81): gates.mjs imports the rss sampler's p95 / bandMedian, which decide the rss gate
     'bench/soak/rss.mjs',
+    // B-B4a (burst 85): the pinned main.mjs imports the latency lane, whose wrapper sits between exec and the world
+    'bench/soak/latency.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

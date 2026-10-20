@@ -10,10 +10,14 @@
  *
  * Records (jsonl.mjs, contiguous seq): header (provenance.mjs, REQUIRED_EXTRAS incl. the divergences
  * digest), cycle x (cycles x lanes), summary; a crash adds a fatal record. Cycle record field order, every
- * cycle: identity, volume, checks, skipTainted, failures, scenarios, throughput, memory, rss, boundary, gc.
+ * cycle: identity, volume, checks, skipTainted, failures, scenarios, throughput, memory, rss, latency, boundary, gc.
  * rss (B-B3): one RssSampler (rss.mjs) per run, reset per lane-cycle, fed process.memoryUsage.rss() in MB at every
  * world end (before the boundary drain): {samples (stored count), p95MB, maxMB, stride}; gates.mjs rssRule reads
  * the post-warm-up p95MB values. Cold: <= 1 transient boxed double per world (the MB value passed to push).
+ * latency (B-B4a, REPORT-ONLY): one LatencyLane (latency.mjs) per run, built from the header's timerFloorNs, its
+ * wrapped adapter composed once under tapAdapter; reset per lane-cycle; armed on worlds (w & 15) === 8 only,
+ * disarmed after the world loop and on the fatal path: {<LATENCY_METHODS entry>: {n, p50Ns, p99Ns, belowFloor}}.
+ * Returning calls only (a throwing call is not timed); a null timerFloorNs leaves it disarmed (every n 0).
  *
  * Failure records (amendment 13, B3 record obligations): one per failing world, at most FAIL_CAP per cycle
  * record (failureCounts and failingWorlds stay complete):
@@ -40,7 +44,8 @@
  * exits 2 (fail closed: a replay request never runs a burn-in in its place).
  *
  * Kernel-free on import: the kernel (kernel.mjs, SOAK_KERNEL seam) loads only inside main(), so tests can
- * import tapAdapter / BreachLog / failureRecord without loading any Signal.js.
+ * import tapAdapter / BreachLog / failureRecord without loading any Signal.js. latency.mjs (and its devDep
+ * @zakkster/lite-sketch) also loads only inside main(), after the SOAK_REPLAY / SOAK_SHRINK dispatch.
  *
  * COLD module: no hot body. Run totals live in gates.mjs Totals (Float64Array slots, exact to 2^53).
  */
@@ -48,7 +53,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-    readConfig, configExit, formatReplayKey, CYCLES_MAX, WARMUP_CYCLES, FAIL_CAP, DETAIL_MAX, VERDICT,
+    readConfig, configExit, formatReplayKey, CYCLES_MAX, WARMUP_CYCLES, FAIL_CAP, DETAIL_MAX, VERDICT, SKETCH_ALPHA,
 } from './config.mjs';
 import {
     GATES, Totals, LaneGates, judgeRun, verdict as runVerdict, oracleFamily, totalsRule,
@@ -70,8 +75,10 @@ const ADAPTERS = Object.freeze({ lite: './adapters/lite.mjs' });
 /* ---- the adapter tap ------------------------------------------------------------------------------ */
 
 /**
- * Wrap an adapter so main sees every world it opens. tap = { onOpen(world) } is called with the RAW world
- * (main tracks world.registry in the leak tracker and a WeakRef witness). The returned adapter's worlds
+ * Wrap an adapter so main sees every world it opens. tap = { onOpen(world) } is called with the world the wrapped
+ * adapter's open() returns: the RAW world, or on an armed latency world (main composes tapAdapter(lat.wrap(adapter),
+ * tap)) the latency delegate, which carries the same registry object (main tracks world.registry in the leak
+ * tracker and a WeakRef witness). The returned adapter's worlds
  * delegate to the raw world (prototype chain) and override batch() only:
  *   tap.escape   set to [] when an OUTERMOST batch call starts; replaced by world.normalizeEscape(err)
  *                when THAT call throws. A nested batch call never touches it, so a nested throw that the
@@ -261,6 +268,15 @@ async function main() {
     const { validateAdapter, applicability } = await import('./adapters/contract.mjs');
     const probs = validateAdapter(adapter);
     if (probs.length > 0) configExit('adapter ' + cfg.engine + ' is invalid: ' + probs.join('; '));
+    // the latency lane (B-B4a) loads HERE, after the replay / shrink dispatch: replay.mjs and shrink.mjs import this
+    // module's helpers and never load latency.mjs or its devDep. A missing / wrong lite-sketch is exit 2, no record.
+    let LatencyLane = null;
+    try {
+        ({ LatencyLane } = await import('./latency.mjs'));
+    } catch (e) {
+        configExit('latency lane unavailable (bench/soak/latency.mjs needs the exact devDep @zakkster/lite-sketch 1.2.0; npm ci): ' +
+            String(e && e.message ? e.message : e).split('\n')[0]);
+    }
 
     // applicability (SPEC 3.3): a lite SKIP or a requested lane that would SKIP is exit 2
     const lanesHdr = [], scenHdr = {}, naHdr = {}, skipped = [], run = [];
@@ -356,8 +372,15 @@ async function main() {
     process.on('SIGINT', onSignal);
     process.on('SIGTERM', onSignal);
 
+    let lat = null;
     try {
         writeRecord(stream, 'header', header);
+        // latency (B-B4a): ONE lane + ONE wrapped adapter per run. failureRecord / breaches keep adapter.name.
+        lat = new LatencyLane({ floorNs: header.timerFloorNs });
+        const latAdapter = lat.wrap(adapter);
+        protocol(header.timerFloorNs === null
+            ? 'soak: NOTE -- latency UNMEASURED: timerFloorNs null'
+            : 'soak: NOTE -- latency report-only: worlds w%16=8, alpha=' + SKETCH_ALPHA + ', floorNs=' + header.timerFloorNs + ', returning calls only');
         const tracker = createLeakTracker({ name: 'soak' });
         const profiler = new GcProfiler().start();
         const rssSampler = new RssSampler();   // one per run (two Float64Array(RSS_BUF)); reset per lane-cycle
@@ -389,12 +412,13 @@ async function main() {
                         tracked++;
                     },
                 };
-                const ad = tapAdapter(adapter, tap);
+                const ad = tapAdapter(latAdapter, tap);
                 ctx.lane = L.name; ctx.cycle = cycle;
                 const tc = performance.now();
                 let w = 0;
                 let script = null, r = null;
                 rssSampler.reset();
+                lat.reset();
                 while (ct.get('ops') < cfg.ops && stopReason === null) {
                     if ((w & YIELD_MASK) === YIELD_MASK) {
                         await tick();
@@ -409,6 +433,7 @@ async function main() {
                     ctx.world = w; ctx.worldSeed = ws;
                     script = generateWorld(desc, ws, { large, covOff });
                     tap.escape = null;
+                    lat.armed = (w & 15) === 8;
                     r = runWorld(ad, script);
                     ct.add('worlds', 1);
                     if (large) ct.add('largeWorlds', 1);
@@ -428,6 +453,7 @@ async function main() {
                     rssSampler.push(process.memoryUsage.rss() / MB);
                     w++;
                 }
+                lat.armed = false;
                 const wallMs = performance.now() - tc;
                 const interrupted = ct.get('ops') < cfg.ops;   // a signal stopped it short of SOAK_OPS
                 ctx.world = null; ctx.worldSeed = null;
@@ -462,6 +488,7 @@ async function main() {
                     throughput: { wallMs: r1(wallMs), opsPerSec: wallMs > 0 ? Math.round(ops / (wallMs / 1000)) : null },
                     memory: closed.memory,
                     rss: { samples: rssSampler.count, p95MB: r3(rssSampler.p95()), maxMB: r3(rssSampler.max()), stride: rssSampler.stride },
+                    latency: lat.toJSON(),
                     boundary,
                     gc: closed.gc,
                 };
@@ -487,6 +514,7 @@ async function main() {
         endLine(v.verdict === null ? 'null' : v.verdict, v.exitCode, stream.seq);
         process.exit(v.exitCode);
     } catch (e) {
+        if (lat !== null) lat.armed = false;
         fatal('mainRejection', e);
     }
 }
