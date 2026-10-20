@@ -137,7 +137,7 @@ const PINNED = Object.freeze([
     'bench/soak/gen.mjs', 'bench/soak/exec.mjs', 'bench/soak/oracles.mjs', 'bench/soak/model.mjs', 'bench/soak/scenarios.mjs',
     'bench/soak/seeds.mjs', 'bench/soak/lanes/index.mjs', 'bench/soak/lanes/graph.mjs', 'bench/soak/lanes/batch.mjs',
     'bench/soak/lanes/error.mjs', 'bench/soak/lanes/nest.mjs', 'bench/soak/adapters/lite.mjs', 'bench/soak/adapters/contract.mjs',
-    'bench/soak/kinds.mjs', 'bench/torture/helpers/index.mjs',
+    'bench/soak/kinds.mjs', 'bench/torture/helpers/index.mjs', 'bench/soak/adapters/lite-s3.mjs',
 ]);
 export { PINNED };
 // A lane's own descriptor file is pinned only while the lane is rostered (b67 B2a Q2): pinning lanes/wie.mjs before
@@ -178,7 +178,7 @@ async function child(opts) {
     if (existsSync(kpath) && statSync(kpath).isDirectory()) kpath = join(kpath, 'Signal.js');
     process.env.SOAK_KERNEL = kpath;
     const CFG = await import('../config.mjs');
-    const { liteAdapter } = await import('../adapters/lite.mjs');
+    const { liteS3Adapter: liteAdapter } = await import('../adapters/lite-s3.mjs');
     const { validateAdapter, applicability } = await import('../adapters/contract.mjs');
     const { laneByName, isLargeWorld, ROSTER } = await import('../lanes/index.mjs');
     const { generateWorld } = await import('../gen.mjs');
@@ -443,7 +443,98 @@ export async function probeStep(skipNames) {
     return { lane: PROBE.lane, kernel: PROBE.kernel, cycles: PROBE.cycles, ops: PROBE.ops, largeWorldsPerCycle, fold };
 }
 
+/* ---- --import-throughput: an earlier run's REPORTED throughput (pure; throws, write() dies) ------------- */
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+// a timed per-cycle list: non-empty, every entry a finite rate >= 0 (null is not zero)
+const isRates = (cyc) => Array.isArray(cyc) && cyc.length > 0 && cyc.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0);
+const rateCell = (cyc) => {
+    const sorted = cyc.slice().sort((a, b) => a - b);
+    return { opsPerSecPerCycle: cyc, min: sorted[0], median: sorted[sorted.length >> 1], max: sorted[sorted.length - 1] };
+};
+
+/**
+ * The doc.throughputRun block --import-throughput writes, from an earlier calibration doc `old` (b92). Throws an
+ * Error (fail closed: never a doc that silently loses REPORTED throughput) unless exactly one case holds:
+ *   (a) TIMED: every old.kernels.<k>.throughput.<lane> is a timed cell ({ opsPerSecPerCycle: [..] }, or the older
+ *       [{ opsPerSec }, ..]) -> perKernel min / median / max recomputed, provenance from old.provenance;
+ *   (b) CHAINED: every cell is the string PENDING (old was itself an --import-throughput run) and
+ *       old.throughputRun.perKernel holds timed cells -> old.throughputRun carried forward VERBATIM (the original
+ *       timed run's own date / gitHead / timing; never relabelled as a later run).
+ * Anything else throws: PENDING with no throughputRun, PENDING mixed with timed cells, a malformed cell, a
+ * carried cell whose min / median / max disagree with its own list. Every old kernel must carry full + smoke
+ * objects: importCountsSame compares their counts with the new cut at the end of write().
+ */
+export function importThroughput(old) {
+    if (!isObj(old) || !isObj(old.kernels) || Object.keys(old.kernels).length === 0) throw new Error('no non-empty kernels object');
+    let timedCells = 0, pendingCells = 0;
+    const per = {};
+    for (const k of Object.keys(old.kernels)) {
+        const K = old.kernels[k];
+        if (!isObj(K) || !isObj(K.full) || !isObj(K.smoke) || !isObj(K.throughput) || Object.keys(K.throughput).length === 0) {
+            throw new Error('kernel ' + k + ': want full, smoke and a non-empty throughput object');
+        }
+        per[k] = {};
+        for (const name of Object.keys(K.throughput)) {
+            const t = K.throughput[name];
+            if (t === 'PENDING') { pendingCells++; continue; }
+            const cyc = Array.isArray(t) ? t.map((c) => (isObj(c) ? c.opsPerSec : undefined)) : isObj(t) ? t.opsPerSecPerCycle : undefined;
+            if (!isRates(cyc)) throw new Error('kernel ' + k + ' lane ' + name + ': throughput is neither PENDING nor a timed cell');
+            timedCells++;
+            per[k][name] = rateCell(cyc);
+        }
+    }
+    if (timedCells > 0 && pendingCells > 0) throw new Error(timedCells + ' timed and ' + pendingCells + ' PENDING throughput cells (mixed shape)');
+    if (timedCells > 0) {
+        const op = old.provenance;
+        if (!isObj(op)) throw new Error('timed throughput with no provenance object');
+        return {
+            note: 'REPORTED tier, decides no gate: an earlier timed run of the same child loop (same seed / cycles / ops), held under quiet-lock; its counts were identical to kernels.*',
+            date: op.date, gitHead: op.gitHead, node: op.node, cpu: op.cpu, loadavgBefore: op.loadavgBefore, loadavgAfter: op.loadavgAfter,
+            busyNodeBefore: op.busyNodeBefore, seconds: op.seconds, timing: op.timing, perKernel: per,
+        };
+    }
+    const tr = old.throughputRun;
+    if (!isObj(tr) || !isObj(tr.perKernel) || Object.keys(tr.perKernel).length === 0) {
+        throw new Error('every throughput cell is PENDING and there is no throughputRun.perKernel to carry forward (an untimed run holds no throughput)');
+    }
+    if (typeof tr.date !== 'string' || typeof tr.timing !== 'string') throw new Error('throughputRun has no date / timing provenance');
+    for (const k of Object.keys(tr.perKernel)) {
+        const P = tr.perKernel[k];
+        if (!isObj(P) || Object.keys(P).length === 0) throw new Error('throughputRun.perKernel.' + k + ' is not a non-empty object');
+        for (const name of Object.keys(P)) {
+            const c = P[name];
+            if (!isObj(c) || !isRates(c.opsPerSecPerCycle) || JSON.stringify(rateCell(c.opsPerSecPerCycle)) !== JSON.stringify(c)) {
+                throw new Error('throughputRun.perKernel.' + k + '.' + name + ' is not a timed cell');
+            }
+        }
+    }
+    // the carried run covers exactly the PENDING cells: a kernel / lane outside old.kernels was never counts-checked
+    const cells = (o, f) => JSON.stringify(Object.keys(o).sort().map((k) => [k, Object.keys(f(o[k])).sort()]));
+    if (cells(tr.perKernel, (P) => P) !== cells(old.kernels, (K) => K.throughput)) throw new Error('throughputRun.perKernel does not cover exactly the kernels / lanes of old.kernels.*.throughput');
+    return JSON.parse(JSON.stringify(tr));
+}
+
+/**
+ * True when every kernel of the earlier doc `old` counted exactly what the new cut `kernels` counted, full and smoke
+ * (counts only, an older cut stored rounded ratios: worlds, ops, scenarios, performed, skipTainted). A kernel of
+ * `old` missing from `kernels` is a difference.
+ */
+export function importCountsSame(old, kernels) {
+    const counts = (sh) => JSON.stringify(Object.keys(sh).map((n) => (isObj(sh[n]) ? [n, sh[n].worlds, sh[n].ops, sh[n].scenarios, sh[n].performed, sh[n].skipTainted] : [n])));
+    const ok = (a) => isObj(a) && isObj(a.full) && isObj(a.smoke);
+    return isObj(old) && isObj(old.kernels) && isObj(kernels) && Object.keys(old.kernels).every((k) => ok(old.kernels[k]) && own(kernels, k) && ok(kernels[k])
+        && counts(old.kernels[k].full) === counts(kernels[k].full) && counts(old.kernels[k].smoke) === counts(kernels[k].smoke));
+}
+
 async function write(outPath, timed, importFrom) {
+    // --import-throughput is read and shape-checked FIRST (fail fast, before the ~15 min sweep); its counts are
+    // compared with this cut at the end (importCountsSame needs the new kernels)
+    let importOld = null, importRun = null;
+    if (importFrom !== undefined) {
+        try { importOld = JSON.parse(readFileSync(importFrom, 'utf8')); } catch (e) { die('--import-throughput ' + importFrom + ': unreadable or not JSON: ' + String(e && e.message)); }
+        try { importRun = importThroughput(importOld); } catch (e) { die('--import-throughput ' + importFrom + ': ' + String(e && e.message)); }
+    }
     const CFG = await import('../config.mjs');
     const { SKIP_NAMES } = await import('../exec.mjs');
     const { GEN_VERSION, GEN_RULES } = await import('../gen.mjs');
@@ -625,27 +716,9 @@ async function write(outPath, timed, importFrom) {
     };
     if (importFrom !== undefined) {
         // throughput of an EARLIER timed run of this same child loop (REPORTED tier), kept with its own provenance
-        const old = JSON.parse(readFileSync(importFrom, 'utf8'));
-        const per = {};
-        for (const k of Object.keys(old.kernels)) {
-            per[k] = {};
-            for (const name of Object.keys(old.kernels[k].throughput)) {
-                const t = old.kernels[k].throughput[name];
-                const cyc = Array.isArray(t) ? t.map((c) => c.opsPerSec) : t.opsPerSecPerCycle;
-                const sorted = cyc.slice().sort((a, b) => a - b);
-                per[k][name] = { opsPerSecPerCycle: cyc, min: sorted[0], median: sorted[sorted.length >> 1], max: sorted[sorted.length - 1] };
-            }
-        }
-        const op = old.provenance;
-        doc.throughputRun = {
-            note: 'REPORTED tier, decides no gate: an earlier timed run of the same child loop (same seed / cycles / ops), held under quiet-lock; its counts were identical to kernels.*',
-            date: op.date, gitHead: op.gitHead, node: op.node, cpu: op.cpu, loadavgBefore: op.loadavgBefore, loadavgAfter: op.loadavgAfter,
-            busyNodeBefore: op.busyNodeBefore, seconds: op.seconds, timing: op.timing, perKernel: per,
-        };
-        // counts only (an older cut stored rounded ratios): worlds, ops, scenarios, performed, skipTainted
-        const counts = (sh) => JSON.stringify(Object.keys(sh).map((n) => [n, sh[n].worlds, sh[n].ops, sh[n].scenarios, sh[n].performed, sh[n].skipTainted]));
-        const same = Object.keys(old.kernels).every((k) => counts(old.kernels[k].full) === counts(kernels[k].full) && counts(old.kernels[k].smoke) === counts(kernels[k].smoke));
-        if (!same) die('--import-throughput: the earlier run counted different numbers; it is not the same loop');
+        // (importThroughput, read at the start: a chained import carries the original timed run forward verbatim)
+        doc.throughputRun = importRun;
+        if (!importCountsSame(importOld, kernels)) die('--import-throughput: the earlier run counted different numbers; it is not the same loop');
     }
     writeFileSync(outPath, JSON.stringify(doc, null, 1) + '\n');
     note('wrote ' + outPath);

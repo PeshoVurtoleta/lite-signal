@@ -189,15 +189,15 @@ test('O5: silent on matching counts and links; fires on each mismatch and on tea
 
 test('O6: the escape set must equal the prediction', () => {
     const tok = (t) => ({ origin: t.split(':')[0], token: t });
-    assert.deepEqual(O.checkEscape([], [], false), []);
-    assert.deepEqual(O.checkEscape(['computed:4', 'computed:4'], [tok('computed:4'), tok('computed:4')], false), []);
-    assert.equal(O.checkEscape([], [tok('computed:4')], false)[0].sig, 'escape-computed');               // F6
-    assert.equal(O.checkEscape(['computed:4'], [tok('computed:4'), tok('computed:4')], false)[0].sig, 'escape-computed');
-    assert.equal(O.checkEscape(['batch:3'], [], false)[0].sig, 'expected-escape-missing');
-    assert.equal(O.checkEscape([], [{ ctor: 'TypeError', message: 'x' }], false)[0].sig, 'escape-TypeError');  // F15 / F8
-    assert.deepEqual(O.checkEscape([], [{ ctor: 'Error', message: 'CycleError: flush passes exceeded' }], true), []);
-    assert.equal(O.checkEscape([], [{ ctor: 'Error', message: 'CycleError: flush passes exceeded' }], false)[0].sig, 'escape-CycleError');
-    assert.equal(O.checkEscape([], [], true)[0].sig, 'expected-escape-missing');
+    assert.deepEqual(O.checkEscape([], [], O.EXPECT_NONE), []);
+    assert.deepEqual(O.checkEscape(['computed:4', 'computed:4'], [tok('computed:4'), tok('computed:4')], O.EXPECT_NONE), []);
+    assert.equal(O.checkEscape([], [tok('computed:4')], O.EXPECT_NONE)[0].sig, 'escape-computed');               // F6
+    assert.equal(O.checkEscape(['computed:4'], [tok('computed:4'), tok('computed:4')], O.EXPECT_NONE)[0].sig, 'escape-computed');
+    assert.equal(O.checkEscape(['batch:3'], [], O.EXPECT_NONE)[0].sig, 'expected-escape-missing');
+    assert.equal(O.checkEscape([], [{ ctor: 'TypeError', message: 'x' }], O.EXPECT_NONE)[0].sig, 'escape-TypeError');  // F15 / F8
+    assert.deepEqual(O.checkEscape([], [{ ctor: 'Error', message: 'CycleError: flush passes exceeded' }], O.EXPECT_CYCLE), []);
+    assert.equal(O.checkEscape([], [{ ctor: 'Error', message: 'CycleError: flush passes exceeded' }], O.EXPECT_NONE)[0].sig, 'escape-CycleError');
+    assert.equal(O.checkEscape([], [], O.EXPECT_CYCLE)[0].sig, 'expected-escape-missing');
 });
 
 test('O7a: a live registration on a live target may fire; off() or a dead target may not', () => {
@@ -382,8 +382,8 @@ test('qa normalizeEscape: AggregateError with 0 / 1 / 2 / 3 nested leaves, the d
     assert.deepEqual(normalizeEscape(new AggregateError([t(1), new AggregateError([t(2), t(3)])])), [leaf(1), leaf(2), leaf(3)]);
     assert.deepEqual(normalizeEscape(t(4)), [leaf(4)]);
     // the predicted single token matches through a one-leaf AggregateError; an empty one is an engine escape
-    assert.deepEqual(O.checkEscape(['effect:1'], normalizeEscape(new AggregateError([t(1)])), false), []);
-    assert.equal(O.checkEscape([], normalizeEscape(new AggregateError([])), false)[0].sig, 'escape-AggregateError');
+    assert.deepEqual(O.checkEscape(['effect:1'], normalizeEscape(new AggregateError([t(1)])), O.EXPECT_NONE), []);
+    assert.equal(O.checkEscape([], normalizeEscape(new AggregateError([])), O.EXPECT_NONE)[0].sig, 'escape-AggregateError');
     // depth: 8 wrappers unwrap, the 9th level is reported as a leaf (fail closed: an unexpected escape)
     let e8 = t(9); for (let i = 0; i < 8; i++) e8 = new AggregateError([e8], 'L' + i);
     assert.deepEqual(normalizeEscape(e8), [leaf(9)]);

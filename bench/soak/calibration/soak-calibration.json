@@ -152,65 +152,70 @@
   }
  },
  "provenance": {
-  "date": "2026-10-20T01:26:56.851Z",
-  "gitHead": "3ef853adabd5f5a823ddf240c3fbdabb9df9aab9",
+  "date": "2026-10-20T08:01:48.090Z",
+  "gitHead": "3e51679f70a5d68498e5bef2583c3b7df7e9d43d",
   "gitDirty": [
-   " M bench/soak/SoakReport.mjs",
-   " M bench/soak/adapters/lite.mjs",
-   " M bench/soak/calibration/soak-calibration.json",
-   " M bench/soak/gates.mjs",
+   " M bench/soak/adapters/contract.mjs",
+   " M bench/soak/calibration/calibrate.mjs",
+   " M bench/soak/config.mjs",
+   " M bench/soak/exec.mjs",
+   " M bench/soak/lanes/index.mjs",
    " M bench/soak/main.mjs",
+   " M bench/soak/oracles.mjs",
    " M bench/soak/parity.json",
    " M bench/soak/parity.mjs",
-   " M test/40-soak-infra.test.mjs",
-   " M test/42-soak-gates.test.mjs",
-   " M test/46-soak-report.test.mjs",
+   " M bench/soak/replay.mjs",
+   " M bench/soak/teeth.mjs",
+   " M test/41-soak-config.test.mjs",
+   " M test/43-soak-model.test.mjs",
+   " M test/70-calibrate-d7.test.mjs",
    "?? BRIEF.md",
    "?? bench/bench-runs/",
-   "?? bench/soak/anatomy.mjs",
-   "?? test/72-soak-anatomy.test.mjs"
+   "?? bench/soak/adapters/lite-s3.mjs",
+   "?? test/74-soak-s3-seam.test.mjs"
   ],
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   4.3,
-   5.84,
-   4.82
+   1.69,
+   2.42,
+   3.02
   ],
   "loadavgAfterTimed": [
-   1.93,
-   2.72,
-   3.63
+   3.08,
+   2.32,
+   2.6
   ],
   "loadavgAfter": [
-   5.84,
-   4.66,
-   4.2
+   7.19,
+   5.21,
+   3.92
   ],
   "busyNodeBefore": [
    "26332 0.0 /opt/homebrew/bin/node",
-   "83125 0.0 node"
+   "28794 12.0 node"
   ],
-  "seconds": 891,
+  "seconds": 894,
   "timing": "PENDING (untimed run; throughput decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
-   "bench/soak/exec.mjs": "ba2d86b403d0384922bb17d9aa771aa2894dfda9caffa63279e28de690d5634e",
-   "bench/soak/oracles.mjs": "3447e38b646966037044939f367dd533e8212f6143dc1162bc2321cecd205d6b",
+   "bench/soak/exec.mjs": "66e1de482727645cc9d938228919cd47bc0de8784a3630f9de67db4ea8acd509",
+   "bench/soak/oracles.mjs": "0d1b0010485a73069d8af8aac77bd49659114f5860f93871c1d433843cb7d35f",
    "bench/soak/model.mjs": "8b453cd6316e5eadcc8bcf961c061683b98245daf4790f9d109f517fb3648789",
    "bench/soak/scenarios.mjs": "3e1897452461c5c63bed1a8b917b9951a7f76cd5d51e97c1b119f32c9a1cb53c",
    "bench/soak/seeds.mjs": "cfae31bb8275b0b116bf012f9d82a87afe51310f12a19edf8ca159a00d099ec8",
-   "bench/soak/lanes/index.mjs": "22d67802a0981e0b978c33ae953b0934c3b5d8fe3b1c2142e815b7c69e91156c",
+   "bench/soak/lanes/index.mjs": "674213648a44fa0e1677bba6a60021d96dd7fe0b4578563b8c057dd95e83c128",
    "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
    "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
    "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
    "bench/soak/adapters/lite.mjs": "b5fdfcc9b614db980b88d57772e4527cceb8b14eb9bbe76da397c121b281c683",
-   "bench/soak/adapters/contract.mjs": "7cdd3c5d985f22b6ec91f8d6acb42bd83bdd790fb197f53f163ad3a77a732bb3",
+   "bench/soak/adapters/contract.mjs": "fe5c303f37a807a81df189bd30a7c6285f497d5901b7a24595d404a4b86d7293",
    "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
    "bench/torture/helpers/index.mjs": "0f58faf5f553716bf5059cdfeae7fe887ea07fe3e853d8cba0e75106e54cb119",
+   "bench/soak/adapters/lite-s3.mjs": "1d52f77102c6b5269bedced545eb2d08951a61133463490f045a2806769e3e45",
    "bench/soak/lanes/wie.mjs": "67aebd356665312b11c0f323e756485caf8cf50f8bec277322937bbf067a0e34"
   }
  },

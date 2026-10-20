@@ -1165,8 +1165,8 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.equal(b6KernelPath('tree'), 'Signal.js');
     assert.throws(() => b6KernelPath('nope'), /unknown kernel nope/);
     assert.deepEqual(b6PinnedFor(roster4), B6_PINNED);
-    assert.equal(b6PinnedFor(roster4).length, 15);
-    assert.equal(b6PinnedFor(roster5)[15], 'bench/soak/lanes/wie.mjs');
+    assert.equal(b6PinnedFor(roster4).length, 16);   // S3 R0: + adapters/lite-s3.mjs
+    assert.equal(b6PinnedFor(roster5)[16], 'bench/soak/lanes/wie.mjs');
     // A2 (the real roster): a WIE cell on lite-1.5.2 is a cell no binding cuts -> exactly one new problem
     const base = calibrationProblems(B6_DOC, B6_C);
     const a2 = b6Copy(B6_DOC);

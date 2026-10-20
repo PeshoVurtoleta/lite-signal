@@ -169,8 +169,8 @@ export function scriptDigest(script) {
  */
 export async function loadEngine(cfg, laneName) {
     if (cfg.engine !== 'lite' || ENGINES_AVAILABLE.indexOf(cfg.engine) === -1) return { adapter: null, app: null, error: 'SOAK_ENGINE: no adapter for ' + cfg.engine };
-    const adMod = await import('./adapters/lite.mjs');
-    const adapter = adMod.liteAdapter;
+    const adMod = await import('./adapters/lite-s3.mjs');
+    const adapter = adMod.liteS3Adapter;
     const { validateAdapter, applicability } = await import('./adapters/contract.mjs');
     const probs = validateAdapter(adapter);
     if (probs.length > 0) return { adapter: null, app: null, error: 'adapter ' + cfg.engine + ' is invalid: ' + probs.join('; ') };

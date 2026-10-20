@@ -151,31 +151,56 @@ export function escapeSig(leaf) {
     return 'escape-' + leaf.ctor;
 }
 
+/** O6 expect[] lists: no engine error expected, and the (iii) cycle-bomb CycleError (G7; any ctor, message prefix). */
+export const EXPECT_NONE = Object.freeze([]);
+export const EXPECT_CYCLE = Object.freeze([Object.freeze({ id: 'CycleError', ctor: null, prefix: 'CycleError:' })]);
+
 /**
  * O6 for one guarded call. pred: predicted SoakThrow tokens (multiset). got: normalizeEscape(escape) or [].
- * cycle: a CycleError is expected (cycle-bomb, G7).
+ * expect: the engine errors expected, an array of { id, ctor: string | null (null = any), prefix } (EXPECT_NONE,
+ * EXPECT_CYCLE). Each entry absorbs at most ONE non-token leaf, entries tried in order; an entry that absorbed
+ * nothing reports 'predicted <id> did not happen' after the token misses. EXPECT_CYCLE gives exactly the former
+ * cycle === true result, EXPECT_NONE the former false. Throws TypeError (before any check) on a malformed list.
  */
-export function checkEscape(pred, got, cycle) {
+export function checkEscape(pred, got, expect) {
+    if (!Array.isArray(expect)) throw new TypeError('checkEscape: expect must be an array (EXPECT_NONE / EXPECT_CYCLE), got ' + (expect === null ? 'null' : typeof expect));
+    for (const e of expect) {
+        if (e === null || typeof e !== 'object' || typeof e.id !== 'string' || typeof e.prefix !== 'string' || e.prefix === '' || (e.ctor !== null && typeof e.ctor !== 'string')) {
+            throw new TypeError('checkEscape: expect entries are { id: string, ctor: string | null, prefix: non-empty string }');
+        }
+    }
     const out = [];
     const want = new Map();
     for (const t of pred) want.set(t, (want.get(t) || 0) + 1);
-    let cycleSeen = false;
+    const seen = expect.map(() => false);
     for (const leaf of got) {
         if (leaf.token !== undefined) {
             const n = want.get(leaf.token) || 0;
             if (n > 0) { want.set(leaf.token, n - 1); continue; }
             out.push({ oracle: 'O6', sig: escapeSig(leaf), detail: cut('unpredicted escape ' + leaf.token) });
-        } else if (cycle && !cycleSeen && typeof leaf.message === 'string' && leaf.message.indexOf('CycleError:') === 0) {
-            cycleSeen = true;
-        } else {
+        } else if (!absorb(expect, seen, leaf)) {
             out.push({ oracle: 'O6', sig: escapeSig(leaf), detail: cut('engine error escaped: ' + leaf.ctor + ': ' + leaf.message) });
         }
     }
     for (const [t, n] of want) {
         if (n > 0) out.push({ oracle: 'O6', sig: 'expected-escape-missing', detail: cut('predicted escape ' + t + ' x' + n + ' did not happen') });
     }
-    if (cycle && !cycleSeen) out.push({ oracle: 'O6', sig: 'expected-escape-missing', detail: 'predicted CycleError did not happen' });
+    for (let j = 0; j < expect.length; j++) {
+        if (!seen[j]) out.push({ oracle: 'O6', sig: 'expected-escape-missing', detail: 'predicted ' + expect[j].id + ' did not happen' });
+    }
     return out;
+}
+
+/** The first expect[] entry not yet seen that matches leaf (ctor, message prefix) absorbs it. */
+function absorb(expect, seen, leaf) {
+    if (typeof leaf.message !== 'string') return false;
+    for (let j = 0; j < expect.length; j++) {
+        const e = expect[j];
+        if (seen[j] || (e.ctor !== null && leaf.ctor !== e.ctor) || leaf.message.indexOf(e.prefix) !== 0) continue;
+        seen[j] = true;
+        return true;
+    }
+    return false;
 }
 
 /** OB: effect i (it had already run) re-ran while `depth` batches were open. Always a failure. */

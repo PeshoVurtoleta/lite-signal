@@ -51,6 +51,8 @@ export const PARITY_FILES = Object.freeze([
     // 1.6.0 DELTA 4b B4 (burst 54, maintainer ruling): the adapter maps the model onto the engine; the control
     // registry and the byte-frozen preb33 control kernel decide which kernel a control run loads (creationAbort)
     'bench/soak/adapters/lite.mjs', 'bench/soak/controls.json',
+    // S3 R0 (burst 92, S3-D1): the decorator adapter main / replay / calibrate load (it wraps the pinned lite.mjs)
+    'bench/soak/adapters/lite-s3.mjs',
     'bench/soak/controls/preb33/Signal.js', 'bench/soak/controls/preb33/Watch.js',
     // unit 0s B1 (burst 64): the WIE lane decides its scripts and coverage (pinned before its roster flip, B2)
     'bench/soak/lanes/wie.mjs',

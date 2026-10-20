@@ -67,10 +67,37 @@ export function validateAdapter(a) {
     return out;
 }
 
-/** Check an opened world exposes every method. */
-export function validateWorld(w) {
+/**
+ * Extension world methods (S3 R0), cap -> the TOP-LEVEL world keys a lane needing that cap calls. scheduler adds no
+ * key: it is the effect(fn, {scheduler}) form of the base effect method.
+ */
+export const EXT_METHODS = Object.freeze({
+    hook: Object.freeze(['hook']),
+    destroy: Object.freeze(['destroy']),
+    owner: Object.freeze(['createRoot', 'runWithOwner', 'getOwner', 'onCleanup']),
+    capacity: Object.freeze(['capacity']),
+    scheduler: Object.freeze([]),
+});
+
+/**
+ * Check an opened world exposes every method. validateWorld(w) checks WORLD_METHODS only (the S1 shape).
+ * validateWorld(w, caps, needsCaps) also checks the EXT_METHODS of every needed cap the adapter declares present
+ * (a cap it lacks is a SKIP, applicability's call, not a world defect). Throws TypeError on a half-given call or a
+ * needsCaps entry that is not a known cap.
+ */
+export function validateWorld(w, caps, needsCaps) {
+    const ext = caps !== undefined || needsCaps !== undefined;
+    if (ext && (caps === null || typeof caps !== 'object' || !Array.isArray(needsCaps))) {
+        throw new TypeError('validateWorld: (w) or (w, caps object, needsCaps array)');
+    }
+    if (ext) for (const c of needsCaps) if (CAP_KEYS.indexOf(c) === -1) throw new TypeError('validateWorld: needsCaps entry ' + c + ' is not a known cap');
     const out = [];
     for (const m of WORLD_METHODS) if (typeof w[m] !== 'function') out.push('world.' + m + ' must be a function');
+    if (!ext) return out;
+    for (const c of needsCaps) {
+        if (!Object.hasOwn(EXT_METHODS, c) || !hasCap(caps, c)) continue;
+        for (const m of EXT_METHODS[c]) if (typeof w[m] !== 'function') out.push('world.' + m + ' must be a function (cap ' + c + ')');
+    }
     return out;
 }
 

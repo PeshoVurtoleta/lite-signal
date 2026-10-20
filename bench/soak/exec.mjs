@@ -42,6 +42,7 @@ import { SoakThrow, ERR, evalKind, decodeValue, EQ_BOMB, toNum, specRefs } from 
 import { Model } from './model.mjs';
 import * as O from './oracles.mjs';
 import { Detectors } from './scenarios.mjs';
+import { laneByName } from './lanes/index.mjs';
 import { mulberry32, shuffle } from '../torture/helpers/index.mjs';
 
 const NONE = Symbol('none');
@@ -85,9 +86,37 @@ function creationAbortOf(ad, opts) {
     return o === undefined ? lite : o;
 }
 
+/** exec's own op names. apply() matches them first, so a lane-owned op can never shadow one (laneOpsOf rejects it). */
+const CORE_OPS = Object.freeze(['sig', 'comp', 'eff', 'set', 'burst', 'read', 'stop', 'disp', 'batch', 'reg', 'off', 'arm', 'seq']);
+
+/**
+ * The lane-owned op handlers of a world (S3 R0): the lanes/index.mjs descriptor.ops of script.lane, resolved ONCE per
+ * world; null when the lane owns none or the script names no rostered lane. apply() hands an op it does not know to
+ * ops[op.o](exec, op, k); an op no lane owns throws exactly as before. opts.laneOps: test-only override (test/74),
+ * null or a plain object. Fails closed BEFORE any state: a handler that is not a function, or a key naming a core op.
+ */
+function laneOpsOf(script, opts) {
+    let ops;
+    if (Object.hasOwn(opts, 'laneOps')) ops = opts.laneOps;   // own key only (no prototype chain)
+    else {
+        const d = laneByName(script.lane);
+        ops = d === null || d.ops === undefined ? null : d.ops;
+    }
+    if (ops === null) return null;
+    if (typeof ops !== 'object' || Array.isArray(ops)) {
+        throw new TypeError('exec: lane ops must be null or a plain object, got ' + (Array.isArray(ops) ? 'an array' : typeof ops));
+    }
+    for (const name of Object.keys(ops)) {
+        if (CORE_OPS.indexOf(name) !== -1) throw new TypeError('exec: lane op ' + name + ' shadows a core op');
+        if (typeof ops[name] !== 'function') throw new TypeError('exec: lane op ' + name + ' is not a function');
+    }
+    return ops;
+}
+
 class Exec {
     constructor(adapter, script, opts) {
         this.creationAbort = creationAbortOf(adapter, opts);
+        this.laneOps = laneOpsOf(script, opts);
         this.unmodelled = null;   // pin (i) sticky: a batch / body guard must not swallow it (run() rethrows)
         this.ad = adapter;
         this.caps = adapter.caps;
@@ -195,8 +224,15 @@ class Exec {
             case 'off': this.unregister(op); break;
             case 'arm': this.arm(op); break;
             case 'seq': for (const s of op.ops) this.apply(s, k); break;
-            default: throw new Error('exec: unknown op ' + op.o);
+            default: this.laneOp(op, k);
         }
+    }
+
+    /** An op exec does not know: the lane's own handler (laneOpsOf), else the unknown-op throw. */
+    laneOp(op, k) {
+        const ops = this.laneOps;
+        if (ops === null || !Object.hasOwn(ops, op.o)) throw new Error('exec: unknown op ' + op.o);
+        ops[op.o](this, op, k);
     }
 
     /* ---- guarded calls (O6) ---------------------------------------------------------------------- */
@@ -220,7 +256,7 @@ class Exec {
         // LOSES it (F22) and fails here as expected-escape-missing. No allowance.
         if (g.batchTok !== null) pred.push(g.batchTok);
         for (const t of g.eq) pred.push(t);
-        for (const f of O.checkEscape(pred, got, g.cycle)) this.failF(f);
+        for (const f of O.checkEscape(pred, got, g.cycle ? O.EXPECT_CYCLE : O.EXPECT_NONE)) this.failF(f);
         if (g.batchTok !== null) for (const leaf of got) if (leaf.token === g.batchTok) { this.gateHits.batchTokenEscaped++; break; }
         this.D.onEscape(g, got);
         return esc;

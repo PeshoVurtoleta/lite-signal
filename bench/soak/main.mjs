@@ -78,7 +78,7 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const YIELD_MASK = 63;            // yield one macrotask every 64 worlds
 const HEARTBEAT_MS = 5000;        // in-cycle heartbeat period (a heartbeat also closes every lane-cycle)
 const SEED_SELF_CHECK_SPAN = 1024;
-const ADAPTERS = Object.freeze({ lite: './adapters/lite.mjs' });
+const ADAPTERS = Object.freeze({ lite: './adapters/lite-s3.mjs' });
 
 /* ---- the adapter tap ------------------------------------------------------------------------------ */
 
@@ -272,7 +272,7 @@ async function main() {
     // the engine (the kernel loads HERE, through the SOAK_KERNEL seam)
     if (!own(ADAPTERS, cfg.engine)) configExit('SOAK_ENGINE: no adapter for ' + cfg.engine);
     const adMod = await import(ADAPTERS[cfg.engine]);
-    const adapter = adMod.liteAdapter;
+    const adapter = adMod.liteS3Adapter;
     const { validateAdapter, applicability } = await import('./adapters/contract.mjs');
     const probs = validateAdapter(adapter);
     if (probs.length > 0) configExit('adapter ' + cfg.engine + ' is invalid: ' + probs.join('; '));

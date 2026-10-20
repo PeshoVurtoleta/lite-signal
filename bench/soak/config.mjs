@@ -95,13 +95,16 @@ const CONSTANTS = Object.freeze({
     // latency (B-B4a, REPORT-ONLY; bench/soak/latency.mjs): one DDSketch (@zakkster/lite-sketch 1.2.0, relative
     // error SKETCH_ALPHA, default maxBins 2048) per LATENCY_METHODS entry, armed on worlds w % 16 === 8.
     // LATENCY_METHODS are the TIMED world methods (record key order); LATENCY_UNTIMED are the world methods passed
-    // through untimed. Together they classify every function-valued key of an opened world (adapters/lite.mjs
-    // open(): 15 functions + the non-function 'registry'); an armed open that meets any other function key, or a
+    // through untimed. Together they classify every function-valued key of an opened world (adapters/lite-s3.mjs
+    // open(): adapters/lite.mjs's 15 functions + the 7 S3 extension methods hook, destroy, createRoot, runWithOwner,
+    // getOwner, onCleanup, capacity (contract.mjs EXT_METHODS, top-level world keys: maintainer ruling D-R0-2) + the
+    // non-function 'registry'); an armed open that meets any other function key, or a
     // listed method whose .length > 2, throws TypeError (fail closed: the wrapper forwards at most two arguments).
     SKETCH_ALPHA: 0.01,
     LATENCY_METHODS: Object.freeze(['signal', 'computed', 'effect', 'set', 'read', 'peek', 'batch', 'untrack', 'dispose',
         'lifecycle', 'settle', 'close']),
-    LATENCY_UNTIMED: Object.freeze(['normalizeEscape', 'stats', 'links']),
+    LATENCY_UNTIMED: Object.freeze(['normalizeEscape', 'stats', 'links', 'hook', 'destroy', 'createRoot', 'runWithOwner',
+        'getOwner', 'onCleanup', 'capacity']),
     // retention
     DRAIN_MS: 2000,
     DRAIN_TRIES: 8,
