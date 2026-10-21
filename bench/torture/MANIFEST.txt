@@ -1,7 +1,7 @@
-lite-signal torture suite — complete set (24 scenarios)
+lite-signal torture suite -- complete set (25 scenarios)
 ========================================================
 
-22 semantic (deterministic, fast, CI) + 2 soak (one opt-in). Full superset through 1.10
+23 semantic (deterministic, fast, CI) + 2 soak (one opt-in). Full superset through 1.10
 (candidate-line numbering after the 2026-10-10 re-pin: see FEATURE GATES).
 Every scenario feature-detects and skips cleanly below its feature; runs green
 from 1.4.x forward. Skips use exit 77 and the runner enforces version floors:
@@ -20,6 +20,9 @@ SEMANTIC (listed in run.mjs registration order)
   concurrent-storm         reentrancy, nesting, flush ordering
   scheduler-storm          deferred execution, ABA thunks, coalescing
   box-torture              signalBox / computedBox interop + surface   (1.5.0+)
+  snapshot-torture         snapshot/restore clean-bit fuzz + fail-closed  (1.6.0+)
+                           battery + D-A box flags / D-B guard / D-C sizing /
+                           D-D not-captured + retention witness
   scope-torture            createScope adoption + disposal-crash fuzz  (1.7.0+)
   retrack-dispose-torture  dispose-during-retracking cursor hazard + seeded
                            disposal fuzz w/ survivor value + pool oracle
@@ -126,16 +129,16 @@ RETIRED (2026-10-20, burst 89): graph-fuzzer, torture-soak
     git show 1dea069:bench/torture/graph-fuzzer.mjs   blob 8c4b5f8f79acb8aee6a5a00620a8962cd401cab8
     git show 1dea069:bench/torture/torture-soak.mjs   blob f8494263097f5daee91ad1aa49044e1c66a5c4c3
 
-op-accounting uses the engine's OWN opcode counters instead of wall-clock — the
+op-accounting uses the engine's OWN opcode counters instead of wall-clock -- the
 lesson from the 1.13 mark-lane review: count deterministic work, don't time it.
 It runs from 1.4.0 (needs only onGraphMutation). See op-accounting-review/
 FINDINGS.md for the instrumentation gap it uncovered: 1.5.0's clean short-circuit
-saves dep-COMPARISONS, which no opcode emits — the analogue of the pre-1.13
+saves dep-COMPARISONS, which no opcode emits -- the analogue of the pre-1.13
 missing mark lane. Recommendation there: add a "compare lane" (op 11/12) so the
 short-circuit's benefit becomes a counted fact and its regression becomes
 catchable.
 
-FEATURE GATES: box/owner->1.5, scope->1.7, flush->1.8,
+FEATURE GATES: box/owner->1.5, snapshot->1.6, scope->1.7, flush->1.8,
 cleanup-return->1.9, dispose->1.10. (Re-pinned +1 minor on 2026-10-10: 1.6.0
 ships without the candidate-line features, which move to 1.7.0+.)
 retrack-dispose, op-accounting, lifecycle, contract, interop, and all others:

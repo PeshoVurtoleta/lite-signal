@@ -13,7 +13,48 @@ changes `watch()`'s fire order and `stop()` ("### Fixed -- `watch()`" below) and
 handle ("### Fixed -- `when()`" below; `Signal.d.ts` gains doc comments only); `Signal.js` changes the tracking-flag fold described below (no
 API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F21 flushEffects fix ("### Fixed -- engine: stale effect-queue entries skip a node that is no longer QUEUED" below), the sync-scheduler creation-throw fix ("### Fixed -- engine: a synchronous scheduler's creation-time throw disposes the effect" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
-published `files[]` changes except `README.md` and `llms.txt`.
+published `files[]` changes except `README.md`, `llms.txt` and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
+
+### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)
+
+`snapshot()` serializes the live graph of a registry to a plain `{ v: 1, nodes: [...] }` object (one record per live
+node: id, kind, flags, value, version, clean, ownerId, ownerPos, deps, subPos); `restore(snap, opts?)` rebuilds it into a FRESH registry
+and returns that registry. Both exist top-level (default registry) and per-registry. Types: `Snapshot`,
+`SnapshotNode`, `SnapshotNodeKind`, `RestoreOptions` (`fnsById`, `handles`, `config`). Values move by reference
+(in-process; no structured clone). Cold paths only: no change to the read / write / flush hot bodies.
+- Restore behavior: it rebuilds nodes and links without running any body, keeps the snapshot ids (a re-snapshot
+  round-trips), and does not re-fire effects (an effect runs only on the next dependency change). Computeds and
+  effects get their body from `opts.fnsById[id]`; a missing one throws `restore: missing fn for id <id>`. A
+  computed restores as follows. A dirty computed restores uncomputed, wired to its recorded deps, and seeded with its recorded value, version and error bit: its body runs on the first read, and a result equal to the recorded value (under Object.is -- a custom `equals` is not captured, so a computed built with one may propagate after restore where the live graph would not) does not propagate. A never-evaluated computed is not seeded. A clean
+  one restores with its cached value and deps. A malformed snapshot, a duplicate id, a dangling dep id (on any
+  record, dirty and never-read computeds included) or owner id all throw before the registry is returned.
+- Input law: restore() validates the whole snapshot before building anything: ids must be positive integers <= 0x3FFFFFFF (2^30 - 1) and unique; dep ids and ownerIds must be positive integers <= 0x3FFFFFFF that resolve to a record id; versions and flags must be int32; a signal is never owned; deps must be an array; a null / non-object record throws a named TypeError. Snapshots carry live node ids, so a snapshot holding any node id past 0x3FFFFFFF (a node created after the registry's first 2^30 - 1, including in a registry restored at the cap that then grew) snapshots fine but restore() refuses it -- fail closed, by design (D-F); once those nodes are disposed, a NEW snapshot of that registry restores again (the old snapshot still holds the id and stays refused). Options must be a plain object with own keys fnsById / handles / config only -- an unknown key throws with a did-you-mean hint; bodies are looked up only as own properties of fnsById. Rejected structures: a signal with deps, an effect as a dep source, a signal as owner, a self owner, owner cycles, dep cycles among clean computeds, and a dep id missing from the snapshot on any record (dirty and never-read computeds included). opts.handles is filled only after the rebuild succeeds; a failed restore leaves it untouched. A snapshot taken after a registry's node-id counter wrapped (ids <= 0) is rejected (fail closed).
+- The snapshot does not record the version clock: if versions had wrapped past the 2^31 band, a restored effect can RE-FIRE once with nothing changed (not merely run an extra, value-correct recompute). A fix (record the clock in the snapshot) is planned. Effect run stamps are not recorded either: restore stamps every effect at the restored clock, so an effect that absorbed its own write in the live graph (and is still due a re-run once a dep it read has moved on) can skip that re-run after restore, with no wrap involved (open finding F-b99-1, fix planned).
+- D-A -- FLAG_BOX: `signalBox` / `computedBox` nodes now carry bit 7 (128) in their node flags, so the
+  `onGraphMutation` op 1 (node-create) and op 2 (node-dispose) flags for them are 160 (signalBox) and 129
+  (computedBox); callable signal / computed / effect stay 32 / 1 / 2. A listener that matched box flags as 32 / 1
+  must accept 160 / 129.
+- D-B -- `snapshot()` throws `[lite-signal] snapshot: graph not settled` while a flush is running, inside a batch,
+  or while ANY body is running -- including a body under `untrack()`, `createRoot()` or `runWithOwner()` -- and (D-B2) inside an `onCleanup` during a dispose or its owner cascade (`destroy()` runs no cleanups) with `(dispose in progress)`, inside an `onGraphMutation` listener with `(onGraphMutation listener running)`, and (D-D2) while any effect has a pending scheduled run (queued, or its first scheduled run not yet executed) with `(scheduled effect run pending)`, so no pending run is lost silently.
+- D-C -- `restore()` without `opts.config` sizes the fresh registry `maxNodes = max(1.5N + 16, 1024)` and
+  `maxLinks = max(1.5L + 16, 4 x maxNodes)` (N nodes, L dep edges in the snapshot). The source registry's
+  `onCapacityExceeded` and `maxFlushPasses` are not carried; pass `opts.config` to set them (an explicit
+  config wins outright).
+- D-D -- not captured: custom `equals` (a restored signal or computed uses `Object.is`), effect schedulers (a restored effect
+  runs synchronously unless re-created with a scheduler), `onCleanup` registrations, and lifecycle /
+  `onGraphMutation` listeners.
+- Tests: `test/76-snapshot.test.mjs`.
+- D-J -- `subPos` + `ownerPos`: every `snapshot()` record gains `subPos: number[]` (parallel to `deps`; `subPos[j]` is dep
+  link j's position in its source's subscriber list; `[]` for a signal) and `ownerPos: number` (position in the owner's
+  child list, 0 = newest child, the one `forEachOwned` visits first; `-1` when `ownerId` is null). Both are REQUIRED:
+  a snapshot without `subPos` / `ownerPos` is refused. `restore()` validates both before building anything (TypeError,
+  `[lite-signal] restore:` prefix): `subPos` missing, not an array, length != `deps.length`, an element not an int >= 0,
+  or per source not a permutation of 0..n-1; `ownerPos` missing, not an int >= -1, not `-1` exactly when `ownerId` is
+  null, `-1` on an owned record, or per owner not a permutation of 0..n-1. It then places every subscriber link at its
+  recorded position and each owner's children in recorded order, so each source's subscriber order and each owner's
+  child order round-trip. Fixed with it: a duplicate read (`[s, C, s]`) is kept (restore dropped the second link), and a
+  child created into a reused pool slot is restored in the right owner-child position (it was restored in the wrong
+  order). Cleanup callbacks are still not captured. `v: 1` is unchanged (the format is unshipped).
 
 ### Changed -- soak latency lane refuses an unreadable parameter list (dev-only, not shipped)
 

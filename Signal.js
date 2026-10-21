@@ -105,6 +105,25 @@ const FLAG_SIGNAL = 1 << 5;
 const FLAG_STALE_READ = 1 << 6;
 const FLAG_QUEUED_STALE = FLAG_QUEUED | FLAG_STALE_READ;
 const FLAG_ERR_OR_STALE = FLAG_HAS_ERROR | FLAG_STALE_READ;
+// 1.6.0: box-form witness for snapshot(). OR'd into the node's flags at
+// signalBox/computedBox creation (folds into the existing flags write -- zero
+// new allocation, off the 56 B/op box path; the hook's op 1 / op 2 flags carry it: signalBox 160, computedBox 129). snapshotKind reads it directly.
+// Never inspected by any hot body; createNode overwrites flags wholesale on
+// recycle so it never lingers on a reused slot.
+const FLAG_BOX = 1 << 7;   // bits 0-6 are taken (1 << 6 = FLAG_STALE_READ)
+// The box constructors' createNode flags, folded at module scope: one const load at the
+// call site, no OR. createNode stores flags wholesale, so the box bit rides the existing write.
+const FLAG_SIGNAL_BOX = FLAG_SIGNAL | FLAG_BOX;
+const FLAG_COMPUTED_BOX = FLAG_COMPUTED | FLAG_BOX;
+
+// Private cross-registry rehydration hook (1.6.0 snapshot/restore). restore()
+// builds a FRESH registry via createRegistry() and populates its internals via
+// this module-scope WeakMap keyed by the fresh registry's public API object --
+// the only sanctioned way one registry closure reaches another's private pools.
+// Kept OFF the public object (not even a non-enumerable symbol, which
+// Object.getOwnPropertySymbols would still surface): a live registry exposes no
+// handle to its own rehydrate. Cold path only; never touched by any hot body.
+const REHYDRATE = new WeakMap();
 
 /**
  * Internal: a reactive node (signal, computed, or effect).
@@ -290,17 +309,335 @@ function editDistance(a, b) {
  * The closest known config key to `key` within edit distance 2 (case-folded so
  * `preAlloc`/`MAXNODES` resolve), or null when nothing is close. Cold path only.
  * @param {string} key
+ * @param {string[]} [keys=ALLOWED_KEYS] the known option names to match against
  * @returns {string|null}
  */
-function suggestKey(key) {
+function suggestKey(key, keys = ALLOWED_KEYS) {
     const lk = key.toLowerCase();
     let best = null;
     let bestD = 3;
-    for (let i = 0; i < ALLOWED_KEYS.length; i++) {
-        const d = editDistance(lk, ALLOWED_KEYS[i].toLowerCase());
-        if (d < bestD) { bestD = d; best = ALLOWED_KEYS[i]; }
+    for (let i = 0; i < keys.length; i++) {
+        const d = editDistance(lk, keys[i].toLowerCase());
+        if (d < bestD) { bestD = d; best = keys[i]; }
     }
     return bestD <= 2 ? best : null;
+}
+
+/** The only option keys restore() recognizes (A9 round 2, E2). Anything else is
+ *  rejected with the same did-you-mean hint as createRegistry's config law. */
+const RESTORE_KEYS = ["fnsById", "handles", "config"];
+const RESTORE_HAS_OWN = Object.prototype.hasOwnProperty;
+const RESTORE_K_SIGNAL = 1;
+const RESTORE_K_SIGNAL_BOX = 2;
+const RESTORE_K_COMPUTED = 3;
+const RESTORE_K_COMPUTED_BOX = 4;
+const RESTORE_K_EFFECT = 5;
+
+/** A restorable node id (also every dep id and ownerId): an int in
+ *  [1, 0x3FFFFFFF] (2^30 - 1). Snapshot ids start at 1, so 0, negatives,
+ *  floats, NaN, non-numbers and anything past the cap fail closed. The cap
+ *  (A9 round 3, maintainer ruling D-F) keeps every restored id a Smi on
+ *  pointer-compressed V8 (31-bit Smi: a closure counter >= 2^30 boxes on every
+ *  write), bounds the post-restore nodeSeq at 2^30, and makes the rebuild's
+ *  `nodeSeq = maxId + 1` int32 wrap unreachable from a restore. */
+function restoreIdOk(x) {
+    return typeof x === "number" && (x | 0) === x && x > 0 && x <= 0x3FFFFFFF;
+}
+
+/** Render a rejected snapshot field for a message without ever throwing
+ *  (String() of a null-prototype object throws). Cold. */
+function restoreShow(x) {
+    return (x !== null && (typeof x === "object" || typeof x === "function")) ? "(" + typeof x + ")" : String(x);
+}
+
+/**
+ * D-J (1.6.0): verify recorded positions form, per group, a permutation of
+ * 0..n-1, where n is the group's member count. Entry e (0 <= e < count) puts
+ * record rec[e] at position pos[e] in group group[e] (a record index). Shared
+ * by subPos (group = the dep's source; n = its subscriber count) and ownerPos
+ * (D-J6: group = the owner; n = its owned-child count). n entries,
+ * every one in range and none twice = a permutation, so a gap reports as out
+ * of range. Positions arrive validated as ints >= 0. Returns the prefix sums
+ * base (length groupCount + 1): group g's members occupy [base[g], base[g + 1]).
+ * Read-only, throws TypeError. Cold: one call per restore.
+ * @private
+ */
+function restorePermCheck(group, pos, rec, count, groupCount, ids, label, noun, plural) {
+    const base = new Int32Array(groupCount + 1);
+    for (let e = 0; e < count; e++) base[group[e] + 1]++;
+    for (let g = 0; g < groupCount; g++) base[g + 1] += base[g];
+    const filled = new Uint8Array(count);
+    for (let e = 0; e < count; e++) {
+        const g = group[e], p = pos[e], n = base[g + 1] - base[g];
+        if (p >= n) {
+            throw new TypeError("[lite-signal] restore: " + label + " " + p + " out of range at index " + rec[e] +
+                " (" + noun + " id " + ids[g] + " has " + n + " " + plural + ")");
+        }
+        const k = base[g] + p;
+        if (filled[k] !== 0) {
+            throw new TypeError("[lite-signal] restore: duplicate " + label + " " + p + " at index " + rec[e] + " (" + noun + " id " + ids[g] + ")");
+        }
+        filled[k] = 1;
+    }
+    return base;
+}
+
+/**
+ * A9 round 2 (+ round 3): the ONE read-only pre-scan restore() runs over
+ * snap.nodes before the first write (no createNode, no handle, no registry
+ * state). Throws on: a null / non-object record; an id, dep id or ownerId that
+ * is not an int in [1, 0x3FFFFFFF] (round 3 cap, D-F); a duplicate id; a
+ * non-int32 version; non-int32 flags (round 3; undefined / NaN / "x" no longer
+ * coerce to 0); an unknown kind; deps not an array; a missing or inherited
+ * compute body (own properties of fnsById only); a signal with deps; a signal
+ * with an owner (round 3: a signal is never owned); an effect used as a dep
+ * source; a dangling dep on ANY record (dirty computeds included, E9); a missing,
+ * self, signal-kind or cyclic owner; a dep cycle among clean computeds
+ * (iterative, O(N+E)); D-J: a subPos that is missing, not an array, not
+ * deps.length long, or holds a non-int / negative element (TypeError, checked
+ * after the record's dep ids), then, per source, subPos values that are not a
+ * permutation of 0..n-1 (TypeError: out of range / duplicate; after the dep
+ * resolve, before the owner scans); D-J6: an ownerPos that is missing or not an
+ * int >= -1 (TypeError, checked after the record's ownerId), then, after the
+ * owner scans (so a missing / self / signal / cyclic owner keeps its own
+ * error), an ownerPos that is not -1 on an unowned record or is -1 on an owned
+ * one, and per owner, ownerPos values that are not a permutation of 0..n-1
+ * (TypeError: out of range / duplicate). Every field the rebuild uses is copied
+ * here, read once, so a getter cannot change it between check and use.
+ * Cold: one call per restore, never on a hot path.
+ * @private
+ */
+function restorePrescan(nodes, fnsById) {
+    const count = nodes.length;
+    const ids = new Int32Array(count);
+    const kinds = new Uint8Array(count);
+    const vers = new Int32Array(count);
+    const clean = new Uint8Array(count);       // 1 = clean computed (wired, cache trusted)
+    const hasErr = new Uint8Array(count);
+    const seed = new Uint8Array(count);        // 1 = dirty, evaluated computed: seed value + version + error bit (D-I2)
+    const ownerIds = new Int32Array(count);    // 0 = no owner
+    const ownerIdx = new Int32Array(count);    // -1 = no owner
+    const values = new Array(count);
+    const fns = new Array(count);
+    const depIds = new Array(count);
+    const depIdx = new Array(count);
+    const subPos = new Array(count);           // D-J: Int32Array per record, parallel to depIds
+    let subE = 0;                              // total dep links = total subscriber slots
+    const ownPos = new Int32Array(count);      // D-J6: position in the owner's child list; -1 = no owner
+    let ownedN = 0;                            // owned records = total owned-child slots
+    const byId = new Map();                    // validated int id -> record index
+
+    // Scan A: per-record shape and int law.
+    for (let i = 0; i < count; i++) {
+        const rec = nodes[i];
+        if (rec === null || typeof rec !== "object") {
+            throw new TypeError("[lite-signal] restore: invalid record at index " + i);
+        }
+        const id = rec.id;
+        if (!restoreIdOk(id)) {
+            throw new TypeError("[lite-signal] restore: invalid id " + restoreShow(id) + " at index " + i);
+        }
+        if (byId.has(id)) throw new Error("[lite-signal] restore: duplicate id " + id);
+        byId.set(id, i);
+        ids[i] = id;
+        const k = rec.kind;
+        let kc = 0;
+        if (k === "signal") kc = RESTORE_K_SIGNAL;
+        else if (k === "signalBox") kc = RESTORE_K_SIGNAL_BOX;
+        else if (k === "computed") kc = RESTORE_K_COMPUTED;
+        else if (k === "computedBox") kc = RESTORE_K_COMPUTED_BOX;
+        else if (k === "effect") kc = RESTORE_K_EFFECT;
+        else throw new TypeError("[lite-signal] restore: unknown kind " + restoreShow(k) + " for id " + id);
+        kinds[i] = kc;
+        const v = rec.version;
+        if (typeof v !== "number" || (v | 0) !== v) {
+            throw new TypeError("[lite-signal] restore: invalid version " + restoreShow(v) + " at index " + i);
+        }
+        vers[i] = v;
+        const fl = rec.flags; if (typeof fl !== "number" || (fl | 0) !== fl) throw new TypeError("[lite-signal] restore: invalid flags " + restoreShow(fl) + " at index " + i);
+        const d = rec.deps;
+        if (!Array.isArray(d)) throw new TypeError("[lite-signal] restore: invalid deps at index " + i);
+        const dl = d.length;
+        if (dl !== 0 && kc <= RESTORE_K_SIGNAL_BOX) {
+            throw new Error("[lite-signal] restore: " + k + " id " + id + " has deps (a signal has no sources)");
+        }
+        const dc = new Int32Array(dl);
+        for (let j = 0; j < dl; j++) {
+            const x = d[j];
+            if (!restoreIdOk(x)) {
+                throw new TypeError("[lite-signal] restore: invalid dep id " + restoreShow(x) + " at index " + i);
+            }
+            dc[j] = x;
+        }
+        depIds[i] = dc;
+        // D-J: subPos[j] = dep link j's position in its source's subscriber list. Required on
+        // every record ([] for a signal); length and each element read ONCE into the copy the
+        // rebuild uses; checked after the dep ids so a bad dep id keeps its own error.
+        const sp = rec.subPos;
+        if (!Array.isArray(sp) || sp.length !== dl) throw new TypeError("[lite-signal] restore: invalid subPos at index " + i);
+        const pc = new Int32Array(dl);
+        for (let j = 0; j < dl; j++) {
+            const x = sp[j];
+            if (typeof x !== "number" || (x | 0) !== x || x < 0) {
+                throw new TypeError("[lite-signal] restore: invalid subPos " + restoreShow(x) + " at index " + i);
+            }
+            pc[j] = x;
+        }
+        subPos[i] = pc;
+        subE += dl;
+        const o = rec.ownerId;
+        if (o === null || o === undefined) {
+            ownerIds[i] = 0;
+        } else if (!restoreIdOk(o)) {
+            throw new TypeError("[lite-signal] restore: invalid ownerId " + restoreShow(o) + " at index " + i);
+        } else {
+            ownerIds[i] = o;
+            if (kc <= RESTORE_K_SIGNAL_BOX) throw new Error("[lite-signal] restore: " + k + " id " + id + " has an owner (a signal is never owned)");
+            ownedN++;
+        }
+        // D-J6: ownerPos = this record's position in its owner's child list, -1 = no owner (the
+        // ownerIdx encoding). Required on every record, read ONCE, after the ownerId checks; -1
+        // iff unowned and the per-owner permutation are checked after the owner scans (Scan C2).
+        const op = rec.ownerPos;
+        if (typeof op !== "number" || (op | 0) !== op || op < -1) {
+            throw new TypeError("[lite-signal] restore: invalid ownerPos " + restoreShow(op) + " at index " + i);
+        }
+        ownPos[i] = op;
+        if (kc >= RESTORE_K_COMPUTED) {
+            // Own properties only: an inherited "toString" (or any prototype key) is never a body.
+            const fn = (fnsById !== undefined && RESTORE_HAS_OWN.call(fnsById, id)) ? fnsById[id] : undefined;
+            if (typeof fn !== "function") {
+                throw new Error("[lite-signal] restore: missing fn for id " + id + " (" + k + ")");
+            }
+            fns[i] = fn;
+            if (kc !== RESTORE_K_EFFECT && rec.clean === true) {
+                clean[i] = 1;
+                if ((fl & FLAG_HAS_ERROR) !== 0) hasErr[i] = 1;
+            } else if (kc !== RESTORE_K_EFFECT && v !== 0) {
+                seed[i] = 1;   // D-I2: evaluated (version 0 = never): seed value + version + error bit
+                if ((fl & FLAG_HAS_ERROR) !== 0) hasErr[i] = 1;
+            }
+        }
+        values[i] = rec.value;
+    }
+
+    // Scan B: every dep and owner resolves; structural kinds. D-J: flatten (source, position, record) per link.
+    const sGroup = new Int32Array(subE), sPos = new Int32Array(subE), sRec = new Int32Array(subE);
+    let se = 0;
+    for (let i = 0; i < count; i++) {
+        const dc = depIds[i];
+        const dl = dc.length;
+        const di = new Int32Array(dl);
+        for (let j = 0; j < dl; j++) {
+            const s = byId.get(dc[j]);
+            if (s === undefined) {
+                throw new Error("[lite-signal] restore: dep id " + dc[j] + " missing for id " + ids[i]);
+            }
+            if (kinds[s] === RESTORE_K_EFFECT) {
+                throw new Error("[lite-signal] restore: dep id " + dc[j] + " of id " + ids[i] + " is an effect (an effect is never a source)");
+            }
+            di[j] = s;
+            sGroup[se] = s; sPos[se] = subPos[i][j]; sRec[se] = i; se++;
+        }
+        depIdx[i] = di;
+        const oid = ownerIds[i];
+        if (oid === 0) { ownerIdx[i] = -1; continue; }
+        const oi = byId.get(oid);
+        if (oi === undefined) {
+            throw new Error("[lite-signal] restore: owner id " + oid + " missing for id " + ids[i]);
+        }
+        if (oi === i) throw new Error("[lite-signal] restore: id " + ids[i] + " owns itself");
+        if (kinds[oi] <= RESTORE_K_SIGNAL_BOX) {
+            throw new Error("[lite-signal] restore: owner id " + oid + " of id " + ids[i] + " is a signal (only a computed or an effect owns)");
+        }
+        ownerIdx[i] = oi;
+    }
+
+    // Scan B2 (D-J): per source, the recorded subscriber positions are a permutation 0..n-1.
+    const subBase = restorePermCheck(sGroup, sPos, sRec, subE, count, ids, "subPos", "source", "subscribers");
+
+    // Scan C: owner chains are acyclic. 1 = on the current walk, 2 = proven to reach a root. O(N), bounded by count.
+    const mark = new Uint8Array(count);
+    for (let i = 0; i < count; i++) {
+        if (mark[i] !== 0) continue;
+        let j = i, steps = 0;
+        while (j !== -1 && mark[j] === 0) {
+            mark[j] = 1;
+            j = ownerIdx[j];
+            if (++steps > count) throw new Error("[lite-signal] restore: owner chain from id " + ids[i] + " exceeds the snapshot");
+        }
+        if (j !== -1 && mark[j] === 1) throw new Error("[lite-signal] restore: owner cycle through id " + ids[j]);
+        j = i;
+        while (j !== -1 && mark[j] === 1) { mark[j] = 2; j = ownerIdx[j]; }
+    }
+
+    // Scan C2 (D-J6): ownerPos is -1 iff the record has no owner; per owner, the recorded
+    // positions are a permutation 0..n-1. ownOrder lists each owner's children in list order.
+    const oGroup = new Int32Array(ownedN), oPos = new Int32Array(ownedN), oRec = new Int32Array(ownedN);
+    let oe = 0;
+    for (let i = 0; i < count; i++) {
+        const oi = ownerIdx[i], p = ownPos[i];
+        if (oi === -1) {
+            if (p !== -1) throw new TypeError("[lite-signal] restore: invalid ownerPos " + p + " at index " + i + " (no owner: expected -1)");
+            continue;
+        }
+        if (p === -1) throw new TypeError("[lite-signal] restore: invalid ownerPos -1 at index " + i + " (owned by id " + ids[oi] + ")");
+        oGroup[oe] = oi; oPos[oe] = p; oRec[oe] = i; oe++;
+    }
+    const ownBase = restorePermCheck(oGroup, oPos, oRec, ownedN, count, ids, "ownerPos", "owner", "owned children");
+    const ownOrder = new Int32Array(ownedN);
+    for (let e = 0; e < ownedN; e++) ownOrder[ownBase[oGroup[e]] + oPos[e]] = oRec[e];
+
+    // Scan D: the dep graph among clean computeds (the edges a pull pre-walks) is acyclic.
+    // Iterative 3-colour DFS, explicit stacks, O(N+E); a cycle throws here, never later on a read.
+    // A wired dirty computed is skipped (D-G): it is uncomputed, so a pull runs its body instead
+    // of walking its links, and a cycle its body closes throws CycleError there, as live does.
+    const colour = new Uint8Array(count);
+    const stackN = new Int32Array(count);
+    const stackE = new Int32Array(count);
+    for (let r = 0; r < count; r++) {
+        if (clean[r] === 0 || colour[r] !== 0) continue;
+        let sp = 0;
+        stackN[0] = r; stackE[0] = 0; colour[r] = 1;
+        while (sp >= 0) {
+            const n = stackN[sp];
+            const di = depIdx[n];
+            const e = stackE[sp];
+            if (e < di.length) {
+                stackE[sp] = e + 1;
+                const s = di[e];
+                if (clean[s] === 0) continue;
+                if (colour[s] === 1) throw new Error("[lite-signal] restore: dep cycle through id " + ids[s]);
+                if (colour[s] === 0) { colour[s] = 1; sp++; stackN[sp] = s; stackE[sp] = 0; }
+            } else {
+                colour[n] = 2;
+                sp--;
+            }
+        }
+    }
+
+    return { count, ids, kinds, vers, clean, hasErr, seed, ownerIdx, values, fns, depIdx, subPos, subBase, subE, ownBase, ownOrder };
+}
+
+/**
+ * D-I / D-I2: the first-run body of a restored DIRTY computed whose value +
+ * version (+ error bit) were seeded from the snapshot. It restores the real
+ * body, runs it, then lifts evalVersion off 0 so pullComputed compares the new
+ * value with the seeded one through node.equals, with the default equals
+ * (Object.is: a custom equals is not captured) -- exactly as a live node with
+ * the default equals would -- instead of treating a first run as a change.
+ * A seeded error bit is kept or cleared by pullComputed's own logic. Cold: one call per seeded node, ever;
+ * pullComputed itself is unchanged.
+ * @private
+ */
+function restoreSeededBody(node, fn) {
+    const gen = node.gen;
+    return function seededFirstRun() {
+        node.computeFn = fn;
+        const v = fn.call(this);
+        if (node.gen === gen && node.evalVersion === 0) node.evalVersion = node.version;   // seeded version != 0
+        return v;
+    };
 }
 
 /**
@@ -524,11 +861,19 @@ export function createRegistry(config) {
     // recompute profiler. Opcodes: 1 node-create, 2 node-dispose, 3 link-add,
     // 4 link-remove, 5 recompute.
     let mutationHook = null;
+    // D-B2 (1.6.0): listeners currently running. Only the wrapper below touches it, so it
+    // exists only while a listener is registered; snapshot() refuses while it is > 0. Smi
+    // (bounded by the JS stack). Fire points are unchanged: they call the wrapper.
+    let hookDepth = 0;
     function onGraphMutation(fn) {
         if (fn !== null && typeof fn !== "function") throw new TypeError("onGraphMutation: listener must be a function or null");
         const prev = mutationHook;
-        mutationHook = fn;
-        return () => { if (mutationHook === fn) mutationHook = prev; };
+        const w = fn === null ? null : (op, a, b) => {
+            hookDepth++;
+            try { fn(op, a, b); } finally { hookDepth--; }
+        };
+        mutationHook = w;
+        return () => { if (mutationHook === w) mutationHook = prev; };
     }
 
     function allocateLink(source, target) {
@@ -1800,7 +2145,7 @@ export function createRegistry(config) {
      */
     function signalBox(initial, opts) {
         const equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
-        const node = createNode(initial, FLAG_SIGNAL);
+        const node = createNode(initial, FLAG_SIGNAL_BOX);
         node.equals = equals;
         node.version = globalVersion;
         statSignals++;
@@ -1825,7 +2170,7 @@ export function createRegistry(config) {
      */
     function computedBox(fn, opts) {
         const equals = (opts !== undefined && opts.equals !== undefined) ? opts.equals : OBJECT_IS;
-        const node = createNode(undefined, FLAG_COMPUTED);
+        const node = createNode(undefined, FLAG_COMPUTED_BOX);
         node.computeFn = fn;
         node.equals = equals;
         statComputeds++;
@@ -1905,7 +2250,7 @@ export function createRegistry(config) {
             disposed = true;
             if (node.gen !== birthGen) return;
             if (node.flags !== 0) {
-                disposeNode(node);
+                disposeGuarded(node);
             }
         };
 
@@ -1934,8 +2279,18 @@ export function createRegistry(config) {
         }
         if (api[NODE_GEN] !== node.gen) return;
         if (node.flags !== 0) {
-            disposeNode(node);
+            disposeGuarded(node);
         }
+    }
+
+    // D-B2 (1.6.0): public dispose entries in progress (dispose(api), the effect / restored-effect
+    // handles, effect()'s first-run-throw tail). The cleanups and op-2 / op-4 listeners a dispose
+    // runs see disposeDepth > 0, so snapshot() refuses inside them. Smi (bounded by the JS stack).
+    // Cold: never inside the pinned disposeNode body.
+    let disposeDepth = 0;
+    function disposeGuarded(node) {
+        disposeDepth++;
+        try { disposeNode(node); } finally { disposeDepth--; }
     }
 
     /**
@@ -2287,7 +2642,422 @@ export function createRegistry(config) {
         while (l !== null) { const nx = l.nextDep; fn(describeNode(l.source)); l = nx; }
     }
 
-    return {getOwner, runWithOwner, signal, computed, effect, signalBox, computedBox, dispose, batch, untrack, createRoot, onCleanup, stats, destroy, isTracking, hasObservers, observeObservers, forEachObserver, forEachSource, forEachOwned, ownerOf, nodeId, describe, onGraphMutation};
+    // === SNAPSHOT / RESTORE (1.6.0) -- COLD, in-process time-travel ==========
+    // Two new cold functions and one private rehydration hook. NONE of them
+    // touch markDownstream / pullComputed / executeEffect / flushEffects or the
+    // read/write fast paths: snapshot is a one-time walk of the live pool,
+    // restore builds a fresh graph out of the engine's existing cold primitives
+    // (signal/computed/computedBox/signalBox constructors + allocateLink +
+    // createNode). Values move BY REFERENCE (in-process; no structuredClone).
+
+    /** kind string for a live node, distinguishing box vs callable form. */
+    function snapshotKind(n) {
+        const f = n.flags;
+        if ((f & FLAG_EFFECT) !== 0) return "effect";
+        const isBox = (f & FLAG_BOX) !== 0;
+        if ((f & FLAG_COMPUTED) !== 0) return isBox ? "computedBox" : "computed";
+        return isBox ? "signalBox" : "signal";
+    }
+
+    /**
+     * Serialize the live graph to a plain object. A cold one-time walk of the
+     * node pool. Node identity is the existing monotonic `node.id`; deps and
+     * ownerId are recorded as ids. Functions (computeFn / equals / schedulers)
+     * are NOT captured -- restore re-supplies bodies only, via `fnsById`; equals and schedulers are lost. Values are
+     * captured by reference. D-J: subPos[j] is dep link j's position in its source's subscriber
+     * list (restore places each link there, so each source's subscriber order round-trips).
+     * D-J6: ownerPos is the record's position in its owner's child list (0 = the newest child,
+     * the head forEachOwned visits first), or -1 when ownerId is null; restore places each child
+     * there, so each owner's child order (the cascade-dispose visit order) round-trips; cleanup callbacks are not captured.
+     * @returns {{v:1, nodes: Array<{id:number,kind:string,flags:number,value:*,version:number,clean:boolean,ownerId:(number|null),ownerPos:number,deps:number[],subPos:number[]}>}}
+     */
+    function snapshot() {
+        // Fail closed on an unsettled graph. A snapshot taken mid-flush or
+        // mid-batch would enshrine a torn cut -- half-propagated versions, deps
+        // captured before severTail, values not yet committed. A snapshot taken
+        // from inside a compute body (currentObserver !== null) would capture a FLAG_COMPUTING
+        // node mid-track with a torn dep list. Snapshot only a quiescent graph so
+        // every captured cache-validity bit is truthful.
+        if (isFlushing || batchDepth > 0 || currentObserver !== null) {
+            throw new Error("[lite-signal] snapshot: graph not settled (flush/batch/track in progress)");
+        }
+        // D-B2 (1.6.0): a dispose or an onGraphMutation listener in progress leaves the graph torn
+        // (a dying node still linked, a half-built node, cut deps) while no body runs.
+        if (disposeDepth > 0) throw new Error("[lite-signal] snapshot: graph not settled (dispose in progress)");
+        if (hookDepth > 0) throw new Error("[lite-signal] snapshot: graph not settled (onGraphMutation listener running)");
+        const out = [];
+        const poolLen = nodePool.length;
+        // D-J: index every live node's subscriber list first (a dep's source may sit later in
+        // the pool), so each dep link records its position there. Cold: one Map per snapshot.
+        const subIdx = new Map();
+        const ownIdx = new Map();   // D-J6: owned node -> its position in its owner's child list
+        for (let i = 0; i < poolLen; i++) {
+            const n = nodePool[i];
+            if (n.flags === 0) continue;
+            let k = 0;
+            for (let l = n.headSub; l !== null; l = l.nextSub) subIdx.set(l, k++);
+            k = 0;
+            for (let c = n.firstOwned; c !== null; c = c.nextOwned) ownIdx.set(c, k++);   // D-J6
+        }
+        let linkTotal = 0, ownedTotal = 0;
+        for (let i = 0; i < poolLen; i++) {
+            const n = nodePool[i];
+            if (n.flags === 0) continue;   // free / never-used slot
+            // D-B (1.6.0): a body running under untrack() / createRoot() / runWithOwner() leaves
+            // currentObserver null, so the guard above misses it -- but its node still carries
+            // FLAG_COMPUTING. Fail closed on ANY running body (cold: one AND per live node).
+            if ((n.flags & FLAG_COMPUTING) !== 0) {
+                throw new Error("[lite-signal] snapshot: graph not settled (flush/batch/track in progress)");
+            }
+            // D-D2 (1.6.0): a pending scheduled run would be lost (restore carries no scheduler).
+            // QUEUED outside a flush/batch = a scheduled re-run handed to its scheduler, not yet run
+            // (executeEffect clears it). An effect with evalVersion 0 has never finished a run:
+            // effect() handed its first run to the scheduler without QUEUED. executeEffect stamps
+            // evalVersion (never 0: globalVersion skips 0) on every completed run, so no new write.
+            if ((n.flags & FLAG_QUEUED) !== 0 || ((n.flags & FLAG_EFFECT) !== 0 && n.evalVersion === 0)) {
+                throw new Error("[lite-signal] snapshot: graph not settled (scheduled effect run pending)");
+            }
+            const deps = [];
+            const subPos = [];
+            let l = n.headDep;
+            while (l !== null) {
+                const src = l.source;
+                if (src !== null) {
+                    const p = subIdx.get(l);
+                    if (p === undefined) throw new Error("[lite-signal] snapshot: graph not settled (torn subscriber list)");
+                    deps.push(src.id);
+                    subPos.push(p);
+                }
+                l = l.nextDep;
+            }
+            linkTotal += deps.length;
+            let ownerPos = -1;
+            if (n.owner !== null) {
+                const q = ownIdx.get(n);
+                if (q === undefined) throw new Error("[lite-signal] snapshot: graph not settled (torn owner list)");
+                ownerPos = q; ownedTotal++;
+            }
+            // Per-computed cache validity, read from the SAME freshness fields the
+            // hot path trusts (pullComputed's clean short-circuit): a cache is
+            // valid iff the node was actually evaluated (evalVersion !== 0) AND no
+            // mark has landed in its cone since that eval (markEpoch <= evalVersion).
+            // A never-read computed (evalVersion 0, deps []) and a dirty one
+            // (markEpoch > evalVersion) both report clean:false so restore rebuilds
+            // them UNCOMPUTED rather than enshrining an undefined/stale cache.
+            // Signals have no cache; the bit is meaningless for them (and false).
+            const clean = (n.evalVersion !== 0) && (((n.markEpoch - n.evalVersion) | 0) <= 0);
+            out.push({
+                id: n.id | 0,
+                kind: snapshotKind(n),
+                flags: n.flags | 0,
+                value: n.value,
+                version: n.version | 0,
+                clean: clean,
+                ownerId: n.owner !== null ? (n.owner.id | 0) : null,
+                ownerPos,
+                deps,
+                subPos
+            });
+        }
+        // D-J: every subscriber link is some live node's dep link, and vice versa.
+        if (linkTotal !== subIdx.size) throw new Error("[lite-signal] snapshot: graph not settled (torn subscriber list)");
+        // D-J6: every child in a live owner's list is a live owned record, and vice versa.
+        if (ownedTotal !== ownIdx.size) throw new Error("[lite-signal] snapshot: graph not settled (torn owner list)");
+        return {v: 1, nodes: out};
+    }
+
+    /**
+     * Populate THIS (assumed-fresh) registry from a snapshot. Private hook,
+     * reached only via {@link restore} through the module-scope REHYDRATE WeakMap.
+     * @private
+     */
+    function rehydrate(snap, fnsById, handlesOut) {
+        if (snap === null || typeof snap !== "object") {
+            throw new TypeError("[lite-signal] restore: invalid snapshot (expected { v: 1, nodes: [...] })");
+        }
+        const nodes = snap.nodes;
+        if (snap.v !== 1 || !Array.isArray(nodes)) {
+            throw new TypeError("[lite-signal] restore: invalid snapshot (expected { v: 1, nodes: [...] })");
+        }
+        // A9 round 2: ONE read-only pre-scan validates every record (E1 int law, E2 own-property
+        // bodies, E4 structure, E9 dangling deps) BEFORE the first write below. Nothing past this
+        // line reads the snapshot again: the rebuild uses only the validated, copied plan.
+        const P = restorePrescan(nodes, fnsById);
+        const count = P.count;
+        const ids = P.ids, kinds = P.kinds, vers = P.vers, values = P.values;
+
+        // Fresh clock: park globalVersion at (>=) the max restored version so a
+        // node marked current at globalVersion never reads a dep as "newer" than
+        // its own eval. A later set() bumps past this and propagates, but the lift also erases an effect's live staleness after an absorbed self-write (F-b99-1, fix planned).
+        let maxV = 1, maxId = 0;
+        for (let i = 0; i < count; i++) {
+            if (vers[i] > maxV) maxV = vers[i];
+            if (ids[i] > maxId) maxId = ids[i];
+        }
+        globalVersion = maxV | 0;
+
+        const built = new Array(count);
+        // E3: handles are collected here and copied into handlesOut only after
+        // every pass succeeded -- a throw (e.g. CapacityError mid-build) leaves
+        // the caller's object untouched, never holding handles into an abandoned registry.
+        const handles = new Array(count);
+
+        // Pass 1: build every node (no compute body is executed here).
+        for (let i = 0; i < count; i++) {
+            const kc = kinds[i];
+            let node, handle;
+
+            if (kc === RESTORE_K_SIGNAL || kc === RESTORE_K_SIGNAL_BOX) {
+                handle = (kc === RESTORE_K_SIGNAL_BOX) ? signalBox(values[i]) : signal(values[i]);
+                node = handle[NODE_PTR];
+                node.value = values[i];            // by reference
+                node.version = vers[i];
+            } else if (kc !== RESTORE_K_EFFECT) {
+                const fn = P.fns[i];
+                // computed/computedBox are LAZY -- construction does not run fn.
+                handle = (kc === RESTORE_K_COMPUTED_BOX) ? computedBox(fn) : computed(fn);
+                node = handle[NODE_PTR];
+                if (P.clean[i] === 1) {
+                    // Snapshot proved this cache CLEAN and evaluated: trust the
+                    // captured value, rebuild deps (pass 2), and mark current so
+                    // the first read is a cache hit. Its deps may still include
+                    // a dirty computed (a self-write, or a dep that threw in the
+                    // pre-walk): pass 2 wires that edge too (D-G).
+                    node.value = values[i];            // by reference
+                    node.version = vers[i];
+                    node.evalVersion = globalVersion | 0;   // mark current: a read is a cache hit
+                    node.markEpoch = globalVersion | 0;
+                    if (P.hasErr[i] === 1) node.flags |= FLAG_HAS_ERROR;
+                }
+                else if (P.seed[i] === 1) {
+                    // DIRTY and evaluated (D-I / D-I2): stay UNCOMPUTED (evalVersion 0,
+                    // the first read runs the body), but copy the recorded value
+                    // + version + error bit, so that first run starts from the
+                    // live state and pullComputed decides what propagates.
+                    node.value = values[i];            // by reference
+                    node.version = vers[i];
+                    if (P.hasErr[i] === 1) node.flags |= FLAG_HAS_ERROR;
+                    node.computeFn = restoreSeededBody(node, fn);
+                }
+                // else: only a never-evaluated (version 0) computed is not seeded.
+                // Pass 2 still wires recorded deps (D-G); the first read runs
+                // the body, which re-tracks deps and caches correctly.
+            } else {
+                const fn = P.fns[i];
+                // Build the effect node WITHOUT running its body (user decision:
+                // restore state, do not re-fire). Marked current as if it had
+                // just run; it fires only on the next dependency change.
+                node = createNode(undefined, FLAG_EFFECT);
+                node.computeFn = fn;
+                node.evalVersion = globalVersion | 0;
+                node.markEpoch = globalVersion | 0;
+                statEffects++;
+                const birthGen = node.gen;
+                let disposed = false;
+                const disposeFn = function dispose() {
+                    if (disposed) return;
+                    disposed = true;
+                    if (node.gen !== birthGen) return;
+                    if (node.flags !== 0) disposeGuarded(node);
+                };
+                disposeFn[NODE_PTR] = node;
+                disposeFn[NODE_GEN] = birthGen;
+                handle = disposeFn;
+            }
+
+            node.id = ids[i];   // preserve stable ids so re-snapshot round-trips (validated unique by the pre-scan)
+            built[i] = node;
+            handles[i] = handle;
+        }
+        nodeSeq = (maxId + 1) | 0;   // continue past restored ids
+
+        // Pass 2: rebuild dep edges (every dep resolved by the pre-scan).
+        // A computed built UNCOMPUTED (never-evaluated or dirty) with recorded
+        // deps is still wired (D-G), so a set() on those deps reaches whatever
+        // reads it; its first read runs the body and the cursor re-tracks or
+        // severs the wired links (no double-link). No recorded deps: skip.
+        // D-J: every link is recorded in slots at its source's base + subPos, and pass 2b
+        // re-chains each source's subscriber list in that order (placed, not appended).
+        // src.tailSub = null before each allocateLink defeats its same-pass dedup
+        // (source.tailSub.target === target), so a node that read one source twice
+        // (deps [s, C, s]) gets both links back. The source's list is left torn (headSub
+        // overwritten, prevSub null) until pass 2b rebuilds every list with links.
+        // Nothing reads a subscriber list in between: a fresh registry has no lifecycle
+        // listener, no onGraphMutation hook and no running observer.
+        const subBase = P.subBase;
+        const slots = new Array(P.subE);
+        const links0 = activeLinks;
+        for (let i = 0; i < count; i++) {
+            const kc = kinds[i];
+            if ((kc === RESTORE_K_COMPUTED || kc === RESTORE_K_COMPUTED_BOX) && P.clean[i] === 0 && P.depIdx[i].length === 0) continue;
+            const node = built[i];
+            const di = P.depIdx[i];
+            const sp = P.subPos[i];
+            for (let j = 0; j < di.length; j++) {
+                const src = built[di[j]];
+                src.tailSub = null;                 // defeat the same-pass dedup (see above)
+                allocateLink(src, node);            // appends to node.tailDep
+                slots[subBase[di[j]] + sp[j]] = node.tailDep;
+            }
+        }
+        // Fail closed if any recorded link was not allocated (a dedup return would leave one
+        // link in two slots and pass 2b would chain a cyclic list). Cold: one compare.
+        if (((activeLinks - links0) | 0) !== P.subE) throw new Error("[lite-signal] restore: link rebuild mismatch (" + ((activeLinks - links0) | 0) + " of " + P.subE + ")");
+        // Pass 2b (D-J): chain each source's subscriber list in recorded order (Scan B2
+        // proved the positions a permutation, so every slot holds exactly one link).
+        for (let s = 0; s < count; s++) {
+            const b = subBase[s], e = subBase[s + 1];
+            if (b === e) continue;
+            const src = built[s];
+            let prev = null;
+            for (let k = b; k < e; k++) {
+                const l = slots[k];
+                l.prevSub = prev;
+                l.nextSub = null;
+                if (prev === null) src.headSub = l; else prev.nextSub = l;
+                prev = l;
+            }
+            src.tailSub = prev;
+        }
+
+        // Pass 3: rebuild the owner tree (owners resolved and proven acyclic by the pre-scan).
+        // D-J6: each owner's children are chained in recorded ownerPos order (Scan C2 proved the
+        // positions a permutation per owner), so each owner's child order round-trips.
+        const ownBase = P.ownBase, ownOrder = P.ownOrder;
+        for (let o = 0; o < count; o++) {
+            const b = ownBase[o], e = ownBase[o + 1];
+            if (b === e) continue;
+            const owner = built[o];
+            let prev = null;
+            for (let k = b; k < e; k++) {
+                const node = built[ownOrder[k]];
+                node.owner = owner;
+                node.prevOwned = prev;
+                node.nextOwned = null;
+                if (prev === null) owner.firstOwned = node; else prev.nextOwned = node;
+                prev = node;
+            }
+        }
+
+        if (handlesOut !== undefined) {
+            for (let i = 0; i < count; i++) handlesOut[ids[i]] = handles[i];
+        }
+    }
+
+    /**
+     * Rebuild a FRESH registry from a snapshot. Computeds/effects are re-supplied
+     * their compute body from `opts.fnsById` (keyed by the snapshot node id);
+     * a missing fn for any computed/effect FAILS CLOSED. If `opts.handles` is
+     * provided it is filled with `{ [id]: handle }` for every restored node --
+     * the natural way to wire `fnsById` bodies to the rebuilt graph (they close
+     * over the same object and are only invoked after restore populates it).
+     * Effects are restored but NOT re-fired. Values are restored by reference.
+     * @param {object} snap  A {@link snapshot} result.
+     * @param {{fnsById?:Object<number,Function>, handles?:Object<number,*>, config?:Object}} [opts]
+     * @returns {Registry} a fresh registry.
+     */
+    function restore(snap, opts) {
+        let fnsById, handlesOut, override;
+        if (opts !== undefined) {
+            // E2 (A9 round 2): a PLAIN object only -- no array, no prototype keys,
+            // no Symbol keys; an unknown key is an error with a did-you-mean hint.
+            if (opts === null || typeof opts !== "object" || Array.isArray(opts)) {
+                throw new TypeError("[lite-signal] restore: options must be a plain object");
+            }
+            const proto = Object.getPrototypeOf(opts);
+            if (proto !== Object.prototype && proto !== null) {
+                throw new TypeError("[lite-signal] restore: options must be a plain object (inherited keys are never read)");
+            }
+            if (Object.getOwnPropertySymbols(opts).length !== 0) {
+                throw new TypeError("[lite-signal] restore: options must not carry Symbol keys");
+            }
+            const okeys = Object.getOwnPropertyNames(opts);
+            for (let ki = 0; ki < okeys.length; ki++) {
+                const ok = okeys[ki];
+                if (RESTORE_KEYS.indexOf(ok) === -1) {
+                    const hint = suggestKey(ok, RESTORE_KEYS);
+                    throw new TypeError(
+                        '[lite-signal] restore: "' + ok + '" is not a recognized option' +
+                        (hint !== null ? ' (did you mean "' + hint + '"?)' : '') +
+                        '. Allowed: ' + RESTORE_KEYS.join(", ") + '.'
+                    );
+                }
+            }
+            fnsById = RESTORE_HAS_OWN.call(opts, "fnsById") ? opts.fnsById : undefined;
+            handlesOut = RESTORE_HAS_OWN.call(opts, "handles") ? opts.handles : undefined;
+            override = RESTORE_HAS_OWN.call(opts, "config") ? opts.config : undefined;
+            if (fnsById !== undefined && (fnsById === null || typeof fnsById !== "object")) {
+                throw new TypeError("[lite-signal] restore: fnsById must be an object");
+            }
+            if (handlesOut !== undefined && (handlesOut === null || typeof handlesOut !== "object")) {
+                throw new TypeError("[lite-signal] restore: handles must be an object");
+            }
+        }
+        if (override !== undefined && (override === null || typeof override !== "object")) {
+            throw new TypeError("[lite-signal] restore: config must be an object");
+        }
+        // Size the fresh registry to the snapshot so a > default-maxNodes (1024)
+        // graph does not hit CapacityError partway through the rebuild. Count the
+        // nodes and their total dep edges, add headroom, and let an explicit
+        // opts.config win. A malformed snap sizes to the default and REHYDRATE's
+        // validator throws the precise shape error.
+        let config = override;
+        if (config === undefined && snap !== null && typeof snap === "object" && Array.isArray(snap.nodes)) {
+            const nodes = snap.nodes;
+            const nodeCount = nodes.length;
+            let linkCount = 0;
+            for (let i = 0; i < nodeCount; i++) {
+                const d = nodes[i] && nodes[i].deps;
+                if (Array.isArray(d)) linkCount += d.length;
+            }
+            const maxNodes = (nodeCount + (nodeCount >> 1) + 16) | 0;   // 1.5x + 16 headroom
+            const nodeCap = maxNodes > 1024 ? maxNodes : 1024;
+            // D-C (1.6.0): links get max(1.5L + 16, 4 x maxNodes) -- the createRegistry default ratio as a
+            // floor, so the restored registry keeps the link headroom a default-sized one has. The source
+            // registry's prealloc / onCapacityExceeded / maxFlushPasses are NOT carried: pass opts.config.
+            const maxLinks = (linkCount + (linkCount >> 1) + 16) | 0;
+            const linkFloor = nodeCap * 4;
+            config = {maxNodes: nodeCap, maxLinks: maxLinks > linkFloor ? maxLinks : linkFloor};
+        }
+        const fresh = createRegistry(config);
+        REHYDRATE.get(fresh)(snap, fnsById, handlesOut);
+        return fresh;
+    }
+
+    const api = {
+        getOwner,
+        runWithOwner,
+        signal,
+        computed,
+        effect,
+        signalBox,
+        computedBox,
+        dispose,
+        batch,
+        untrack,
+        createRoot,
+        onCleanup,
+        stats,
+        destroy,
+        isTracking,
+        hasObservers,
+        observeObservers,
+        forEachObserver,
+        forEachSource,
+        forEachOwned,
+        ownerOf,
+        nodeId,
+        describe,
+        onGraphMutation,
+        snapshot,
+        restore
+    };
+    // Private rehydration hook: reachable by restore() via REHYDRATE.get(fresh)
+    // but held OFF the public object in a module-scope WeakMap, so a live
+    // registry exposes no handle to its own rehydrate (invisible to
+    // Object.getOwnPropertySymbols; calling it could corrupt the registry).
+    REHYDRATE.set(api, rehydrate);
+    return api;
 }
 
 // -----------------------------------------------------------------
@@ -2404,6 +3174,23 @@ export function nodeId(handle) {
 }
 export function describe(handle) {
     return defaultRegistry.describe(handle);
+}
+
+/**
+ * Serialize the default registry's live graph to a plain object (1.6.0).
+ * See {@link Registry.snapshot}.
+ */
+export function snapshot() {
+    return defaultRegistry.snapshot();
+}
+
+/**
+ * Rebuild a fresh registry from a snapshot (1.6.0). Delegates to the default
+ * registry but returns an independent, freshly-built registry. See
+ * {@link Registry.restore}.
+ */
+export function restore(snap, opts) {
+    return defaultRegistry.restore(snap, opts);
 }
 
 export {watch, when, whenAsync} from "./Watch.js";

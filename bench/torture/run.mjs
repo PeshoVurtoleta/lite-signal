@@ -63,6 +63,7 @@ const SCENARIOS = [
     { name: "concurrent-storm", group: "semantic", file: "concurrent-storm.mjs", floor: "1.4.0", about: "reentrancy, nesting, flush ordering" },
     { name: "scheduler-storm", group: "semantic", file: "scheduler-storm.mjs", floor: "1.4.0", about: "deferred execution, ABA thunks, coalescing" },
     { name: "box-torture", group: "semantic", file: "box-torture.mjs", floor: "1.5.0", about: "signalBox/computedBox interop + surface (1.5.0+)" },
+    { name: "snapshot-torture", group: "semantic", file: "snapshot-torture.mjs", floor: "1.6.0", about: "snapshot/restore clean-bit fuzz + fail-closed + D-A..D-D + retention (1.6.0+)" },
     { name: "scope-torture", group: "semantic", file: "scope-torture.mjs", floor: "1.7.0", about: "createScope adoption + disposal-crash fuzz (1.7.0+)" },
     { name: "retrack-dispose-torture", group: "semantic", file: "retrack-dispose-torture.mjs", floor: "1.4.0", about: "dispose-during-retracking cursor hazard + seeded disposal fuzz" },
     { name: "owner-torture", group: "semantic", file: "owner-torture.mjs", floor: "1.5.0", about: "getOwner/runWithOwner capture-restore + ABA degradation" },

@@ -476,6 +476,8 @@ A registry-level (and top-level) debug hook for push-based tooling -- the connec
 - **Allocation-free when registered** -- three integers, no objects, no closures. Worst-case measured cost on a dynamic-retracking torture loop (11.4M events over 400K writes) is +29% -- a debug-mode tax proportional to event volume, paid only while a consumer is attached.
 - **LIFO stacking** -- `onGraphMutation(a); onGraphMutation(b); unsubB()` restores `a`. Used by lite-devtools 1.1 to multiplex multiple consumers behind one engine registration.
 
+**Flag values (1.6.0):** op 1 and op 2 carry the node's flags. Callable `signal` / `computed` / `effect` report 32 / 1 / 2; `signalBox` and `computedBox` nodes also carry the box bit (128) and report 160 / 129. Op 2 can additionally carry bit 6 (64, the internal stale-read mark) when a node a write flagged mid-run is disposed before that flag clears; op 1 never does.
+
 **Listener contract: observe only -- never throw, never mutate the graph from inside.** The hook fires synchronously inside mutation points; mutating from the callback corrupts the in-flight operation. Wrap any downstream work that could touch the registry in a microtask.
 
 ### onCleanup
@@ -524,6 +526,38 @@ r.destroy();                     // reset all pools, invalidate generations
 `createRegistry` is the unit of isolation. Two registries share no state -- useful for multi-tenant code, plugin sandboxes, and tests that need a fresh world.
 
 `setDefaultRegistry(r)` swaps the registry used by top-level helpers. Use sparingly; intended for test setup.
+
+### snapshot / restore (1.6.0)
+
+```ts
+snapshot(): Snapshot;                                          // top-level (default registry) and r.snapshot()
+restore(snap: Snapshot, opts?: RestoreOptions): Registry;      // top-level and r.restore(); returns a FRESH registry
+// RestoreOptions: { fnsById?: { [id]: fn }, handles?: { [id]: handle }, config?: RegistryConfig }
+
+const r = createRegistry();
+const a = r.signal(5);                                         // id 1
+const c = r.computed(() => a() * 2);                           // id 2
+r.effect(() => { console.log(c()); });                         // id 3 (logs 10)
+const snap = r.snapshot();                                     // { v: 1, nodes: [{ id, kind, flags, value, version, clean, ownerId, ownerPos, deps, subPos }] }
+const handles = {};
+const fnsById = {
+  2: () => handles[1]() * 2,                                   // computed id 2 reads signal id 1
+  3: () => { console.log(handles[2]()); }                      // effect id 3
+};
+const r2 = restore(snap, { fnsById, handles });                // no body runs; handles[1..3] filled
+handles[1].set(7);                                             // the restored effect logs 14
+```
+
+`snapshot()` walks the live node pool once (cold path) and returns a plain, in-process object; values are held by reference (no structured clone). `restore()` builds a fresh registry from it and returns that registry; the source registry is untouched.
+
+- **What restore does.** It rebuilds nodes and links without running any body, keeps the snapshot ids (a re-snapshot round-trips), and does NOT re-fire effects -- an effect runs only on its next dependency change. A dirty computed restores uncomputed, wired to its recorded deps, and seeded with its recorded value, version and error bit: its body runs on the first read, and a result equal to the recorded value (under Object.is -- a custom `equals` is not captured, so a computed built with one may propagate after restore where the live graph would not) does not propagate. A never-evaluated computed is not seeded. A clean one restores with its cached value and deps.
+- **Fail-closed on capture.** `snapshot()` throws `[lite-signal] snapshot: graph not settled (<reason>)`: `(flush/batch/track in progress)` inside a flush, inside a batch, or while any body is running -- including a body under `untrack`, `createRoot` or `runWithOwner`; `(dispose in progress)` inside an `onCleanup` during a dispose or its owner cascade (a handle's dispose, `dispose()`, or `effect()`'s first-run-throw dispose -- `destroy()` runs no cleanups); `(onGraphMutation listener running)` inside an `onGraphMutation` listener; `(scheduled effect run pending)` while any effect has a scheduled run pending (queued, or its first scheduled run not yet executed), so no pending run can be silently lost. A scheduler that never runs its thunk keeps `snapshot()` refusing until that effect is disposed.
+- **Fail-closed on restore.** A malformed snapshot (`TypeError`), a computed or effect with no `fnsById[id]` entry, a duplicate id, a dangling dep id (on any record, dirty and never-read computeds included), a dangling owner id, or a non-object `opts` / `config` all throw instead of returning a partial registry.
+- **Input law.** `restore()` validates the whole snapshot before building anything: ids must be positive integers <= 0x3FFFFFFF (2^30 - 1) and unique; dep ids and ownerIds must be positive integers <= 0x3FFFFFFF that resolve to a record id; versions and flags must be int32; a signal is never owned; deps must be an array; subPos must be an array with one entry per dep (each an int >= 0, and per source a permutation of 0..n-1); ownerPos must be an int >= -1, exactly -1 when ownerId is null, and per owner a permutation of 0..n-1; a snapshot without subPos / ownerPos is refused; a null / non-object record throws a named TypeError. Snapshots carry live node ids, so a snapshot holding any node id past 0x3FFFFFFF (a node created after the registry's first 2^30 - 1, including in a registry restored at the cap that then grew) snapshots fine but restore() refuses it -- fail closed, by design (D-F); once those nodes are disposed, a NEW snapshot of that registry restores again (the old snapshot still holds the id and stays refused). Options must be a plain object with own keys fnsById / handles / config only -- an unknown key throws with a did-you-mean hint; bodies are looked up only as own properties of fnsById. Rejected structures: a signal with deps, an effect as a dep source, a signal as owner, a self owner, owner cycles, dep cycles among clean computeds, and a dep id missing from the snapshot on any record (dirty and never-read computeds included). opts.handles is filled only after the rebuild succeeds; a failed restore leaves it untouched. A snapshot taken after a registry's node-id counter wrapped (ids <= 0) is rejected (fail closed).
+- **Sizing.** Without `opts.config`, the fresh registry gets `maxNodes = max(1.5N + 16, 1024)` and `maxLinks = max(1.5L + 16, 4 x maxNodes)` (N nodes, L dep edges). The source registry's `onCapacityExceeded` and `maxFlushPasses` are not carried -- pass `opts.config` to set them; an explicit config wins outright.
+- **Not captured.** Custom `equals` (a restored signal or computed uses `Object.is`), effect schedulers (a restored effect runs synchronously unless re-created with a scheduler), `onCleanup` registrations, and lifecycle / `onGraphMutation` listeners. `snapshot()` refuses while any effect has a pending scheduled run, so none is lost silently.
+- **Version clock.** The snapshot does not record the version clock: if versions had wrapped past the 2^31 band, a restored effect can RE-FIRE once with nothing changed (not merely run an extra, value-correct recompute). A fix (record the clock in the snapshot) is planned. Effect run stamps are not recorded either: restore stamps every effect at the restored clock, so an effect that absorbed its own write in the live graph (and is still due a re-run once a dep it read has moved on) can skip that re-run after restore, with no wrap involved (open finding F-b99-1, fix planned).
+- **Box forms.** `signalBox` / `computedBox` are recorded as their own kinds and restore as boxes (they carry the box flag bit, 128).
 
 ---
 
@@ -868,19 +902,19 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds the complete **24-scenario suite (22 semantic + 2
+`bench/torture/` holds the complete **25-scenario suite (23 semantic + 2
 soak, one of them opt-in)** in two groups, behind one runner (`run.mjs`
 SCENARIOS; 22 at the 1.4.4-parity RC, 26 after the 2026-08 audit added
 `retrack-dispose-torture`, `contract-torture`, `interop-torture` and
 `wraparound-torture`, 24 since the resource soaks `graph-fuzzer` and
-`torture-soak` were retired on 2026-10-20). They are not
+`torture-soak` were retired on 2026-10-20, 25 since `snapshot-torture` joined for 1.6.0). They are not
 perf benchmarks: the ops/sec figures reflect random workload composition, not
 engine throughput -- `bench/benchmark.mjs` remains the canonical perf harness.
 
 Every scenario feature-detects and **skips cleanly** below the engine version
 that introduces its feature, so the whole set is safe to ship on the 1.5.0 engine
-and stays green from 1.4.x forward. On this engine the runner executes **18
-semantic scenarios** -- including `owner-torture`, `error-torture`,
+and stays green from 1.4.x forward. On this engine the runner executes **19
+semantic scenarios** -- `snapshot-torture` (1.6.0) plus the 18 of the 1.5.x engine, including `owner-torture`, `error-torture`,
 `deep-chain-torture`, `zerogc-torture` (its `churn-box` signalBox lane),
 `introspect-torture` and `lifecycle-torture`, which EXECUTE here for the first
 time via signalBox and the getOwner/runWithOwner/createRoot surface -- and
@@ -1399,7 +1433,7 @@ Yes, if your computeFn reads its deps in the same order each invocation. The `cu
 npm test          # behavior suite, ~1.3s
 npm run test:gc   # zero-gc suite, requires --expose-gc, ~3s
 npm run bench     # microscope + mirror comparative benches (rb.txt / r.txt), ~5min
-npm run torture          # full torture suite, all 24 scenarios (22 semantic + 2 soak)
+npm run torture          # full torture suite, all 25 scenarios (23 semantic + 2 soak)
 npm run torture:semantic # correctness scenarios only, ~10s
 npm run torture:soak     # resource soaks only, wall-clock bound
 node --expose-gc bench/benchmarkReactive.mjs  # DEPRECATED pre-v3 reactivity suite (removed after 1.5.1)
