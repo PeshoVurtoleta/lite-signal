@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openStream, writeRecord, writeFatal, RECORD_TYPES } from '../bench/soak/jsonl.mjs';
 import { fmix32, unfmix32, seedFor, worldSeed, selfCheckSeeds, remapCollision, REMAP_PREIMAGE, LANE_LIMIT, CYCLE_LIMIT } from '../bench/soak/seeds.mjs';
 import { CYCLES_MAX, DEFAULT_SEED, ROSTER_MAX } from '../bench/soak/config.mjs';
-import { ROSTER as SOAK_ROSTER } from '../bench/soak/lanes/index.mjs';
+import { ROSTER as SOAK_ROSTER, laneSpan } from '../bench/soak/lanes/index.mjs';
 import { PARITY_FILES } from '../bench/soak/parity.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -293,8 +293,8 @@ test('seeds: remapCollision is exact for any span -- a crafted colliding base, v
     assert.notEqual(d, null);
     assert.equal(seedFor(DEFAULT_SEED, d.laneA, d.cycleA), seedFor(DEFAULT_SEED, d.laneB, d.cycleB));
     assert.notDeepEqual([d.laneA, d.cycleA], [d.laneB, d.cycleB]);
-    // the S1 default run (the full roster, SOAK_ROSTER.length lanes; 11 cycles, base 0xC0FFEE) cannot reach it
-    assert.equal(remapCollision(DEFAULT_SEED, SOAK_ROSTER.length, 11), null);
+    // the default run (the full roster, laneSpan(SOAK_ROSTER) indices; 11 cycles, base 0xC0FFEE) cannot reach it
+    assert.equal(remapCollision(DEFAULT_SEED, laneSpan(SOAK_ROSTER), 11), null);
     // the mirror base: base = PRE makes PRE the REMAPPED input and 0 the natural one, so the A and B roles
     // swap; the pA domain check alone decides lanes = 1 (pA lane 8 is out of a 1-lane roster)
     assert.equal(remapCollision(REMAP_PREIMAGE, 1, 11), null);
@@ -773,8 +773,8 @@ test('main: headpatched ERROR (smoke) -> exit 1, every BREACH carries known in {
     assert.ok(fails.some((f) => f.op === 'batch' && Array.isArray(f.escape) && f.escape.length > 0), 'F22 worlds carry the outermost-batch escape');
 });
 
-test('main: 1.5.2 (smoke, the 5-lane roster) -> exit 1 with the four L-REV-152 BREACH heads; failure records keep ids and families apart', () => {
-    const r = soak({ SOAK_KERNEL: K_152 }, ['--smoke']);
+test('main: 1.5.2 (smoke, SOAK_LANES = the five S1 lanes GRAPH..WIE) -> exit 1 with the four L-REV-152 BREACH heads; failure records keep ids and families apart', () => {
+    const r = soak({ SOAK_KERNEL: K_152, SOAK_LANES: 'GRAPH,BATCH,ERROR,NEST,WIE' }, ['--smoke']);
     assert.equal(r.status, 1, r.stderr);
     assert.equal(r.recs[0].controls.name, 'rev152');
     assert.equal(lastLine(r.stdout), 'soak: END verdict=FAIL exit=1 records=' + r.recs.length);

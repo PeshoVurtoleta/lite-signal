@@ -58,7 +58,7 @@
       "description": "A dependency pre-walk has no catch, so a throwing computed dependency escapes it. EFFECT pre-walk: the token escapes set()/batch() unpredicted and the effect stays queued forever (O6 escape-computed + O4 effect-dead in the same step). COMPUTED pre-walk (burst 53 triage, PLAN-F-b33-1 N19; .handoff/b53-evidence/triage-SUMMARY.md, repro-a / repro-b): the token escapes an intermediate computed's pre-walk, so it neither re-runs nor bumps its version; the reader records the error, and on recovery the intermediate returns its old value, the equality cutoff keeps its version, and the reader is never refreshed: an effect stays dead with a stale ERR(computed:N) on the ENGINE side (standalone O4, no O6 in the step), a computed reader keeps a stale cached ERR(computed:N) (O1c computed-err-mismatch, and O2 glitch in a body that reads it). The reader may also get the error as a CACHED rethrow (pullComputed fast path: the throwing dependency already ran this version, so it runs no body); the soak tagger counts throw-dep-computed-prewalk only at the end of a body frame, so it misses that path (b53 t2 triage, N19.6; a tagger gap, and the tag is world-level, so it is not causal anyway). The standalone shapes therefore need a world that carries recovery-after-throw and NOT revert-after-mid-read (that world is DIV-F5's), with no throw-dep-computed-prewalk clause. Same root and same fix (FIX-T at BOTH pre-walk sites, as headpatched); ships in 1.5.2. Still NOT matched: a standalone O4 with ERR only on the model side, an O1c computed-mismatch (non-error), an O1e effect-stale, an O2 glitch or O1c computed-err-mismatch whose engine side is not ERR(computed:N), and any of these shapes in a world that lacks recovery-after-throw or carries revert-after-mid-read."
     },
     {
-      "id": "DIV-F7", "kind": "fix", "finding": "F7", "since": "1.5.2", "fixedIn": null, "fixBy": null,
+      "id": "DIV-F7", "kind": "fix", "finding": "F7", "since": "1.5.2", "fixedIn": null, "fixBy": "A5",
       "decision": "fix (FIX-O) and contract D3 (DIV-D3-independent-registrations)",
       "engines": ["lite"], "lanes": ["NEST"], "oracles": ["O7a"], "sigs": ["dead-registration-fire"],
       "ops": [], "scen": [], "worldScen": [], "priorScen": [],
@@ -77,12 +77,15 @@
       "description": "A lifecycle callback that disposes another dependency mid-walk crashes disposeNode/severTail (FINDINGS F8)."
     },
     {
-      "id": "DIV-F9", "kind": "fix", "finding": "F9", "since": "1.5.2", "fixedIn": null, "fixBy": null,
+      "id": "DIV-F9", "kind": "fix", "finding": "F9", "since": "1.5.2", "fixedIn": null, "fixBy": "A5",
       "decision": "fix (FIX-H): live-entry stack for onGraphMutation listeners",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
-      "pending": "S3 HOOK lane, O8 ghost-listener (S1 oracle worlds run hook-free)",
+      "engines": ["lite"], "lanes": ["HOOK"], "oracles": ["O8"], "sigs": ["ghost-listener"], "ops": [], "scen": [], "worldScen": ["hook-non-lifo-off"], "priorScen": [],
+      "shapes": [
+        { "pair": "O8:ghost-listener", "detail": "^L\\d+ received op[1-5] after off at step \\d+ \\(expected L\\d+\\)$" }
+      ],
+      "attribution": null, "pending": null,
       "conformanceCases": [], "expectedThrow": null,
-      "description": "onGraphMutation unsubscribe only works in LIFO order; an out-of-order unsubscribe resurrects a dead listener."
+      "description": "onGraphMutation unsubscribe only works in LIFO order; an out-of-order unsubscribe resurrects a dead listener. S3 HOOK lane (R1): O8 ghost-listener with an off'd receiver, in a world that carries hook-non-lifo-off. Still NOT matched: a live listener that is not the top live one, a receiver that is not a subscribed listener, an off'd receiver when no listener is live ('expected none'), and any O8 mirror-links fail."
     },
     {
       "id": "DIV-F10", "kind": "fix", "finding": "F10", "since": "1.5.2", "fixedIn": null, "fixBy": "A6",

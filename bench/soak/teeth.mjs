@@ -84,6 +84,9 @@ export const CHECKS = deepFreeze({
     // `oracle=O1 lane=WIE sig=effect-stale known=DIV-B33` (b65 census: O1e heads 9490 of 10000 preb33 worlds)
     // b75 (PLAN-0s-e TASK 5): the published 1.5.2 also predates F-b33-1 -- L-WIE-rev152, same O1e head, DIV-B33
     'lane:WIE': ['L-WIE-preb33', 'L-WIE-rev152'],
+    // b93 S3 R1c (PLAN-0s-s3-r1 TASK 9): rev152 heads `oracle=O8 lane=HOOK sig=ghost-listener known=DIV-F9` (F9, LIFO-only
+    // off); T-hook-mirror (headpatched, freeLink's op-4 hook fire removed) heads `oracle=O8 lane=HOOK sig=mirror-links`
+    'lane:HOOK': ['L-REV-HOOK', 'T-hook-mirror'],
     'gate:oracle': ['L-REV-152'],
     // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
     // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
@@ -110,6 +113,7 @@ export const CHECKS = deepFreeze({
     'oracle:O5': ['T-sever'],
     'oracle:O6': ['L-REV-152'],
     'oracle:O7a': ['L-REV-152'],
+    'oracle:O8': ['L-REV-HOOK', 'T-hook-mirror'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
     'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
@@ -118,6 +122,8 @@ export const CHECKS = deepFreeze({
     'sig:O5:link-count': ['T-sever'],
     'sig:O6:escape-*': ['L-REV-152'],   // `oracle=O6 lane=ERROR sig=escape-computed`
     'sig:O7a:dead-registration-fire': ['L-REV-152'],
+    'sig:O8:ghost-listener': ['L-REV-HOOK'],
+    'sig:O8:mirror-links': ['T-hook-mirror'],
     'cause:interrupted': ['L-I1', 'L-I2'],
     'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS']),
     'cause:check-floor': ['T-floor-BATCH'],
@@ -151,8 +157,8 @@ const NEARWRAP_WHY = 'SOAK_NEARWRAP presets the counter near its ceiling, so the
 
 /** Controls the SPEC asks for that do not exist yet. covers = the universe ids whose ONLY teeth this would be. */
 export const GAPS = deepFreeze({
-    'P-TREE': { why: 'pass control on the tree kernel: the tree is expected red until A1-A3 land (' + SPEC + ':465, section 10.3)', until: 'A1-A3', covers: [] },
-    'P-NEST': { why: 'pass control tree/NEST: declared GAP; A1 cannot land until it is live and green (' + SPEC + ':465, :496)', until: 'A1', covers: [] },
+    'P-TREE': { why: 'pass control on the tree kernel: the tree is expected red until A1-A3 land (' + SPEC + ':511, section 10.3)', until: 'A1-A3', covers: [] },
+    'P-NEST': { why: 'pass control tree/NEST: declared GAP; A1 cannot land until it is live and green (' + SPEC + ':511, :544)', until: 'A1', covers: [] },
     'T-A1': fixMinusOne(513, 'A1'),
     'T-A2': fixMinusOne(514, 'A2'),
     'T-A3a': fixMinusOne(515, 'A3'),
@@ -166,7 +172,7 @@ export const GAPS = deepFreeze({
     'T-A7b': fixMinusOne(523, 'A7 + S2 wrap.mjs', NEARWRAP_WHY),
     'T-d8pc-head': { why: 'the d8-pc engine lane is placed in S2 (' + S1CD + ':7, amendment 4)', until: 'S2', covers: [] },
     'T-OB-lying-adapter': {
-        why: 'OB fired in 0/6000 census worlds on headpatched, tree and 1.5.2 (bench/soak/calibration/ob-census.json); the red case is an adapter whose batch is fn => fn(), and main.mjs:249 loads only liteAdapter (no second adapter seam in S1)',
+        why: 'OB fired in 0/6000 census worlds on headpatched, tree and 1.5.2 (bench/soak/calibration/ob-census.json); the red case is an adapter whose batch is fn => fn(), and main.mjs:276 loads only liteS3Adapter (adapters/lite-s3.mjs, the S3 decorator over the lite adapter; no second adapter seam)',
         until: 'S5 adapters', covers: ['oracle:OB', 'sig:OB:batch-early-run'],
     },
     'T-OB-nested-close': {

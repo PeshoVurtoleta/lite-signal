@@ -71,7 +71,7 @@ import { classify, digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences
 import { CHECK_NAMES, SKIP_NAMES, runWorld } from './exec.mjs';
 import { generateWorld, GEN_RULES } from './gen.mjs';
 import { seedFor, worldSeed, selfCheckSeeds } from './seeds.mjs';
-import { ROSTER, ALL_SCENARIOS, COV_OFF_SUPPORTED, laneByName, isLargeWorld } from './lanes/index.mjs';
+import { ROSTER, ALL_SCENARIOS, COV_OFF_SUPPORTED, laneByName, isLargeWorld, laneSpan } from './lanes/index.mjs';
 import { openStream, writeRecord, protocol, stdoutLine, endLine, installFatalHandlers, defaultOutPath } from './jsonl.mjs';
 
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -264,7 +264,8 @@ async function main() {
         if (res === null) configExit('startup gate ' + g.id + ' has no runner in main.mjs');
         if (res.verdict !== VERDICT.PASS) configExit('startup gate ' + g.id + ' is red: ' + JSON.stringify(res));
     }
-    const seedProblem = selfCheckSeeds(cfg.seed, cfg.roster.length, cfg.forever ? SEED_SELF_CHECK_SPAN : Math.min(cfg.cycles, SEED_SELF_CHECK_SPAN));
+    // the INDEX span (S3 R1), a superset of the rostered indices: the scan fails closed on any pair inside it
+    const seedProblem = selfCheckSeeds(cfg.seed, laneSpan(cfg.roster), cfg.forever ? SEED_SELF_CHECK_SPAN : Math.min(cfg.cycles, SEED_SELF_CHECK_SPAN));
     if (seedProblem !== null) configExit('seed self-check: ' + seedProblem);
     if (REGISTRY_PROBLEMS.length > 0) configExit('divergences.json is invalid: ' + REGISTRY_PROBLEMS[0]);
     const divDigest = digest(readFileSync(REGISTRY_URL, 'utf8'));

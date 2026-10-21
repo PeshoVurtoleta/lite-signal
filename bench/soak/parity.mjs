@@ -65,6 +65,8 @@ export const PARITY_FILES = Object.freeze([
     // B-B5 (burst 88): the pinned SoakReport.mjs imports the html renderer and the baseline diff, which decide the
     // --html page and the --baseline verdict / exit
     'bench/soak/report-html.mjs', 'bench/soak/baseline.mjs',
+    // S3 R1 (burst 93): the HOOK lane decides its scripts and coverage; the link mirror decides its O8 checks
+    'bench/soak/lanes/hook.mjs', 'bench/soak/mirror.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

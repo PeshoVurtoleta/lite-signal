@@ -13,8 +13,9 @@ import { BATCH } from './batch.mjs';
 import { ERROR } from './error.mjs';
 import { NEST } from './nest.mjs';
 import { WIE } from './wie.mjs';
+import { HOOK } from './hook.mjs';
 import { SCENARIOS } from '../scenarios.mjs';
-import { LANE_LIMIT } from '../seeds.mjs';
+import { LANE_LIMIT, remapCollision } from '../seeds.mjs';
 
 /** Reserved lane indices (S3-D6). A lane lands in ROSTER in any order; its index never changes. */
 export const LANE_INDEX = Object.freeze({
@@ -40,9 +41,41 @@ export function checkLaneIndex(table, roster) {
     }
 }
 
-export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE']);
-const BY_NAME = { GRAPH, BATCH, ERROR, NEST, WIE };
+export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK']);   // HOOK (index 6) last: S3 R1
+const BY_NAME = { GRAPH, BATCH, ERROR, NEST, WIE, HOOK };
 checkLaneIndex(LANE_INDEX, ROSTER);
+
+/**
+ * The lane INDEX span of a roster: max LANE_INDEX + 1 over its names (S3 R1). Seeds pack the index, not the roster
+ * position, so a roster [GRAPH .. WIE, HOOK] spans 7 indices with 6 lanes; every seed-domain check uses the span. An
+ * empty roster or a name with no LANE_INDEX entry throws (fail closed; the domain would be unknown).
+ */
+export function laneSpan(roster) {
+    if (!Array.isArray(roster) || roster.length === 0) throw new TypeError('laneSpan: roster must be a non-empty array of lane names');
+    let max = -1;
+    for (const name of roster) {
+        if (!Object.hasOwn(LANE_INDEX, name)) throw new Error('laneSpan: roster lane ' + name + ' has no LANE_INDEX entry');
+        if (LANE_INDEX[name] > max) max = LANE_INDEX[name];
+    }
+    return max + 1;
+}
+
+/**
+ * The remap pair of a run over `roster` (seeds.mjs remapCollision over laneSpan(roster)), returned only when BOTH
+ * laneA and laneB are rostered indices, else null: an index inside the span that no rostered lane holds never draws
+ * a seed. Exact, O(roster).
+ */
+export function rosterRemapCollision(base, roster, cycles) {
+    const hit = remapCollision(base, laneSpan(roster), cycles);
+    if (hit === null) return null;
+    let a = false;
+    let b = false;
+    for (const name of roster) {
+        if (LANE_INDEX[name] === hit.laneA) a = true;
+        if (LANE_INDEX[name] === hit.laneB) b = true;
+    }
+    return a && b ? hit : null;
+}
 
 export const LANES = Object.freeze(ROSTER.map((name) => Object.freeze(Object.assign({}, BY_NAME[name], { index: LANE_INDEX[name] }))));
 

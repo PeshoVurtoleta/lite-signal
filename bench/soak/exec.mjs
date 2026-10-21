@@ -24,7 +24,8 @@
  *                 disposal is tainted until it ends (taint clears only for a run entirely after it) ONLY if
  *                 that run already read a killed node, or a live computed tainted after the kill (b70 D6 V1);
  *                 a run that read neither before the kill sees what the model sees and is not tainted by this disposal
- *   at rest       O1e + O4 every op, O5 every op, O1c when the op's chk bit is set and at world end
+ *   at rest       O1e + O4 every op, O5 every op, O1c when the op's chk bit is set and at world end; O8
+ *                 (HOOK lane, exec.hk !== null) the hook mirror vs stats() last
  *   wie writer    (WIE, gen.mjs I2 lifted) a computed whose spec carries w writes w := f(its output) through
  *                 write() after its body returns (spec.wu: under untrack), exactly like an effect writer. D4: a
  *                 target that is not an earlier signal (forward / self / non-integer / non-signal) or is in its
@@ -49,7 +50,7 @@ const NONE = Symbol('none');
 const END_CHECK_SALT = 0x5bd1e995;
 
 /** Oracles counted when PERFORMED (a skipped check is never counted as one). */
-export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'OB']);
+export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'OB', 'O8']);
 /** Oracles that skip tainted nodes; each skip is counted per oracle (S1c gates a taint-skip ratio). */
 export const SKIP_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4']);
 const COUNTER_CAP = 0x3FFFFFFF;   // per-world counters stay Smi (S7: [2^30, 2^31) boxes on pointer-compressed V8)
@@ -136,7 +137,7 @@ class Exec {
         this.regActions = new Map();
         this.ran = new Set();
         this.D = new Detectors(this);
-        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, OB: 0 };
+        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, OB: 0, O8: 0 };
         this.skipTainted = { O1c: 0, O1e: 0, O2: 0, O4: 0 };
         this.gateHits = { batchTokenEscaped: 0 };   // guards whose escape carried the throw-in-batch token
         this.effReruns = 0;    // effect re-runs (runs > 0) in this world, capped at COUNTER_CAP (OB evidence)
@@ -145,6 +146,7 @@ class Exec {
         this.opsRun = 0;
         this.opsByClass = Object.create(null);
         this.trace = opts.trace === true ? [] : null;
+        this.hk = null;   // HOOK lane state (lanes/hook.mjs HookState), set by its first hsub; null on every other lane
     }
 
     /** Count one performed check / one taint skip (capped: never leaves Smi range). */
@@ -732,5 +734,20 @@ class Exec {
             if (s !== null) for (const f of O.checkCounts(M, s, neverRan)) this.failF(f);
         }
         if (op.chk === 1) this.o1c(op.cs >>> 0);
+        if (this.hk !== null) this.hookAtRest();
+    }
+
+    /**
+     * O8 at rest (HOOK lane only): the hook mirror vs stats() (oracles.mjs checkMirror; the per-delivery receiver
+     * check runs inside each listener). Runs after the op's O1c pull, so every delivery of the op is mirrored. One
+     * performed O8 per op; then the HookState step moves to the next op.
+     */
+    hookAtRest() {
+        const hk = this.hk;
+        this.did('O8');
+        let s = null;
+        try { s = this.W.stats(); } catch (e) { this.engineError(e, 'stats()'); }
+        if (s !== null) for (const f of O.checkMirror(hk.mirror, s)) this.failF(f);
+        hk.step++;
     }
 }

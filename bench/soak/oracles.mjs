@@ -16,6 +16,9 @@
  *   O7a  checkFire       a lifecycle callback fires only for a live registration on a live target
  *   OB   checkBatchRun   an effect that already ran re-runs while a batch is open (exec decides when; the
  *                        first run of an effect created inside a batch is synchronous by design, p2)
+ *   O8   checkHookFire   a graph-mutation event reached the TOP LIVE listener, never an off'd or a lower one
+ *        checkMirror     the mirror.mjs replay of the hook stream is consistent and matches stats() at rest
+ *                        (S3 R1, the HOOK lane only: lanes/hook.mjs onFire calls checkHookFire, exec.mjs hookAtRest calls checkMirror while exec.hk !== null)
  *
  * COLD module.
  */
@@ -23,7 +26,7 @@
 import { Model } from './model.mjs';
 import { SoakThrow, sameValue, showValue } from './kinds.mjs';
 
-export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'OB']);
+export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'OB', 'O8']);
 
 /** The sig vocabulary (SPEC-B section 6; escape-<origin> / escape-<Ctor> are open families). */
 export const SIGS = Object.freeze({
@@ -35,6 +38,7 @@ export const SIGS = Object.freeze({
     O6: ['escape-*', 'expected-escape-missing', 'equals-mutated', 'escape-empty'],
     O7a: ['dead-registration-fire'],
     OB: ['batch-early-run'],
+    O8: ['ghost-listener', 'mirror-links'],
 });
 
 const DETAIL_MAX = 240;
@@ -214,4 +218,43 @@ export function checkFire(model, r, kind) {
     if (why === null) return null;
     const g = model.regs[r];
     return { oracle: 'O7a', sig: 'dead-registration-fire', detail: cut((kind || 'callback') + ' fired for registration r' + r + ' on #' + (g ? g.target : '?') + ': ' + why) };
+}
+
+/**
+ * O8 for one hook delivery. stack: the lane's listeners in subscription order, each { live: boolean, offStep:
+ * number | null } (offStep = the step whose off() retired it); receiver: the stack index of the listener that got
+ * the event; op: the hook op (1-5); step: the op step being executed. The expected receiver is the TOP LIVE entry
+ * (the highest live index; TASK 0 b93: headpatched delivers there after any off order, a live L0 underneath).
+ *   off'd receiver        ghost-listener 'L<i> received op<k> after off at step <offStep> (expected L<j> | none)' (DIV-F9 shape)
+ *   live, not the top     ghost-listener 'L<i> received op<k> at step <s> but L<j> is the top live listener'
+ *   index not in stack    ghost-listener 'L<i> received op<k> at step <s> but is not a subscribed listener'
+ * Returns null when receiver is the top live entry.
+ */
+export function checkHookFire(stack, receiver, op, step) {
+    let top = -1;
+    for (let j = stack.length - 1; j >= 0; j--) {
+        if (stack[j].live) { top = j; break; }
+    }
+    if (receiver === top) return null;
+    const want = top === -1 ? 'none' : 'L' + top;
+    const e = Number.isInteger(receiver) && receiver >= 0 && receiver < stack.length ? stack[receiver] : null;
+    if (e === null) {
+        return { oracle: 'O8', sig: 'ghost-listener', detail: cut('L' + receiver + ' received op' + op + ' at step ' + step + ' but is not a subscribed listener') };
+    }
+    if (!e.live) {
+        return { oracle: 'O8', sig: 'ghost-listener', detail: cut('L' + receiver + ' received op' + op + ' after off at step ' + e.offStep + ' (expected ' + want + ')') };
+    }
+    return { oracle: 'O8', sig: 'ghost-listener', detail: cut('L' + receiver + ' received op' + op + ' at step ' + step + ' but ' + want + ' is the top live listener') };
+}
+
+/**
+ * O8 at rest: every problem the mirror (mirror.mjs) recorded since the last check, then its edge / node counts vs
+ * stats().activeLinks / activeNodes. Drains the mirror's problem list. Returns a list (empty = consistent).
+ */
+export function checkMirror(mirror, stats) {
+    const out = [];
+    for (const p of mirror.drain()) out.push({ oracle: 'O8', sig: 'mirror-links', detail: cut(p) });
+    if (mirror.edges !== stats.activeLinks) out.push({ oracle: 'O8', sig: 'mirror-links', detail: cut('mirror edges ' + mirror.edges + ' != activeLinks ' + stats.activeLinks) });
+    if (mirror.nodes !== stats.activeNodes) out.push({ oracle: 'O8', sig: 'mirror-links', detail: cut('mirror nodes ' + mirror.nodes + ' != activeNodes ' + stats.activeNodes) });
+    return out;
 }

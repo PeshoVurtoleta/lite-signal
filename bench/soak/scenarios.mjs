@@ -29,6 +29,8 @@ export const SCENARIOS = Object.freeze([
     'early-exit-after-dispose', 'lifecycle-callback-dispose', 'lifecycle-dispose-recycle', 'dispose-outer-observer',
     // WIE (unit 0s; in the roster since B2b)
     'wie-stale-effect', 'wie-stale-computed', 'wie-prewalk', 'wie-untrack', 'wie-write-before-read',
+    // HOOK (S3 R1; lanes/hook.mjs, in the roster since R1b)
+    'hook-multi', 'hook-non-lifo-off', 'hook-mirror-dispose', 'hook-recompute',
 ]);
 
 const DEEP_PULL_MIN = 16;
@@ -300,6 +302,30 @@ export class Detectors {
 
     onEffectCreated(inBatch, ran) {
         if (inBatch && ran) this.count('effect-created-mid-batch');
+    }
+
+    /* ---- HOOK --------------------------------------------------------------------------------------- */
+
+    /**
+     * One hook delivery (lanes/hook.mjs onFire), BEFORE the mirror applies it. hk: the world's HookState.
+     *   hook-multi           the delivery happened with >= 3 listeners live (L0 + 2 above it)
+     *   hook-mirror-dispose  op 2 for a node the mirror still holds SOURCE edges for (rule I3: freed silently)
+     *   hook-recompute       op 5 reached a listener
+     */
+    onHookFire(hk, op, a) {
+        const st = hk.stack;
+        let live = 0;
+        for (let j = 0; j < st.length; j++) if (st[j].live) live++;
+        if (live >= 3) this.count('hook-multi');
+        if (op === 2) {
+            const m = hk.mirror.out.get(a);
+            if (m !== undefined && m.size > 0) this.count('hook-mirror-dispose');
+        } else if (op === 5) this.count('hook-recompute');
+    }
+
+    /** An hoff of a live listener; above: a live listener sits above its target (a NON-LIFO off). */
+    onHookOff(above) {
+        if (above) this.count('hook-non-lifo-off');
     }
 
     /* ---- ERROR -------------------------------------------------------------------------------------- */

@@ -26,7 +26,8 @@ import os from 'node:os';
 import { SCHEMA_VERSION, GEN_VERSION, gatesBlock, configExit } from './config.mjs';
 import { KERNEL_URL, KERNEL_OVERRIDE, KERNEL_FILES, KERNEL_KNOWN_AS, CONTROLS_ERROR, KERNEL_NEARWRAP } from './kernel.mjs';
 import { checkParity } from './parity.mjs';
-import { SEED_FORMULA, WORLD_SEED_FORMULA, remapCollision } from './seeds.mjs';
+import { SEED_FORMULA, WORLD_SEED_FORMULA } from './seeds.mjs';
+import { rosterRemapCollision } from './lanes/index.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const IS_WIN = process.platform === 'win32';
@@ -171,8 +172,9 @@ export function buildHeader(cfg, extras) {
         seedFormula: SEED_FORMULA,
         worldSeedFormula: WORLD_SEED_FORMULA,
         // DATA, not a failure: the one (lane, cycle) pair that shares a seed through the seed-0 remap, if
-        // this run's base, roster size and cycle count reach it (seeds.mjs remapCollision; exact, O(1)).
-        seedRemapCollision: remapCollision(cfg.seed, cfg.roster.length, cfg.cycles),
+        // this run's base, rostered lane INDICES and cycle count reach it (lanes/index.mjs rosterRemapCollision:
+        // seeds.mjs remapCollision over the index span, kept only when both lanes are rostered; exact).
+        seedRemapCollision: rosterRemapCollision(cfg.seed, cfg.roster, cfg.cycles),
         gates: gatesBlock(),
         timerFloorNs: timerFloorNs(),
     };

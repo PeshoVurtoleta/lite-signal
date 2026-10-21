@@ -25,7 +25,7 @@
  *          hollowVolume DEFAULT_CYCLES x OPS_MIN, every kernel over its bound lanes (the smallest gated volume config
  *                       accepts); each row records failingWorlds (test/41 (e) counts full-length rows only)
  *          covOff       every supported cov-off at the smoke shape on the lane's first kernel (kernelsFor(lane)[0]:
- *                       headpatched for every unlisted lane and for NEST) (hollow-evidence controls)
+ *                       headpatched for every unlisted lane and for NEST and HOOK) (hollow-evidence controls)
  *          seedSweep    SWEEP_SEEDS at the smoke shape, every kernel over its bound lanes (REPORTED seed spread;
  *                       binds nothing)
  *          covOffSweep  every cov-off at the smoke shape over COVOFF_SEEDS, every kernel bound to the lane (taint
@@ -50,6 +50,11 @@
  * carries NEST's full-length evidence (test/41 (f)). headpatched stays first: covOff and the headpatched NEST
  * cov-off sweep are unchanged. ERROR stays on the binding kernels: it fail-stops on every kernel (tree 17039/17050,
  * b74 0b; DIV-F5 / F6 / F22), exempt from (f) only while one of those three is open (maintainer ruling b74).
+ * HOOK -> headpatched only (S3 R1, burst 93; the WIE precedent): lite-1.5.2 (= the rev152 kernel) and tree both go
+ * red on O8 ghost-listener by design (DIV-F9: an out-of-LIFO-order onGraphMutation unsubscribe resurrects a dead
+ * listener), so neither is a HOOK evidence kernel while DIV-F9 is open; headpatched passes HOOK and stays first (covOff).
+ * lanes/hook.mjs joins the pinned list through LANE_PINS; mirror.mjs (the O8 link mirror hook.mjs imports) is in
+ * PINNED, like kinds.mjs and the torture helpers.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -76,6 +81,8 @@ export const LANE_ONLY_KERNELS = Object.freeze({ tree: 'Signal.js' });
 export const LANE_KERNELS = Object.freeze({
     WIE: Object.freeze(['tree']),
     NEST: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
+    // HOOK (S3 R1, b93): red-by-design on lite-1.5.2 and tree (DIV-F9 ghost-listener, header); headpatched only
+    HOOK: Object.freeze(['headpatched']),
 });
 /** The kernel ids that cut `lane` (a fresh array). */
 export const kernelsFor = (lane) => (own(LANE_KERNELS, lane) ? LANE_KERNELS[lane].slice() : Object.keys(KERNELS));
@@ -138,11 +145,13 @@ const PINNED = Object.freeze([
     'bench/soak/seeds.mjs', 'bench/soak/lanes/index.mjs', 'bench/soak/lanes/graph.mjs', 'bench/soak/lanes/batch.mjs',
     'bench/soak/lanes/error.mjs', 'bench/soak/lanes/nest.mjs', 'bench/soak/adapters/lite.mjs', 'bench/soak/adapters/contract.mjs',
     'bench/soak/kinds.mjs', 'bench/torture/helpers/index.mjs', 'bench/soak/adapters/lite-s3.mjs',
+    // S3 R1 (b93): the O8 link mirror lanes/hook.mjs drives (decides the HOOK checks)
+    'bench/soak/mirror.mjs',
 ]);
 export { PINNED };
 // A lane's own descriptor file is pinned only while the lane is rostered (b67 B2a Q2): pinning lanes/wie.mjs before
 // the roster flip would turn (p) red with no cut to clear it.
-export const LANE_PINS = Object.freeze({ WIE: 'bench/soak/lanes/wie.mjs' });
+export const LANE_PINS = Object.freeze({ WIE: 'bench/soak/lanes/wie.mjs', HOOK: 'bench/soak/lanes/hook.mjs' });
 /** PINNED + the pins of the rostered lanes (roster order). */
 export const pinnedFor = (roster) => PINNED.concat(roster.filter((l) => own(LANE_PINS, l)).map((l) => LANE_PINS[l]));
 

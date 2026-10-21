@@ -294,6 +294,9 @@ const A_RETURN = '    return {getOwner, runWithOwner, signal, computed, effect, 
 // :1026 the flushEffects inner loop, the non-scheduler branch (28-space indent); the :1577 twin carries
 // `node.gen === gen &&` and does not match.
 const A_FLUSH_RUN = ' '.repeat(28) + 'if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n';
+// :607 the freeLink op-4 hook fire (unlink an edge; 8-space indent). b93 TASK 0 B0-9: exactly one occurrence in the
+// headpatched kernel (the allocateLink op-3 twin :597 carries mutationHook(3, ...) and does not match).
+const A_HOOK_OP4 = '        if (mutationHook !== null) mutationHook(4, source.id, target.id);\n';
 
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
@@ -391,6 +394,15 @@ export const CONTROLS = deepFreeze([
     // lane:WIE pairs.
     M('L-WIE-rev152', 'rev152', { SOAK_LANES: 'WIE', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'explained', lines: [], specs: ['oracle=O1 lane=WIE sig=effect-stale'], known: ['DIV-B33'],
+    }),
+    // L-REV-HOOK (b93 S3 R1c, PLAN-0s-s3-r1 TASK 9): the published 1.5.2 (rev152) unsubscribes onGraphMutation listeners
+    // LIFO only (F9), so a non-LIFO off resurrects a dead listener: O8 ghost-listener, explained by DIV-F9 (fixedIn null,
+    // fixBy A5). MEASURED b93 R1b (11 x 100000, default seed): exit 1, head `oracle=O8 lane=HOOK sig=ghost-listener
+    // known=none ... replay=HOOK:0:0x43e8fd92 detail=L5 received op5 after off at step 96 (expected L1)` (known=none
+    // before DIV-F9 had its matcher); the tree shows the same head. 'explained' with the O8 head spelled out so lane:HOOK
+    // pairs (test/45 reads expect.specs).
+    M('L-REV-HOOK', 'rev152', { SOAK_LANES: 'HOOK', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 1, kind: 'explained', lines: [], specs: ['oracle=O8 lane=HOOK sig=ghost-listener'], known: ['DIV-F9'],
     }),
     // L-P-INTERIM (amendment 13): the interim pass control on GRAPH,BATCH -- exit 0, no BREACH, 22 clean boundaries.
     M('L-P-INTERIM', 'headpatched', { SOAK_LANES: 'GRAPH,BATCH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
@@ -529,6 +541,19 @@ export const CONTROLS = deepFreeze([
         exit: 3, kind: 'nobreach', lines: [],
         specs: ['INCONCLUSIVE taint-skip lane=NEST oracle=O1c', 'INCONCLUSIVE taint-skip lane=NEST oracle=O1e'],
     }, { flags: GC_FLAGS.concat(['--import', HALF_PRELOAD]) }),
+    // P-HOOK-HP (b93 S3 R1c): the HOOK pass control on headpatched (FIX-H: off works in any order; TASK 0 b93: delivery
+    // goes to the top live listener). MEASURED b93 R1b (11 x 100000, default seed): exit 0, END verdict=PASS. Also holds
+    // A4's heap / retention silence (kind nobreach: zero BREACH lines, gate=heap / gate=retention included).
+    M('P-HOOK-HP', 'headpatched', { SOAK_LANES: 'HOOK', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { boundaries: MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'PASS' },
+    }),
+    // P-HOOK-TREE-COVOFF (b93 S3 R1c): the tree HOOK lane with every off kept LIFO (cov-off:hook-non-lifo-off) must not
+    // false-fail: the F9 ghost needs a non-LIFO off, so the run is clean but INCONCLUSIVE on the missing scenario.
+    // MEASURED b93 R1b (--smoke): exit 3, 0 BREACH, missing=hook-non-lifo-off.
+    M('P-HOOK-TREE-COVOFF', 'tree', { SOAK_LANES: 'HOOK', SOAK_MUSTFAIL: 'cov-off:hook-non-lifo-off' }, ['--smoke'], {
+        exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=HOOK missing=hook-non-lifo-off'],
+        specs: ['INCONCLUSIVE scenario lane=HOOK missing=hook-non-lifo-off'],
+    }),
     // T-cov-*: the coverage gate (gates.mjs:384), each at the smoke shape. BATCH's cov-off switch compares DECODED
     // values with Object.is (lanes/batch.mjs put, the test scenarios.mjs:236 counts a revert by), so it leaves 0
     // revert-after-mid-read hits per smoke run (burst 13; the code compare it replaced leaked 18 through the
@@ -577,6 +602,12 @@ export const CONTROLS = deepFreeze([
     M('T-mark', 'tree', { SOAK_LANES: 'GRAPH' }, ['--smoke'], {
         exit: 0, kind: 'nobreach', lines: [], specs: ['NOTE shape[GRAPH] markDedupe>=' + MARK_DEDUPE_NOTE], extra: { verdict: 'SMOKE' },
     }, { patches: [P_TMARK_1, P_TMARK_2] }),
+    // T-hook-mirror (b93 S3 R1c, PLAN-0s-s3-r1 TASK 9): freeLink never fires the op-4 (unlink) hook, so the lane's
+    // listener-fed mirror keeps every severed edge and O8 mirror-links trips at rest (mirror edges != stats() links).
+    // Anchor A_HOOK_OP4 (exactly once, B0-9). Engine answers are untouched: no other oracle should fire.
+    M('T-hook-mirror', 'headpatched', { SOAK_LANES: 'HOOK' }, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O8 lane=HOOK sig=mirror-links known=none'],
+    }, { patches: [[A_HOOK_OP4, '        /* MUSTFAIL T-hook-mirror: mutationHook(4, ...) removed */\n']] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375
@@ -745,6 +776,7 @@ function zeroCommitCopy(dir) {
     for (const ent of readdirSync(SOAK)) if (ent !== 'out') cpSync(join(SOAK, ent), join(dir, 'bench', 'soak', ent), { recursive: true });
     // kinds.mjs imports ../torture/helpers/index.mjs (the only import that leaves bench/soak)
     cpSync(join(ROOT, 'bench', 'torture', 'helpers'), join(dir, 'bench', 'torture', 'helpers'), { recursive: true });
+    cpSync(join(ROOT, 'harness', 'visit-anchors.mjs'), join(dir, 'harness', 'visit-anchors.mjs'));
     for (const f of ['Signal.js', 'Watch.js', 'package.json']) copyFileSync(join(ROOT, f), join(dir, f));
     const genv = childEnv({ GIT_CONFIG_GLOBAL: join(dir, 'no-global-gitconfig'), GIT_CONFIG_NOSYSTEM: '1' }, true);
     const r = spawnSync('git', ['init', '-q'], { cwd: dir, env: genv, encoding: 'utf8' });

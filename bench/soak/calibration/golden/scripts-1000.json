@@ -12,8 +12,10 @@
     "BATCH": "c61f6eb2e75f5fdd003d181e970884eca44a749b61a84ac1beb284215770765a",
     "ERROR": "6455a39b856e1a9a93928eda327c0f33c8eb0d63177ba7c0447fce9996a1d857",
     "NEST": "17386fc7e45792e2322fce4851d909628786c0386cf3a7ea0b22a3c2f22e913c",
-    "WIE": "4bb3c7d3cfecc509adbf6c21ce38226297afbacae3c558ff292ffccde26a1cdd"
+    "WIE": "4bb3c7d3cfecc509adbf6c21ce38226297afbacae3c558ff292ffccde26a1cdd",
+    "HOOK": "27bc01e118626f7de807e79be72b2c7ebbd9788da0d68d524483f6b79ddebf1c"
   },
+  "hookCut": "2026-10-21, burst 93 (S3 R1d): HOOK (lane index 6) appended, computed with test/42's own digest() over the live generator; the five S1 digests above are byte-identical to their cut.",
   "inputsSha256AtCut": {
     "bench/soak/gen.mjs": "2318d2632b3702000278e7e1e0bf2eb5792708240e6ea75b3aad5509825fdda2",
     "bench/soak/kinds.mjs": "47a9dbb92967773d3ad07dcc23d89615ea4625cba65287af4f8994bef5648cfb",

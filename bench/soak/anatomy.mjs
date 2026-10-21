@@ -10,7 +10,12 @@
  *   const { lane, why } = openAnatomy({ source }?)       SYNCHRONOUS (see the load note below)
  *                              never throws for an UNAVAILABLE lane: lane null + why (one line). source (test seam):
  *                              an engine source string used instead of the kernel file. A bad option throws TypeError.
- *   lane.adapter               the shadow adapter (adapters/lite.mjs liteAdapterFor(K'); name 'lite', base knownAs)
+ *   lane.adapter               the shadow adapter: the S3 decorator over it (adapters/lite-s3.mjs liteS3AdapterFor(K'),
+ *                                which wraps adapters/lite.mjs liteAdapterFor(K'); name 'lite', base knownAs), so a lane
+ *                                with S3 needsCaps (HOOK: world.hook) runs on the shadow as it runs on main's
+ *                                liteS3Adapter. An S1 lane takes the identical S1 path: effect(fn) with no opts
+ *                                forwards to the inner effect, and close() empties the decorator's own
+ *                                (empty) lists before the inner close() (b93 R1c; before it, a HOOK shadow world failed its first hsub -> divergent)
  *   lane.vc                    the shadow engine's Int32Array(16) counter block (globalThis.__VISIT__, captured, then
  *                                deleted from globalThis)
  *   lane.dir                   the temp dir the instrumented copy was imported from (already removed)
@@ -51,7 +56,7 @@ import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { NAMES, I, instrument } from '../../harness/visit-anchors.mjs';
 import { KERNEL_FILES } from './kernel.mjs';
-import { liteAdapterFor } from './adapters/lite.mjs';
+import { liteS3AdapterFor } from './adapters/lite-s3.mjs';
 import { runWorld } from './exec.mjs';
 import { nearest } from './config.mjs';
 
@@ -263,5 +268,5 @@ export function openAnatomy(opts) {
     if (mod === null || typeof mod !== 'object' || typeof mod.createRegistry !== 'function') {
         return fail('the instrumented kernel does not export createRegistry()');
     }
-    return { lane: new AnatomyLane(liteAdapterFor(mod), vc, dir), why: null };
+    return { lane: new AnatomyLane(liteS3AdapterFor(mod), vc, dir), why: null };
 }
