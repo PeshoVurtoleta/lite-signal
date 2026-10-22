@@ -15,6 +15,11 @@ const HAVE_GC = typeof globalThis.gc === "function";
 const NOT_SETTLED = /not settled/;
 // D-A flag values: callables 32 / 1 / 2, boxes carry FLAG_BOX (128): 160 / 129.
 const F_SIGNAL = 32, F_COMPUTED = 1, F_EFFECT = 2, F_SIGNAL_BOX = 160, F_COMPUTED_BOX = 129;
+// A dirty record whose stamps agree with the bit (b100, D-M): a mark landed one clock tick after the snapshot's
+// last write (gv advanced, as a reverted write does), so markEpoch > evalVersion AND markEpoch <= gv, as live keeps it.
+// (markEpoch = evalVersion + 1 alone can sit AHEAD of gv: the next write then stamps the same epoch and its mark
+// walk stops there, which no live graph does.)
+function dirtyRec(snap, n) { snap.gv = (snap.gv + 1) | 0 || 1; n.clean = false; n.markEpoch = snap.gv; return n; }
 
 
 // snapshot/restore (1.6.0): in-process time-travel / undo.
@@ -87,6 +92,10 @@ test("snapshot/restore: 200-seed round-trip oracle (value + version + propagatio
 
         // Every value/version/kind/dep/owner matches: re-snapshot deep-equals.
         assert.deepEqual(sortById(r2.snapshot().nodes), sortById(snap.nodes));
+        // D-M / D-O (b100): the whole snapshot round-trips, clock + next id + per-record stamps included.
+        assert.deepStrictEqual(Object.keys(snap), ["v", "nodes", "gv", "nextId"]);
+        for (const n of snap.nodes) assert.ok(Number.isInteger(n.evalVersion) && Number.isInteger(n.markEpoch), "stamps on record " + n.id);
+        assert.deepStrictEqual(r2.snapshot(), snap, "snapshot(restore(s)) === s incl. gv / nextId / evalVersion / markEpoch");
 
         // Reads return restored values (cache hits); effect did NOT re-fire.
         assert.equal(H[ids.total](), o0.total);
@@ -718,12 +727,13 @@ test("N7 snapshot() fires 0 onGraphMutation events", () => {
 
 // --- N8. after destroy() ---------------------------------------------------------------------------------------
 
-test("N8 snapshot after destroy() is { v: 1, nodes: [] }", () => {
+test("N8 snapshot after destroy() is { v: 1, nodes: [], gv, nextId } (the clock and the next id survive destroy)", () => {
     const r = createRegistry();
     r.signal(1);
     r.signalBox(2);
     r.destroy();
-    assert.deepEqual(r.snapshot(), { v: 1, nodes: [] });
+    assert.deepStrictEqual(r.snapshot(), { v: 1, nodes: [], gv: 1, nextId: 3 });
+    assert.deepStrictEqual(createRegistry().snapshot(), { v: 1, nodes: [], gv: 1, nextId: 1 }, "fresh registry");
 });
 
 // --- N9. disposed ids are absent ---------------------------------------------------------------------------
@@ -782,8 +792,10 @@ test("A5 restored effect runs 0x on restore, 1x after one dep set", () => {
     const sId = src.nodeId(s), effId = src.nodeId(eff);
     const H = {};
     let runs = 0;
-    const r2 = src.restore(src.snapshot(), { fnsById: { [effId]: () => { H[sId](); runs++; } }, handles: H });
+    const snap = src.snapshot();
+    const r2 = src.restore(snap, { fnsById: { [effId]: () => { H[sId](); runs++; } }, handles: H });
     assert.equal(runs, 0);
+    assert.deepStrictEqual(r2.snapshot(), snap, "the effect's stamps (evalVersion / markEpoch), the clock and the next id round-trip");
     H[sId].set(1);
     assert.equal(runs, 1);
     assert.equal(n, 1, "source effect untouched");
@@ -843,12 +855,9 @@ test("A5 randomized graphs: re-snapshot of the restore deepEquals the original (
             }
         }
         const r2 = r.restore(snap, { fnsById, handles: H });
-        const byId = (a, b) => a.id - b.id;
-        // spec (cases 7/8): a not-clean computed (never read or dirty) restores UNCOMPUTED, so only its identity
-        // fields (id/kind/flags/clean/ownerId/ownerPos) must round-trip; every other record round-trips whole.
-        const norm = (nodes) => [...nodes].sort(byId).map((n) => (n.clean === false && n.kind !== "signal" && n.kind !== "signalBox"
-            ? { id: n.id, kind: n.kind, flags: n.flags, clean: n.clean, ownerId: n.ownerId, ownerPos: n.ownerPos } : n));
-        assert.deepEqual(norm(r2.snapshot().nodes), norm(snap.nodes), "seed " + seed);
+        // D-L / D-M / D-O (b100): every record round-trips WHOLE -- a dirty evaluated computed is seeded with its value,
+        // version and stamps, a never-read one stays uncomputed with its recorded zeros -- and so do gv and nextId.
+        assert.deepStrictEqual(r2.snapshot(), snap, "seed " + seed);
         r.destroy(); r2.destroy();
     }
     // asserted coverage floor: the stream really exercised the feature classes
@@ -1068,10 +1077,26 @@ describe("A9 round 2 -- restore input law", () => {
         recOf(snap, e2Id).ownerId = e1Id;
         assert.throws(() => r.restore(snap, { fnsById: { [e1Id]: () => {}, [e2Id]: () => {} } }), named(/owner cycle/));
     });
-    test("E4 a dep cycle among clean computeds throws at restore (not later on a read)", () => {
-        const { r, c1Id, c2Id, snap, fns } = chain();
-        recOf(snap, c1Id).deps = [c2Id];
-        assert.throws(() => r.restore(snap, { fnsById: fns }), named(/dep cycle/));
+    test("E4 (D-N) a live-built dep cycle among clean computeds is restored, not refused; reads match the live twin incl. its RangeError", () => {
+        const r = createRegistry(), G = {};
+        G.a = r.signal(1);
+        G.c1 = r.computed(() => { try { G.c2(); } catch (e) {} return G.a() + 1; });
+        G.c2 = r.computed(() => G.c1() * 2);
+        assert.equal(G.c2(), 4);
+        const aId = r.nodeId(G.a), c1Id = r.nodeId(G.c1), c2Id = r.nodeId(G.c2);
+        const snap = r.snapshot();
+        assert.equal(recOf(snap, c1Id).clean, true); assert.equal(recOf(snap, c2Id).clean, true);
+        assert.ok(recOf(snap, c1Id).deps.includes(c2Id) && recOf(snap, c2Id).deps.includes(c1Id), "the snapshot holds the clean cycle c1 <-> c2");
+        const H = {}, K = {};
+        const r2 = r.restore(snap, { fnsById: { [c1Id]: () => { try { K.c2(); } catch (e) {} return K.a() + 1; }, [c2Id]: () => K.c1() * 2 }, handles: H });
+        K.a = H[aId]; K.c1 = H[c1Id]; K.c2 = H[c2Id];
+        assert.deepStrictEqual(r2.snapshot(), snap);
+        assert.equal(K.c2(), 4, "clean: cache hit");
+        const out = (f) => { try { return f(); } catch (e) { return e.constructor.name; } };
+        G.a.set(5); K.a.set(5);
+        const lv = out(() => G.c2());
+        assert.equal(lv, "RangeError", "live overflows its pre-walk (probe 0c class, live bug, not A9)");
+        assert.equal(out(() => K.c2()), lv);
     });
     test("E4 control: a valid owner tree + clean chain still restores and propagates", () => {
         const { r, aId, c2Id, snap } = chain();
@@ -1352,7 +1377,7 @@ describe("A9 round 3 -- restore pre-scan + mutant rows", () => {
     test("R2-T E2-sym: Symbol-keyed restore options throw", () => {
         const r = createRegistry();
         const restore = (snap, opts) => r.restore(snap, opts);
-        assert.throws(() => restore({ v: 1, nodes: [] }, { [Symbol("x")]: 1 }), /Symbol keys/);
+        assert.throws(() => restore({ v: 1, nodes: [], gv: 1, nextId: 1 }, { [Symbol("x")]: 1 }), /Symbol keys/);
     });
 
     // --- R2-E1: a signal is never owned ------------------------------------------------------------------------
@@ -1389,7 +1414,7 @@ describe("A9 round 3 -- restore pre-scan + mutant rows", () => {
         const sId = r.nodeId(s), cId = r.nodeId(c), eId = r.nodeId(e);
         const snap = r.snapshot();
         assert.equal(recOf(snap, cId).clean, true);
-        recOf(snap, cId).clean = false;
+        dirtyRec(snap, recOf(snap, cId));                 // live-emittable stamps: marked after its last evaluation
         const H = {}, seen = []; let cRuns = 0;
         const r2 = r.restore(snap, { fnsById: { [cId]: () => { cRuns++; return H[sId]() + 1; }, [eId]: () => { seen.push(H[cId]()); } }, handles: H });
         assert.equal(cRuns, 0, "uncomputed: restore runs no body");
@@ -1407,7 +1432,7 @@ describe("A9 round 3 -- restore pre-scan + mutant rows", () => {
         const sId = r.nodeId(s), c1Id = r.nodeId(c1), c2Id = r.nodeId(c2);
         const snap = r.snapshot();
         assert.equal(recOf(snap, c2Id).clean, true);
-        recOf(snap, c1Id).clean = false;
+        dirtyRec(snap, recOf(snap, c1Id));
         const H = {}; let c1Runs = 0;
         r.restore(snap, { fnsById: { [c1Id]: () => { c1Runs++; return H[sId]() + 1; }, [c2Id]: () => H[c1Id]() * 2 }, handles: H });
         assert.equal(c1Runs, 0);
@@ -1490,15 +1515,16 @@ describe("A9 round 3 -- restore pre-scan + mutant rows", () => {
     });
 
     // --- D-F: ids, dep ids and ownerIds are capped at 0x3FFFFFFF --------------------------------------------------
-    test("D-F control: id 0x3FFFFFFF restores; the next created node gets a fresh, larger id and works", () => {
+    test("D-F control (D-O): id 0x3FFFFFFF restores; the next created node takes the recorded nextId exactly (no maxId + 1) and works", () => {
         const { r, snap } = twoSignals();
         snap.nodes[1].id = 0x3FFFFFFF;
+        snap.nextId = 0x40000000;                      // live-emittable: live's next id is past its largest id
         const H = {};
         const r2 = r.restore(snap, { handles: H });
         assert.equal(H[0x3FFFFFFF](), 2);
         const n = r2.signal(9);
         const nid = r2.nodeId(n);
-        assert.ok(Number.isInteger(nid) && nid > 0x3FFFFFFF, "next id " + nid + " continues past the restored max");
+        assert.equal(nid, 0x40000000, "next id is the recorded nextId (D-O), not maxId + 1");
         assert.notEqual(nid, snap.nodes[0].id);
         n.set(10);
         assert.equal(n(), 10);
@@ -1612,7 +1638,7 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         const snap = r.snapshot();
         assert.equal(rec(snap, srcId).flags, F_COMPUTED_BOX); assert.equal(rec(snap, depId).flags, F_COMPUTED_BOX);
         assert.equal(rec(snap, depId).clean, true);
-        rec(snap, srcId).clean = false;               // dirty computedBox source under a clean computedBox dependent
+        dirtyRec(snap, rec(snap, srcId));                   // dirty computedBox source under a clean computedBox dependent
         const H = {}, out = [];
         r.restore(snap, { fnsById: { [srcId]: () => H[sId].get() + 1, [depId]: () => H[srcId].get() * 10, [eId]: () => { out.push(H[depId].get()); } }, handles: H });
         assert.equal(H[depId].get(), 20, "clean computedBox dependent: cache hit");
@@ -1628,7 +1654,7 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         const e = r.effect(() => { c(); });
         const sId = r.nodeId(s), tId = r.nodeId(t), cId = r.nodeId(c), eId = r.nodeId(e);
         const snap = r.snapshot();
-        rec(snap, cId).clean = false;
+        dirtyRec(snap, rec(snap, cId));
         const H = {};
         const r2 = r.restore(snap, { fnsById: { [cId]: () => H[sId]() + H[tId](), [eId]: () => { H[cId](); } }, handles: H });
         assert.deepEqual(rec(r2.snapshot(), cId).deps, [sId, tId], "wired once, before any read");
@@ -1712,7 +1738,7 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         const sId = r.nodeId(s), dId = r.nodeId(d), rdId = r.nodeId(rd);
         const snap = r.snapshot();
         assert.equal(rec(snap, rdId).clean, true); assert.notEqual(rec(snap, dId).version, 0);
-        rec(snap, dId).clean = false;                  // the D-G shape: a dirty (evaluated) computedBox under a clean reader
+        dirtyRec(snap, rec(snap, dId));                      // the D-G shape: a dirty (evaluated) computedBox under a clean reader
         const H = {}; let rdRuns = 0, dRuns = 0;
         const r2 = r.restore(snap, { fnsById: { [dId]: () => { dRuns++; return H[sId]() > 0 ? 10 : 20; }, [rdId]: () => { rdRuns++; return H[dId].get() + 1; } }, handles: H });
         let liveRuns = 0; const lrd = r.computed(() => { liveRuns++; return d.get() + 1; }); lrd(); liveRuns = 0;
@@ -1747,18 +1773,29 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         const R = restoreSelfWrite(r, snap, ids, body, 2);
         assert.deepEqual(rec(R.r2.snapshot(), ids.c), rec(snap, ids.c));
     });
-    // --- b98 E2 + nits: the seeded one-shot wrapper puts the real body back BEFORE running it and passes the receiver.
-    test("D-I wrapper is one-shot: after a THROWING first run (dep read first) later runs are not wrapped (seen [true,false])", () => {
-        const r = createRegistry(); const s = r.signal(1);
-        const c = r.computed(() => (s() > 0 ? 1 : 0)); const e = r.effect(() => { c(); r.untrack(() => { if (s() < 2) s.set(2); }); });
-        const ids = { s: r.nodeId(s), c: r.nodeId(c), e: r.nodeId(e) };
-        const snap = r.snapshot(); assert.equal(rec(snap, ids.c).clean, false, "seeded shape");
-        const H = {}, seen = []; let first = true;
-        r.restore(snap, { fnsById: { [ids.c]: () => { const v = H[ids.s](); seen.push(new Error().stack.includes("seededFirstRun")); if (first) { first = false; throw new Error("x"); } return v > 0 ? 1 : 0; }, [ids.e]: () => { try { H[ids.c](); } catch (x) {} } }, handles: H });
-        assert.throws(() => H[ids.c](), /x/); H[ids.s].set(7); H[ids.c]();
-        assert.deepEqual(seen, [true, false]);
+    // --- D-L (b100): a seeded dirty computed keeps its recorded stamps and its own body (the b98 one-shot first-run
+    // wrapper is deleted), so its first read pre-walks like live. The receiver / gen rows below still hold.
+    test("D-L a seeded dirty computed pre-walks like its live twin: an unchanged dep settles it with NO body run (run count + log equal)", () => {
+        const r = createRegistry(), lv = [];
+        const s = r.signal(1);
+        const c1 = r.computed(() => (s() > 0 ? 1 : 0));
+        const c2 = r.computed(() => { const v = c1(); lv.push(v); return v + 10; });
+        c2(); s.set(2); r.untrack(() => c1());        // c2 marked dirty; c1 re-settles to the same value (version kept)
+        const ids = { s: r.nodeId(s), c1: r.nodeId(c1), c2: r.nodeId(c2) };
+        const snap = r.snapshot();
+        const c2r = rec(snap, ids.c2);
+        assert.equal(c2r.clean, false); assert.notEqual(c2r.evalVersion, 0); assert.ok(((c2r.markEpoch - c2r.evalVersion) | 0) > 0, "dirty by the stamps");
+        const H = {}, rv = [];
+        const r2 = r.restore(snap, { fnsById: { [ids.c1]: () => (H[ids.s]() > 0 ? 1 : 0), [ids.c2]: () => { const v = H[ids.c1](); rv.push(v); return v + 10; } }, handles: H });
+        assert.deepStrictEqual(r2.snapshot(), snap, "seeded record kept whole (stamps incl.)");
+        const L0 = lv.length;
+        assert.deepEqual([c2(), H[ids.c2]()], [11, 11]);
+        assert.deepEqual(rv, lv.slice(L0)); assert.deepEqual(rv, [], "the pre-walk settled it: no body run (D-I's evalVersion 0 forced one)");
+        s.set(-1); H[ids.s].set(-1);
+        assert.deepEqual([c2(), H[ids.c2]()], [10, 10]);
+        assert.deepEqual(rv, lv.slice(L0)); assert.deepEqual(rv, [0]);
     });
-    test("D-I wrapper keeps the receiver: a non-arrow seeded body sees the same `this` on its first and later runs, as live", () => {
+    test("D-L seeded body keeps the receiver: a non-arrow seeded body sees the same `this` on its first and later runs, as live", () => {
         const r = createRegistry(); const s = r.signal(1); const liveThis = [];
         const c = r.computed(function () { liveThis.push(this); return s() > 0 ? 1 : 0; });
         const e = r.effect(() => { c(); r.untrack(() => { if (s() < 2) s.set(2); }); });
@@ -1771,9 +1808,9 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         assert.ok(liveThis.length >= 2 && recv.length >= 2, "live " + liveThis.length + " restored " + recv.length);
         assert.equal(liveThis[0], liveThis[1], "live: one receiver across runs");
         assert.equal(typeof recv[0], typeof liveThis[0]); assert.notEqual(recv[0], undefined);
-        assert.equal(recv[0], recv[1], "restored: the first (wrapped) run gets the same receiver as later runs");
+        assert.equal(recv[0], recv[1], "restored: the first run gets the same receiver as later runs");
     });
-    test("D-I wrapper gen check: a first run that destroy()s the registry and refills the slot leaves the new occupant untouched (every signal records clean:false)", () => {
+    test("D-L gen check: a first run that destroy()s the registry and refills the slot leaves the new occupant untouched (every signal records clean:false)", () => {
         const r = createRegistry(); const s = r.signal(1);
         const c = r.computed(() => (s() > 0 ? 1 : 0)); const e = r.effect(() => { c(); r.untrack(() => { if (s() < 2) s.set(2); }); });
         const ids = { s: r.nodeId(s), c: r.nodeId(c), e: r.nodeId(e) };
@@ -1789,7 +1826,7 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         assert.equal(sigs.length, 8);
         assert.deepEqual(sigs.filter((n) => n.clean !== false).map((n) => n.id), [], "a signal never records clean:true");
     });
-    test("D-G Scan D (T2): a dep cycle through a WIRED dirty computed is live-emittable and restores live-equivalently (Scan D walks clean computeds only)", () => {
+    test("D-G (T2): a dep cycle through a WIRED dirty computed is live-emittable and restores live-equivalently (D-N: restore runs no cycle scan)", () => {
         const build = (r, G, log) => {
             G.s = r.signal(0);
             G.C = r.computed(() => { const v = G.s(); if (v > 0) { try { return G.D(); } catch (e) { return -1; } } return v; });
@@ -1811,20 +1848,13 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         drive(G, log); drive(G2, out);
         assert.deepEqual(log.slice(L0), [0, "D=1", -1, "D=0"]);
         assert.deepEqual(out, log.slice(L0));
-        // A cycle the BODIES close (hand-written snapshot) is bounded: CycleError on the first pull, never a hang.
-        const snap2 = { v: 1, nodes: [
-            { id: 1, kind: "signal", flags: F_SIGNAL, value: 1, version: 2, clean: false, ownerId: null, ownerPos: -1, deps: [], subPos: [] },
-            { id: 2, kind: "computed", flags: F_COMPUTED, value: 0, version: 1, clean: false, ownerId: null, ownerPos: -1, deps: [3, 1], subPos: [0, 0] },
-            { id: 3, kind: "computedBox", flags: F_COMPUTED_BOX, value: 0, version: 1, clean: false, ownerId: null, ownerPos: -1, deps: [2], subPos: [0] },
-            { id: 4, kind: "computed", flags: F_COMPUTED, value: 7, version: 1, clean: true, ownerId: null, ownerPos: -1, deps: [2], subPos: [1] }] };
-        const K = {};
-        r.restore(snap2, { fnsById: { 2: () => K[3].get() + K[1](), 3: () => K[2]() * 10, 4: () => K[2]() + 100 }, handles: K });
-        assert.equal(K[4](), 7);
-        K[1].set(5);
-        assert.throws(() => K[4](), /^Error: CycleError: Circular dependency detected\.$/);
+        // The b99 hand-written cycle (snap2) is gone: live cannot emit it (no gv / nextId / stamps), and a hand-written
+        // snapshot live cannot emit is not a contract (ADDENDUM 3). A live-emittable CLEAN dep cycle restores like live
+        // (incl. its RangeError): test/77 "D-N ... (probe 0c)" and the E4 (D-N) row above.
     });
 
-    const SEEDS = [12345, 0x9E3779B9 | 0, 7];
+    // LS_FUZZ_SEEDS=a,b,... overrides the fuzz seeds (b100 closing run: 12345,-1640531527,7,1013904223,2147483647).
+    const SEEDS = process.env.LS_FUZZ_SEEDS ? process.env.LS_FUZZ_SEEDS.split(",").map((x) => Number(x) | 0) : [12345, 0x9E3779B9 | 0, 7];
     // LS_FUZZ_GRAPHS=<n> (default 400) scales every fuzz row below and its floors (closing runs use 4000).
     const FUZZ_G = Number(process.env.LS_FUZZ_GRAPHS) > 0 ? Number(process.env.LS_FUZZ_GRAPHS) | 0 : 400;
     const FK = FUZZ_G / 400;
@@ -1851,13 +1881,14 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         }
         assert.ok(dur >= 20 * FK, "dirtyUnderReader " + dur); assert.ok(sw >= 2600 * FK, "selfWrites " + sw); assert.ok(cmp >= 1150 * FK, "compared " + cmp);
     });
-    // Graphs pinned OUT of the asserted all-lanes row, each by a named cause (b98 diagnosis). D-J (b99) fixed
-    // subscriber order, so the only exclusion left is the F6 class (fixed by D-H, not by restore).
+    // Graphs once pinned OUT of the asserted all-lanes row (b98 diagnosis): D-J (b99) fixed subscriber order, and D-L
+    // (b100) seeds a dirty computed with its stamps, so its body pre-walks like live and reproduces live's F6 rethrow
+    // (LEDGER #38, a LIVE bug fixed by D-H). No exclusion is left; the F6 graphs keep their own row below.
     const F6_GRAPHS = { 12345: [161], 7: [40] };         // a catching body sees a dep error from the pre-walk (LEDGER #38, D-H)
-    test("D-G/D-I/D-J seeded live fuzz, all lanes, full logs, 3 seeds x LS_FUZZ_GRAPHS (F6 graphs excluded): restored runs live-equivalently", () => {
+    test("D-G/D-I/D-J seeded live fuzz, all lanes, full logs, 3 seeds x LS_FUZZ_GRAPHS (no exclusion): restored runs live-equivalently", () => {
         let cmp = 0;
         for (const seed of SEEDS) {
-            const { cov, fails } = fuzzRoundTrip(createRegistry, seed, FUZZ_G, { skipG: F6_GRAPHS[seed] || [], fullLogs: true });
+            const { cov, fails } = fuzzRoundTrip(createRegistry, seed, FUZZ_G, { fullLogs: true });
             assert.equal(cov.restoreRefused, 0, "seed " + seed + ": " + fails.slice(0, 2).join(" / "));
             assert.equal(cov.mismatched, 0, "seed " + seed + ": " + fails.slice(0, 2).join(" / "));
             assert.equal(cov.structural, 0, "seed " + seed + ": " + fails.slice(0, 2).join(" / "));
@@ -1865,7 +1896,8 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         }
         assert.ok(cmp >= 1000 * FK, "compared " + cmp);
     });
-    test("F6 graphs (12345 g161, 7 g40): restored settles live-equivalently", { todo: "F6 (LEDGER #38, ruling D-H): live rethrows a dep error from the pre-walk past a catching body; the restored uncomputed body catches it" }, () => {
+    // b100: green since D-L (red on b100-before: both graphs mismatched); F6 itself stays a live bug (LEDGER #38, D-H).
+    test("F6 graphs (12345 g161, 7 g40): restored settles live-equivalently, incl. live's F6 pre-walk rethrow (D-L)", () => {
         for (const seed of [12345, 7]) {
             const { cov, fails } = fuzzRoundTrip(createRegistry, seed, 400, { onlyG: F6_GRAPHS[seed] });
             assert.equal(cov.compared, 1); assert.equal(cov.mismatched, 0, fails.join(" / "));
@@ -1876,6 +1908,16 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         const { cov, fails } = fuzzRoundTrip(createRegistry, seed, 318, { onlyG: [317], fullLogs: true });
         assert.equal(cov.compared, 1); assert.equal(cov.mismatched, 0, fails.join(" / ")); assert.equal(cov.structural, 0, fails.join(" / "));
     });
+    // F-b99-1 fuzz red rows (b99 closing fuzz; fixed by b100 D-L / D-M / D-O): each graph ran differently restored than
+    // live on b100-before (missed / extra effect runs, g2719 all-lanes: live "!T" vs restored "0"). Full logs + exact structure.
+    for (const [seed, g, noThr] of [[12345, 1766, true], [271828183, 230, true], [271828183, 558, true], [1013904223, 3438, true],
+        [2147483647, 1864, true], [2147483647, 2719, true], [2147483647, 2719, false]]) {
+        test("F-b99-1 fuzz row: seed " + seed + " g" + g + (noThr ? " (noThr)" : " (all lanes)") + ": restored runs live-equivalently, full logs + exact structure", () => {
+            const { cov, fails } = fuzzRoundTrip(createRegistry, seed, g + 1, { onlyG: [g], noThr, fullLogs: true });
+            assert.equal(cov.restoreRefused, 0, fails.join(" / ")); assert.equal(cov.compared, 1);
+            assert.equal(cov.mismatched, 0, fails.join(" / ")); assert.equal(cov.structural, 0, fails.join(" / "));
+        });
+    }
 });
 
 describe("A9 round 5 -- D-J: subscriber order is recorded (subPos) and placed on restore", () => {
@@ -2263,13 +2305,9 @@ function fuzzRoundTrip(createRegistry, seed, graphs, knobs = {}) {
             env2.R[i] = reader(h, specs[i].k === "sb" || specs[i].k === "cb");
             if (specs[i].k === "s" || specs[i].k === "sb") env2.W[i] = (v) => h.set(v);
         }
-        // D-J structural lane: forEachObserver ids of every spec handle, live vs restored. Right after restore the
-        // lists must be IDENTICAL (links, duplicates and order). After the script they are compared in FIRST-
-        // OCCURRENCE order (the order a write notifies in): a restored dirty computed runs its body on its first
-        // read where live may settle it by the pre-walk (D-G / D-I), and a body that reads one source twice while
-        // that source has a later subscriber gets a 2nd link (allocateLink dedups at the tail only, live too).
-        // -- F-b99-1 (computed side: D-I forces evalVersion 0); burst 100 restores the exact post-script compare
-        // (structOf(..., false)).
+        // D-J structural lane: forEachObserver ids of every spec handle, live vs restored, compared IDENTICALLY
+        // (links, duplicates and order) right after restore AND after the script: restore copies live's clock,
+        // next id and stamps (D-L / D-M / D-O), so a restored dirty computed settles by the same pre-walk as live.
         // Ids above the snapshot's max are post-restore nodes; their ids may differ, so "n".
         // D-J6 owner lane: after "/", the forEachOwned ids of the same handle, compared EXACTLY (order included)
         // both right after restore and after the script: only effects own (nest children), an owner re-runs
@@ -2298,7 +2336,7 @@ function fuzzRoundTrip(createRegistry, seed, graphs, knobs = {}) {
         if (knobs.onlyG ? !knobs.onlyG.includes(g) : (knobs.skipG !== undefined && knobs.skipG.includes(g))) continue;
         cov.compared++;
         if (a !== b) { cov.mismatched++; if (fails.length < 5) fails.push("g" + g + " live " + a + " != restored " + b); }
-        const st1b = st1 + "#" + structOf(r, handles, true), st2b = st2 + "#" + structOf(r2, hs2, true);
+        const st1b = st1 + "#" + structOf(r, handles, false), st2b = st2 + "#" + structOf(r2, hs2, false);
         if (st1b !== st2b) { cov.structural++; if (fails.length < 5) fails.push("g" + g + " observers live " + st1b + " != restored " + st2b); }
     }
     return { cov, fails };

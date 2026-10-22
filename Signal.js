@@ -338,8 +338,9 @@ const RESTORE_K_EFFECT = 5;
  *  floats, NaN, non-numbers and anything past the cap fail closed. The cap
  *  (A9 round 3, maintainer ruling D-F) keeps every restored id a Smi on
  *  pointer-compressed V8 (31-bit Smi: a closure counter >= 2^30 boxes on every
- *  write), bounds the post-restore nodeSeq at 2^30, and makes the rebuild's
- *  `nodeSeq = maxId + 1` int32 wrap unreachable from a restore. */
+ *  write). It does not bound the post-restore node-id counter: restore copies
+ *  the snapshot's nextId (D-O, any int32 -- live's counter wraps by
+ *  `(nodeSeq + 1) | 0`), so the rebuild continues exactly where live was. */
 function restoreIdOk(x) {
     return typeof x === "number" && (x | 0) === x && x > 0 && x <= 0x3FFFFFFF;
 }
@@ -392,8 +393,8 @@ function restorePermCheck(group, pos, rec, count, groupCount, ids, label, noun, 
  * compute body (own properties of fnsById only); a signal with deps; a signal
  * with an owner (round 3: a signal is never owned); an effect used as a dep
  * source; a dangling dep on ANY record (dirty computeds included, E9); a missing,
- * self, signal-kind or cyclic owner; a dep cycle among clean computeds
- * (iterative, O(N+E)); D-J: a subPos that is missing, not an array, not
+ * self, signal-kind or cyclic owner (a dep cycle among clean computeds is NOT
+ * refused, D-N: live emits one); D-J: a subPos that is missing, not an array, not
  * deps.length long, or holds a non-int / negative element (TypeError, checked
  * after the record's dep ids), then, per source, subPos values that are not a
  * permutation of 0..n-1 (TypeError: out of range / duplicate; after the dep
@@ -402,7 +403,13 @@ function restorePermCheck(group, pos, rec, count, groupCount, ids, label, noun, 
  * owner scans (so a missing / self / signal / cyclic owner keeps its own
  * error), an ownerPos that is not -1 on an unowned record or is -1 on an owned
  * one, and per owner, ownerPos values that are not a permutation of 0..n-1
- * (TypeError: out of range / duplicate). Every field the rebuild uses is copied
+ * (TypeError: out of range / duplicate). D-M (round 6): an evalVersion or
+ * markEpoch that is missing or not an int32 (TypeError, after the flags); a
+ * signal whose stamps are not both 0, an effect with evalVersion 0, a computed
+ * whose evalVersion is 0 while its version is not (or the reverse), and a clean
+ * bit other than `evalVersion !== 0 && ((markEpoch - evalVersion) | 0) <= 0`
+ * (snapshot()'s own formula; TypeError). Negative stamps and stamps on either
+ * side of gv are accepted (live reaches both). Every field the rebuild uses is copied
  * here, read once, so a getter cannot change it between check and use.
  * Cold: one call per restore, never on a hot path.
  * @private
@@ -412,9 +419,11 @@ function restorePrescan(nodes, fnsById) {
     const ids = new Int32Array(count);
     const kinds = new Uint8Array(count);
     const vers = new Int32Array(count);
+    const evs = new Int32Array(count);         // D-M: recorded evalVersion
+    const mes = new Int32Array(count);         // D-M: recorded markEpoch
     const clean = new Uint8Array(count);       // 1 = clean computed (wired, cache trusted)
     const hasErr = new Uint8Array(count);
-    const seed = new Uint8Array(count);        // 1 = dirty, evaluated computed: seed value + version + error bit (D-I2)
+    const seed = new Uint8Array(count);        // 1 = dirty, evaluated computed: seed value + version + stamps + error bit (D-I2, D-L)
     const ownerIds = new Int32Array(count);    // 0 = no owner
     const ownerIdx = new Int32Array(count);    // -1 = no owner
     const values = new Array(count);
@@ -455,6 +464,28 @@ function restorePrescan(nodes, fnsById) {
         }
         vers[i] = v;
         const fl = rec.flags; if (typeof fl !== "number" || (fl | 0) !== fl) throw new TypeError("[lite-signal] restore: invalid flags " + restoreShow(fl) + " at index " + i);
+        // D-M (round 6): the recorded freshness stamps, each read ONCE. Any int32: a far floor is
+        // negative and a stamp may sit modularly on either side of gv, both live-reachable. The
+        // relations are the ones live keeps: a signal is never evaluated or marked; an effect
+        // snapshot() accepts has finished a run; a computed is evaluated (evalVersion != 0) iff
+        // its version moved off 0; the clean bit is exactly snapshot()'s formula.
+        const ev = rec.evalVersion;
+        if (typeof ev !== "number" || (ev | 0) !== ev) throw new TypeError("[lite-signal] restore: invalid evalVersion " + restoreShow(ev) + " at index " + i);
+        const me = rec.markEpoch;
+        if (typeof me !== "number" || (me | 0) !== me) throw new TypeError("[lite-signal] restore: invalid markEpoch " + restoreShow(me) + " at index " + i);
+        if (kc <= RESTORE_K_SIGNAL_BOX) {
+            if (ev !== 0) throw new TypeError("[lite-signal] restore: invalid evalVersion " + ev + " at index " + i + " (a signal is never evaluated: expected 0)");
+            if (me !== 0) throw new TypeError("[lite-signal] restore: invalid markEpoch " + me + " at index " + i + " (a signal is never marked: expected 0)");
+        } else if (kc === RESTORE_K_EFFECT) {
+            if (ev === 0) throw new TypeError("[lite-signal] restore: invalid evalVersion 0 at index " + i + " (an effect has finished a run)");
+        } else if ((ev === 0) !== (v === 0)) {
+            throw new TypeError("[lite-signal] restore: invalid evalVersion " + ev + " at index " + i + " (version " + v + ": a computed is evaluated iff its version is not 0)");
+        }
+        const cl = rec.clean;
+        if (cl !== (ev !== 0 && ((me - ev) | 0) <= 0)) {
+            throw new TypeError("[lite-signal] restore: invalid clean " + restoreShow(cl) + " at index " + i + " (evalVersion " + ev + ", markEpoch " + me + ")");
+        }
+        evs[i] = ev; mes[i] = me;
         const d = rec.deps;
         if (!Array.isArray(d)) throw new TypeError("[lite-signal] restore: invalid deps at index " + i);
         const dl = d.length;
@@ -510,11 +541,11 @@ function restorePrescan(nodes, fnsById) {
                 throw new Error("[lite-signal] restore: missing fn for id " + id + " (" + k + ")");
             }
             fns[i] = fn;
-            if (kc !== RESTORE_K_EFFECT && rec.clean === true) {
+            if (kc !== RESTORE_K_EFFECT && cl) {
                 clean[i] = 1;
                 if ((fl & FLAG_HAS_ERROR) !== 0) hasErr[i] = 1;
             } else if (kc !== RESTORE_K_EFFECT && v !== 0) {
-                seed[i] = 1;   // D-I2: evaluated (version 0 = never): seed value + version + error bit
+                seed[i] = 1;   // D-I2 / D-L: dirty, evaluated (version 0 = never): seed value + version + stamps + error bit
                 if ((fl & FLAG_HAS_ERROR) !== 0) hasErr[i] = 1;
             }
         }
@@ -588,56 +619,7 @@ function restorePrescan(nodes, fnsById) {
     const ownOrder = new Int32Array(ownedN);
     for (let e = 0; e < ownedN; e++) ownOrder[ownBase[oGroup[e]] + oPos[e]] = oRec[e];
 
-    // Scan D: the dep graph among clean computeds (the edges a pull pre-walks) is acyclic.
-    // Iterative 3-colour DFS, explicit stacks, O(N+E); a cycle throws here, never later on a read.
-    // A wired dirty computed is skipped (D-G): it is uncomputed, so a pull runs its body instead
-    // of walking its links, and a cycle its body closes throws CycleError there, as live does.
-    const colour = new Uint8Array(count);
-    const stackN = new Int32Array(count);
-    const stackE = new Int32Array(count);
-    for (let r = 0; r < count; r++) {
-        if (clean[r] === 0 || colour[r] !== 0) continue;
-        let sp = 0;
-        stackN[0] = r; stackE[0] = 0; colour[r] = 1;
-        while (sp >= 0) {
-            const n = stackN[sp];
-            const di = depIdx[n];
-            const e = stackE[sp];
-            if (e < di.length) {
-                stackE[sp] = e + 1;
-                const s = di[e];
-                if (clean[s] === 0) continue;
-                if (colour[s] === 1) throw new Error("[lite-signal] restore: dep cycle through id " + ids[s]);
-                if (colour[s] === 0) { colour[s] = 1; sp++; stackN[sp] = s; stackE[sp] = 0; }
-            } else {
-                colour[n] = 2;
-                sp--;
-            }
-        }
-    }
-
-    return { count, ids, kinds, vers, clean, hasErr, seed, ownerIdx, values, fns, depIdx, subPos, subBase, subE, ownBase, ownOrder };
-}
-
-/**
- * D-I / D-I2: the first-run body of a restored DIRTY computed whose value +
- * version (+ error bit) were seeded from the snapshot. It restores the real
- * body, runs it, then lifts evalVersion off 0 so pullComputed compares the new
- * value with the seeded one through node.equals, with the default equals
- * (Object.is: a custom equals is not captured) -- exactly as a live node with
- * the default equals would -- instead of treating a first run as a change.
- * A seeded error bit is kept or cleared by pullComputed's own logic. Cold: one call per seeded node, ever;
- * pullComputed itself is unchanged.
- * @private
- */
-function restoreSeededBody(node, fn) {
-    const gen = node.gen;
-    return function seededFirstRun() {
-        node.computeFn = fn;
-        const v = fn.call(this);
-        if (node.gen === gen && node.evalVersion === 0) node.evalVersion = node.version;   // seeded version != 0
-        return v;
-    };
+    return { count, ids, kinds, vers, evs, mes, clean, hasErr, seed, ownerIdx, values, fns, depIdx, subPos, subBase, subE, ownBase, ownOrder };
 }
 
 /**
@@ -2669,7 +2651,10 @@ export function createRegistry(config) {
      * D-J6: ownerPos is the record's position in its owner's child list (0 = the newest child,
      * the head forEachOwned visits first), or -1 when ownerId is null; restore places each child
      * there, so each owner's child order (the cascade-dispose visit order) round-trips; cleanup callbacks are not captured.
-     * @returns {{v:1, nodes: Array<{id:number,kind:string,flags:number,value:*,version:number,clean:boolean,ownerId:(number|null),ownerPos:number,deps:number[],subPos:number[]}>}}
+     * D-M / D-O (A9 round 6): every record carries its evalVersion + markEpoch, and the snapshot
+     * the registry clock (gv) and the next node id (nextId), so restore resumes live's exact
+     * freshness state and id sequence.
+     * @returns {{v:1, nodes: Array<{id:number,kind:string,flags:number,value:*,version:number,clean:boolean,ownerId:(number|null),ownerPos:number,deps:number[],subPos:number[],evalVersion:number,markEpoch:number}>, gv:number, nextId:number}}
      */
     function snapshot() {
         // Fail closed on an unsettled graph. A snapshot taken mid-flush or
@@ -2742,8 +2727,7 @@ export function createRegistry(config) {
             // valid iff the node was actually evaluated (evalVersion !== 0) AND no
             // mark has landed in its cone since that eval (markEpoch <= evalVersion).
             // A never-read computed (evalVersion 0, deps []) and a dirty one
-            // (markEpoch > evalVersion) both report clean:false so restore rebuilds
-            // them UNCOMPUTED rather than enshrining an undefined/stale cache.
+            // both report clean:false; restore seeds a dirty one with its value, version and stamps (D-L), so its first read pre-walks as live, and leaves a never-read one uncomputed.
             // Signals have no cache; the bit is meaningless for them (and false).
             const clean = (n.evalVersion !== 0) && (((n.markEpoch - n.evalVersion) | 0) <= 0);
             out.push({
@@ -2756,14 +2740,16 @@ export function createRegistry(config) {
                 ownerId: n.owner !== null ? (n.owner.id | 0) : null,
                 ownerPos,
                 deps,
-                subPos
+                subPos,
+                evalVersion: n.evalVersion | 0,   // D-M: the freshness stamps restore copies back
+                markEpoch: n.markEpoch | 0
             });
         }
         // D-J: every subscriber link is some live node's dep link, and vice versa.
         if (linkTotal !== subIdx.size) throw new Error("[lite-signal] snapshot: graph not settled (torn subscriber list)");
         // D-J6: every child in a live owner's list is a live owned record, and vice versa.
         if (ownedTotal !== ownIdx.size) throw new Error("[lite-signal] snapshot: graph not settled (torn owner list)");
-        return {v: 1, nodes: out};
+        return {v: 1, nodes: out, gv: globalVersion | 0, nextId: nodeSeq | 0};
     }
 
     /**
@@ -2779,6 +2765,17 @@ export function createRegistry(config) {
         if (snap.v !== 1 || !Array.isArray(nodes)) {
             throw new TypeError("[lite-signal] restore: invalid snapshot (expected { v: 1, nodes: [...] })");
         }
+        // D-M / D-O (round 6): the recorded clock and next node id are REQUIRED, each read ONCE
+        // and copied exactly, never coerced. gv is never 0 (the clock skips 0) and otherwise any
+        // int32 (it wraps); nextId is any int32 (live's nodeSeq wraps by (nodeSeq + 1) | 0).
+        const gv = snap.gv;
+        if (typeof gv !== "number" || (gv | 0) !== gv || gv === 0) {
+            throw new TypeError("[lite-signal] restore: invalid gv " + restoreShow(gv) + " (expected an int32 other than 0)");
+        }
+        const nextId = snap.nextId;
+        if (typeof nextId !== "number" || (nextId | 0) !== nextId || Object.is(nextId, -0)) {
+            throw new TypeError("[lite-signal] restore: invalid nextId " + restoreShow(nextId) + " (expected an int32)");
+        }
         // A9 round 2: ONE read-only pre-scan validates every record (E1 int law, E2 own-property
         // bodies, E4 structure, E9 dangling deps) BEFORE the first write below. Nothing past this
         // line reads the snapshot again: the rebuild uses only the validated, copied plan.
@@ -2786,15 +2783,12 @@ export function createRegistry(config) {
         const count = P.count;
         const ids = P.ids, kinds = P.kinds, vers = P.vers, values = P.values;
 
-        // Fresh clock: park globalVersion at (>=) the max restored version so a
-        // node marked current at globalVersion never reads a dep as "newer" than
-        // its own eval. A later set() bumps past this and propagates, but the lift also erases an effect's live staleness after an absorbed self-write (F-b99-1, fix planned).
-        let maxV = 1, maxId = 0;
-        for (let i = 0; i < count; i++) {
-            if (vers[i] > maxV) maxV = vers[i];
-            if (ids[i] > maxId) maxId = ids[i];
-        }
-        globalVersion = maxV | 0;
+        // D-M (round 6): the clock resumes at live's globalVersion exactly, and pass 1 gives every
+        // computed and effect its recorded evalVersion + markEpoch, so each freshness compare
+        // (the clean short-circuit, the newer-dep pre-walk, the modular 2^31 band) answers as it
+        // did live. No clock is synthesised from the restored versions.
+        globalVersion = gv;
+        const evs = P.evs, mes = P.mes;
 
         const built = new Array(count);
         // E3: handles are collected here and copied into handlesOut only after
@@ -2819,38 +2813,42 @@ export function createRegistry(config) {
                 node = handle[NODE_PTR];
                 if (P.clean[i] === 1) {
                     // Snapshot proved this cache CLEAN and evaluated: trust the
-                    // captured value, rebuild deps (pass 2), and mark current so
-                    // the first read is a cache hit. Its deps may still include
+                    // captured value, rebuild deps (pass 2), and copy its stamps
+                    // (clean by the validated formula: a read is a cache hit). Its deps may still include
                     // a dirty computed (a self-write, or a dep that threw in the
                     // pre-walk): pass 2 wires that edge too (D-G).
                     node.value = values[i];            // by reference
                     node.version = vers[i];
-                    node.evalVersion = globalVersion | 0;   // mark current: a read is a cache hit
-                    node.markEpoch = globalVersion | 0;
+                    node.evalVersion = evs[i];   // D-M: the recorded stamps
+                    node.markEpoch = mes[i];
                     if (P.hasErr[i] === 1) node.flags |= FLAG_HAS_ERROR;
                 }
                 else if (P.seed[i] === 1) {
-                    // DIRTY and evaluated (D-I / D-I2): stay UNCOMPUTED (evalVersion 0,
-                    // the first read runs the body), but copy the recorded value
-                    // + version + error bit, so that first run starts from the
-                    // live state and pullComputed decides what propagates.
+                    // DIRTY and evaluated (D-I2 / D-L): copy the recorded value + version
+                    // + error bit AND stamps, so the first read pre-walks the wired deps
+                    // and reruns the body exactly as the live node would (the equality
+                    // cutoff uses node.equals: the default -- a custom equals is not captured).
                     node.value = values[i];            // by reference
                     node.version = vers[i];
+                    node.evalVersion = evs[i];
+                    node.markEpoch = mes[i];
                     if (P.hasErr[i] === 1) node.flags |= FLAG_HAS_ERROR;
-                    node.computeFn = restoreSeededBody(node, fn);
                 }
-                // else: only a never-evaluated (version 0) computed is not seeded.
-                // Pass 2 still wires recorded deps (D-G); the first read runs
-                // the body, which re-tracks deps and caches correctly.
+                else {
+                    // Never evaluated (version 0, evalVersion 0): nothing seeded. Pass 2
+                    // still wires recorded deps (D-G); the first read runs the body,
+                    // which re-tracks deps and caches correctly.
+                    node.markEpoch = mes[i];
+                }
             } else {
                 const fn = P.fns[i];
                 // Build the effect node WITHOUT running its body (user decision:
-                // restore state, do not re-fire). Marked current as if it had
-                // just run; it fires only on the next dependency change.
+                // restore state, do not re-fire). Its recorded stamps are copied (D-M),
+                // so it fires on the next dependency change exactly as live's would.
                 node = createNode(undefined, FLAG_EFFECT);
                 node.computeFn = fn;
-                node.evalVersion = globalVersion | 0;
-                node.markEpoch = globalVersion | 0;
+                node.evalVersion = evs[i];   // never 0 (validated)
+                node.markEpoch = mes[i];
                 statEffects++;
                 const birthGen = node.gen;
                 let disposed = false;
@@ -2869,13 +2867,13 @@ export function createRegistry(config) {
             built[i] = node;
             handles[i] = handle;
         }
-        nodeSeq = (maxId + 1) | 0;   // continue past restored ids
+        nodeSeq = nextId;   // D-O: continue at live's next id (validated int32)
 
         // Pass 2: rebuild dep edges (every dep resolved by the pre-scan).
-        // A computed built UNCOMPUTED (never-evaluated or dirty) with recorded
-        // deps is still wired (D-G), so a set() on those deps reaches whatever
-        // reads it; its first read runs the body and the cursor re-tracks or
-        // severs the wired links (no double-link). No recorded deps: skip.
+        // A never-evaluated or dirty computed with recorded deps is wired too
+        // (D-G), so a set() on those deps reaches whatever reads it; its first
+        // read pre-walks them (dirty, D-L) or runs the body (never evaluated), and
+        // the cursor re-tracks or severs the wired links (no double-link). No recorded deps: skip.
         // D-J: every link is recorded in slots at its source's base + subPos, and pass 2b
         // re-chains each source's subscriber list in that order (placed, not appended).
         // src.tailSub = null before each allocateLink defeats its same-pass dedup

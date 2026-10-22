@@ -59,6 +59,7 @@
 
 import * as Signal from "../../Signal.js";
 import { createReport, mulberry32, randInt, shuffle } from "./helpers/index.mjs";
+import { createLeakTracker } from "@zakkster/lite-leak";
 
 const { createRegistry, CapacityError } = Signal;
 const reg = (opts) => createRegistry({ maxNodes: 8192, maxLinks: 32768, onCapacityExceeded: "grow", ...opts });
@@ -341,9 +342,9 @@ function throws(scenario, fn, detail, want) {
     }, "restore did not throw on a missing owner id", "owner id");
 
     // Wrong shape: not v:1.
-    throws("fail-bad-version", () => reg().restore({ v: 2, nodes: [] }, {}),
+    throws("fail-bad-version", () => reg().restore({ v: 2, nodes: [], gv: 1, nextId: 1 }, {}),
         "restore did not throw on an unknown snapshot version", "invalid snapshot");
-    throws("fail-bad-nodes", () => reg().restore({ v: 1, nodes: "nope" }, {}),
+    throws("fail-bad-nodes", () => reg().restore({ v: 1, nodes: "nope", gv: 1, nextId: 1 }, {}),
         "restore did not throw on a non-array nodes field", "invalid snapshot");
 
     R.note(`fail-closed battery: 6 malformed-input rejections asserted`);
@@ -618,7 +619,10 @@ function restoreNoThrow(scenario, fn, detail) {
     while (queue.length) queue.shift()();
     const sId = r.nodeId(s), eId = r.nodeId(e);
     const snap = r.snapshot();
-    const KEYS = "clean,deps,flags,id,kind,ownerId,ownerPos,subPos,value,version";   // D-J: subPos parallel to deps; D-J6: ownerPos
+    // D-J: subPos parallel to deps; D-J6: ownerPos; D-M (b100): evalVersion + markEpoch per record, gv + nextId on the snapshot.
+    const KEYS = "clean,deps,evalVersion,flags,id,kind,markEpoch,ownerId,ownerPos,subPos,value,version";
+    R.eq("not-captured", Object.keys(snap).join(","), "v,nodes,gv,nextId", "snapshot top-level keys (in order)");
+    R.ok("not-captured", Number.isInteger(snap.gv) && snap.gv !== 0 && Number.isInteger(snap.nextId), `gv ${snap.gv} / nextId ${snap.nextId} not int32 (gv != 0)`);
     for (const n of snap.nodes) {
         R.eq("not-captured", Object.keys(n).sort().join(","), KEYS, `snapshot record ${n.id} keys (no fn / equals / scheduler)`);
     }
@@ -732,6 +736,39 @@ if (typeof globalThis.gc !== "function") {
         `(>= ${SLACK_MB} MB slack) -- snapshot or restore is retaining per cycle`);
     R.note(`retention witness: ${BATCHES}x${BATCH} cycles @ ${GRAPH} nodes, heap drift ${growthMB.toFixed(2)} MB (slack ${SLACK_MB} MB)`);
     R.note(`high-water MB: ${highWater.map((h) => (h / 1048576).toFixed(1)).join(" -> ")}`);
+}
+
+// A6 (b100): restore + destroy x100 under a lite-leak tracker -- every restored registry is collected (size() -> 0).
+// The cleanup and the tag are module-level constants: neither closes over the tracked registry. Nothing calls
+// untrack(): a size() that returns to 0 is the finalizer path, i.e. every dropped registry was COLLECTED, so each
+// one reports through onLeak exactly once (100 reports = 100 collections; a retained registry keeps size() > 0).
+const LEAK_NOOP = () => {};
+{
+    const leaks = [];
+    const tracker = createLeakTracker({ name: "snapshot-restore", onLeak: (x) => leaks.push(x.kind + ":" + String(x.tag)) });
+    let cycles = 0;
+    const leakCycle = (i) => {
+        const r = reg();
+        const s = r.signal(i);
+        const c = r.computed(() => s() * 2);
+        const e = r.effect(() => { c(); });
+        s.set(i + 1); r.batch(() => { s.set(i + 7); s.set(i + 1); });
+        const sId = r.nodeId(s), cId = r.nodeId(c), eId = r.nodeId(e);
+        const H = {};
+        const r2 = r.restore(r.snapshot(), { fnsById: { [cId]: () => H[sId]() * 2, [eId]: () => { H[cId](); } }, handles: H });
+        H[sId].set(i + 2);
+        tracker.track(r2, LEAK_NOOP, "restored");
+        r2.destroy(); r.destroy();
+        cycles++;
+    };
+    for (let i = 0; i < 100; i++) leakCycle(i);
+    const before = tracker.size();
+    for (let k = 0; k < 20 && tracker.size() > 0; k++) { globalThis.gc(); await new Promise((res) => setTimeout(res, 25)); }
+    R.eq("retention", cycles, 100, "restore + destroy cycles run");
+    R.eq("retention", before, 100, "tracker saw every restored registry before GC");
+    R.eq("retention", tracker.size(), 0, "restored registries still alive after restore + destroy x100 + GC (lite-leak tracker.size())");
+    R.eq("retention", leaks.length, 100, "finalizer reports (one per collected registry)");
+    R.note(`lite-leak witness: restore + destroy x${cycles}, tracker.size() ${before} -> ${tracker.size()}`);
 }
 
 process.exit(R.finish("snapshot/restore contract + fail-closed + retention all held", { minAsserts: 50 }));

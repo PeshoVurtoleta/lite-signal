@@ -186,14 +186,24 @@ export interface SnapshotNode {
     value: unknown;
     /** The node's version counter at capture. */
     version: number;
+    /** The registry clock value at this node's last evaluation (int32; 0 = never evaluated). Required:
+     *  restore() refuses a missing or non-int32 value, a signal with a non-0 value, an effect with 0, and a
+     *  computed whose 0-ness differs from its `version`'s. Copied back exactly (negative values after an int32
+     *  wrap are legal). */
+    evalVersion: number;
+    /** The registry clock value at the last mark that reached this node (int32; 0 for a signal). Required:
+     *  restore() refuses a missing or non-int32 value or a signal with a non-0 value; `clean` must agree with
+     *  it (`clean` iff `evalVersion !== 0` and `markEpoch` is not modularly ahead of `evalVersion`). Copied back exactly. */
+    markEpoch: number;
     /** Whether this node's cache was CLEAN and evaluated at capture -- i.e. the
      *  computed actually ran and no mark has landed in its cone since (the same
      *  freshness test pullComputed's clean short-circuit trusts). For a computed,
      *  restore trusts the cached value only when `true`; a `false`
-     *  (never-evaluated or dirty) computed is rebuilt UNCOMPUTED so its first
-     *  read re-runs the body, wired to its recorded deps (a dirty one is seeded
-     *  with its recorded value, version and error bit as the baseline for its
-     *  first recompute; a never-evaluated one is not seeded). Meaningless (always `false`) for a plain signal. */
+     *  computed is wired to its recorded deps and is not a cache hit: a dirty one is
+     *  seeded with its recorded value, version, error bit, evalVersion and markEpoch and
+     *  is pulled exactly as live does (the body runs only if a dep moved past its
+     *  evalVersion); a never-evaluated one (version 0) is not seeded and runs its body
+     *  on its first read. Meaningless (always `false`) for a plain signal. */
     clean: boolean;
     /** Owner node's id, or `null` for a top-level node. */
     ownerId: number | null;
@@ -202,7 +212,9 @@ export interface SnapshotNode {
      *  refuses a record without it, a non-integer, a value < -1, `-1` on an owned
      *  record, a non-`-1` on an unowned one, and any owner whose children's
      *  `ownerPos` values are not a permutation of 0..n-1. restore() re-creates each
-     *  owner's children in this order. */
+     *  owner's children in this order.
+     *  Cleanup callbacks are not captured; a restored node registers them when it
+     *  next runs. */
     ownerPos: number;
     /** Ids of this node's dependency sources, in dep-list order. */
     deps: number[];
@@ -211,9 +223,7 @@ export interface SnapshotNode {
      *  missing / non-array `subPos`, a length != `deps.length`, an element that is not
      *  an int >= 0, and any source whose subscribers' positions are not a permutation
      *  of 0..n-1 (out of range or duplicate). restore() places every subscriber link
-     *  at its recorded position, so each source's subscriber order round-trips.
-     *  Cleanup callbacks are not captured; a restored node registers them when it
-     *  next runs. */
+     *  at its recorded position, so each source's subscriber order round-trips. */
     subPos: number[];
 }
 
@@ -223,6 +233,12 @@ export interface SnapshotNode {
 export interface Snapshot {
     /** Format version. Currently `1`. */
     v: 1;
+    /** The source registry's version clock at capture (int32, never 0). Required; restore() sets the
+     *  fresh registry's clock to it exactly. */
+    gv: number;
+    /** The source registry's next node id at capture (a 32-bit integer). Required; any int32 (live's counter
+     *  wraps, so it may sit at or below a restored id); restore() continues ids from it exactly. */
+    nextId: number;
     /** Every live node in the source registry at capture time. */
     nodes: SnapshotNode[];
 }
@@ -511,18 +527,26 @@ export interface Registry {
      * id) -- a missing fn for any computed/effect FAILS CLOSED. Dependency edges
      * and the owner tree are rebuilt from ids. A CLEAN, evaluated computed is
      * restored with its cached value + deps and marked current (a read is a cache
-     * hit); a DIRTY computed is rebuilt UNCOMPUTED, wired to its recorded deps, and
-     * seeded with its recorded value, version and error bit (the value is only the
-     * baseline for the first recompute, not a trusted cache): its body runs on the
-     * first read, re-tracks deps, and a result equal to the recorded value (under
-     * Object.is -- a custom `equals` is not captured, so a computed built with one
-     * may propagate after restore where the live graph would not) does not
-     * propagate. A NEVER-EVALUATED computed is not seeded. A subsequent `set()` propagates normally,
-     * except that every restored effect is stamped at the restored clock (its own run stamp is not recorded):
-     * an effect that absorbed its own write in the live graph, and so is still due a re-run once a dep it read
-     * has moved on, can skip that re-run after restore (open finding F-b99-1, fix planned). Effects are
+     * hit); a DIRTY computed is restored with its recorded deps, value, version,
+     * error bit, evalVersion and markEpoch, so a read pulls it exactly as live does:
+     * the pull walks its deps and runs the body only if a dep moved past its
+     * evalVersion (otherwise the seeded value is a cache hit); when the body runs, a
+     * result equal to the seeded value (under Object.is -- a custom `equals` is not
+     * captured, so a computed built with one may propagate after restore where the
+     * live graph would not) does not propagate. A NEVER-EVALUATED computed (version 0)
+     * is not seeded; its body runs on its first read. A subsequent `set()` propagates normally. Effects are
      * restored but NOT re-fired -- they run only on the next dependency change;
      * no user side effect runs during restore. Values are restored by reference.
+     * After restore, the rebuilt graph runs each effect with the same sequence of values,
+     * and leaves every node with the same value or error and the same subscriber / owner
+     * order, as the live graph would from the same point; this is a gated
+     * property (the seeded live fuzz in test/76: 400 graphs x 3 seeds in `npm test`, 4000
+     * x 5 seeds at the A9 close), not a universal law. Limits: cleanup callbacks
+     * (`onCleanup`) and a custom `equals` / scheduler are NOT captured, so an effect that
+     * registered a cleanup before `snapshot()` has none until its next run (the ORDER of
+     * pre-snapshot cleanups is therefore not reproduced); live bugs are reproduced, not
+     * fixed (LEDGER #38 F6, #41, #42). Since D-L a restored graph reproduces live's F6
+     * pre-walk rethrow (restore copies live state); F6 remains a live bug (D-H).
      * A duplicate or dangling id, or an unknown owner id, FAILS CLOSED.
      * Every dep id must exist in the snapshot on EVERY record, including dirty /
      * never-read computeds.
@@ -530,7 +554,7 @@ export interface Registry {
      * restore() validates the whole snapshot before building anything: ids must be
      * positive integers <= 0x3FFFFFFF (2^30 - 1) and unique; dep ids and ownerIds
      * must be positive integers <= 0x3FFFFFFF that resolve to a record id; versions
-     * and flags must be int32; a signal is never owned; deps must be
+     * and flags must be int32; the snapshot's `gv`, `nextId` and every record's `evalVersion` / `markEpoch` are required and must be int32 (a missing or non-int32 one throws a TypeError before anything is built); `gv` is never 0, `nextId` may be any 32-bit integer, even at or below a restored id (live's counter wraps), and restore continues ids from it exactly, an effect's `evalVersion` is never 0, a signal's `evalVersion` and `markEpoch` are 0, `clean` must equal (`evalVersion !== 0` and `markEpoch` not modularly ahead of `evalVersion`), and a computed has `evalVersion` 0 exactly when its `version` is 0 (negative stamps after an int32 wrap and any stamp-vs-`gv` order are NOT refused: live reaches them); a signal is never owned; deps must be
      * an array; subPos must be an array with one entry per dep (each an int >= 0,
      * and per source a permutation of 0..n-1); ownerPos must be an int >= -1, exactly
      * -1 when ownerId is null, and per owner a permutation of 0..n-1; a snapshot
@@ -543,20 +567,19 @@ export interface Registry {
      * a plain object with own keys fnsById / handles / config only -- an unknown key
      * throws with a did-you-mean hint; bodies are looked up only as own properties
      * of fnsById. Rejected structures: a signal with deps, an effect as a dep
-     * source, a signal as owner, a self owner, owner cycles, dep cycles among clean
-     * computeds, and a dep id missing from the snapshot on any record (dirty and
+     * source, a signal as owner, a self owner, owner cycles, and a dep id missing from the snapshot on any record (dirty and
      * never-read computeds included). opts.handles is filled only after the rebuild
      * succeeds; a failed restore leaves it untouched. A snapshot taken after a
-     * registry's node-id counter wrapped (ids <= 0) is rejected (fail closed).
+     * registry's node-id counter wrapped (ids <= 0) is rejected (fail closed). A dep cycle among clean computeds is NOT refused: live can emit one (a
+     * computed whose body catches a CycleError from a partner), and the restored graph reproduces live exactly,
+     * including live's own RangeError (stack overflow) on the next read after a write to a dep (LEDGER #42, open).
      *
-     * The snapshot does not record the version clock: if versions had wrapped past
-     * the 2^31 band, a restored effect can RE-FIRE once with nothing changed (not
-     * merely run an extra, value-correct recompute). A fix (record the clock in the
-     * snapshot) is planned. Effect run stamps are not recorded either: restore stamps
-     * every effect at the restored clock, so an effect that absorbed its own write in
-     * the live graph (and is still due a re-run once a dep it read has moved on) can
-     * skip that re-run after restore, with no wrap involved (open finding F-b99-1, fix
-     * planned).
+     * The snapshot records the registry clock (`gv`), the next node id (`nextId`) and
+     * every node's `evalVersion` / `markEpoch`, and restore copies them (the clock and
+     * next id exactly), so every freshness check in a restored graph answers as live's
+     * does (within the limits above): a restored effect no longer re-fires where live would
+     * not, and one that absorbed its own write is still due its re-run. The LIVE 2^31 dormancy band (the 32-bit version wrap) is unchanged and a
+     * restore reproduces it; the old restore-only wrap re-fire is gone.
      *
      * The fresh registry is sized to the snapshot (see `opts.config`). Without `opts.config`
      * the fresh registry gets `maxLinks = max(1.5 * L + 16, 4 * maxNodes)` (L = total
