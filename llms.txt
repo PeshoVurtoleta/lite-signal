@@ -411,7 +411,7 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   (wrong id, wrong value, wrong edges). All six entry points + `peek()` + `read()`
   + `set()` now resolve through a generation check (the same ABA discipline
   `dispose()` already had); stale handles read as `undefined` (or throw the
-  documented `TypeError`, for `observeObservers`). `describe()` descriptors are
+  documented `TypeError`, for `observeObservers`). Since 1.6.0 a tracked read that disposes its own node from hook code (onConnect / onGraphMutation / tail-sever onDisconnect, run by the new dependency link) also returns `undefined` (LEDGER #44). `describe()` descriptors are
   gen-stamped alongside `NODE_PTR`, so the "descriptors are re-walkable handles"
   contract survives the guard: a fresh descriptor walks, one held across a
   recycle correctly goes stale. **Added -- `onGraphMutation(fn)`:** registry-level

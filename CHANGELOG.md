@@ -674,12 +674,31 @@ skipped).
   65536 -> RangeError; the default 1024 -> CycleError).
 - Residuals, measured (Node v26.8.2, darwin, 2026-10-22; depths are untimed probes; the timings are K=9 rounds at load average
   2.9-3.4, PRELIMINARY; evidence `.handoff/fixT/perf/SUMMARY.txt`, `.handoff/b102-evidence/`): the cold first-read chain depth
-  is about 6-7% below the pre-FIX-T 1.6.0-dev build B0 (08401c2) (warmed bisection 2411 vs 2567; a one-shot fresh process 1984 vs 2120); a `computedBox`
+  is 6.1% below (warmed bisection 2411 vs 2567) and 6.4% below (a one-shot fresh process 1984 vs 2120) the pre-FIX-T 1.6.0-dev build B0 (08401c2) (percentages = 1 - live/B0 from those depths; .handoff/b102-evidence/B1fix/chain-ab.txt, a6-oneshot.txt); a `computedBox`
   `get()` keeps the `pullComputed` wrapper, one extra frame per cold level (1945 warmed); re-walk depth is about 5055 on
   every build. The write plus one-level refresh path measured about 6% slower than the pre-FIX-T 1.6.0-dev build B0 (08401c2, `Signal.js` sha256/8 98295467; lane L6, B0/W2 0.940); clean computed
   reads measured about 3x faster than B0 in every round but inconclusive under the A/A band rule. Not gated: statistical tier.
-- Still OPEN, not part of this entry: LEDGER #43 (restore re-runs an effect once more than live) and #44 (`allocateLink` user
-  code can recycle a slot under the read functions).
+- Still OPEN, not part of this entry: LEDGER #43 (restore re-runs an effect once more than live). (#44 is fixed, next entry.)
+
+### Fixed -- engine: a tracked read no longer returns a recycled slot's value after hook code disposed the node (LEDGER #44)
+
+Pre-existing (found b102). A tracked read whose dependency link is new calls `allocateLink`, which can run user code
+(`observeObservers` `onConnect`; an `onGraphMutation` op-3 listener; an `onDisconnect` fired by the tail sever). If that code
+disposed the node being read and a new node reused the slot, the read returned the new resident's value (computed kinds also ran
+the new resident's body; a dispose-only computed read threw `TypeError: node.computeFn is not a function`). Each of the four
+readers (signal read, computed read, `signalBox` `get`, `computedBox` `get`) now re-checks the generation right after
+`allocateLink` and returns `undefined`, like other stale-handle reads; the cursor-reuse arm and untracked reads are unchanged.
+`Signal.d.ts` keeps `(): T`. Cost (node v26.8.2, quiet host, `--print-bytecode`, `.handoff/b104-evidence/A6-growth.txt`): +18 B
+bytecode per reader (read(signal) 88 -> 106, read(computed) 182 -> 200 of the 460 B inline limit, boxGet 78 -> 96,
+boxComputedGet 81 -> 99); all four still inline, 0 deopts, jit-health 5 bailouts = baseline. Timing not yet measured. Gate:
+`test/79-l44-read-reuse.test.mjs` (4 kinds x 3 triggers red on `Signal.js` 928f0e64; 4/4 no-recheck mutants killed; zero-GC rows).
+
+### Changed -- soak b103: DIV-F6 retired, DIV-F5 O1c shape widened (dev-only, not shipped)
+
+FIX-T fixed F6, so DIV-F6 is retired and the test/41 (f) ERROR exemption set is now `{DIV-F5, DIV-F22}`. The DIV-F5 O1c
+(computed-err-mismatch) entry no longer requires the step scenario revert-after-mid-read (it matches the world scenario too): a live
+soak world ERROR:7:0x8999219f had been known=none only because of that narrowing (the OPEN F5 bug: a batch revert restores
+preBatchVersion after a mid-batch re-run; 7-op repro). F5 stays OPEN (fixBy A3). Maintainer ruling b103, PLAN-0s-fixt.md ADDENDUM 13.
 
 ### Changed -- soak NEST taint-skip triage (D6): in-flight frames taint only on a victim read (dev-only, not shipped)
 

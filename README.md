@@ -447,7 +447,7 @@ The 1.2.0 owner tree makes the engine recycle pool slots autonomously: when an e
 
 1.2.1 generation-checks every entry point that resolves a handle (the same ABA discipline `dispose()` always had):
 
-- `nodeId`, `describe`, `hasObservers`, `forEachObserver`, `forEachSource`, `forEachOwned`, `ownerOf`, `signal.peek()`, `computed.peek()`, `signal()`/`computed()` read, `signal.set()` -> return `undefined` / are no-ops on stale handles.
+- `nodeId`, `describe`, `hasObservers`, `forEachObserver`, `forEachSource`, `forEachOwned`, `ownerOf`, `signal.peek()`, `computed.peek()`, `signal()`/`computed()` read, `signal.set()` -> return `undefined` / are no-ops on stale handles. Since 1.6.0 the same holds when hook code disposes the node during a tracked read: a read whose new dependency link runs user code (`observeObservers` `onConnect`, an `onGraphMutation` listener, an `onDisconnect` fired by the tail sever) that disposes the node being read returns `undefined`, never the value of the new resident of the recycled slot (LEDGER #44; the type stays `(): T`).
 - `observeObservers` throws `TypeError` (matching the existing non-handle contract).
 
 Descriptors returned by `describe()` and the `forEach*` walkers are themselves gen-stamped, so the documented "descriptors are re-walkable handles" contract survives the guard: a fresh descriptor walks, one held across a recycle correctly goes stale.
