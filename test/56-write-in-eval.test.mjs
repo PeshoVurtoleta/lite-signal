@@ -20,7 +20,7 @@
 // RED on b47-before (51530b36, DELTA 4a engine): KC-PX, KC-NEST (the KC order-B lost update, DELTA 5 T6); GREEN on the DELTA 5 engine (0).
 // RED on a5c64df9 also includes KC-XP, KC-PX, KC-NEST, KC-NEST0 (added rows; see helper-56-redsets.txt for the measured set).
 // RED on the B1 engine f2dd6edc (R1-REJECTED: false STALE from the node's own cleanups): P2, P2c, P4, PC, W0, DR, ANC, ANC-2, ANC2H, P2-eRuns, IF, KC, NC2, NEST (14).
-// F6K is a KNOWN pin (DIV-F6, open, fixBy A2): it asserts the CURRENT value (runs 1); the ideal is 2.
+// F6K was a KNOWN pin (DIV-F6, runs 1); FIXED by FIX-T A2 (b102, D1(b) + D4, PLAN-0s-fixt ADDENDUM 8.1): runs 3.
 // KNOWN (N8) pins (maintainer 2026-10-14 "accept all three"): EQ (D-M1), P1 / P1b (D-M2). Each asserts CURRENT behaviour.
 // ANC + P2-eRuns (D-R3) are FIXED by DELTA 4a and assert the fixed value (= a5c64df9's). KC is exact (D5-2 (a), N13.1:
 // fr 1; 400a655e re-runs F). KC-NEST0 is a KNOWN residual pin (N13.2, accepted for 1.6.0).
@@ -438,11 +438,17 @@ describe('F-b33-1 write during evaluation', () => {
         assert.strictEqual(w.peek(), 6);
     }, { maxNodes: 256, onCapacityExceeded: 'grow', maxFlushPasses: 8 }));
 
-    // F6K -- KNOWN DIV-F6 pin (open, fixBy A2). C writes x from a foreign owner (stale flag on C itself) while go
-    // is true: the re-pull cap throws 'CycleError: computed keeps invalidating its own reads' inside E's pre-walk,
-    // leaving E QUEUED with its entry consumed, so E never runs again. maxFlushPasses 8: x ends 9 (1 + 8 runs).
-    // Asserts the CURRENT value runs === 1; the ideal is 2 (A2's DIV-F6 fix flips this row).
-    it('F6K KNOWN DIV-F6: computed CycleError in the pre-walk strands the effect (runs 1, ideal 2)', () => withReg((r) => {
+    // F6K -- DIV-F6 FIXED by FIX-T A2 (b102; D1(b) + D4, PLAN-0s-fixt ADDENDUM 1 / 8.1). C writes x from a foreign
+    // owner (stale flag on C itself) while go is true. Until b101 the re-pull cap threw 'CycleError: computed keeps
+    // invalidating its own reads' inside E's pre-walk, leaving E QUEUED with its entry consumed (runs 1, stranded).
+    // Now the cap branch CACHES the CycleError as C's own error (D1(b)), so the pre-walk returns, E re-runs (run 2),
+    // and E's body read of C throws that cached error -- the effect error leaves the flush, so go.set(true) throws it.
+    // maxFlushPasses 8: x ends 9 (1 + 8 C runs). A plain C() read while go is still true throws the SAME error object
+    // and does not re-run C (x stays 9; on b101-before that C() read throws a different CycleError object, and the
+    // probe prints x 18 only after go.set(false)). go.set(false) leaves the error (Error -> 9 is
+    // always a change, D4), so E runs a 3rd time and nothing throws. Values pinned from live (b102 evidence
+    // .handoff/b102-evidence/B2/f6k-probe2.txt); RED on b101-before (runs 1 after go.set(true)).
+    it('F6K DIV-F6 fixed: computed CycleError is cached, the effect re-runs into it and leaves it (runs 3)', () => withReg((r) => {
         const x = r.signal(0), go = r.signal(false);
         const C = r.computed(() => {
             const v = x();
@@ -451,12 +457,23 @@ describe('F-b33-1 write during evaluation', () => {
         });
         let runs = 0;
         r.effect(() => { runs++; C(); });
-        let msg = null;
-        try { go.set(true); } catch (e) { msg = e.message; }
-        assert.strictEqual(msg, 'CycleError: computed keeps invalidating its own reads');
+        assert.strictEqual(runs, 1);                      // run 1: initial
+        assert.strictEqual(x.peek(), 0);
+        let err = null;
+        try { go.set(true); } catch (e) { err = e; }
+        assert.ok(err instanceof Error, 'go.set(true) throws the effect body read of the cached CycleError');
+        assert.strictEqual(err.message, 'CycleError: computed keeps invalidating its own reads');
+        assert.strictEqual(runs, 2);                      // run 2: E enters C's cached CycleError (not stranded)
         assert.strictEqual(x.peek(), 9);
-        go.set(false);
-        assert.strictEqual(runs, 1); // KNOWN DIV-F6: ideal 2
+        let again = null;
+        try { C(); } catch (e) { again = e; }
+        assert.strictEqual(again, err, 'C() throws the SAME cached error object');
+        assert.strictEqual(x.peek(), 9, 'the cached error is not re-computed');
+        let err2 = null;
+        try { go.set(false); } catch (e) { err2 = e; }
+        assert.strictEqual(err2, null);
+        assert.strictEqual(runs, 3);                      // run 3: C leaves the error (Error -> 9, D4)
+        assert.strictEqual(x.peek(), 9);
         assert.strictEqual(C(), 9);
     }, { maxNodes: 256, onCapacityExceeded: 'grow', maxFlushPasses: 8 }));
 

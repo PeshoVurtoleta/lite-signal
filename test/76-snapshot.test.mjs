@@ -1077,7 +1077,7 @@ describe("A9 round 2 -- restore input law", () => {
         recOf(snap, e2Id).ownerId = e1Id;
         assert.throws(() => r.restore(snap, { fnsById: { [e1Id]: () => {}, [e2Id]: () => {} } }), named(/owner cycle/));
     });
-    test("E4 (D-N) a live-built dep cycle among clean computeds is restored, not refused; reads match the live twin incl. its RangeError", () => {
+    test("E4 (D-N) a live-built dep cycle among clean computeds is restored, not refused; reads match the live twin incl. its CycleError", () => {
         const r = createRegistry(), G = {};
         G.a = r.signal(1);
         G.c1 = r.computed(() => { try { G.c2(); } catch (e) {} return G.a() + 1; });
@@ -1092,10 +1092,12 @@ describe("A9 round 2 -- restore input law", () => {
         K.a = H[aId]; K.c1 = H[c1Id]; K.c2 = H[c2Id];
         assert.deepStrictEqual(r2.snapshot(), snap);
         assert.equal(K.c2(), 4, "clean: cache hit");
-        const out = (f) => { try { return f(); } catch (e) { return e.constructor.name; } };
+        const out = (f) => { try { return f(); } catch (e) { return e.constructor.name + ": " + e.message; } };
         G.a.set(5); K.a.set(5);
         const lv = out(() => G.c2());
-        assert.equal(lv, "RangeError", "live overflows its pre-walk (probe 0c class, live bug, not A9)");
+        // FIX-T A1 / D2 = G-a (b102, LEDGER #42): the cyclic pre-walk throws CycleError at depth > nodePool.length
+        // instead of overflowing the stack (b101-before: RangeError, the probe 0c class). D-N itself is unchanged.
+        assert.match(lv, /^Error: CycleError: Circular/, "live throws the pre-walk CycleError (was RangeError until b101)");
         assert.equal(out(() => K.c2()), lv);
     });
     test("E4 control: a valid owner tree + clean chain still restores and propagates", () => {
@@ -1599,26 +1601,45 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         assert.deepEqual(out, log.slice(L0));
     });
 
+    // D-G -> D-H (b102, FIX-T, PLAN-0s-fixt ADDENDUM 7 task 9a; LEDGER #38/F6 D-H split pull): until b101 a dep that
+    // threw in b's pre-walk threw OUT of the pre-walk, so b never re-ran and stayed dirty under a clean reader. Now
+    // refreshComputed never throws: a caches its error, b re-runs (bRuns 2) and its body's read of a throws a's cached
+    // error -- the SAME object -- which b caches as its own (b clean, errored). The restored twin seeds both errors and
+    // re-runs nothing on read (D-I copies live state). RED on b101-before (b dirty, bRuns 1).
     for (const mode of ["computed reader", "effect reader"]) {
-        test("D-G throwing-dep pair (" + mode + "): a dep that threw in the pre-walk leaves its reader clean over a dirty computed; restored == live", () => {
+        test("D-H throwing-dep pair (" + mode + "): the dependent re-runs into the dep's cached error (same object); restored == live", () => {
+            const n = { a: 0, b: 0 }, thrown = { a: [], b: [] };
             const build = (r, G, log) => {
                 G.s = r.signal(0);
-                G.a = r.computed(() => { if (G.s() > 0) throw new Error("E"); return G.s(); });
-                G.b = r.computed(() => G.a() + 1);
+                G.a = r.computed(() => { n.a++; if (G.s() > 0) { const e = new Error("E"); thrown.a.push(e); throw e; } return G.s(); });
+                G.b = r.computed(() => { n.b++; try { return G.a() + 1; } catch (e) { thrown.b.push(e); throw e; } });
                 G.b(); G.s.set(1);
                 if (mode === "computed reader") { G.rd = r.computed(() => { try { return G.b(); } catch (e) { return -1; } }); log.push(G.rd()); }
                 else G.rd = r.effect(() => { try { log.push(G.b()); } catch (e) { log.push(-1); } });
             };
             const r = createRegistry(); const G = {}, log = [];
             build(r, G, log);
+            assert.deepEqual(log, [-1], "the reader saw b throw");
+            assert.deepEqual(n, { a: 2, b: 2 }, "b re-ran after a's pre-walk refresh (D-H: the pre-walk does not throw)");
+            assert.equal(thrown.a.length, 1); assert.equal(thrown.b.length, 1);
+            assert.strictEqual(thrown.b[0], thrown.a[0], "b's body read threw a's cached error, the same object");
+            const caught = (f) => { try { f(); } catch (e) { return e; } return null; };
+            assert.strictEqual(caught(() => G.b()), thrown.a[0], "live b() throws a's error object");
+            assert.strictEqual(caught(() => G.a()), thrown.a[0]);
+            assert.deepEqual(n, { a: 2, b: 2 }, "cached: the reads re-run nothing");
             const snap = r.snapshot();
             const bId = r.nodeId(G.b), rdId = r.nodeId(G.rd), sId = r.nodeId(G.s), aId = r.nodeId(G.a);
-            assert.equal(rec(snap, bId).clean, false, "b stays dirty: a threw in b's pre-walk");
+            assert.equal(rec(snap, bId).clean, true, "b is clean: it re-ran and cached the error (was dirty until b101)");
+            assert.equal(rec(snap, aId).clean, true);
             assert.equal(rec(snap, rdId).clean, true); assert.ok(rec(snap, rdId).deps.includes(bId));
-            const H = {}, out = [];
-            const fns = { [aId]: () => { if (H[sId]() > 0) throw new Error("E"); return H[sId](); }, [bId]: () => H[aId]() + 1 };
+            const H = {}, out = [], m = { a: 0, b: 0 };
+            const fns = { [aId]: () => { m.a++; if (H[sId]() > 0) throw new Error("E"); return H[sId](); }, [bId]: () => { m.b++; return H[aId]() + 1; } };
             fns[rdId] = mode === "computed reader" ? () => { try { return H[bId](); } catch (e) { return -1; } } : () => { try { out.push(H[bId]()); } catch (e) { out.push(-1); } };
             r.restore(snap, { fnsById: fns, handles: H });
+            const eb = caught(() => H[bId]()), ea = caught(() => H[aId]());
+            assert.ok(eb instanceof Error && eb.message === "E", "restored b throws the seeded error");
+            assert.strictEqual(eb, ea, "restored b and a throw the same object, like live");
+            assert.deepEqual(m, { a: 0, b: 0 }, "the restored twin re-runs nothing on read");
             const L0 = log.length;
             G.s.set(-5); H[sId].set(-5);
             if (mode === "computed reader") { log.push(G.rd()); out.push(H[rdId]()); }
@@ -1752,17 +1773,29 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
     });
     // --- D-I2 (b99): an ERRORED dirty computed is seeded too (value + version + FLAG_HAS_ERROR): restore copies the live
     // state and pullComputed decides. Rows compare restored against a live twin, so they hold before and after D-K.
-    test("D-I2 (P2): a seeded errored computed whose body throws E then returns the same E reacts like its live twin", () => {
-        const E = new Error("low"); const body = (s) => { if (s() < 3) throw E; return E; };
+    // D-I2 (P2) -> KNOWN F-b101-1 pin (LEDGER #43, OPEN, its own A9 unit after FIX-T; PLAN-0s-fixt ADDENDUM 6 / 7 9b).
+    // A seeded errored dirty computed that LEAVES its error for a non-equal value re-runs the restored effect once
+    // more than live on the next unchanged write. PRE-EXISTING: same counts on HEAD 08401c2 (b101-before), so this
+    // row is green on both builds. Repro (LEDGER #43): s = signal(1); c = computed(() => { if (s() < 3) throw E;
+    // return "ok"; }); effect(() => { try { c(); } catch {} untrack(() => { if (s() < 2) s.set(2); }); });
+    // snapshot -> restore; set 5 then 6 on both: live runs the effect at 5 only (k = 1), restored at 5 AND 6 (k + 1).
+    // The old P2 shape (E then the same E) went red only because D-K / D4 made it leave the error: on live it now
+    // shows the same live 1 / restored 2 (b101-before: 0 / 0, E -> E equal). Evidence .handoff/b102-evidence/B2/
+    // di2-probe.txt. The fix flips this row to restored == live.
+    test("D-I2 KNOWN F-b101-1 (LEDGER #43): a seeded errored computed leaving its error re-runs the restored effect once more (live 1, restored 2)", () => {
+        const E = new Error("low"); const body = (s) => { if (s() < 3) throw E; return "ok"; };
         const r = createRegistry(); const L = selfWritePair(r, (s) => r.computed(() => body(s)), 2);
         const ids = { s: r.nodeId(L.s), c: r.nodeId(L.c), e: r.nodeId(L.e) };
         const snap = r.snapshot();
         assert.equal(rec(snap, ids.c).clean, false); assert.ok((rec(snap, ids.c).flags & 16) !== 0, "recorded error");
         const R = restoreSelfWrite(r, snap, ids, body, 2);
         const L0 = L.log.length;
-        const put = (h, v, log) => { try { h.set(v); } catch (x) { log.push("set!" + x.message); } };
-        for (const v of [5, 6]) { put(L.s, v, L.log); put(R.H[ids.s], v, R.out); }
-        assert.deepEqual(R.out, L.log.slice(L0));
+        L.s.set(5); R.H[ids.s].set(5);
+        assert.deepEqual(L.log.slice(L0), ["ok"], "live: the effect runs once at 5");
+        assert.deepEqual(R.out, ["ok"], "restored: once at 5, like live");
+        L.s.set(6); R.H[ids.s].set(6);
+        assert.deepEqual(L.log.slice(L0), ["ok"], "live: no re-run at 6 (c unchanged)");
+        assert.deepEqual(R.out, ["ok", "ok"], "KNOWN F-b101-1: the restored effect re-runs at 6 (ideal: [\"ok\"])");
     });
     test("D-I2 round-trip: snapshot(restore(s)) keeps a dirty errored computed's record (FLAG_HAS_ERROR, value, version)", () => {
         const body = (s) => { if (s() < 3) throw new Error("low"); return s(); };
@@ -1850,7 +1883,7 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         assert.deepEqual(out, log.slice(L0));
         // The b99 hand-written cycle (snap2) is gone: live cannot emit it (no gv / nextId / stamps), and a hand-written
         // snapshot live cannot emit is not a contract (ADDENDUM 3). A live-emittable CLEAN dep cycle restores like live
-        // (incl. its RangeError): test/77 "D-N ... (probe 0c)" and the E4 (D-N) row above.
+        // (incl. its CycleError; RangeError until b101): test/77 "D-N ... (probe 0c)" and the E4 (D-N) row above.
     });
 
     // LS_FUZZ_SEEDS=a,b,... overrides the fuzz seeds (b100 closing run: 12345,-1640531527,7,1013904223,2147483647).

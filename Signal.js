@@ -1498,23 +1498,31 @@ export function createRegistry(config) {
 
     /**
      * F-b33-1: the post-run tail of a computed whose flags carry FLAG_HAS_ERROR or
-     * FLAG_STALE_READ. Not stale -> rethrow the cached error (the old inline throw).
+     * FLAG_STALE_READ. Not stale -> return: the error stays cached and the pullComputed
+     * wrapper throws it (D-H: a refresh never throws a cached error).
      * Stale -> clear the flag, set a far evalVersion floor (below any write made in
      * this run; never 0, so the equality cutoff is kept and neither the same-version
-     * cache nor the clean short-circuit can re-absorb it), then re-pull in the same
-     * read. The floor is set BEFORE the cap check, so a throw leaves the node dirty,
-     * not cached. More than maxFlushPasses nested re-pulls -> Error
-     * "CycleError: computed keeps invalidating its own reads".
+     * cache nor the clean short-circuit can re-absorb it), then re-refresh in the same
+     * read. More than maxFlushPasses nested re-pulls -> D1(b): Error
+     * "CycleError: computed keeps invalidating its own reads" is cached as the node's
+     * own error (value, FLAG_HAS_ERROR, version = evalVersion = globalVersion), so a
+     * repeat read rethrows it instead of re-running the body.
      * @private
      */
     function computedRunTail(node) {
-        if ((node.flags & FLAG_STALE_READ) === 0) throw node.value;
+        if ((node.flags & FLAG_STALE_READ) === 0) return;
         node.flags &= ~FLAG_STALE_READ;
         const f = (globalVersion - 0x3FFFFFFF) | 0;
         node.evalVersion = f === 0 ? -1 : f;
-        if (staleRepulls >= maxFlushPasses) throw new Error("CycleError: computed keeps invalidating its own reads");
+        if (staleRepulls >= maxFlushPasses) {
+            node.value = new Error("CycleError: computed keeps invalidating its own reads");
+            node.flags |= FLAG_HAS_ERROR;
+            node.version = globalVersion;
+            node.evalVersion = globalVersion;
+            return;
+        }
         staleRepulls++;
-        try { return pullComputed(node); } finally { staleRepulls--; }
+        try { refreshComputed(node, 0); } finally { staleRepulls--; }
     }
 
     /**
@@ -1637,14 +1645,15 @@ export function createRegistry(config) {
     // every run; the call that replaces them is smaller and never taken in practice.
     // A1.9: pull a computed dep from executeEffect's pre-walk; true if that ran user code
     // which freed or recycled the walk's link (both ends compared). Small, so it inlines;
-    // out of line only for executeEffect's inlining budget. pullComputed keeps the check
+    // out of line only for executeEffect's inlining budget. refreshComputed keeps the check
     // inline: routing its own pre-walk through this helper measured slower (r2, mux).
+    // D-H: refresh, not pull -- a dep's cached error is thrown by the body's read, never here.
     // F-b33-1: also true if node's markEpoch moved across the pull (a write reached this
     // effect while the walk ran user code). `e !== 0`: createNode's recycle reset must not
     // mask the link compare.
     function pullMoved(link, dep, node) {
         const m = node.markEpoch;
-        pullComputed(dep);
+        refreshComputed(dep, 0);
         const e = node.markEpoch;
         return (e !== m && e !== 0) || link.source !== dep || link.target !== node;
     }
@@ -1739,44 +1748,74 @@ export function createRegistry(config) {
     }
 
     /**
-     * Resolve a computed node's current value: re-run if a dependency has changed
-     * since last evaluation, else return cached value. The clean-read short-circuit
-     * via markEpoch (1.1.4) returns the cached value in O(1) when no mark landed
-     * in this node's transitive cone since the last eval, instead of walking the
-     * whole dependency subtree.
+     * Resolve a computed node's current value: refresh it (refreshComputed) unless it
+     * was already evaluated at globalVersion, then rethrow its cached error or return
+     * its value.
      *
      * Errors thrown by computeFn are captured in `node.value` with FLAG_HAS_ERROR;
-     * subsequent reads re-throw until a dependency change re-runs computeFn.
+     * subsequent reads re-throw until a dependency change re-runs computeFn. D-H: only
+     * this wrapper throws a cached error, so a dependent's pre-walk never aborts on an
+     * errored dep -- the dependent re-runs and its body's read (which may catch) throws.
+     *
+     * gen snapshot across the refresh: a node disposed (or its slot recycled) by user
+     * code during the refresh reads undefined, never the slot's new value or error.
+     *
+     * Used by peek, box get and box peek; the computed read closure inlines these 3
+     * steps by hand (one frame per cold level).
+     *
+     * @private
+     */
+    function pullComputed(node) {
+        if (node.evalVersion !== globalVersion) {
+            const g = node.gen;
+            refreshComputed(node, 0);
+            if (node.gen !== g) return undefined;   // disposed during the refresh
+        }
+        if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;
+        return node.value;
+    }
+
+    /**
+     * Bring a computed node up to date: re-run if a dependency has changed since
+     * last evaluation, else keep the cached value. The clean-read short-circuit via
+     * markEpoch (1.1.4) settles it in O(1) when no mark landed in this node's
+     * transitive cone since the last eval, instead of walking the whole dependency
+     * subtree.
+     *
+     * Returns void and never throws the node's cached error (pullComputed and the
+     * read closure do).
+     * Throws only on a cycle: the node re-entered while computing, or (#42) `depth`,
+     * the pre-walk recursion depth (a Smi), past nodePool.length -- an acyclic dep
+     * chain is never deeper than the pool, so a cyclic dep graph throws CycleError
+     * instead of overflowing the stack -- while nodePool.length is below the stack
+     * limit; a larger pool still overflows first (LEDGER #42 residual).
      *
      * Same gen-snapshot self-dispose guard as executeEffect -- see #141 fix.
      *
      * @private
      */
-    function pullComputed(node) {
-        if (node.evalVersion === globalVersion) {
-            if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;
-            return node.value;
-        }
+    function refreshComputed(node, depth) {
+        if (node.evalVersion === globalVersion) return;
 
         // CLEAN SHORT-CIRCUIT (ported from 1.1.3): markDownstream already stamps
         // markEpoch on the changed signal's whole cone; if no mark landed since
         // our last eval, the cached value is valid -> skip the dep walk. O(1).
         if (node.evalVersion !== 0 && ((node.markEpoch - node.evalVersion) | 0) <= 0) {
             node.evalVersion = globalVersion | 0;
-            if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;
-            return node.value;
+            return;
         }
 
         const savedGen = node.gen;   // once, before any user code (see executeEffect)
         let shouldRun = node.evalVersion === 0;
         if (!shouldRun) {
+            if (depth > nodePool.length) throwComputedCycle();   // #42: deeper than any acyclic chain
             const markAtWalk = node.markEpoch;   // F-b33-1: a write during the walk moves it
             let link = node.headDep;
             const evalVer = node.evalVersion | 0;
             while (link !== null) {
                 const dep = link.source;
                 if ((dep.flags & FLAG_COMPUTED) !== 0) {
-                    pullComputed(dep);
+                    refreshComputed(dep, depth + 1);
                     if (link.source !== dep || link.target !== node) { shouldRun = true; break; }   // A1.9: link freed
                 }
                 if (((dep.version - evalVer) | 0) > 0) {
@@ -1785,7 +1824,7 @@ export function createRegistry(config) {
                 }
                 link = link.nextDep;
             }
-            if (node.gen !== savedGen) return undefined;   // A1.9: disposed during the pre-walk
+            if (node.gen !== savedGen) return;   // A1.9: disposed during the pre-walk
             if (markAtWalk !== node.markEpoch) shouldRun = true;
         }
 
@@ -1793,7 +1832,7 @@ export function createRegistry(config) {
             if ((node.flags & FLAG_COMPUTING) !== 0) throwComputedCycle();
             node.flags |= FLAG_COMPUTING;
             runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute
-            if (node.gen !== savedGen) return undefined;   // B1 (r3): disposed by a cleanup
+            if (node.gen !== savedGen) return;   // B1 (r3): disposed by a cleanup
 
             const prevObserver = currentObserver;
             const prevOwner = currentOwner;
@@ -1813,7 +1852,9 @@ export function createRegistry(config) {
                 // the pinned, then pooled, slot (retention until reuse). Cold: never inlined.
                 if (node.gen === savedGen) {
                     const eq = node.equals;
-                    if ((node.evalVersion === 0 || !eq || !eq(node.value, newValue)) && node.gen === savedGen) {
+                    // D-K: leaving an error is always a change; equals is not called on the error.
+                    if ((node.evalVersion === 0 || (node.flags & FLAG_HAS_ERROR) !== 0 || !eq ||
+                        !eq(node.value, newValue)) && node.gen === savedGen) {
                         node.value = newValue;
                         node.version = globalVersion;
                     }
@@ -1844,15 +1885,13 @@ export function createRegistry(config) {
                 cursorDepth = d;
                 activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
             }
-            if (node.flags === 0) return undefined;   // disposed during body
-            if ((node.flags & FLAG_ERR_OR_STALE) !== 0) return computedRunTail(node);
-            return node.value;
+            if (node.flags === 0) return;   // disposed during body
+            if ((node.flags & FLAG_ERR_OR_STALE) !== 0) computedRunTail(node);
+            return;
         }
 
-        if (node.flags === 0) return undefined;   // disposed during body
+        if (node.flags === 0) return;   // disposed during body
         node.evalVersion = globalVersion;
-        if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;
-        return node.value;
     }
 
     // --- PUBLIC API --------------------------------------------------
@@ -1993,7 +2032,13 @@ export function createRegistry(config) {
                     allocateLink(node, currentObserver);
                 }
             }
-            return pullComputed(node);
+            if (node.evalVersion !== globalVersion) {
+                const g = node.gen;   // not birthGen: allocateLink may run user code (LEDGER #44)
+                refreshComputed(node, 0);
+                if (node.gen !== g) return undefined;   // disposed during the refresh
+            }
+            if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;
+            return node.value;
         };
 
         read.peek = sharedComputedPeek;

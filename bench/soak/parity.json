@@ -1,6 +1,6 @@
 {
   "files": {
-    "Signal.js": "9829546722e690ee2f461072d4c8f81d7b94793cdee3066148ed07ddb1c0e0aa",
+    "Signal.js": "928f0e6481b90b21b25308cd53a21ed010d7130f13c530992a4790e76f889433",
     "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
     "bench/soak/model.mjs": "8b453cd6316e5eadcc8bcf961c061683b98245daf4790f9d109f517fb3648789",
@@ -38,7 +38,7 @@
     "bench/soak/rss.mjs": "2b4354b7ce6d35e47532517f2799a1a7c1306298fe32bf147704260d1c0e0831",
     "bench/soak/latency.mjs": "1a37b7aed5f1bd8ea8aba9f4698272a2a46ea01b781082b0a3d867ff99dac8f1",
     "bench/soak/anatomy.mjs": "5a3e2020e551f1502bd520dbb80b8224c615365ed45899cbcdf46ac2b868c17e",
-    "harness/visit-anchors.mjs": "2acf86ec6ec1e4de811fd8baf229e88b3b1414aefa3049b9bba1a2d42bf45512",
+    "harness/visit-anchors.mjs": "e6ba6d757b60f26f577e5fefdbfaf506c724686e061fb741245eb7a3b3cd06b9",
     "bench/soak/report-html.mjs": "a58c79a8c80d20f8a119910518d8820e6bbda50e6ea165357f1484618b830654",
     "bench/soak/baseline.mjs": "ab03666f2f59ee0f8e7acad3fc5eeafab304ae52cf73610dc83d4c93c51dec04",
     "bench/soak/lanes/hook.mjs": "9108a30a1a5a17fdecec2ad221d886a6c2540f29dc6fdf476c7ec9fcdc8cb5f3",

@@ -1,15 +1,18 @@
-// test/65-hot-body-pins.test.mjs -- burst 63 (PLAN-0w C2): source pins for the 7 hot bodies of the engine.
+// test/65-hot-body-pins.test.mjs -- burst 63 (PLAN-0w C2): source pins for the 8 hot bodies of the engine.
 // Maintainer ruling R1 (b63): the hot-body gate is a per-function SOURCE pin (sha256 first 16 hex + UTF-8 byte length
 // of the exact body text), V8-independent; there is no bytecode gate. A body = from the start of the unique line
 // `    function NAME(` (4-space indent) through its matching close brace. The extractor is a small lexer: braces inside
 // string / template / regex literals and comments do not count; ${...} inside templates nests. Regex detection is the
-// usual previous-token heuristic, so the test also asserts the 7 bodies hold NO regex literal (fail closed: a body
+// usual previous-token heuristic, so the test also asserts the 8 bodies hold NO regex literal (fail closed: a body
 // that gains one needs this extractor re-checked by hand before it is re-pinned).
 // Fail closed: a name that is missing, or whose `function NAME(` occurs more than once, is an error naming it.
 // RE-PIN = DELIBERATE: any edit to one of these bodies turns this test red by design. Re-pin in the SAME commit as the
 // engine edit, after review: `HOT_BODY_PRINT=1 node --test test/65-hot-body-pins.test.mjs` prints the current table
 // (diagnostic only; the test still asserts). Sibling pin: bench/soak/parity.json (engine parity), re-pinned likewise.
 // Cross-check at pin time (b63): an independent extractor, .handoff/b62-evidence/qa/hotbody.mjs, gave the same 7 sha16.
+// b102 (FIX-T W2, PLAN-0s-fixt ADDENDUM 7 task 6): pullComputed split into the refreshComputed body + a thin
+// wrapper; both are pinned (8 bodies). The other 6 pins are byte-identical to b63. The computed read closure is an
+// anonymous function expression (not `function NAME(`), so it is NOT pinned here (b102: unchanged scope).
 // Kernel: LITE_SIGNAL_KERNEL (absolute path to a Signal.js), default ../Signal.js. Source is read, never imported.
 import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 const KPATH = process.env.LITE_SIGNAL_KERNEL ?? fileURLToPath(new URL('../Signal.js', import.meta.url));
 const SRC = readFileSync(KPATH, 'utf8');
 
-// Pinned on Signal.js sha256/8 d07e0b17 (burst 63).
+// Pinned on Signal.js sha256/8 d07e0b17 (burst 63); pullComputed re-pinned + refreshComputed added on 4292ebea (b102).
 const PINS = {
     flushEffects: { sha16: 'b4b77b7b0a6a8e2f', bytes: 2270 },
     executeEffect: { sha16: 'b054d7c092b84fa2', bytes: 3475 },
@@ -28,9 +31,11 @@ const PINS = {
     nodeMiss: { sha16: 'c6aa7fbe2f7077f0', bytes: 1535 },
     disposeNode: { sha16: 'd6262e1a459f3746', bytes: 6547 },
     effectTail: { sha16: '1b80da7167ba5bbf', bytes: 93 },
-    pullComputed: { sha16: 'e4ef82dabc56d21b', bytes: 5055 },
+    pullComputed: { sha16: '5420227134aa9791', bytes: 346 },
+    refreshComputed: { sha16: 'ed8d9d7ae754ef9b', bytes: 5005 },
 };
-const NAMES = ['flushEffects', 'executeEffect', 'createNode', 'nodeMiss', 'disposeNode', 'effectTail', 'pullComputed'];
+const NAMES = ['flushEffects', 'executeEffect', 'createNode', 'nodeMiss', 'disposeNode', 'effectTail', 'pullComputed',
+    'refreshComputed'];
 
 const ID_CHAR = /[A-Za-z0-9_$]/;
 const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw',
@@ -169,8 +174,8 @@ test('kernel under test', (t) => {
         }
         console.log('// HOT_BODY_PRINT (sha256/8 ' + sha.slice(0, 8) + ')\nconst PINS = {\n' + rows.join('\n') + '\n};');
     }
-    assert.equal(NAMES.length, 7, 'exactly 7 hot bodies (PLAN-0w C2)');
-    assert.deepEqual(Object.keys(PINS).sort(), NAMES.slice().sort(), 'pin table must cover exactly the 7 hot bodies');
+    assert.equal(NAMES.length, 8, 'exactly 8 hot bodies (PLAN-0w C2 + b102 refreshComputed)');
+    assert.deepEqual(Object.keys(PINS).sort(), NAMES.slice().sort(), 'pin table must cover exactly the 8 hot bodies');
 });
 
 describe('extractor self-test (synthetic sources)', () => {

@@ -82,7 +82,7 @@ describe("F-b99-1: restored effects keep live's stamps (DX units)", () => {
 });
 
 describe("D-N: a clean dep cycle live emits is restored, not refused (probe 0c)", () => {
-    test("restore accepts; after s.set(1) the restored read fails like live (RangeError)", () => {
+    test("restore accepts; after s.set(1) the restored read fails like live (CycleError: Circular)", () => {
         const build = (r, H, out) => {
             const s = r.signal(0);
             const C = r.computed(() => { try { H.D(); } catch (e) { out.push("caught"); } return s(); });
@@ -101,8 +101,9 @@ describe("D-N: a clean dep cycle live emits is restored, not refused (probe 0c)"
         G2.s = K[sId]; G2.C = K[cId]; G2.D = K[dId];
         assert.equal(G2.C(), 0);
         G.s.set(1); G2.s.set(1);
-        assert.throws(() => G.C(), RangeError);
-        assert.throws(() => G2.C(), RangeError);
+        // FIX-T A1 / D2 = G-a (b102, LEDGER #42): the cyclic pre-walk throws CycleError (RangeError until b101).
+        assert.throws(() => G.C(), (e) => !(e instanceof RangeError) && /^CycleError: Circular/.test(e.message));
+        assert.throws(() => G2.C(), (e) => !(e instanceof RangeError) && /^CycleError: Circular/.test(e.message));
         assert.ok(r2);
     });
 });

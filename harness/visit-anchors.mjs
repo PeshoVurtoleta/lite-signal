@@ -28,13 +28,13 @@ export const NAMES = Object.freeze([
     "linkFree",       // 2  freeLink entry (sever)
     "markStamp",      // 3  markDownstream stamped a node's markEpoch (first visit this write)
     "markEdge",       // 4  markDownstream walked one subscriber edge
-    "scHit",          // 5  pullComputed CLEAN SHORT-CIRCUIT hit (the 1.5.0 markEpoch gate)
-    "pullTotal",      // 6  pullComputed entries
-    "pullCacheHit",   // 7  pullComputed same-globalVersion cache hit
-    "recompute",      // 8  pullComputed actually re-ran the body
+    "scHit",          // 5  refreshComputed CLEAN SHORT-CIRCUIT hit (the 1.5.0 markEpoch gate)
+    "pullTotal",      // 6  refreshComputed entries + the pullComputed / read-closure cache-hit branch (= the 1.5.x pullComputed entries)
+    "pullCacheHit",   // 7  refreshComputed / pullComputed / read-closure same-globalVersion cache hit
+    "recompute",      // 8  refreshComputed actually re-ran the body
     "eqDispatch",     // 9  `const eq = node.equals` dispatch sites (x3)
     "effectExec",     // 10 executeEffect entries
-    "depWalk",        // 11 dep-validation edges walked (pullComputed + executeEffect needsRun loops)
+    "depWalk",        // 11 dep-validation edges walked (refreshComputed + executeEffect needsRun loops)
 ]);
 export const IDX = Object.freeze(Object.fromEntries(NAMES.map((n, i) => [i, n])));
 export const I = Object.freeze(Object.fromEntries(NAMES.map((n, i) => [n, i])));
@@ -85,10 +85,20 @@ export const EDITS = Object.freeze([
         `                ${bump(I.markEdge)}if (t.markEpoch !== gv) { ${bump(I.markStamp)}`, 2],   // F-b33-1: markDownstream + its markDownstreamInEval twin
     [`if (node.evalVersion !== 0 && ((node.markEpoch - node.evalVersion) | 0) <= 0) {`,
         `if (node.evalVersion !== 0 && ((node.markEpoch - node.evalVersion) | 0) <= 0) { ${bump(I.scHit)}`, 1],
-    [`function pullComputed(node) {`,
-        `function pullComputed(node) { ${bump(I.pullTotal)}`, 1],
-    [`        if (node.evalVersion === globalVersion) {`,
-        `        if (node.evalVersion === globalVersion) { ${bump(I.pullCacheHit)}`, 1],
+    // FIX-T W2 (b102): pullComputed split into the refreshComputed body (no throw) plus a thin
+    // wrapper; the computed READ CLOSURE inlines the wrapper by hand. The three rows below keep
+    // pullTotal / pullCacheHit equal to the 1.5.x pullComputed-entry counts: every refreshComputed
+    // entry counts (the wrapper's stale branch, the read closure's stale branch, the pre-walks'
+    // direct calls, the dep recursion), and the wrapper / read-closure FRESH branch -- which never
+    // enters refreshComputed -- counts one entry and one cache hit. The `!==` row is un-indented:
+    // 2x = the pullComputed wrapper (8 spaces) + the read closure (12 spaces); a third reader that
+    // copies the line verbatim fails closed here.
+    [`function refreshComputed(node, depth) {`,
+        `function refreshComputed(node, depth) { ${bump(I.pullTotal)}`, 1],
+    [`        if (node.evalVersion === globalVersion) return;`,
+        `        if (node.evalVersion === globalVersion) { ${bump(I.pullCacheHit)}return; }`, 1],
+    [`if (node.evalVersion !== globalVersion) {`,
+        `if (node.evalVersion === globalVersion) { ${bump(I.pullTotal)}${bump(I.pullCacheHit)}} else {`, 2],
     [`runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute`,
         `${bump(I.recompute)}runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute`, 1],
     [`const eq = node.equals;`,

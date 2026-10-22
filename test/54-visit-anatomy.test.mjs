@@ -41,10 +41,10 @@ const esc = (s) => s.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 const label = (a) => `"${esc(a.slice(0, 48))}..."`;
 const caught = (src) => { try { instrument(src); } catch (e) { return e; } return null; };
 
-test("exports: MODULE_REF + 13 EDITS + 12 NAMES; NAMES / I / IDX agree", () => {
+test("exports: MODULE_REF + 14 EDITS + 12 NAMES; NAMES / I / IDX agree", () => {
     assert.deepEqual(Object.keys(A).sort(), ["EDITS", "I", "IDX", "MODULE_REF", "NAMES", "instrument"]);
     assert.ok(MODULE_REF instanceof RegExp);
-    assert.equal(EDITS.length, 13);
+    assert.equal(EDITS.length, 14);
     assert.equal(NAMES.length, 12);
     for (let i = 0; i < NAMES.length; i++) { assert.equal(I[NAMES[i]], i); assert.equal(IDX[i], NAMES[i]); }
 });
@@ -87,7 +87,7 @@ test("double-instrument and any __VC refused; purity (same in -> same out, input
     assert.equal(instrument(LIVE), once);
 });
 
-test("instrument(''): 13 drift lines, each ONE line, each 'found 0x, expected Nx'", () => {
+test("instrument(''): 14 drift lines, each ONE line, each 'found 0x, expected Nx'", () => {
     const e = caught("");
     assert.ok(e && Array.isArray(e.drift));
     assert.deepEqual(e.drift, EDITS.map(([a, , n]) => `${label(a)} found 0x, expected ${n}x`));
@@ -225,13 +225,16 @@ test("--verify: stdout + exit line equals the verify golden; engine line checked
 });
 
 test("--verify must-fail control: a gutted clean short-circuit body exits 1 with named VERIFY FAIL lines", () => {
-    // Drop `return node.value;` from the clean short-circuit body: every clean read then
+    // Drop the bare `return;` from the clean short-circuit body: every clean read then
     // falls through to the O(deps) walk, so unrelated-read.depWalk is no longer 0.
-    const from = "            if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;\n            return node.value;\n        }\n\n        const savedGen";
+    // FIX-T W2 (b102): the body lives in refreshComputed (returns void, never throws the
+    // cached error), so the 1.5.x `throw node.value; return node.value;` anchor is gone --
+    // same mutant, retargeted to the body's new last statement.
+    const from = "            node.evalVersion = globalVersion | 0;\n            return;\n        }\n\n        const savedGen";
     assert.equal(LIVE.split(from).length - 1, 1, "edit anchor occurs exactly once");
     const d = mkdtempSync(join(tmpRoot, "g-"));
     const eng = join(d, "Signal.gutted.js");
-    writeFileSync(eng, LIVE.replace(from, () => "            if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;\n        }\n\n        const savedGen"));
+    writeFileSync(eng, LIVE.replace(from, () => "            node.evalVersion = globalVersion | 0;\n        }\n\n        const savedGen"));
     const r = run(["--verify", "--engine", eng]);
     assert.equal(r.status, 1);
     assert.equal(r.stdout.includes("VERIFY PASSED"), false);
