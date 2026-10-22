@@ -1957,6 +1957,10 @@ export function createRegistry(config) {
         // to the recycled slot. See probe-c1-stale-set.mjs / probe-c1-stale-read.mjs.
         const birthGen = node.gen;
 
+        /**
+         * Read the value; tracked inside an observer. Returns
+         * undefined if the handle is stale, including disposed by a hook during this read.
+         */
         const read = () => {
             if (node.gen !== birthGen) return undefined;
             if (currentObserver !== null) {
@@ -1965,6 +1969,7 @@ export function createRegistry(config) {
                     activeObserverCurrentDep = expected.nextDep;
                 } else {
                     allocateLink(node, currentObserver);
+                    if (node.gen !== birthGen) return undefined;   // a hook inside allocateLink disposed this node (LEDGER #44)
                 }
             }
             return node.value;
@@ -2022,6 +2027,10 @@ export function createRegistry(config) {
 
         const birthGen = node.gen;
 
+        /**
+         * Read the value (refreshed if stale); tracked inside an observer. Returns
+         * undefined if the handle is stale, including disposed by a hook during this read.
+         */
         const read = () => {
             if (node.gen !== birthGen) return undefined;
             if (currentObserver !== null) {
@@ -2030,10 +2039,11 @@ export function createRegistry(config) {
                     activeObserverCurrentDep = expected.nextDep;
                 } else {
                     allocateLink(node, currentObserver);
+                    if (node.gen !== birthGen) return undefined;   // a hook inside allocateLink disposed this node (LEDGER #44)
                 }
             }
             if (node.evalVersion !== globalVersion) {
-                const g = node.gen;   // not birthGen: allocateLink may run user code (LEDGER #44)
+                const g = node.gen;   // equals birthGen here: the else arm re-checks after allocateLink (LEDGER #44)
                 refreshComputed(node, 0);
                 if (node.gen !== g) return undefined;   // disposed during the refresh
             }
@@ -2072,6 +2082,10 @@ export function createRegistry(config) {
     // low single digits on read-heavy graphs and is the explicit, documented
     // tradeoff for the creation win.
 
+    /**
+     * signalBox get(): read the value; tracked inside an observer. Returns
+     * undefined if the handle is stale, including disposed by a hook during this read.
+     */
     function boxGet() {
         const node = this[NODE_PTR];
         if (node.gen !== this[NODE_GEN]) return undefined;   // stale: slot recycled (ABA guard)
@@ -2081,6 +2095,7 @@ export function createRegistry(config) {
                 activeObserverCurrentDep = expected.nextDep;
             } else {
                 allocateLink(node, currentObserver);
+                if (node.gen !== this[NODE_GEN]) return undefined;   // a hook inside allocateLink disposed this node (LEDGER #44)
             }
         }
         return node.value;
@@ -2127,6 +2142,10 @@ export function createRegistry(config) {
             try { fn(val); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }
         });
     }
+    /**
+     * computedBox get(): read the value (refreshed if stale); tracked inside an observer. Returns
+     * undefined if the handle is stale, including disposed by a hook during this read.
+     */
     function boxComputedGet() {
         const node = this[NODE_PTR];
         if (node.gen !== this[NODE_GEN]) return undefined;
@@ -2136,6 +2155,7 @@ export function createRegistry(config) {
                 activeObserverCurrentDep = expected.nextDep;
             } else {
                 allocateLink(node, currentObserver);
+                if (node.gen !== this[NODE_GEN]) return undefined;   // a hook inside allocateLink disposed this node (LEDGER #44)
             }
         }
         return pullComputed(node);

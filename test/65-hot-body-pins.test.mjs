@@ -13,6 +13,9 @@
 // b102 (FIX-T W2, PLAN-0s-fixt ADDENDUM 7 task 6): pullComputed split into the refreshComputed body + a thin
 // wrapper; both are pinned (8 bodies). The other 6 pins are byte-identical to b63. The computed read closure is an
 // anonymous function expression (not `function NAME(`), so it is NOT pinned here (b102: unchanged scope).
+// b104 (LEDGER #44, PLAN-44 TASK 6): the four readers are pinned too (12 bodies). boxGet + boxComputedGet by name;
+// the two `const read = () => {` closures as readSignal / readComputed via an anchor extractor that searches only
+// inside the 4-space `function signal(` / `function computed(` body and fails closed on 0 or >1 hits there.
 // Kernel: LITE_SIGNAL_KERNEL (absolute path to a Signal.js), default ../Signal.js. Source is read, never imported.
 import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +26,8 @@ import { fileURLToPath } from 'node:url';
 const KPATH = process.env.LITE_SIGNAL_KERNEL ?? fileURLToPath(new URL('../Signal.js', import.meta.url));
 const SRC = readFileSync(KPATH, 'utf8');
 
-// Pinned on Signal.js sha256/8 d07e0b17 (burst 63); pullComputed re-pinned + refreshComputed added on 4292ebea (b102).
+// Pinned on Signal.js sha256/8 d07e0b17 (burst 63); pullComputed re-pinned + refreshComputed added on 4292ebea (b102);
+// the four readers added on e912e302 (b104, LEDGER #44).
 const PINS = {
     flushEffects: { sha16: 'b4b77b7b0a6a8e2f', bytes: 2270 },
     executeEffect: { sha16: 'b054d7c092b84fa2', bytes: 3475 },
@@ -33,9 +37,13 @@ const PINS = {
     effectTail: { sha16: '1b80da7167ba5bbf', bytes: 93 },
     pullComputed: { sha16: '5420227134aa9791', bytes: 346 },
     refreshComputed: { sha16: 'ed8d9d7ae754ef9b', bytes: 5005 },
+    boxGet: { sha16: '2938d89e667b9f07', bytes: 640 },
+    boxComputedGet: { sha16: '5940c249c8717ecf', bytes: 618 },
+    readSignal: { sha16: 'bb06aefbf682ef8f', bytes: 605 },
+    readComputed: { sha16: 'bb6f6be2c79aeb23', bytes: 991 },
 };
 const NAMES = ['flushEffects', 'executeEffect', 'createNode', 'nodeMiss', 'disposeNode', 'effectTail', 'pullComputed',
-    'refreshComputed'];
+    'refreshComputed', 'boxGet', 'boxComputedGet', 'readSignal', 'readComputed'];
 
 const ID_CHAR = /[A-Za-z0-9_$]/;
 const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw',
@@ -52,8 +60,14 @@ function extractBody(src, name) {
     const at = src.indexOf(lineNeedle);
     if (at === -1) throw new Error(name + ': not at the start of a line with 4-space indent');
     const start = at + 1;
+    return scanBody(src, name, start, start + 4 + needle.length, '');
+}
+
+// Lexes from i (just after the opening `(` of the parameter list) to the brace that closes the body. `tail` is the
+// only text allowed after that brace on its line ('' for a declaration, ';' for `const x = () => {...};`); the
+// returned text runs from `start` through the tail.
+function scanBody(src, name, start, i, tail) {
     const stats = { comments: 0, strings: 0, templates: 0, regexes: 0 };
-    let i = start + 4 + needle.length;
     let paren = 1;
     let prev = '(';         // last significant (non-space, non-comment) char, for the regex heuristic
     let prevWord = '';
@@ -144,14 +158,35 @@ function extractBody(src, name) {
                 const end = i + 1;
                 let k = end;
                 while (k < n && src[k] !== '\n') k++;
-                if (src.slice(end, k).length !== 0) fail('found text after the closing brace on its line');
-                return { text: src.slice(start, end), start, end, stats };
+                if (src.slice(end, k) !== tail) fail('found text after the closing brace on its line');
+                return { text: src.slice(start, end + tail.length), start, end: end + tail.length, stats };
             }
         }
         prev = c; prevWord = ''; i++;
     }
     return fail('ran off the end of the source (unbalanced braces)');
 }
+
+// b104 (LEDGER #44 TASK 6): the anonymous `const read = () => {` closure inside the 4-space `function OUTER(` body.
+// Fail closed: OUTER missing or not unique at 4-space indent, the closure declared 0 or >1 times inside it (any
+// `const|let|var read =` counts, so a respaced twin cannot shadow the pin), or not at an 8-space line start.
+const READ_ANCHOR = 'const read = () => {';
+function extractReadClosure(src, label, outer) {
+    const outerHits = (src.match(new RegExp('^    function\\s*\\*?\\s*' + outer + '\\s*\\(', 'gm')) || []).length;
+    if (outerHits !== 1) throw new Error(label + ': `    function ' + outer + '(` occurs ' + outerHits + 'x (must be 1)');
+    const oStart = src.indexOf('\n    function ' + outer + '(') + 1;
+    if (oStart === 0) throw new Error(label + ': `function ' + outer + '(` not in canonical form');
+    const o = scanBody(src, label + ' (outer ' + outer + ')', oStart, oStart + 14 + outer.length, '');
+    const decls = (o.text.match(/(^|[^A-Za-z0-9_$.])(const|let|var)\s+read\s*=/g) || []).length;
+    if (decls !== 1) throw new Error(label + ': `' + READ_ANCHOR + '` occurs ' + decls + 'x inside ' + outer + ' (must be 1)');
+    const rel = o.text.indexOf('\n        ' + READ_ANCHOR);
+    if (rel === -1) throw new Error(label + ': `' + READ_ANCHOR + '` not at an 8-space line start inside ' + outer);
+    const start = o.start + rel + 1;
+    return scanBody(src, label, start, start + 8 + READ_ANCHOR.indexOf('(') + 1, ';');
+}
+const ANCHORED = { readSignal: 'signal', readComputed: 'computed' };
+const extractPinned = (src, nm) => (Object.hasOwn(ANCHORED, nm) ? extractReadClosure(src, nm, ANCHORED[nm])
+    : extractBody(src, nm));
 
 function pinOf(text) {
     const sha16 = createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16);
@@ -166,7 +201,7 @@ test('kernel under test', (t) => {
         for (const nm of NAMES) {
             let row;
             try {
-                const p = pinOf(extractBody(SRC, nm).text);
+                const p = pinOf(extractPinned(SRC, nm).text);
                 row = '    ' + nm + ": { sha16: '" + p.sha16 + "', bytes: " + p.bytes + ' },';
             } catch (e) { row = '    // ' + e.message; }
             rows.push(row);
@@ -174,8 +209,8 @@ test('kernel under test', (t) => {
         }
         console.log('// HOT_BODY_PRINT (sha256/8 ' + sha.slice(0, 8) + ')\nconst PINS = {\n' + rows.join('\n') + '\n};');
     }
-    assert.equal(NAMES.length, 8, 'exactly 8 hot bodies (PLAN-0w C2 + b102 refreshComputed)');
-    assert.deepEqual(Object.keys(PINS).sort(), NAMES.slice().sort(), 'pin table must cover exactly the 8 hot bodies');
+    assert.equal(NAMES.length, 12, 'exactly 12 hot bodies (PLAN-0w C2 + b102 refreshComputed + b104 the four readers)');
+    assert.deepEqual(Object.keys(PINS).sort(), NAMES.slice().sort(), 'pin table must cover exactly the 12 hot bodies');
 });
 
 describe('extractor self-test (synthetic sources)', () => {
@@ -215,10 +250,44 @@ describe('extractor self-test (synthetic sources)', () => {
     });
 });
 
+describe('read-closure anchor extractor self-test (synthetic sources)', () => {
+    const one = '        const read = () => {\n            if (x) { return \'}\'; }\n            return 1;\n        };';
+    const sig = (inner) => 'const a = 1;\n    function signal(v) {\n' + inner + '\n        return read;\n    }\n' +
+        'export function signal(v) { return 0; }\n';
+    it('extracts the closure through its `};` (a column-0 export twin of the outer does not count)', () => {
+        const got = extractReadClosure(sig(one), 'readSignal', 'signal');
+        assert.equal(got.text, one);
+        assert.equal(got.stats.strings, 1);
+    });
+    it('fails closed on two closures inside the outer body', () => {
+        assert.throws(() => extractReadClosure(sig(one + '\n' + one), 'readSignal', 'signal'), /readSignal: .*occurs 2x inside signal/);
+    });
+    it('fails closed on a respaced twin inside the outer body', () => {
+        const twin = '        const read=() => 2;';
+        assert.throws(() => extractReadClosure(sig(one + '\n' + twin), 'readSignal', 'signal'), /occurs 2x inside signal/);
+    });
+    it('fails closed on 0 hits inside the outer body (an anchor outside it does not count)', () => {
+        const src = sig('        const r = 1;') + '    function other() {\n' + one + '\n    }\n';
+        assert.throws(() => extractReadClosure(src, 'readSignal', 'signal'), /readSignal: .*occurs 0x inside signal/);
+    });
+    it('fails closed on a missing or duplicated 4-space outer', () => {
+        assert.throws(() => extractReadClosure(sig(one), 'readComputed', 'computed'), /readComputed: .*computed\(` occurs 0x/);
+        assert.throws(() => extractReadClosure(sig(one) + sig(one), 'readSignal', 'signal'), /readSignal: .*signal\(` occurs 2x/);
+    });
+    it('fails closed on a closure not at an 8-space line start', () => {
+        const deep = '            const read = () => {\n                return 1;\n            };';
+        assert.throws(() => extractReadClosure(sig(deep), 'readSignal', 'signal'), /not at an 8-space line start/);
+    });
+    it('fails closed on text after the closing `};`', () => {
+        const bad = '        const read = () => {\n            return 1;\n        }; x();';
+        assert.throws(() => extractReadClosure(sig(bad), 'readSignal', 'signal'), /found text after the closing brace/);
+    });
+});
+
 describe('hot-body source pins', () => {
     for (const nm of NAMES) {
         it(nm, (t) => {
-            const body = extractBody(SRC, nm);
+            const body = extractPinned(SRC, nm);
             const got = pinOf(body.text);
             const line = SRC.slice(0, body.start).split('\n').length;
             t.diagnostic(nm + ' line ' + line + ' sha16 ' + got.sha16 + ' bytes ' + got.bytes +

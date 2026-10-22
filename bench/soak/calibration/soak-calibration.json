@@ -171,52 +171,44 @@
   }
  },
  "provenance": {
-  "date": "2026-10-22T03:58:47.634Z",
-  "gitHead": "0878c6b57ec63a8731f6334da71426a6318627f4",
+  "date": "2026-10-22T22:35:11.471Z",
+  "gitHead": "bfcf95bd448c69ab1a78824ef4f8078964477b77",
   "gitDirty": [
    " M CHANGELOG.md",
    " M LEDGER.md",
    " M README.md",
-   " M Signal.d.ts",
-   " M bench/soak/_mustfail.mjs",
-   " M bench/soak/calibration/calibrate.mjs",
-   " M bench/soak/config.mjs",
-   " M bench/soak/divergences.json",
-   " M bench/soak/divergences.mjs",
-   " M bench/soak/main.mjs",
+   " M Signal.js",
    " M bench/soak/parity.json",
-   " M bench/soak/replay.mjs",
-   " M harness/visit-anatomy.mjs",
    " M llms.txt",
-   " M test/40-soak-infra.test.mjs",
-   " M test/41-soak-config.test.mjs",
-   " M test/44-soak-divergences.test.mjs",
+   " M test/65-hot-body-pins.test.mjs",
+   " M test/78-fixt-errors.test.mjs",
    "?? BRIEF.md",
-   "?? bench/bench-runs/"
+   "?? bench/bench-runs/",
+   "?? test/79-l44-read-reuse.test.mjs"
   ],
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   3.37,
-   3.63,
-   3.87
+   1.47,
+   1.78,
+   2.65
   ],
   "loadavgAfterTimed": [
-   1.77,
-   2.56,
-   3.21
+   1.61,
+   1.62,
+   2.19
   ],
   "loadavgAfter": [
-   6.43,
-   4.76,
-   4.06
+   7.09,
+   4.3,
+   3.23
   ],
   "busyNodeBefore": [
-   "21952 12.2 node"
+   "1226 9.1 node"
   ],
-  "seconds": 933,
+  "seconds": 902,
   "timing": "PENDING (untimed run; throughput decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
@@ -1484,7 +1476,7 @@
    "files": [
     {
      "path": "Signal.js",
-     "sha256": "928f0e6481b90b21b25308cd53a21ed010d7130f13c530992a4790e76f889433"
+     "sha256": "e912e3022b638c10e6d58498e0fed0d1ddce28553051ee448e3fe7f75f840681"
     },
     {
      "path": "Watch.js",

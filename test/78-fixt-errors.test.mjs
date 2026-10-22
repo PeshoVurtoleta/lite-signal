@@ -176,6 +176,10 @@ describe('A5 gen hazard: a dep body disposes the parent during its pre-walk', ()
     // Q's id never equals the parent's; the gen snapshot is what tells them apart. Q throws Y, so the recycled slot
     // holds HAS_ERROR(Y): a reader that skips the gen check rethrows Y. One row per reader: P() (the read closure),
     // P.peek(), Pb.get(), Pb.peek() (pullComputed).
+    // closureBirthGen mutant (b102 NIT, `const g = node.gen` -> `const g = birthGen` in the read closure): EQUIVALENT
+    // since LEDGER #44 (b104, PLAN-44 D1) -- the else arm re-checks `node.gen !== birthGen` after allocateLink, so g equals
+    // birthGen whenever the refresh block is reached. It survives these rows by design; on b104-before it is killed by
+    // test/79's A1 computed rows.
     for (const via of ['read', 'peek', 'box get', 'box peek']) {
         it('A5 ' + via + ': slot reused by a computed that throws Y: the read returns undefined, never throws Y', () => {
             const Y = new Error('Y');
