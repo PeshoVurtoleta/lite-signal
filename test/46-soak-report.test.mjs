@@ -32,6 +32,7 @@ import { applicability } from '../bench/soak/adapters/contract.mjs';
 import { GATE_NAMES } from '../bench/soak/gates.mjs';
 import { ORACLES } from '../bench/soak/oracles.mjs';
 import { GAPS, CHECKS } from '../bench/soak/teeth.mjs';
+import { BreachLog } from '../bench/soak/main.mjs';   // b103: the relabelled-tree row re-derives its BREACH entries
 import { releaseRefusal, rssStride } from '../bench/soak/SoakReport.mjs';   // import runs no CLI: isEntry() guard
 import { RssSampler } from '../bench/soak/rss.mjs';
 import { failureRecord } from '../bench/soak/main.mjs';   // kernel-free on import (main.mjs header): no Signal.js loads
@@ -391,10 +392,23 @@ test('a small GRAPH-only tree run at the parity.json pins, parity ok -> consiste
     assert.ok(!r.out.some((l) => l.indexOf('NOTE -- control kernel') !== -1), 'a tree run prints no control NOTE');
 });
 test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x OPS_MIN) -> NOT A RELEASE SOAK -- volume', () => {
-    // a tree run classifies with includeFixed false: 1.5.2's WIE worlds (DIV-B33, a FIXED entry) re-tag as known null there
+    // a tree run classifies with includeFixed false: every 1.5.2 world a FIXED entry explains re-tags as known null there --
+    // its WIE worlds (DIV-B33) and, since b103 (DIV-F6 fixed in A2-FIX-T), its F6 ERROR worlds (DIV-F6, DIV-F6+DIV-F22)
+    const FIXED_RE = /(^|\+)DIV-(B33|F6)(\+|$)/;
     const retag = (recs) => {
-        for (const c of cyclesOf(recs)) for (const f of c.failures) if (f.known === 'DIV-B33') Object.assign(f, { known: null, tag: null, failKnown: f.fails.map(() => null) });
-        for (const b of summaryOf(recs).breaches) if (b.known === 'DIV-B33') b.known = null;
+        for (const c of cyclesOf(recs)) for (const f of c.failures) if (FIXED_RE.test(String(f.known))) Object.assign(f, { known: null, tag: null, failKnown: f.fails.map(() => null) });
+        // b103: a retagged F6+F22 world also moves its DIV-F22 line to known=null (the whole world is unknown on the tree),
+        // so the oracle BREACH entries are re-derived from the retagged failures with main.mjs's BreachLog, as SoakReport
+        // rebuilds them; gate entries and still-open-id entries no stored failure rebuilds (capped lanes) are kept
+        const s = summaryOf(recs);
+        const log = new BreachLog(() => {});
+        for (const c of cyclesOf(recs)) for (const f of c.failures) log.noteWorld(f, c.lane, 'lite');
+        const rebuilt = log.entries.map((e) => JSON.parse(JSON.stringify(e)));
+        const key = (b) => BreachLog.key(b.oracle, b.lane, b.sig, b.known);
+        const have = new Set(rebuilt.map(key));
+        const isGate = (b) => Object.prototype.hasOwnProperty.call(b, 'gate');
+        s.breaches = s.breaches.filter(isGate).concat(rebuilt,
+            s.breaches.filter((b) => !isGate(b) && !FIXED_RE.test(String(b.known)) && !have.has(key(b))));
     };
     const r = expectRefusal(tamper('rev', (recs) => { recs[0].controls.name = null; asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true); retag(recs); }), 'volume');
     assert.match(r.out[0], / kernel=tree engine=lite lanes=GRAPH,BATCH,ERROR,NEST,WIE,HOOK /);

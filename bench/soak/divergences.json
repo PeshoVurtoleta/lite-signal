@@ -35,7 +35,7 @@
       "ops": [], "scen": [], "worldScen": ["revert-after-mid-read"], "priorScen": [],
       "shapes": [
         { "pair": "O1c:computed-mismatch", "detail": "^node#\\d+ \\(\\w+\\) engine=.* model=.*$" },
-        { "pair": "O1c:computed-err-mismatch", "detail": "^node#\\d+ \\(\\w+\\) engine=.* model=.*$", "scen": ["revert-after-mid-read"] },
+        { "pair": "O1c:computed-err-mismatch", "detail": "^node#\\d+ \\(\\w+\\) engine=.* model=.*$" },
         { "pair": "O1e:effect-stale", "detail": "^effect#\\d+ saw \\[.*\\] model \\[.*\\]$" },
         { "pair": "O2:glitch", "detail": "^body#\\d+ read #\\d+ engine=.* model=.*$" }
       ],
@@ -43,8 +43,8 @@
       "description": "set(x), read a computed, set(back) inside one batch: the computed and its effects keep the intermediate value. 1.5.2 BATCH (200/200 worlds) and ERROR batches with reads; the stale value may surface at a later step's O1c, so the step scen is not required, the world scen is."
     },
     {
-      "id": "DIV-F6", "kind": "fix", "finding": "F6", "since": "1.5.2", "fixedIn": null, "fixBy": "A2",
-      "decision": "fix (FIX-T): a throwing computed dependency no longer escapes the effect pre-walk",
+      "id": "DIV-F6", "kind": "fix", "finding": "F6", "since": "1.5.2", "fixedIn": "A2-FIX-T", "fixBy": "A2",
+      "decision": "fixed (b103 B5, PLAN-0s-fixt TASK 12): fixedIn A2-FIX-T (0878c6b, FIX-T: a refresh / dependency pre-walk never throws a dependency's cached error, D-H; leaving an error is always a change, equals not called, D-K). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. preb33 or rev152); on the tree an F6 shape is a regression (known=none)",
       "engines": ["lite"], "lanes": ["ERROR"], "oracles": ["O1c", "O2", "O4", "O6"], "sigs": ["computed-err-mismatch", "effect-dead", "escape-computed", "glitch"],
       "ops": [], "scen": [], "worldScen": [], "priorScen": [],
       "shapes": [

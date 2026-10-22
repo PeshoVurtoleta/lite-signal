@@ -312,8 +312,9 @@ const P_TMARK_2 = Object.freeze([A_TMARK_PUSH, '// Intrusive push: t.nextMark ho
 // explains there, because main / SoakReport classify with includeFixed = (controls.name !== null).
 const KNOWN_INTERIM = Object.freeze(['DIV-F21', 'DIV-F22']);
 // P-INTERIM-ERROR-clean (N17.2, N19.4): preb33 is a POST-F21 controls.json kernel (includeFixed true), so a DIV-F21
-// label there is not in this list -> MISS (A3': zero DIV-F21 on preb33); only the still-open DIV-F5 / DIV-F6 /
-// DIV-F22 (no FIX-R / FIX-T / A2 batch-error fix in preb33) may explain a BREACH.
+// label there is not in this list -> MISS (A3': zero DIV-F21 on preb33); only DIV-F5 / DIV-F6 / DIV-F22 (no FIX-R /
+// FIX-T / A2 batch-error fix in preb33) may explain a BREACH. DIV-F5 / DIV-F22 are open; DIV-F6 is FIXED since b103
+// (fixedIn A2-FIX-T) and still explains here because preb33 is a named control kernel (includeFixed true).
 const KNOWN_INTERIM_CLEAN = Object.freeze(['DIV-F5', 'DIV-F6', 'DIV-F22']);
 
 function deepFreeze(o) {
@@ -517,9 +518,11 @@ export const CONTROLS = deepFreeze([
     // DIV-F5 / DIV-F6 / DIV-F22 }. RE-MEASURED burst 53: the widening unmasked 2 more known=none heads (main.mjs
     // prints one BREACH line per (family, lane, sig, known) and keeps FAIL_CAP = 16 records per cycle, so b52's first
     // known=none lines hid them; c-pinterim.txt MISS). Same bug via the CACHED-rethrow path, which the
-    // throw-dep-computed-prewalk tagger misses (t2-SUMMARY.md, N19.6): DIV-F6's standalone shapes dropped that
+    // throw-dep-computed-prewalk tagger misses (t2-SUMMARY.md, N19.6; moot on the tree since FIX-T, b103: a pre-walk
+    // never rethrows a cached error, so no world reaches that path): DIV-F6's standalone shapes dropped that
     // clause and classify them; OK in .handoff/b53-evidence/c2-pinterim.txt. preb33 is frozen
-    // without FIX-T (and FIX-R / the A2 batch-error fix), so its F5 / F6 / F22 lines never clear: this control stays
+    // without FIX-T (and FIX-R / the A2 batch-error fix), so its F5 / F6 / F22 lines never clear (DIV-F6, fixed in
+    // A2-FIX-T since b103, still explains them here: includeFixed is true on a named control kernel): this control stays
     // 'explained' at exit 1 permanently; a clean (exit 0, 'nobreach') control needs a FIX-T kernel. F21 teeth: test/58.
     M('P-INTERIM-ERROR-clean', 'preb33', { SOAK_LANES: 'ERROR', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'explained', lines: [], specs: [], known: KNOWN_INTERIM_CLEAN,

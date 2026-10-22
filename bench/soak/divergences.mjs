@@ -47,6 +47,9 @@
  * when it was predicted (no O6 escape-* fail in the step): tag F22. Note: in S1 an effect body only
  * re-throws computed tokens, so the decision is where the token was thrown (pre-walk vs body), not
  * leaf.origin. No replacing leaf, a non-SoakThrow leaf, or an escape-* fail naming no leaf -> null.
+ * DIV-F6 is FIXED since b103 (fixedIn A2-FIX-T, FIX-T 0878c6b: a pre-walk never throws a dependency's cached
+ * error), so an F6 shape -- and with it an F6+F22 world -- classifies only with includeFixed (a named control
+ * kernel such as preb33 or rev152); on the tree it is known=none (a regression), never a bare F22.
  *
  * COLD module. No engine import.
  */

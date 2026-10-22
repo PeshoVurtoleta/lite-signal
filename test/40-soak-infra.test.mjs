@@ -882,9 +882,17 @@ test('main: failureRecord -- failKnown is per fail, in fail order (two fails exp
         ] },
         scen: { 'dep-set-flip': 2, 'recovery-after-throw': 2, 'throw-dep-computed-prewalk': 1, 'throw-in-batch': 1 },
     };
-    const f = MQ.failureRecord(r, { engine: 'lite', lane: 'ERROR', cycle: 0, world: 0, worldSeed: 1, escape: [{ origin: 'computed', token: 'computed:18' }] });
+    const f = MQ.failureRecord(r, { engine: 'lite', lane: 'ERROR', cycle: 0, world: 0, worldSeed: 1, escape: [{ origin: 'computed', token: 'computed:18' }], kernelKnownAs: 'rev152' });
     assert.equal(f.known, 'DIV-F6+DIV-F22');
     assert.deepEqual(f.failKnown, ['DIV-F6', 'DIV-F22', 'DIV-F6']);
+    // b103 F-b103-2: the fixture is a 1.5.2 world, i.e. the rev152 control kernel (ctx.kernelKnownAs): DIV-F6 is fixed
+    // (A2-FIX-T), so it explains only there. The same record on the tree (null, or the key absent in a test import) is a
+    // regression (known=none), and a malformed identity throws (fail closed)
+    const ctxT = { engine: 'lite', lane: 'ERROR', cycle: 0, world: 0, worldSeed: 1, escape: [{ origin: 'computed', token: 'computed:18' }] };
+    assert.equal(MQ.failureRecord(r, Object.assign({ kernelKnownAs: null }, ctxT)).known, null);
+    assert.equal(MQ.failureRecord(r, ctxT).known, null, 'absent key = this process identity (a test import: tree)');
+    for (const bad of ['', 0, undefined, {}, ['rev152']]) assert.throws(() => MQ.failureRecord(r, Object.assign({ kernelKnownAs: bad }, ctxT)), TypeError, String(bad));
+    assert.equal(MQ.failureRecord(r, Object.assign(Object.create({ kernelKnownAs: 'rev152' }), ctxT)).known, null, 'an inherited kernelKnownAs is ignored (own key only)');
 });
 
 /* -- S1c B4: replay.mjs / shrink.mjs (TASKS 7-8). Appended hunk; every kernel run uses a frozen kernel. -- */
@@ -1234,7 +1242,7 @@ test('replay: m21 -- failKnown stays per fail in fail order on an ASYMMETRIC fix
         ] },
         scen: { 'dep-set-flip': 2, 'recovery-after-throw': 2, 'throw-dep-computed-prewalk': 1, 'throw-in-batch': 1 },
     };
-    const f = MQ.failureRecord(r, { engine: 'lite', lane: 'ERROR', cycle: 0, world: 0, worldSeed: 1, escape: [{ origin: 'computed', token: 'computed:18' }] });
+    const f = MQ.failureRecord(r, { engine: 'lite', lane: 'ERROR', cycle: 0, world: 0, worldSeed: 1, escape: [{ origin: 'computed', token: 'computed:18' }], kernelKnownAs: 'rev152' });
     assert.equal(f.known, 'DIV-F6+DIV-F22');
     assert.deepEqual(f.failKnown, ['DIV-F6', 'DIV-F6', 'DIV-F22']);
     const lines = [];

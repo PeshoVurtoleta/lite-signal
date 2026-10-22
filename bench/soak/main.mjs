@@ -138,7 +138,9 @@ let kernelKnownAs = null;
 
 /**
  * Build one failing world's record and classify it. r: runWorld() result with r.failure !== null.
- * ctx { engine, lane, cycle, world, worldSeed, escape (tap.escape) }. classify() is the divergence
+ * ctx { engine, lane, cycle, world, worldSeed, escape (tap.escape), kernelKnownAs? }. kernelKnownAs (optional OWN key; b103
+ * F-b103-1): the kernel's controls.json name or null, as kernel.mjs KERNEL_KNOWN_AS reports it (replay.mjs passes it);
+ * absent = this main run's own identity. Anything but null or a non-empty string throws TypeError (fail closed). classify() is the divergence
  * registry (a malformed record throws there: a harness bug is a fatal, never a silent "unknown").
  */
 export function failureRecord(r, ctx) {
@@ -152,7 +154,9 @@ export function failureRecord(r, ctx) {
     if (escape !== null) crec.escape = escape;
     // a fixed registry entry (fixedIn set) explains only when includeFixed is true (any named controls.json kernel); on the tree or a scratch
     // kernel it is a regression. Same identity as the header's controls.name (provenance.mjs) and SoakReport.
-    const cls = classify(crec, { includeFixed: kernelKnownAs !== null });
+    const knownAs = Object.prototype.hasOwnProperty.call(ctx, 'kernelKnownAs') ? ctx.kernelKnownAs : kernelKnownAs;
+    if (knownAs !== null && (typeof knownAs !== 'string' || knownAs === '')) throw new TypeError('failureRecord: ctx.kernelKnownAs must be null or a controls.json kernel name');
+    const cls = classify(crec, { includeFixed: knownAs !== null });
     return {
         oracles: uniq(fails.map((x) => x.oracle)),
         sigs: uniq(fails.map((x) => x.sig)),

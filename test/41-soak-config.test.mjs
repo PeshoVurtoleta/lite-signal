@@ -611,8 +611,9 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
 //       cells both have failingWorlds 0 (a count: null is not zero) and worlds > 0. A fail-stopped cell (every world
 //       fails early: headpatched NEST 33885/33885 at 32.5 ops/world) confounds every length-dependent count (O7a, the
 //       rare scenarios, taint). ONE exemption (maintainer ruling b74): ERROR, only while at least one of DIV-F5 /
-//       DIV-F6 / DIV-F22 is open (fixedIn === null) in bench/soak/divergences.json; all three closed (or absent) is
-//       red (cut ERROR on tree, drop the exemption); an exemption set other than exactly {ERROR: those three} is red
+//       DIV-F22 is open (fixedIn === null) in bench/soak/divergences.json (b103 R13.3: DIV-F6, closed in A2-FIX-T, left
+//       the set; the 'b103 (f)' row pins ruled set == open set); both closed (or absent) is
+//       red (cut ERROR on tree, drop the exemption); an exemption set other than exactly {ERROR: those two} is red
 //   (q) doc.probe is the calibrate.mjs PROBE (lane, kernel, cycles, ops); PROBE.cycles === MIN_ACTIVE_CYCLES (main
 //       rejects SOAK_CYCLES below it); every one of the probe's cycles ran >= 1 LARGE world
 // Per-lane kernel map (b67 B2a, D7): every kernel x lane check runs kernel-major over calibrate.mjs kernelsOf(roster),
@@ -654,7 +655,7 @@ const b6SeedsOk = (cells) => JSON.stringify(cells.map((c) => (c || {}).seed)) ==
 const b6FullLength = (f) => f !== null && typeof f === 'object' && b6Count(f.failingWorlds) && f.failingWorlds === 0
     && b6Count(f.worlds) && f.worlds > 0;
 // the ONE (f) exemption the maintainer ruled (b74): ERROR, while one of these divergences is open
-const B6_F_EXEMPT_RULED = '{"ERROR":["DIV-F5","DIV-F6","DIV-F22"]}';
+const B6_F_EXEMPT_RULED = '{"ERROR":["DIV-F5","DIV-F22"]}';   // b103 R13.3: DIV-F6 dropped (fixed, A2-FIX-T)
 const B6_F_EXEMPT = Object.freeze(JSON.parse(B6_F_EXEMPT_RULED));
 const B6_DIVS = JSON.parse(readFileSync(join(SOAK, 'divergences.json'), 'utf8'));
 // the ids of `ids` still open in a divergences doc: an entry with fixedIn === null (absent = closed: fail closed)
@@ -787,14 +788,14 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
         p.push('(e) CHECK_FLOOR_SMOKE=' + C.CHECK_FLOOR_SMOKE + ' is below 1/8 of the least full-length smoke cell ' + smokeMin);
     }
     // (f) b74 D4: every rostered lane has full-length evidence on some kernel that cuts it (header); ERROR is exempt
-    // only while one of DIV-F5 / F6 / F22 is open, and the exemption set is exactly the ruled one
+    // only while one of DIV-F5 / F22 is open, and the exemption set is exactly the ruled one
     // second literal on purpose: editing :654 (B6_F_EXEMPT_RULED, the default source only) alone is red; fail closed
     // -- a non-object exempt (null) is red, never a TypeError
     // b79 C1: exempt.ERROR is read ONCE and compared + printed element by element (an indexed loop: no
     // JSON.stringify, toJSON or iterator on it), so a toJSON-spoofed ['DIV-F7'] is red and its line shows ["DIV-F7"]
     const exK = exempt !== null && typeof exempt === 'object' ? Reflect.ownKeys(exempt) : null;
     const exE = exK === null ? null : exempt.ERROR;
-    const exRuled = ['DIV-F5', 'DIV-F6', 'DIV-F22'];
+    const exRuled = ['DIV-F5', 'DIV-F22'];
     const exElt = (v) => (typeof v === 'string' ? '"' + v + '"'
         : v !== null && (typeof v === 'object' || typeof v === 'function') ? '<' + typeof v + '>' : String(v));
     const exA = Array.isArray(exE), exN = exA ? exE.length : -1;
@@ -808,8 +809,8 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
     if (JSON.stringify(exK) !== '["ERROR"]' || !exOk) {
         const shown = exK === null ? 'null'
             : JSON.stringify(exK.map(String)) + ' ERROR=' + exS;
-        p.push('(f) the exemption set ' + shown + ' != ["ERROR"] ERROR=["DIV-F5","DIV-F6","DIV-F22"]'
-            + ' (maintainer ruling b74: only ERROR, tied to DIV-F5 / F6 / F22)');
+        p.push('(f) the exemption set ' + shown + ' != ["ERROR"] ERROR=["DIV-F5","DIV-F22"]'
+            + ' (maintainer ruling b74: only ERROR, tied to DIV-F5 / F22; b103 R13.3 dropped DIV-F6)');
     }
     for (const d of lanes) {
         let ok = false;
@@ -866,7 +867,7 @@ const B6_C = Object.freeze(Object.assign({}, CFG));
 const b6With = (over) => Object.assign({}, B6_C, over);
 
 // the binding minima, read from the evidence (never typed in): mutants sit one step past them. b74 D4: full-length
-// cells only, plus the cells of a lane (f) exempts right now (ERROR, while DIV-F5 / F6 / F22 is open: its fail-stopped
+// cells only, plus the cells of a lane (f) exempts right now (ERROR, while DIV-F5 / F22 is open: its fail-stopped
 // cells keep feeding SCEN_MIN's binding, ERROR aggregate, until the ERROR recut). A missing cell is (a)'s, not b6Min's.
 function b6Min(sh, pick) {
     let best = null;
@@ -1097,28 +1098,34 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     delete fGone.kernels.tree.full.NEST;
     delete fGone.kernels.tree.smoke.NEST;
     red(fGone, B6_C, '(f) NEST', 'no tree NEST cells (the HEAD-shaped JSON)');
-    // (f) the ERROR exemption: it holds while ONE of DIV-F5 / F6 / F22 is open; all closed or absent -> red
-    const F_IDS = ['DIV-F5', 'DIV-F6', 'DIV-F22'];
+    // (f) the ERROR exemption: it holds while ONE of DIV-F5 / F22 is open; all closed or absent -> red
+    const F_IDS = ['DIV-F5', 'DIV-F22'];
     const closeDivs = (ids) => { const d = b6Copy(B6_DIVS); for (const e of d.entries) if (ids.indexOf(e.id) !== -1) e.fixedIn = 'A2'; return d; };
-    red(B6_DOC, B6_C, '(f) ERROR: the exemption expired', 'DIV-F5 / F6 / F22 all closed (the exemption expired: recut ERROR)', b6ShaOf, B6_PROBE, closeDivs(F_IDS));
+    red(B6_DOC, B6_C, '(f) ERROR: the exemption expired', 'DIV-F5 / F22 both closed (the exemption expired: recut ERROR)', b6ShaOf, B6_PROBE, closeDivs(F_IDS));
     const absent = b6Copy(B6_DIVS);
     absent.entries = absent.entries.filter((e) => F_IDS.indexOf(e.id) === -1);
-    red(B6_DOC, B6_C, '(f) ERROR: the exemption expired', 'DIV-F5 / F6 / F22 absent from divergences.json (absent is not open)', b6ShaOf, B6_PROBE, absent);
-    const oneOpen = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, closeDivs(['DIV-F6', 'DIV-F22']));
+    red(B6_DOC, B6_C, '(f) ERROR: the exemption expired', 'DIV-F5 / F22 absent from divergences.json (absent is not open)', b6ShaOf, B6_PROBE, absent);
+    const oneOpen = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, closeDivs(['DIV-F22']));
     assert.deepEqual(oneOpen.filter((x) => x.indexOf('(f) ERROR') === 0), [], 'control: DIV-F5 alone open keeps ERROR exempt');
+    // b103 R13.3 (PLAN-0s-fixt ADDENDUM 13): DIV-F6 is CLOSED (fixedIn A2-FIX-T) and left the ruled set; the ruled set is
+    // exactly the OPEN set of the shipped registry, and the pre-R13.3 three-id set is red
+    assert.equal(B6_DIVS.entries.find((e) => e.id === 'DIV-F6').fixedIn, 'A2-FIX-T');
+    assert.deepEqual(B6_F_EXEMPT.ERROR, ['DIV-F5', 'DIV-F22'], 'b103 (f): the ruled set');
+    assert.deepEqual(b6DivOpen(B6_F_EXEMPT.ERROR, B6_DIVS), B6_F_EXEMPT.ERROR, 'b103 (f): ruled set == open set');
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'b103: the pre-R13.3 set {ERROR: [DIV-F5, DIV-F6, DIV-F22]}', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F5', 'DIV-F6', 'DIV-F22'] });
     // (f) b6DivOpen: only fixedIn === null is open; a missing fixedIn key or '' is closed, so the exemption expires
     // (a `== null` or `!e.fixedIn` open test would keep ERROR exempt on a malformed registry: fail open)
     const noKey = b6Copy(B6_DIVS);
     for (const e of noKey.entries) if (F_IDS.indexOf(e.id) !== -1) delete e.fixedIn;
     red(B6_DOC, B6_C, '(f) ERROR: the exemption expired',
-        'fixedIn deleted on DIV-F5 / F6 / F22 (a missing key is not open)', b6ShaOf, B6_PROBE, noKey);
+        'fixedIn deleted on DIV-F5 / F22 (a missing key is not open)', b6ShaOf, B6_PROBE, noKey);
     const noKeyV = validate(noKey);
     assert.ok(noKeyV.some((x) => /missing key fixedIn/.test(x)),
         'validate() names the missing fixedIn key: ' + JSON.stringify(noKeyV));
     const emptyFx = b6Copy(B6_DIVS);
     for (const e of emptyFx.entries) if (F_IDS.indexOf(e.id) !== -1) e.fixedIn = '';
     red(B6_DOC, B6_C, '(f) ERROR: the exemption expired',
-        "fixedIn '' on DIV-F5 / F6 / F22 (an empty string is not open)", b6ShaOf, B6_PROBE, emptyFx);
+        "fixedIn '' on DIV-F5 / F22 (an empty string is not open)", b6ShaOf, B6_PROBE, emptyFx);
     // (f) the structural exemption check fails closed: a null exempt is a '(f)' problem, never a TypeError
     red(B6_DOC, B6_C, '(f) the exemption set ', 'exempt = null (a non-object exemption set)',
         b6ShaOf, B6_PROBE, B6_DIVS, null);
@@ -1139,10 +1146,10 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     const spoofP = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, B6_DIVS, spoof);
     assert.ok(spoofP.some((x) => x.indexOf('(f) the exemption set ["ERROR"] ERROR=["DIV-F7"] != ') === 0),
         'the (f) line shows the real elements, not the toJSON: ' + JSON.stringify(spoofP));
-    red(B6_DOC, B6_C, '(f) the exemption set ', 'a trailing undefined 4th slot on ERROR', b6ShaOf, B6_PROBE, B6_DIVS,
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'a trailing undefined 3rd slot on ERROR', b6ShaOf, B6_PROBE, B6_DIVS,
         { ERROR: F_IDS.concat([undefined]) });
     red(B6_DOC, B6_C, '(f) the exemption set ', 'an array-like (not an Array) ERROR', b6ShaOf, B6_PROBE, B6_DIVS,
-        { ERROR: { 0: 'DIV-F5', 1: 'DIV-F6', 2: 'DIV-F22', length: 3 } });
+        { ERROR: { 0: 'DIV-F5', 1: 'DIV-F22', length: 2 } });
     // (e) b74 D4: a hollowVolume row counts only when full-length; every row failing -> the floor reads hollow
     const hvFail = b6Copy(B6_DOC);
     for (const k of Object.keys(hvFail.hollowVolume)) for (const l of Object.keys(hvFail.hollowVolume[k])) hvFail.hollowVolume[k][l].failingWorlds = 1;

@@ -167,10 +167,14 @@ export function scriptDigest(script) {
  * is a CONFIG message or null. Dynamic import: kernel.mjs reads SOAK_KERNEL here (and exits 2 itself on a
  * bad kernel path, before any record).
  */
+// b103 F-b103-1: the loaded kernel's controls.json name (kernel.mjs KERNEL_KNOWN_AS) or null, set by loadEngine; recordOf
+// passes it to failureRecord, so a replay on a named control kernel classifies with includeFixed exactly as main does.
+let replayKnownAs = null;
 export async function loadEngine(cfg, laneName) {
     if (cfg.engine !== 'lite' || ENGINES_AVAILABLE.indexOf(cfg.engine) === -1) return { adapter: null, app: null, error: 'SOAK_ENGINE: no adapter for ' + cfg.engine };
     const adMod = await import('./adapters/lite-s3.mjs');
     const adapter = adMod.liteS3Adapter;
+    ({ KERNEL_KNOWN_AS: replayKnownAs } = await import('./kernel.mjs'));   // the adapter loaded it: no new load
     const { validateAdapter, applicability } = await import('./adapters/contract.mjs');
     const probs = validateAdapter(adapter);
     if (probs.length > 0) return { adapter: null, app: null, error: 'adapter ' + cfg.engine + ' is invalid: ' + probs.join('; ') };
@@ -234,7 +238,7 @@ export function playWorld(adapter, res, opts) {
 /** main.mjs failureRecord for the played world (null when it ran clean). */
 export function recordOf(adapter, res, played) {
     if (played.r.failure === null) return null;
-    return failureRecord(played.r, { engine: adapter.name, lane: res.lane, cycle: res.cycle, world: res.world, worldSeed: res.worldSeed, escape: played.escape });
+    return failureRecord(played.r, { engine: adapter.name, lane: res.lane, cycle: res.cycle, world: res.world, worldSeed: res.worldSeed, escape: played.escape, kernelKnownAs: replayKnownAs });
 }
 
 /** BREACH lines of a failure record (main.mjs BreachLog format), without BreachLog's REPLAY line. */

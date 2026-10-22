@@ -147,6 +147,9 @@ const known = (r, o) => { const c = classify(r, o); return c === null ? null : c
 // DIV-F21 is FIXED (fixedIn 'A2-F21'): its matcher rows run as a named control kernel does (main / SoakReport pass
 // includeFixed = controls.name !== null), so a near-miss null is the matcher's, never the fixedIn skip's
 const FX = () => ({ includeFixed: true });
+// DIV-F6 is FIXED too (fixedIn 'A2-FIX-T', b103): its matcher rows use these, for the same reason
+const classifyFx = (r, o) => classify(r, Object.assign(FX(), o));
+const knownFx = (r, o) => known(r, Object.assign(FX(), o));
 
 // ---- 1. the shipped registry ---------------------------------------------------------------------------
 test('the shipped registry validates against the imported vocabulary', () => {
@@ -220,14 +223,14 @@ test('DIV-F21 near-misses classify null', () => {
 });
 
 test('DIV-F6: escape-computed (+ its O4) -> DIV-F6; near-misses -> null', () => {
-    assert.equal(known(rec('F6')), 'DIV-F6');
-    assert.equal(classify(rec('F6')).tag, 'F6');
+    assert.equal(knownFx(rec('F6')), 'DIV-F6');
+    assert.equal(classifyFx(rec('F6')).tag, 'F6');
     // a different lane, a different token origin in the escape
-    assert.equal(classify(rec('F6', { lane: 'NEST' })), null);
+    assert.equal(classifyFx(rec('F6', { lane: 'NEST' })), null);
     const eq = rec('F6'); eq.fails[0] = { oracle: 'O6', sig: 'escape-equals', detail: 'unpredicted escape equals:8' };
-    assert.equal(classify(eq), null);
+    assert.equal(classifyFx(eq), null);
     const tok = rec('F6'); tok.fails[0].detail = 'unpredicted escape batch:76';
-    assert.equal(classify(tok), null);
+    assert.equal(classifyFx(tok), null);
     // O4 effect-dead is matched only next to the F6 escape
     // (b53 N19.3: O4solo, the standalone O4 with ERR(computed) on the engine side, is now DIV-F6; see the b53 rows below)
 });
@@ -239,8 +242,12 @@ test('DIV-F5: revert-after-mid-read worlds on BATCH and ERROR; near-misses -> nu
     const noRevert = rec('F5later'); noRevert.worldScen = without(noRevert.worldScen, 'revert-after-mid-read');
     assert.equal(classify(noRevert), null);
     assert.equal(classify(rec('F5', { lane: 'GRAPH' })), null);
-    // computed-err-mismatch needs the revert in the failing step itself
+    // b103 R13.2: computed-err-mismatch no longer needs the revert in the failing step (the step-scen narrowing went;
+    // the entry's own rule: the world scen is required, the step scen is not) -- the WORLD revert still binds
     const cem = rec('F5err'); cem.scen = without(cem.scen, 'revert-after-mid-read');
+    assert.equal(known(cem), 'DIV-F5');
+    cem.worldScen = without(cem.worldScen, 'revert-after-mid-read');
+    if (cem.worldScenCounts !== undefined) delete cem.worldScenCounts['revert-after-mid-read'];
     assert.equal(classify(cem), null);
 });
 
@@ -292,11 +299,11 @@ test('DIV-F7: a fire for a disposed target; near-misses -> null', () => {
 
 // ---- 3. DIV-F22 ---------------------------------------------------------------------------------------
 test('DIV-F22 attribution: F6 pre-walk token -> F6+F22, effect-body escape -> F22', () => {
-    const a = classify(rec('F6F22'));
+    const a = classifyFx(rec('F6F22'));
     assert.equal(a.known, 'DIV-F6+DIV-F22');
     assert.equal(a.tag, 'F6+F22');
     assert.deepEqual(a.perFail, [['DIV-F6'], ['DIV-F22'], ['DIV-F6']]);
-    const b = classify(rec('F22'));
+    const b = classifyFx(rec('F22'));
     assert.equal(b.known, 'DIV-F22');
     assert.equal(b.tag, 'F22');
     // the 17th S1b "F6+F22" world: predicted escape, same failure on headpatched -> F22
@@ -330,7 +337,7 @@ test('DIV-F22 must-fail controls (amendment 8)', () => {
     eq.fails.unshift({ oracle: 'O6', sig: 'escape-equals', detail: 'unpredicted escape equals:8' });
     assert.equal(classify(eq), null);
     // the escape-computed fail names a token that is not in this call's escape
-    assert.equal(classify(rec('F6F22', { escape: [{ origin: 'computed', token: 'computed:99' }] })), null);
+    assert.equal(classifyFx(rec('F6F22', { escape: [{ origin: 'computed', token: 'computed:99' }] })), null);
 });
 
 // ---- 4. fixedIn ----------------------------------------------------------------------------------------
@@ -479,17 +486,17 @@ test('a detail regex must match the WHOLE detail: lexical-only anchors are rejec
     // an even run of backslashes before $ leaves it unescaped: still valid
     assert.deepEqual(validate(mutF6('^unpredicted escape computed:\\d+\\\\$')), []);
     // the same broad matcher cannot enter through opts.registry (a dv-proposed.json)
-    assert.throws(() => classify(rec('F6'), { registry: mutF6('^unpredicted escape computed:\\d+|.*$') }), /invalid/);
+    assert.throws(() => classifyFx(rec('F6'), { registry: mutF6('^unpredicted escape computed:\\d+|.*$') }), /invalid/);
     // the shipped shapes are whole-string matchers: a detail with a suffix no longer matches
     const tail = rec('F6'); tail.fails[0].detail = 'unpredicted escape computed:13 and more';
-    assert.equal(classify(tail), null);
+    assert.equal(classifyFx(tail), null);
     // the ^(?:...)$ wrapper itself: a narrow top-level alternation is legitimate, and it must NOT match a
     // detail that merely starts with the first branch (compiled as new RegExp(src) it would -> DIV-F6).
     // The second branch is 'kq7', not 'zz': 'zz' is a probe, so the wrapped form would be rejected.
     const alt = mutF6('^unpredicted escape computed:\\d+|kq7$');
     assert.deepEqual(validate(alt), []);
-    assert.equal(classify(tail, { registry: alt }), null);
-    assert.equal(known(rec('F6'), { registry: alt }), 'DIV-F6');
+    assert.equal(classifyFx(tail, { registry: alt }), null);
+    assert.equal(knownFx(rec('F6'), { registry: alt }), 'DIV-F6');
     // a structure-free length matcher is caught by the longer probes
     assert.ok(has(validate(mutF6('^.{2,}$')), /structure-free probe/));
     assert.ok(has(validate(mutF6('^[a-z0-9 ]{2,}$')), /structure-free probe/));
@@ -606,8 +613,8 @@ test('QA teeth DIV-F6 `with`: the F6-shaped O4 effect-dead alone (no O6 escape-c
     const solo = rec('F6');
     solo.fails = solo.fails.filter((f) => f.oracle === 'O4');
     assert.equal(solo.fails.length, 1);
-    assert.equal(classify(solo), null, 'O4 effect-dead was explained without its F6 escape');
-    assert.equal(known(rec('F6')), 'DIV-F6', 'positive control');
+    assert.equal(classifyFx(solo), null, 'O4 effect-dead was explained without its F6 escape');
+    assert.equal(knownFx(rec('F6')), 'DIV-F6', 'positive control');
 });
 
 // ---- 8. b53 N19.3: DIV-F6 widened to the pre-walk-throw stale-cache shapes -----------------------------
@@ -657,18 +664,18 @@ const B53 = {
 const b53 = (k, mut) => { const r = clone(B53[k]); if (mut) mut(r); return r; };
 const dropWorld = (r, name) => { r.worldScen = without(r.worldScen, name); delete r.worldScenCounts[name]; return r; };
 const addWorld = (r, name) => { r.worldScen.push(name); r.worldScenCounts[name] = 1; return r; };
-const notF6 = (r) => { const c = classify(r); return c === null || !c.known.includes('DIV-F6'); };
+const notF6 = (r) => { const c = classifyFx(r); return c === null || !c.known.includes('DIV-F6'); };
 
 test('b53 A1: head (a) -- standalone O4 effect-dead with the stale ERR(computed) on the engine side -> DIV-F6', () => {
-    const c = classify(b53('a'));
+    const c = classifyFx(b53('a'));
     assert.notEqual(c, null);
     assert.equal(c.known, 'DIV-F6');
     assert.deepEqual(c.perFail, [['DIV-F6']]);
-    assert.equal(known(rec('O4solo')), 'DIV-F6', 'the older captured 0x5a22a78c record (same shape) agrees');
+    assert.equal(knownFx(rec('O4solo')), 'DIV-F6', 'the older captured 0x5a22a78c record (same shape) agrees');
 });
 
 test('b53 A2: head (b) -- O2 glitch + O1c computed-err-mismatch with engine=ERR(computed) -> every line DIV-F6', () => {
-    const c = classify(b53('b'));
+    const c = classifyFx(b53('b'));
     assert.notEqual(c, null);
     assert.equal(c.known, 'DIV-F6');
     assert.deepEqual(c.perFail, [['DIV-F6'], ['DIV-F6']]);
@@ -677,46 +684,46 @@ test('b53 A2: head (b) -- O2 glitch + O1c computed-err-mismatch with engine=ERR(
 test('b53 A3: head (b) in a revert-after-mid-read world is NOT DIV-F6 (the F5 shapes stay F5 or unknown)', () => {
     assert.ok(notF6(b53('b', (r) => addWorld(r, 'revert-after-mid-read'))));
     assert.ok(notF6(b53('a', (r) => addWorld(r, 'revert-after-mid-read'))));
-    assert.equal(known(b53('b'), undefined), 'DIV-F6', 'positive control: the unmodified record');
+    assert.equal(knownFx(b53('b'), undefined), 'DIV-F6', 'positive control: the unmodified record');
 });
 
 test('b53 A4 (N19.6): dropping throw-dep-computed-prewalk from the world stays DIV-F6; dropping recovery-after-throw is NOT DIV-F6', () => {
-    assert.equal(known(b53('a', (r) => dropWorld(r, 'throw-dep-computed-prewalk'))), 'DIV-F6');
+    assert.equal(knownFx(b53('a', (r) => dropWorld(r, 'throw-dep-computed-prewalk'))), 'DIV-F6');
     assert.ok(notF6(b53('a', (r) => dropWorld(r, 'recovery-after-throw'))));
-    assert.equal(known(b53('b', (r) => dropWorld(r, 'throw-dep-computed-prewalk'))), 'DIV-F6');
+    assert.equal(knownFx(b53('b', (r) => dropWorld(r, 'throw-dep-computed-prewalk'))), 'DIV-F6');
     assert.ok(notF6(b53('b', (r) => dropWorld(r, 'recovery-after-throw'))));
-    assert.equal(known(b53('a')), 'DIV-F6', 'positive control');
+    assert.equal(knownFx(b53('a')), 'DIV-F6', 'positive control');
 });
 
 test('b53 A5: an O4 effect-dead with ERR(computed) on the MODEL side only, standalone, is NOT DIV-F6 (pre-b53 behaviour)', () => {
     const r = b53('a');
     r.fails = [{ oracle: 'O4', sig: 'effect-dead', detail: 'effect#26 saw [#21=8346155] model [#21=ERR(computed:13)] (ran 0 times this op)' }];
-    assert.equal(classify(r), null);
+    assert.equal(classifyFx(r), null);
 });
 
 test('b53 A6: DIV-F5-shaped records still classify DIV-F5 (including the ERR(computed) F5err with the prewalk scenarios present)', () => {
-    assert.equal(known(rec('F5')), 'DIV-F5');
-    assert.equal(known(rec('F5later')), 'DIV-F5');
-    assert.equal(known(rec('F5err')), 'DIV-F5');
-    assert.equal(known(rec('F5err')) === 'DIV-F6', false);
+    assert.equal(knownFx(rec('F5')), 'DIV-F5');
+    assert.equal(knownFx(rec('F5later')), 'DIV-F5');
+    assert.equal(knownFx(rec('F5err')), 'DIV-F5');
+    assert.equal(knownFx(rec('F5err')) === 'DIV-F6', false);
 });
 
 test('b53 near-miss: head (a) / (b) on another lane classify null', () => {
-    assert.equal(classify(b53('a', (r) => { r.lane = 'BATCH'; })), null);
-    assert.equal(classify(b53('b', (r) => { r.lane = 'NEST'; })), null);
+    assert.equal(classifyFx(b53('a', (r) => { r.lane = 'BATCH'; })), null);
+    assert.equal(classifyFx(b53('b', (r) => { r.lane = 'NEST'; })), null);
 });
 
 test('b53 N19.6: heads (c) O4 and (d) O1c computed-err-mismatch (no throw-dep-computed-prewalk tag) -> DIV-F6; narrowing holds', () => {
-    assert.equal(known(b53('c')), 'DIV-F6');
-    assert.equal(known(b53('d')), 'DIV-F6');
-    assert.equal(known(rec('CEMsolo')), 'DIV-F6', 'the older captured standalone O1c (recovery-after-throw world, engine-side ERR)');
+    assert.equal(knownFx(b53('c')), 'DIV-F6');
+    assert.equal(knownFx(b53('d')), 'DIV-F6');
+    assert.equal(knownFx(rec('CEMsolo')), 'DIV-F6', 'the older captured standalone O1c (recovery-after-throw world, engine-side ERR)');
     for (const k of ['c', 'd']) {
         assert.ok(notF6(b53(k, (r) => dropWorld(r, 'recovery-after-throw'))), k + ' without recovery-after-throw');
         assert.ok(notF6(b53(k, (r) => addWorld(r, 'revert-after-mid-read'))), k + ' with revert-after-mid-read');
     }
     // a standalone O1c computed-err-mismatch with ERR on the MODEL side only is not the stale cache
     const m = b53('d'); m.fails[0].detail = 'node#31 (sum) engine=208570 model=ERR(computed:13)';
-    assert.equal(classify(m), null);
+    assert.equal(classifyFx(m), null);
 });
 
 
@@ -730,7 +737,52 @@ test('b53 validate: shape worldScen / notWorldScen fail closed; all-of / none-of
     assert.ok(has(v((s) => { s.notWorldScen = ['recovery-after-throw']; }), /in both worldScen and notWorldScen/));
     assert.ok(has(v((s, e) => { e.worldScen = ['revert-after-mid-read']; }), /is in the entry worldScen/));
     const all = fresh(); for (const s of F6(all).shapes) if (s.worldScen) s.worldScen = ['recovery-after-throw', 'equality-cutoff'];
-    assert.equal(known(b53('c'), { registry: all }), 'DIV-F6'); assert.equal(classify(b53('d'), { registry: all }), null);
+    assert.equal(knownFx(b53('c'), { registry: all }), 'DIV-F6'); assert.equal(classifyFx(b53('d'), { registry: all }), null);
     const none = fresh(); for (const s of F6(none).shapes) if (s.notWorldScen) s.notWorldScen = ['revert-after-mid-read', 'throwing-equals'];
-    assert.equal(known(b53('d'), { registry: none }), 'DIV-F6'); assert.equal(classify(b53('c'), { registry: none }), null);
+    assert.equal(knownFx(b53('d'), { registry: none }), 'DIV-F6'); assert.equal(classifyFx(b53('c'), { registry: none }), null);
+});
+
+// ---- 8b. b103 B5 (PLAN-0s-fixt TASK 12): DIV-F6 FIXED by FIX-T (0878c6b) -----------------------------------
+// The DIV-F6 matcher rows above run as a named control kernel does (classifyFx / knownFx = includeFixed true), so
+// their near-miss nulls stay the matcher's, never the fixedIn skip's. This row pins the fixed state itself.
+test('DIV-F6 is fixed in A2-FIX-T (b103): the tree classifies every F6 shape null (a regression there); a named control kernel explains it', () => {
+    const e = fresh().entries.find((x) => x.id === 'DIV-F6');
+    assert.equal(e.kind, 'fix');
+    assert.equal(e.fixedIn, 'A2-FIX-T');
+    assert.equal(e.fixBy, 'A2');
+    for (const k of ['F6', 'O4solo', 'CEMsolo']) {
+        assert.equal(classify(rec(k)), null, k + ': the default (tree: controls.name null)');
+        assert.equal(classify(rec(k), { includeFixed: false }), null, k + ': includeFixed false');
+        assert.equal(known(rec(k), FX()), 'DIV-F6', k + ': a named control kernel (preb33, rev152)');
+    }
+    for (const k of ['a', 'b', 'c', 'd']) {
+        assert.equal(classify(b53(k)), null, 'b53 head ' + k + ' on the tree');
+        assert.equal(known(b53(k), FX()), 'DIV-F6', 'b53 head ' + k + ' on a control kernel');
+    }
+    // amendment 8: a computed (pre-walk) replacing token needs F6, so the F6+F22 world is unknown on the tree, not F22
+    assert.equal(classify(rec('F6F22')), null);
+    assert.equal(classifyFx(rec('F6F22')).tag, 'F6+F22');
+    // an unfixed copy (fixedIn null: the pre-b103 registry) explains without includeFixed
+    const u = fresh(); for (const x of u.entries) if (x.id === 'DIV-F6') x.fixedIn = null;
+    assert.equal(known(rec('F6'), { registry: u }), 'DIV-F6');
+});
+
+// b103 R13.2 (PLAN-0s-fixt ADDENDUM 13, triage .handoff/b103-evidence/T1/): ERROR:7:0x8999219f on the tree (FIX-T unmasked
+// it; red on 1.5.2 too) is the OPEN F5 bug. Its O1c computed-err-mismatch shape used to require the STEP scen
+// revert-after-mid-read, against the entry's own description (the world scen is required, the step scen is not).
+const B103_F5 = {"engine":"lite","lane":"ERROR","step":255,"op":"stop","scen":["second-invalidation","dep-set-flip","recovery-after-throw"],"fails":[{"oracle":"O2","sig":"glitch","detail":"body#13 read #12 engine=-620903596 model=438374991"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#13 (cond) engine=-620903596 model=438374991"},{"oracle":"O1c","sig":"computed-err-mismatch","detail":"node#53 (cond) engine=-620903596 model=ERR(computed:53)"}],"worldScen":["diamond-write","equality-cutoff","dep-set-flip","second-invalidation","throw-in-batch","throwing-equals","throw-dep-effect-prewalk","recovery-after-throw","throw-dep-computed-prewalk","cycle-error-surfaces","multi-write-same-signal","revert-after-mid-read"],"worldScenCounts":{"diamond-write":39,"equality-cutoff":25,"dep-set-flip":147,"second-invalidation":161,"throw-in-batch":13,"throwing-equals":15,"throw-dep-effect-prewalk":22,"recovery-after-throw":88,"throw-dep-computed-prewalk":18,"cycle-error-surfaces":2,"multi-write-same-signal":6,"revert-after-mid-read":1}};
+test('b103 R13.2: the ERROR:7:0x8999219f record (O2 glitch + O1c computed-mismatch + O1c computed-err-mismatch) -> DIV-F5; F5 stays open', () => {
+    const c = classify(clone(B103_F5));
+    assert.notEqual(c, null, 'every line of the triage world is explained');
+    assert.equal(c.known, 'DIV-F5');
+    assert.deepEqual(c.perFail.map((p) => p.slice()), [['DIV-F5'], ['DIV-F5'], ['DIV-F5']]);
+    const e = fresh().entries.find((x) => x.id === 'DIV-F5');
+    assert.equal(e.fixedIn, null); assert.equal(e.fixBy, 'A3');
+    assert.ok(e.shapes.every((s) => !Object.prototype.hasOwnProperty.call(s, 'scen')), 'no DIV-F5 shape narrows on the step scen');
+    // the entry worldScen still binds: the same lines in a world without revert-after-mid-read -> null
+    const nw = clone(B103_F5); nw.worldScen = without(nw.worldScen, 'revert-after-mid-read'); delete nw.worldScenCounts['revert-after-mid-read'];
+    assert.equal(classify(nw), null);
+    // the computed-err-mismatch line alone (the head that read known=none) -> DIV-F5
+    const solo = clone(B103_F5); solo.fails = [solo.fails[2]];
+    assert.equal(known(solo), 'DIV-F5');
 });
