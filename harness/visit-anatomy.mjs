@@ -20,7 +20,7 @@
 // short-circuit's evalVersion re-stamp), a19-pull-freed and a19-effect-freed
 // (a pre-walk pull that frees the link the walk stands on: the A1.9
 // LINK-FREED guards -- the `link.source !== dep || link.target !== node`
-// checks in pullComputed's pre-walk and in pullMoved -- plus a dep-walk count
+// checks in refreshComputed's pre-walk and in pullMoved -- plus a dep-walk count
 // and a zero-retention witness) -- 16 more pins (37), then a19-pull-aba,
 // a19-effect-aba, a19-effect-relink and a19-pull-relink (a pre-walk pull that
 // disposes the READER itself, whose slot and link are recycled at once: the
@@ -308,7 +308,7 @@ const SHAPES = {
     // recomputes X, whose value never changes, so the `equals` cut-off keeps
     // X.version still: Y's pre-walk pulls X and stops (no Y recompute), and
     // the effect's pre-walk pulls Y and stops (no body run). Per write: one
-    // recompute and three dep edges (E->Y, Y->X, X->s). A pullComputed
+    // recompute and three dep edges (E->Y, Y->X, X->s). A refreshComputed
     // pre-walk that re-runs after every computed pull recomputes Y too (2x);
     // an effect pre-walk that runs after every computed pull runs the body.
     "cutoff-chain": (report) => {
@@ -360,7 +360,7 @@ const SHAPES = {
         }
         report(OPS, diff(t0, snap()), { sink: acc });
     },
-    // A1.9 LINK FREED INSIDE pullComputed's PRE-WALK: X disposes ITSELF from
+    // A1.9 LINK FREED INSIDE refreshComputed's PRE-WALK: X disposes ITSELF from
     // its own body once s moves; Y reads X. Per op: fresh s / X / Y, prime Y,
     // write s, read Y. Y's pre-walk pulls X, X's recompute frees the X->Y
     // link the walk stands on, and the A1.9 guard must re-run Y (which now
@@ -414,7 +414,7 @@ const SHAPES = {
         const d = diff(t0, snap());
         report(OPS, d, { reruns, liveDelta: liveDelta(st0, r.stats()) });
     },
-    // A1.9 READER DISPOSED (AND RECYCLED) INSIDE pullComputed's PRE-WALK (ABA):
+    // A1.9 READER DISPOSED (AND RECYCLED) INSIDE refreshComputed's PRE-WALK (ABA):
     // Y reads X; once s moves, X's body disposes Y, creates Z (t1 + t2) and
     // reads it untracked. Y is in its pre-walk, not COMPUTING, so disposeNode
     // puts its slot straight on the LIFO free list: Z takes Y's node (aba) and
@@ -549,7 +549,7 @@ const SHAPES = {
         const st1 = r.stats();
         report(OPS, d, { aba, linkSame, linkGrowth: st1.linkPoolPopulation - pop1, liveDelta: liveDelta(st0, st1) });
     },
-    // A1.9 LINK RECYCLED WITH THE SAME SOURCE inside pullComputed's PRE-WALK
+    // A1.9 LINK RECYCLED WITH THE SAME SOURCE inside refreshComputed's PRE-WALK
     // (the inline check's TARGET half): the effect-relink shape with a computed
     // reader. Y reads X; X's body disposes Y, makes pad (takes Y's slot) and
     // C2, and creates a computed T read untracked, whose X() read reuses the

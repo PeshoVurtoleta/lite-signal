@@ -544,9 +544,10 @@ export interface Registry {
      * x 5 seeds at the A9 close), not a universal law. Limits: cleanup callbacks
      * (`onCleanup`) and a custom `equals` / scheduler are NOT captured, so an effect that
      * registered a cleanup before `snapshot()` has none until its next run (the ORDER of
-     * pre-snapshot cleanups is therefore not reproduced); live bugs are reproduced, not
-     * fixed (LEDGER #38 F6, #41, #42). Since D-L a restored graph reproduces live's F6
-     * pre-walk rethrow (restore copies live state); F6 remains a live bug (D-H).
+     * pre-snapshot cleanups is therefore not reproduced); restore copies live state, so it
+     * reproduces live as it is now: LEDGER #38 (F6), #41 and #42 are fixed in 1.6.0-dev
+     * (FIX-T), so a restored dependency pre-walk no longer rethrows a cached error either,
+     * leaving an error state is a change in it too, and a restored dep cycle throws CycleError.
      * A duplicate or dangling id, or an unknown owner id, FAILS CLOSED.
      * Every dep id must exist in the snapshot on EVERY record, including dirty /
      * never-read computeds.
@@ -572,7 +573,7 @@ export interface Registry {
      * succeeds; a failed restore leaves it untouched. A snapshot taken after a
      * registry's node-id counter wrapped (ids <= 0) is rejected (fail closed). A dep cycle among clean computeds is NOT refused: live can emit one (a
      * computed whose body catches a CycleError from a partner), and the restored graph reproduces live exactly,
-     * including live's own RangeError (stack overflow) on the next read after a write to a dep (LEDGER #42, open).
+     * including live's own CycleError ("CycleError: Circular dependency detected.") on the next read after a write to a dep (LEDGER #42, fixed in FIX-T; residual: a pool larger than the pre-walk stack limit still overflows the stack with a RangeError first).
      *
      * The snapshot records the registry clock (`gv`), the next node id (`nextId`) and
      * every node's `evalVersion` / `markEpoch`, and restore copies them (the clock and
