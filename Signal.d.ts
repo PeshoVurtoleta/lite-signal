@@ -313,13 +313,15 @@ export type ReactiveHandle = Signal<any> | Computed<any> | SignalBox<any> | Comp
  *                        a node that a write flagged mid-run is disposed before the flag
  *                        clears (still mid-run, or after that run threw);
  *                        op `1` never carries it. Box nodes carry `128` (see op `1`).
- *  - `3` link add.       `(intA, intB) = (source.id, target.id)` -- emitted only for an
- *                        edge that still exists when it fires (an `onConnect` hook that
- *                        removed the new edge suppresses it). Op `2` (node disposed)
+ *  - `3` link add.       `(intA, intB) = (source.id, target.id)` -- since 1.6.0 emitted only
+ *                        for an edge that still exists when it fires (an `onConnect` hook
+ *                        that removed the new edge, by disposing either endpoint,
+ *                        suppresses it). Also emitted when an `onConnect` hook throws
+ *                        without disposing either endpoint (the edge stays live): after
+ *                        the hook and before its error propagates. Op `2` (node disposed)
  *                        implies the node's subscriber edges are gone; no per-edge op `4`
  *                        is emitted for them (bench/soak/mirror.mjs rule I3).
- *  - `4` link remove.    `(intA, intB) = (source.id, target.id)` -- `-1` if the link
- *                        was already nulled (defensive, rare).
+ *  - `4` link remove.    `(intA, intB) = (source.id, target.id)`.
  *  - `5` recompute.      `(intA, intB) = (node.id, 0)` -- fires just before an effect
  *                        re-run or a computed re-eval.
  */

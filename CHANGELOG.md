@@ -678,7 +678,25 @@ skipped).
   `get()` keeps the `pullComputed` wrapper, one extra frame per cold level (1945 warmed); re-walk depth is about 5055 on
   every build. The write plus one-level refresh path measured about 6% slower than the pre-FIX-T 1.6.0-dev build B0 (08401c2, `Signal.js` sha256/8 98295467; lane L6, B0/W2 0.940); clean computed
   reads measured about 3x faster than B0 in every round but inconclusive under the A/A band rule. Not gated: statistical tier.
-- Still OPEN, not part of this entry: LEDGER #43 (restore re-runs an effect once more than live). (#44 and #45 are fixed, next entries.)
+- Still OPEN, not part of this entry: LEDGER #43 (restore re-runs an effect once more than live). (#44, #45 and #46 are fixed, next entries.)
+
+### Fixed -- engine: onGraphMutation now reports op 3 for an edge a throwing onConnect hook leaves live (LEDGER #46)
+
+Pre-existing (found b105 by the #45 reviewer). When an `observeObservers` `onConnect` hook threw, `allocateLink` had already linked
+the edge into both lists (kept live by design, A1.5/S1) but `fireConnect` threw before op 3, so the edge was live and never
+announced; a Mirror replay under-counted edges. Present in published 1.5.2 (ec36ab8, `Signal.js` f8dd50f8), e912e302 and 928f0e64
+(probe `.handoff/b105-evidence/L46/op3-throw.mjs`: before `activeLinks=2 op3=["3:2->3"]`, after `["3:1->3","3:2->3"]`,
+`.handoff/b106-evidence/L46/golden-diff.txt`). `fireConnect` now emits op 3 for the edge it leaves live, after the hook threw and
+before the error propagates (order: connect (threw), op 3, error), unless the hook disposed either endpoint (the #45 generation
+check). The edge stays live; an effect that catches the error still re-runs on that source. If the op-3 listener itself throws there,
+its error replaces the `onConnect` error (maintainer ruling b106 Q1 = (i), plain `finally`). KNOWN interplay with #45: a hook that
+throws after disposing an endpoint emits no op 3 (the #45 rule wins). Cost (node v26.8.2, `--print-bytecode`, untimed,
+`.handoff/b106-evidence/L46/jit-before.txt` / `jit-after.txt`): `fireConnect` 142 -> 205 B (+63, cold), `allocateLink` 572 unchanged,
+the four readers unchanged (106 / 200 / 96 / 99), inlining census unchanged; not timed (hot bodies byte-identical). The throw path
+measured minor 0 / major 0 GC before and after (`gc-throw-*.txt`; 1e6-step gate in test/81). Gate:
+`test/81-l46-op3-throw.test.mjs` (18 tests; rows R1, R4, R5, R9b, DF and test/80 N3' red on `Signal.js` d00484d6, 6 rows; mutants M1-M10,
+swapped ids, an `||` generation check, X3 (flags instead of generation) and T1 (one [a, b] array per throw, transient) killed; X6 equivalent).
+test/80 row N3, which pinned the old no-op-3 behavior, is rewritten as N3'. Docs: the `Signal.d.ts` op `4` text drops the stale `-1` sentinel clause (the `freeLink` `-1` ternaries were removed in 1.5.0-beta.8, see that entry). Fix: `Signal.js` d00484d6 -> 0628127b.
 
 ### Fixed -- engine: onGraphMutation no longer reports op 3 for an edge an onConnect hook removed (LEDGER #45)
 
