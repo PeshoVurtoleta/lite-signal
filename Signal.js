@@ -784,13 +784,17 @@ export function createRegistry(config) {
     let nodeSeq = 1 | 0;
     let lifecycleCount = 0 | 0;
     const lifecycleMap = new WeakMap();
-    function fireConnect(node) {
-        const e = lifecycleMap.get(node);
-        if (e === undefined || e.onConnect === undefined) return;
+    // LEDGER #45: returns true when the hook disposed either endpoint (gen moved), i.e. the new
+    // edge is gone; allocateLink then skips op 3. Only a boolean crosses the call (cold path).
+    function fireConnect(source, target) {
+        const e = lifecycleMap.get(source);
+        if (e === undefined || e.onConnect === undefined) return false;
         // A1.6: #30 gen-safe restore -- a callback that disposes the observer does not re-seat it.
         const po = currentObserver, pg = po !== null ? po.gen : 0;
+        const sg = source.gen, tg = target.gen;
         currentObserver = null;
         try { e.onConnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }
+        return source.gen !== sg || target.gen !== tg;
     }
     function fireDisconnect(node) {
         const e = lifecycleMap.get(node);
@@ -942,8 +946,9 @@ export function createRegistry(config) {
         else target.headDep = link;
         target.tailDep = link;
         // A1.5 (S1): onConnect runs only once the edge is in BOTH lists, so a callback that
-        // disposes `source` (or `target`) unlinks a whole edge. Op order stays connect, op 3.
-        if (_was0) fireConnect(source);
+        // disposes `source` (or `target`) unlinks a whole edge. Op order stays connect, op 3;
+        // op 3 fires only for an edge that survived the hook (#45: a hook-removed edge emits none).
+        if (_was0 && fireConnect(source, target)) return;
         if (mutationHook !== null) mutationHook(3, source.id, target.id);
     }
 
