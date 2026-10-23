@@ -678,7 +678,25 @@ skipped).
   `get()` keeps the `pullComputed` wrapper, one extra frame per cold level (1945 warmed); re-walk depth is about 5055 on
   every build. The write plus one-level refresh path measured about 6% slower than the pre-FIX-T 1.6.0-dev build B0 (08401c2, `Signal.js` sha256/8 98295467; lane L6, B0/W2 0.940); clean computed
   reads measured about 3x faster than B0 in every round but inconclusive under the A/A band rule. Not gated: statistical tier.
-- Still OPEN, not part of this entry: LEDGER #43 (restore re-runs an effect once more than live). (#44 is fixed, next entry.)
+- Still OPEN, not part of this entry: LEDGER #43 (restore re-runs an effect once more than live). (#44 and #45 are fixed, next entries.)
+
+### Fixed -- engine: onGraphMutation no longer reports op 3 for an edge an onConnect hook removed (LEDGER #45)
+
+Pre-existing (found b104). `allocateLink` ran the `observeObservers` `onConnect` hook (`fireConnect`) before emitting op 3. A hook that
+disposed the source (op 2 for it, with a new node possibly reusing the slot), or disposed the target computed, or a target that
+disposed itself from its own read's hook, removed the new edge, yet op 3 still reported ids for an edge that did not exist (or the
+new occupant's id as its source). `fireConnect(source, target)` now records both endpoints' generations before the hook and returns
+whether either changed; `allocateLink` does `if (_was0 && fireConnect(source, target)) return;`, so op 3 is emitted only for an
+edge that survived the hook. The order "connect, op 3" is kept. Published 1.5.2 (ec36ab8, `Signal.js` f8dd50f8) shows the
+source-disposed cases; on 1.5.2 a disposed target instead leaves a live phantom edge (already fixed on the 1.6 line). KNOWN
+residual (both target-disposed cases): the hook's dispose of the target emits op 4 for the new edge, whose op 3 is now never
+emitted, so a Mirror replay sees a lone op 4 ('op4 on non-live id <target>'); pinned in the gate. Cost (node v26.8.2,
+`--print-bytecode`, untimed, `.handoff/b105-evidence/L45/a6-after.txt`): `allocateLink` 567 -> 572 B (+5), `fireConnect` 107 -> 142 B
+(cold, never inlined), the four readers unchanged (106 / 200 / 96 / 99), inlining census unchanged, 0 deopts, jit-health 5
+bailouts = baseline. Not timed (`allocateLink` is not inlined and the change is in its cold `_was0` branch). Op 2 implies the
+node's subscriber edges are gone; no per-edge op 4 is emitted for them. Gate: `test/80-l45-op3-ghost.test.mjs` (17 tests; ghost
+rows A/B/C/D and the two KNOWN rows red on `Signal.js` 928f0e64 and e912e302; mutants M1/M2/M3 killed, 6/4/2 rows failing).
+Fix: `Signal.js` e912e302 -> d00484d6.
 
 ### Fixed -- engine: a tracked read no longer returns a recycled slot's value after hook code disposed the node (LEDGER #44)
 
@@ -690,7 +708,11 @@ readers (signal read, computed read, `signalBox` `get`, `computedBox` `get`) now
 `allocateLink` and returns `undefined`, like other stale-handle reads; the cursor-reuse arm and untracked reads are unchanged.
 `Signal.d.ts` keeps `(): T`. Cost (node v26.8.2, quiet host, `--print-bytecode`, `.handoff/b104-evidence/A6-growth.txt`): +18 B
 bytecode per reader (read(signal) 88 -> 106, read(computed) 182 -> 200 of the 460 B inline limit, boxGet 78 -> 96,
-boxComputedGet 81 -> 99); all four still inline, 0 deopts, jit-health 5 bailouts = baseline. Timing not yet measured. Gate:
+boxComputedGet 81 -> 99); all four still inline, 0 deopts, jit-health 5 bailouts = baseline. Timing (interleaved A/B, fix
+(`Signal.js` e912e302) vs `Signal.js` 928f0e64, K=9 rotated rounds, node v26.8.2, darwin, quiet host, load 2.42 -> 2.33,
+2026-10-23, `.handoff/b104/perf/SUMMARY.txt`; a tracked read in an effect re-run, cursor-reuse and allocateLink arms of all four
+readers): 7 of 8 lanes measured inside the run's own A/A noise band; the 8th (`computedBox` `get`, reuse arm) is inconclusive
+(its A/A band, 0.949..1.003, leaves [0.95, 1.05]); a padded control build measured slower beyond the band on all 8. Gate:
 `test/79-l44-read-reuse.test.mjs` (4 kinds x 3 triggers red on `Signal.js` 928f0e64; 4/4 no-recheck mutants killed; zero-GC rows).
 
 ### Changed -- soak b103: DIV-F6 retired, DIV-F5 O1c shape widened (dev-only, not shipped)
