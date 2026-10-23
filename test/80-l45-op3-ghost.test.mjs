@@ -7,7 +7,7 @@
 // edge must not be announced.
 // Rows: A / B / C / D = GHOST rows (RED on e912e302 and 928f0e64, GREEN after the fix).
 //   C-KNOWN pins the single op 4 left for an edge whose op 3 was never emitted (maintainer ruling Q1 = a, ADDENDUM 1.1).
-//   N1-N4 = REGRESSION pins (green before and after). GC / retention rows = REGRESSION pins with their own must-fail controls.
+//   N1, N2, N4 = REGRESSION pins (green before and after); N3' = REGRESSION #46, replaces #45 N3 (RED on d00484d6, GREEN after). GC / retention rows = REGRESSION pins with their own must-fail controls.
 // Kernel: LITE_SIGNAL_KERNEL (absolute path), default ../Signal.js. GC rows need --expose-gc (else SKIP).
 // MIT (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
 import { describe, it } from 'node:test';
@@ -155,19 +155,26 @@ describe('REGRESSION N1-N4: op 3 still fires when the edge survives the hook', (
         assert.deepEqual(w.mir.drain(), []);
         assert.equal(r.stats().activeLinks, 1);
     });
-    it('N3: a throwing onConnect emits no op 3 and the error propagates (not wedged)', () => {
+    it('N3\': (REGRESSION #46, replaces #45 N3) a throwing onConnect now emits op 3 for the live edge, the error propagates, not wedged', () => {
         const r = createRegistry();
         const w = wire(r);
         const S = r.signal(1);
         let armed = true;
         r.observeObservers(S, { onConnect: () => { if (armed) { armed = false; throw new Error('boom45'); } } });
         const C = r.computed(() => S());
+        const sid = r.nodeId(S), cid = r.nodeId(C);
         assert.throws(() => C(), /boom45/);
-        assert.deepEqual(op3From(w.log, r.nodeId(S)), [], 'no op 3 for the throwing connect: ' + JSON.stringify(w.log));
-        assert.deepEqual(w.mir.drain().filter((p) => p.startsWith('op3')), []);
-        // not wedged: a fresh effect reading S (hook now quiet) links and emits op 3 normally
+        // PLAN-46 ASSERTIONS 1: the edge S->C survived the throw, so it is announced exactly once.
+        assert.deepEqual(op3From(w.log, sid), ['3:' + sid + '->' + cid], JSON.stringify(w.log));
+        assert.deepEqual(w.mir.drain(), []);
+        assert.equal(w.mir.edges, 1);
+        assert.equal(r.stats().activeLinks, 1);
+        // not wedged: a fresh effect reading S (hook now quiet) links and emits its own op 3 -> two in total
         r.effect(() => { S(); });
-        assert.equal(op3From(w.log, r.nodeId(S)).length, 1, JSON.stringify(w.log));
+        assert.equal(op3From(w.log, sid).length, 2, JSON.stringify(w.log));
+        assert.deepEqual(w.mir.drain(), []);
+        assert.equal(w.mir.edges, 2);
+        assert.equal(r.stats().activeLinks, 2);
     });
     it('N4: a link created INSIDE the hook emits its op 3 before the outer one', () => {
         const r = createRegistry();

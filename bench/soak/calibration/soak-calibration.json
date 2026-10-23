@@ -171,8 +171,8 @@
   }
  },
  "provenance": {
-  "date": "2026-10-23T00:25:20.287Z",
-  "gitHead": "b32a6f3eccefacfa5f9075d2d6398770b6d10d05",
+  "date": "2026-10-23T01:22:53.763Z",
+  "gitHead": "c5abe0aa41c071a652e8e2825e3807e60ed4c3f5",
   "gitDirty": [
    " M CHANGELOG.md",
    " M LEDGER.md",
@@ -180,33 +180,34 @@
    " M Signal.js",
    " M bench/soak/parity.json",
    " M llms.txt",
+   " M test/80-l45-op3-ghost.test.mjs",
    "?? BRIEF.md",
    "?? bench/bench-runs/",
-   "?? test/80-l45-op3-ghost.test.mjs"
+   "?? test/81-l46-op3-throw.test.mjs"
   ],
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   2.2,
-   2.64,
-   3.03
+   2.39,
+   4.52,
+   4.39
   ],
   "loadavgAfterTimed": [
-   1.53,
-   2.26,
-   2.75
+   1.46,
+   2.04,
+   3.09
   ],
   "loadavgAfter": [
-   6.03,
-   4.32,
-   3.54
+   6.51,
+   4.5,
+   3.86
   ],
   "busyNodeBefore": [
-   "39947 0.0 node"
+   "89997 8.0 node"
   ],
-  "seconds": 919,
+  "seconds": 912,
   "timing": "PENDING (untimed run; throughput decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
@@ -1474,7 +1475,7 @@
    "files": [
     {
      "path": "Signal.js",
-     "sha256": "d00484d6d7d02b28e6f1220325f7db376a93f9e94fe6d44d93be50955a3f6356"
+     "sha256": "0628127bc811edc50d864424bb57955291fc9632d3c3291856d10219d3cafa48"
     },
     {
      "path": "Watch.js",

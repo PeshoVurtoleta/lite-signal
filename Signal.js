@@ -793,7 +793,13 @@ export function createRegistry(config) {
         const po = currentObserver, pg = po !== null ? po.gen : 0;
         const sg = source.gen, tg = target.gen;
         currentObserver = null;
-        try { e.onConnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }
+        // LEDGER #46: a throwing onConnect leaves the edge live; announce it before the error propagates,
+        // unless the hook removed an endpoint (#45). A throwing op-3 listener here replaces the error.
+        let ok = false;
+        try { e.onConnect(); ok = true; } finally {
+            currentObserver = (po !== null && po.gen === pg) ? po : null;
+            if (!ok && mutationHook !== null && source.gen === sg && target.gen === tg) mutationHook(3, source.id, target.id);
+        }
         return source.gen !== sg || target.gen !== tg;
     }
     function fireDisconnect(node) {
