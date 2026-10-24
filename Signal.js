@@ -165,6 +165,8 @@ class ReactiveNode {
         this.preBatchVersion = 0;
         /** batchEpoch that owns the capture; 0 = no capture. */
         this.revertEpoch = 0;
+        /** FIX-R (A3, F5): evalCount at the capture; the revert is blocked iff it moved. Smi. */
+        this.preBatchEvals = 0;
 
         // Doubly-linked dependency list (this node depends on these sources).
         this.headDep = null;
@@ -753,6 +755,10 @@ export function createRegistry(config) {
 
     // 0 is reserved for "unset" (evalVersion / markEpoch stamps): the read.set / boxSet bumps skip it via `|| 1` (F29).
     let globalVersion = 1;
+    // FIX-R (A3, F5): body-run counter, bumped once per computed / effect body run (fireRecompute).
+    // Masked to 30 bits so the context slot stays a Smi (zero-box); compared for equality only.
+    // KNOWN ABA: exactly k*2^30 body runs between a capture and its revert -> the pre-fix revert.
+    let evalCount = 0;
     let batchEpoch = 1;
     let currentObserver = null;           // tracking context: whose reads link deps
     let currentOwner = null;              // lifecycle context: who owns nodes created now
@@ -1184,6 +1190,7 @@ export function createRegistry(config) {
         node.revertEpoch = 0;
         node.preBatchValue = undefined;
         node.preBatchVersion = 0;
+        node.preBatchEvals = 0;   // FIX-R (A3, F5)
         node.nextMark = null;   // 1.3.0: defensive -- disposal during a sweep shouldn't happen, but ensures clean state
 
         // LEDGER #40: drop observeObservers hooks before the slot is pooled (else the next resident
@@ -1233,9 +1240,9 @@ export function createRegistry(config) {
 
         // 1.2.3: Clean free-list invariant (Andrii's recommendation).
         //
-        // Every node leaving the pool is guaranteed-clean for the seven fields
+        // Every node leaving the pool is guaranteed-clean for the eight fields
         // {headDep, tailDep, headSub, tailSub, revertEpoch, preBatchValue,
-        // preBatchVersion}: dispose() clears them on the recycle path, and the
+        // preBatchVersion, preBatchEvals (FIX-R)}: dispose() clears them on the recycle path, and the
         // ReactiveNode constructor initializes them to the same values on the
         // fresh-allocation path (chunked refill above). Re-writing them
         // here was defense against a state that cannot exist.
@@ -1668,9 +1675,12 @@ export function createRegistry(config) {
         const e = node.markEpoch;
         return (e !== m && e !== 0) || link.source !== dep || link.target !== node;
     }
-    // Op 5 (recompute), out of line for the frames' inlining budget (small: TurboFan inlines
-    // it back, so the no-hook path is still one compare).
-    function fireRecompute(node) { if (mutationHook !== null) mutationHook(5, node.id, 0); }
+    // Op 5 (recompute), out of line for the frames' inlining budget (TurboFan inlines it back,
+    // so the no-hook path is one Smi bump + one compare).
+    // FIX-R (A3, F5): every body run (executeEffect, refreshComputed) calls this first in its `try`,
+    // so the evalCount bump lives HERE, before the hook call (a throwing op-5 hook still counts as
+    // a run): inside executeEffect it would push that body past V8's 460 B inline limit.
+    function fireRecompute(node) { evalCount = (evalCount + 1) & 0x3fffffff; if (mutationHook !== null) mutationHook(5, node.id, 0); }
     // F-b33-1: executeEffect's post-run tail, out of line for its inlining budget (small: inlines back).
     // Truthiness test, not `!== 0` (D4): 25 B vs 31 keeps it under the small-function inline caps
     // (Maglev 27 B, TurboFan 30 B); flags is a Smi bit set, so the two forms are the same test.
@@ -1987,7 +1997,7 @@ export function createRegistry(config) {
         };
 
         read.peek = sharedSignalPeek;
-        // set stays a CLOSURE (byte-identical to 1.2.0 + the F29 `|| 1` 0-skip): its call path is the hot
+        // set stays a CLOSURE (1.2.0 + the F29 `|| 1` 0-skip + the FIX-R guard): its call path is the hot
         // path, and a closure over `node` beats a shared method's this[NODE_PTR]
         // load. Keeping it a closure also restores detached `const {set}=signal()`.
         read.set = (value) => {
@@ -1997,10 +2007,13 @@ export function createRegistry(config) {
             if (batchDepth > 0 && node.revertEpoch !== batchEpoch) {
                 node.preBatchValue = node.value;
                 node.preBatchVersion = node.version;
+                node.preBatchEvals = evalCount;   // FIX-R (A3, F5): body-run count at the capture
                 node.revertEpoch = batchEpoch;
             }
             node.value = value;
-            if (batchDepth > 0 && node.revertEpoch === batchEpoch && eq && eq(node.preBatchValue, value)) {
+            // FIX-R (A3, F5): revert only if no body ran since this node's capture (else a body
+            // that saw the intermediate value would look current and never re-run).
+            if (batchDepth > 0 && node.revertEpoch === batchEpoch && node.preBatchEvals === evalCount && eq && eq(node.preBatchValue, value)) {
                 node.version = node.preBatchVersion;
                 return;
             }
@@ -2119,10 +2132,12 @@ export function createRegistry(config) {
         if (batchDepth > 0 && node.revertEpoch !== batchEpoch) {
             node.preBatchValue = node.value;
             node.preBatchVersion = node.version;
+            node.preBatchEvals = evalCount;   // FIX-R (A3, F5): body-run count at the capture
             node.revertEpoch = batchEpoch;
         }
         node.value = value;
-        if (batchDepth > 0 && node.revertEpoch === batchEpoch && eq && eq(node.preBatchValue, value)) {
+        // FIX-R (A3, F5): same guard as read.set.
+        if (batchDepth > 0 && node.revertEpoch === batchEpoch && node.preBatchEvals === evalCount && eq && eq(node.preBatchValue, value)) {
             node.version = node.preBatchVersion;
             return;
         }
@@ -2355,9 +2370,16 @@ export function createRegistry(config) {
      * Coalesce multiple synchronous writes into a single effect-flush pass.
      * Nested batches are merged -- only the outermost close triggers the flush.
      *
-     * Pre-batch revert (1.2.0): if a signal is set, then set back to its
-     * pre-batch value (under its `equals`) before the outer close, the version
-     * bump is reverted and downstream effects/computeds do not fire.
+     * Pre-batch revert (1.2.0; narrowed by FIX-R, A3 / F5): if a signal is set,
+     * then set back to its pre-batch value (under its `equals`) before the outer
+     * close, the version bump is reverted and downstream effects/computeds do not
+     * fire -- ONLY if no computed or effect body ran since that signal's first
+     * write in the batch (its capture). If one ran (a computed read mid-batch,
+     * an effect created mid-batch), the set back is a normal write: it bumps the
+     * version and marks downstream, so no reader keeps the intermediate value.
+     * A body that is already running when it writes the signal does not count
+     * (KNOWN residual). The body-run counter is 30-bit: exactly k*2^30 body runs
+     * between the capture and the set back fall back to the pre-fix revert (KNOWN).
      *
      * NOT transactional: an exception inside the body does NOT roll back applied
      * writes. Effects that have not yet fired for the pending writes do still
@@ -2549,6 +2571,7 @@ export function createRegistry(config) {
             n.revertEpoch = 0;
             n.preBatchValue = undefined;
             n.preBatchVersion = 0;
+            n.preBatchEvals = 0;   // FIX-R (A3, F5)
 
             n.owner = null;
             n.prevOwned = null;

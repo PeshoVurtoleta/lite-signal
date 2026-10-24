@@ -22,6 +22,8 @@
  *   sign  start 2^31 - k: the k-th bump crosses 2^31 (int32: to -2^31; float64: the Smi -> HeapNumber edge)
  *   zero  int32 start -k (== 2^32 - k mod 2^32): the k-th bump reaches 0, the "unset" sentinel value;
  *         float64 start 2^32 - k: the k-th bump crosses 2^32 (where an int32 counter would alias)
+ *   mask30 (both phases) start 2^30 - k: the k-th bump of `x = (x + 1) & 0x3fffffff` wraps to 0 (the only crossing a
+ *         30-bit Smi counter has; K_LIMIT keeps the start in [1, 2^30))
  * The arithmetic class of each counter is read from the source (its bump witness), never assumed.
  * Census completeness: every int32 `x = (x + 1) | 0` or 0-skipping `x = ((x + 1) | 0) || 1` bump in the source
  * (bare or as the right side of a chained `o.f = x = ...`) must be a census counter or one of
@@ -29,7 +31,8 @@
  * other one is a counter the census missed -> SoakConfigError (tree / hp today: activeLinks, activeNodes,
  * batchDepth, lifecycleCount + the census counters; cursorDepth is bumped as `d + 1`, a Smi stack depth).
  * KNOWN GAP (reviewer nit): the guard sees `x` and `o.f` bumps only -- not `a.b.c` member bumps, nor `>>> 0` /
- * `& MASK` spellings. Today's census is exact for both kernels; a new spelling needs a guard update.
+ * `& MASK` spellings (the mask30 witness is a CLASS for a census counter, not a guard spelling). Today's census is
+ * exact for both kernels; a new spelling needs a guard update.
  *
  * ---- TASK 1 census (read-only; tree Signal.js sha256 bfd063e5 @ 8b9c013, headpatched fa2871f0) -----------
  * Line numbers are the base files' at the census; the ANCHORS below, not these numbers, are what derive uses.
@@ -42,6 +45,8 @@
  *   batchEpoch     int32, 0 skipped          409 / 1760 + guard 1765         402 / 1646 + guard 1651
  *   nodeSeq        int32                     437 / 877                       410 / 834
  *   evalCount      float64, equality-only    absent                          401 / 1115, 1193 `++`
+ *                  (A3 FIX-R, b108: the tree now carries it as mask30 `(evalCount + 1) & 0x3fffffff`, fireRecompute;
+ *                  census tree 6 -> 7)
  *   statTotalAllocations  float64 `++`       398 / 857                       390 / 814
  *   statTotalDisposals    float64 `++`       399 / 835                       391 / 771
  *   gen (ReactiveNode field)                 112 / 817, 1947 `(gen+1)|0`     102 / 767, 1837 `gen+1` float64 (FIX-G)
@@ -98,7 +103,8 @@ import { SoakConfigError } from './config.mjs';
 
 const TWO31 = 2147483648;
 const TWO32 = 4294967296;
-const K_LIMIT = 0x3FFFFFFF;   // structural: keeps every preset start inside int32 (config caps k far lower)
+const TWO30 = 1073741824;
+const K_LIMIT = 0x3FFFFFFF;   // structural: keeps every preset start inside int32, a mask30 start in [1, 2^30) (config caps k far lower)
 const PHASES = Object.freeze(['sign', 'zero']);
 const OPT_KEYS = Object.freeze(['phase', 'k']);
 
@@ -106,14 +112,18 @@ const BOUNDED = Object.freeze(['activeLinks', 'activeNodes', 'batchDepth', 'curs
 
 function fail(msg) { throw new SoakConfigError('NEARWRAP: ' + msg); }
 
+/** The arithmetic classes, in witness-list order. mask30 = the 30-bit Smi counter (A3 FIX-R evalCount). */
+const ARITHS = Object.freeze(['int32', 'float64', 'mask30']);
+
 /** Bump witnesses of the counter expressions `xs` (every bump site's spelling): which arithmetic class it uses. */
 function bumps(...xs) {
-    const int32 = [], float64 = [];
+    const int32 = [], float64 = [], mask30 = [];
     for (const x of xs) {
         int32.push(x + ' = (' + x + ' + 1) | 0', x + ' = ((' + x + ' + 1) | 0) || 1');   // plain | F29 0-skip
         float64.push(x + '++', x + ' = ' + x + ' + 1', x + ' += 1');
+        mask30.push(x + ' = (' + x + ' + 1) & 0x3fffffff');   // exact spelling only: any other mask / step is unrecognised
     }
-    return Object.freeze({ int32: Object.freeze(int32), float64: Object.freeze(float64) });
+    return Object.freeze({ int32: Object.freeze(int32), float64: Object.freeze(float64), mask30: Object.freeze(mask30) });
 }
 
 function entry(o) {
@@ -125,13 +135,13 @@ function entry(o) {
  * The census counters (TASK 1). Each entry rewrites ONE initializer: `anchor` (= lhs + ' = ' + init + ';') must
  * occur exactly once (0 or 2+ -> SoakConfigError) and becomes lhs + ' = ' + start + ';'. `required: false`
  * (evalCount) may be absent from a kernel, but only if its identifier appears NOWHERE in the source; a kernel that uses the counter without the anchor
- * is a stale census, not a skip. The bump witnesses decide int32 vs float64: exactly one class must be present.
+ * is a stale census, not a skip. The bump witnesses decide int32 / float64 / mask30: exactly one class must be present.
  */
 export const REWRITES = Object.freeze([
     entry({ counter: 'globalVersion', required: true, lhs: 'let globalVersion', init: '1', ident: 'globalVersion', bumps: bumps('globalVersion') }),
     entry({ counter: 'batchEpoch', required: true, lhs: 'let batchEpoch', init: '1', ident: 'batchEpoch', bumps: bumps('batchEpoch') }),
     entry({ counter: 'nodeSeq', required: true, lhs: 'let nodeSeq', init: '1 | 0', ident: 'nodeSeq', bumps: bumps('nodeSeq') }),
-    // headpatched only (FIX-R); absent from the tree kernel, where the identifier must not appear at all
+    // FIX-R: headpatched float64 `++`; tree mask30 (A3, b108); a kernel without it (pre-A3) must not name it at all
     entry({ counter: 'evalCount', required: false, lhs: 'let evalCount', init: '0', ident: 'evalCount', bumps: bumps('evalCount') }),
     entry({ counter: 'statTotalAllocations', required: true, lhs: 'let statTotalAllocations', init: '0', ident: 'statTotalAllocations', bumps: bumps('statTotalAllocations') }),
     entry({ counter: 'statTotalDisposals', required: true, lhs: 'let statTotalDisposals', init: '0', ident: 'statTotalDisposals', bumps: bumps('statTotalDisposals') }),
@@ -171,12 +181,16 @@ function countIdent(src, ident) {
 
 function arithOf(src, rw) {
     const has = (list) => list.some((tok) => occurrences(src, tok).length !== 0);
-    const i32 = has(rw.bumps.int32), f64 = has(rw.bumps.float64);
-    if (i32 === f64) fail('stale census: ' + rw.counter + ' has ' + (i32 ? 'both int32 and float64' : 'no recognised') + ' bump (expected one of ' + rw.bumps.int32.concat(rw.bumps.float64).join(' | ') + ')');
-    return i32 ? 'int32' : 'float64';
+    const found = ARITHS.filter((a) => has(rw.bumps[a]));
+    if (found.length !== 1) {
+        fail('stale census: ' + rw.counter + ' has ' + (found.length === 0 ? 'no recognised' : 'more than one class of (' + found.join(' and ') + ')') +
+            ' bump (expected one of ' + ARITHS.map((a) => rw.bumps[a].join(' | ')).join(' | ') + ')');
+    }
+    return found[0];
 }
 
 function startOf(arith, phase, k) {
+    if (arith === 'mask30') return TWO30 - k;   // both phases: the wrap to 0 is the mask30 crossing
     if (phase === 'sign') return TWO31 - k;
     return arith === 'int32' ? -k : TWO32 - k;
 }

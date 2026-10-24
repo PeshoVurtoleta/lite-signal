@@ -192,7 +192,7 @@ test('wrapStreamProblems: a summary greener than the re-derivation is a problem;
 
 /* ---- NEARWRAP derive (A5) --------------------------------------------------------------------------- */
 
-const KERNELS = [['tree', SRC, 6], ['headpatched', HP_SRC, 7]];
+const KERNELS = [['tree', SRC, 7], ['headpatched', HP_SRC, 7]];   // tree 6 -> 7: A3 FIX-R evalCount (b108)
 const present = (src) => REWRITES.filter((r) => src.split(r.anchor).length - 1 >= 1);
 const identRe = (id) => new RegExp('(^|[^A-Za-z0-9_$])' + id + '(?![A-Za-z0-9_$])');
 const countOf = (src, a) => src.split(a).length - 1;
@@ -205,16 +205,20 @@ test('REWRITES: on each kernel every present anchor matches exactly once; an abs
             if (r.required === false && n === 0) { assert.ok(!identRe(r.ident).test(src), name + ': ' + r.counter + ' identifier must not appear'); continue; }
             assert.equal(n, 1, name + ' anchor ' + r.counter);
         }
-        assert.equal(present(src).length, count, name + ' census count (tree 6, headpatched 7)');
+        assert.equal(present(src).length, count, name + ' census count (tree 7 since A3 FIX-R, headpatched 7)');
     }
 });
 
-// Spec start values: sign phase 2^31 - k; zero phase int32 -k, float64 2^32 - k. Arithmetic class per the census:
-// globalVersion / batchEpoch / nodeSeq int32; evalCount / statTotal* float64; gen int32 on the tree, float64 on headpatched (FIX-G).
-const ARITH = (name, counter) => (['evalCount', 'statTotalAllocations', 'statTotalDisposals'].includes(counter) || (counter === 'gen' && name === 'headpatched') ? 'float64' : 'int32');
+// Spec start values: sign phase 2^31 - k; zero phase int32 -k, float64 2^32 - k; mask30 2^30 - k in BOTH phases (PLAN-A3
+// addendum 3 D-6). Arithmetic class per the census: globalVersion / batchEpoch / nodeSeq int32; statTotal* float64;
+// evalCount mask30 on the tree (A3 FIX-R `(evalCount + 1) & 0x3fffffff`), float64 on headpatched; gen int32 on the tree,
+// float64 on headpatched (FIX-G).
+const ARITH = (name, counter) => (counter === 'evalCount' && name === 'tree' ? 'mask30'
+    : ['evalCount', 'statTotalAllocations', 'statTotalDisposals'].includes(counter) || (counter === 'gen' && name === 'headpatched') ? 'float64' : 'int32');
+const startWant = (arith, phase, k) => (arith === 'mask30' ? 2 ** 30 - k : phase === 'sign' ? 2 ** 31 - k : (arith === 'int32' ? -k : 2 ** 32 - k));
 const escRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-test('derive(): per-counter start values (sign 2^31-k; zero int32 -k / float64 2^32-k), counts 6 / 7, shas, determinism', () => {
+test('derive(): per-counter start values (sign 2^31-k; zero int32 -k / float64 2^32-k; mask30 2^30-k), counts 7 / 7, shas, determinism', () => {
     const k = 8;
     for (const [name, src, count] of KERNELS) {
         for (const phase of ['sign', 'zero']) {
@@ -226,7 +230,8 @@ test('derive(): per-counter start values (sign 2^31-k; zero int32 -k / float64 2
             assert.equal(derive(src, { phase, k }).derivedSha256, d.derivedSha256, 'pure function');
             for (const r of present(src)) {
                 const arith = ARITH(name, r.counter);
-                const want = phase === 'sign' ? 2 ** 31 - k : (arith === 'int32' ? -k : 2 ** 32 - k);
+                const want = startWant(arith, phase, k);
+                assert.equal(d.rewrites.find((x) => x.counter === r.counter).arith, arith, name + '/' + phase + ' ' + r.counter + ' arith class');
                 const m = new RegExp(escRe(r.lhs) + ' = (-?\\d+);').exec(d.text);
                 assert.ok(m, name + '/' + phase + ' ' + r.counter + ' initializer rewritten');
                 assert.equal(Number(m[1]), want, name + '/' + phase + ' ' + r.counter + ' start');
@@ -238,11 +243,11 @@ test('derive(): per-counter start values (sign 2^31-k; zero int32 -k / float64 2
 });
 
 // Literal counter-name pins (independent oracle, not derived from nearwrap.mjs): catches a dropped float64 entry
-// the int32 census guard cannot see. Order = REWRITES order (evalCount sits 4th, only on headpatched).
-const TREE_COUNTERS = ['globalVersion', 'batchEpoch', 'nodeSeq', 'statTotalAllocations', 'statTotalDisposals', 'gen'];
+// the int32 census guard cannot see. Order = REWRITES order (evalCount sits 4th; on the tree since A3 FIX-R).
+const TREE_COUNTERS = ['globalVersion', 'batchEpoch', 'nodeSeq', 'evalCount', 'statTotalAllocations', 'statTotalDisposals', 'gen'];
 const HP_COUNTERS = ['globalVersion', 'batchEpoch', 'nodeSeq', 'evalCount', 'statTotalAllocations', 'statTotalDisposals', 'gen'];
 
-test('derive(): rewrites[].counter are pinned literally (tree 6, headpatched 7 incl. evalCount), both phases', () => {
+test('derive(): rewrites[].counter are pinned literally (tree 7, headpatched 7, both incl. evalCount), both phases', () => {
     for (const phase of ['sign', 'zero']) {
         assert.deepStrictEqual(derive(SRC, { phase, k: 8 }).rewrites.map((r) => r.counter), TREE_COUNTERS, 'tree/' + phase);
         assert.deepStrictEqual(derive(HP_SRC, { phase, k: 8 }).rewrites.map((r) => r.counter), HP_COUNTERS, 'headpatched/' + phase);
@@ -288,6 +293,60 @@ test('derive(): an injected uncensused 0-skip bump (`((x + 1) | 0) || 1`: plain,
             assert.match(String(msg.message), /stale census/, name + ' ' + JSON.stringify(f));
         }
     }
+});
+
+/* ---- mask30 (PLAN-A3 addendum 3 D-6): the tree's evalCount, bumped `(evalCount + 1) & 0x3fffffff` ------------------ */
+
+const MASK30_BUMP = 'evalCount = (evalCount + 1) & 0x3fffffff;';
+// Witness (from the class definition, not from nearwrap): a start in [0, 2^30) whose k-th masked bump is the first to reach 0.
+function mask30Witness(start, k) {
+    if (!(Number.isSafeInteger(start) && start >= 0 && start < 2 ** 30)) return false;
+    let x = start;
+    for (let i = 1; i <= k; i++) { x = (x + 1) & 0x3fffffff; if (x === 0) return i === k; }
+    return false;
+}
+
+test('mask30: the tree evalCount starts at 2^30 - k in both phases and its k-th bump wraps to 0 (witness); k = 1 and K_LIMIT bound the start to [1, 2^30)', () => {
+    assert.equal(countOf(SRC, MASK30_BUMP), 1, 'the live bump line is spelled exactly once');
+    for (const phase of ['sign', 'zero']) {
+        for (const k of [1, 2, 8, 64, 2 ** 30 - 1]) {
+            const rw = derive(SRC, { phase, k }).rewrites.find((r) => r.counter === 'evalCount');
+            assert.equal(rw.arith, 'mask30', phase + ':' + k);
+            assert.equal(Number(rw.to), 2 ** 30 - k, phase + ':' + k + ' start');
+            if (k <= 64) assert.ok(mask30Witness(Number(rw.to), k), phase + ':' + k + ' witness');
+            else assert.equal(Number(rw.to), 1, 'K_LIMIT gives the smallest start, 1');
+        }
+    }
+});
+
+test('mask30 MUST-FAIL: a start outside [0, 2^30) is refused -- by the witness (other classes\' starts) and by derive (k that would leave the range)', () => {
+    const k = 8;
+    // every other class's start for the same k fails the mask30 witness, as do the two range edges
+    for (const bad of [2 ** 31 - k, -k, 2 ** 32 - k, 2 ** 30, -1, 2 ** 30 + k, 2 ** 30 - k + 0.5]) assert.equal(mask30Witness(bad, k), false, 'start ' + bad);
+    assert.equal(mask30Witness(2 ** 30 - k, k), true, 'control: the class start passes');
+    assert.equal(mask30Witness(2 ** 30 - k + 1, k), false, 'off by one: wraps one bump early');
+    // derive: k = 0 would start at 2^30, k > 2^30 below 0, k = 2^30 at 0 (one full lap, never a k-step crossing)
+    for (const kb of [0, -1, 2 ** 30, 2 ** 30 + 1, 2 ** 31]) {
+        for (const phase of ['sign', 'zero']) assert.ok(thrownConfig(() => derive(SRC, { phase, k: kb })), phase + ' k ' + kb);
+    }
+});
+
+test('mask30 fail-closed: an unrecognised evalCount bump spelling (step 2, another mask, uppercase, decimal) or two classes at once trips the stale census', () => {
+    const forms = ['evalCount = (evalCount + 2) & 0x3fffffff;', 'evalCount = (evalCount + 1) & 0x1fffffff;',
+        'evalCount = (evalCount + 1) & 0x3FFFFFFF;', 'evalCount = (evalCount + 1) & 1073741823;', 'evalCount = evalCount + 2;'];
+    for (const f of forms) {
+        const mut = SRC.replace(MASK30_BUMP, f);
+        assert.equal(countOf(mut, MASK30_BUMP), 0, 'mutant drops the witness: ' + f);
+        let e = null; try { derive(mut, { phase: 'sign', k: 8 }); } catch (x) { e = x; }
+        assert.ok(e instanceof SoakConfigError, f);
+        assert.match(e.message, /stale census: evalCount has no recognised bump/, f);
+    }
+    let e2 = null; try { derive(SRC.replace(MASK30_BUMP, MASK30_BUMP + ' evalCount++;'), { phase: 'sign', k: 8 }); } catch (x) { e2 = x; }
+    assert.ok(e2 instanceof SoakConfigError && /evalCount has more than one class of \(float64 and mask30\)/.test(e2.message), String(e2 && e2.message));
+    // control: an UNMASKED int32 bump is a recognised class (read from the source, never assumed) -- and its start fails the mask30 witness
+    const i32 = derive(SRC.replace(MASK30_BUMP, 'evalCount = (evalCount + 1) | 0;'), { phase: 'sign', k: 8 }).rewrites.find((r) => r.counter === 'evalCount');
+    assert.equal(i32.arith, 'int32');
+    assert.equal(mask30Witness(Number(i32.to), 8), false, 'an unmasked counter never gets a mask30 start');
 });
 
 /* ---- spinVersion ------------------------------------------------------------------------------------ */

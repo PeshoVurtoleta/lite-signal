@@ -4,11 +4,11 @@
 // derived from the plan's cases, not from running a kernel.
 // Kernel: LITE_SIGNAL_KERNEL (absolute path to a Signal.js with a sibling Watch.js), default ../Signal.js.
 //
-// RED-CHECK STATUS: cases (a)-(e) and (g) were proven red on kernels/a1cand (still has F5); output in
-// audit/2026-10-07/verification/golden-A3/red-37.a1cand.txt. The red-check MUST be repeated on
-// golden-A3/before/Signal.js at A3 task 0 (and the todo removed by task 7). Until A3 lands
-// those cases carry { todo: 'A3' } so npm test stays green.
-// Cases (f), GC budget and retention are regression pins (green on before; no todo).
+// RED-CHECK STATUS (b108, A3 FIX-R): cases (a)(b)(d)(e) are red on the 0628127b build (.handoff/b107-before) and green
+// with the FIX-R bump; their todo is removed. (c) is a KNOWN row (maintainer Q3): an effect that writes s and then reads
+// s in the SAME run is invisible to the per-node eval counter (the capture follows that run's bump), so the revert is
+// suppressed -> [5]; the p2 ideal is [5,0]. (g') uses a direct reader of a (the old (g) fixture hid the blocked revert
+// behind c's equality cutoff). Cases (f), GC budget and retention are regression pins (green on before; no todo).
 // Existing pins that must stay green and are NOT copied here: test/19-v12-additions.test.mjs
 // "pre-batch revert (v1.2.0)" (lines ~132-180) and test/17-reactivity.test.mjs line ~99.
 // Run with --expose-gc for the GC and retention tests; without it they SKIP (never pass).
@@ -23,7 +23,6 @@ import { createLeakTracker } from '@zakkster/lite-leak';
 const KPATH = process.env.LITE_SIGNAL_KERNEL ?? new URL('../Signal.js', import.meta.url).pathname;
 const { createRegistry } = await import(KPATH);
 const HAVE_GC = typeof globalThis.gc === 'function';
-const TODO = { todo: 'A3' };
 
 test('kernel under test', (t) => {
     const sha = createHash('sha256').update(readFileSync(KPATH)).digest('hex');
@@ -42,7 +41,7 @@ function fixture() {
 }
 
 describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
-    it('(a) batch{a.set(1); c(); a.set(0)}: c() === 0 and seen === 0', TODO, () => {
+    it('(a) batch{a.set(1); c(); a.set(0)}: c() === 0 and seen === 0', () => {
         const f = fixture();
         let inside;
         f.r.batch(() => { f.a.set(1); inside = f.c(); f.a.set(0); });
@@ -52,7 +51,7 @@ describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
         f.stop();
     });
 
-    it('(b) batch{a.set(1); effect(log a); a.set(0)}: log is [1, 0]', TODO, () => {
+    it('(b) batch{a.set(1); effect(log a); a.set(0)}: log is [1, 0]', () => {
         const r = createRegistry();
         const a = r.signal(0);
         const log = [];
@@ -62,7 +61,10 @@ describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
         stop();
     });
 
-    it('(c) effect writes then reads inside batch, then revert: log is [5, 0]', TODO, () => {
+    // KNOWN (maintainer Q3, LEDGER line pending): p2 ideal is [5, 0]; the R-node counter cannot see the in-body read of s
+    // that follows the effect's own write (the capture happens after that run's bump), so the revert is suppressed.
+    // Pinned as the full observed list (deepEqual); if this turns [5,0] the residual was fixed: re-rule the row.
+    it('(c) KNOWN: effect writes then reads inside batch, then revert: log is [5] (ideal [5, 0])', () => {
         const r = createRegistry();
         const a = r.signal(0);
         const log = [];
@@ -71,11 +73,11 @@ describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
             stop = r.effect(() => { if (!w) { w = 1; a.set(5); } log.push(a()); });
             a.set(0);
         });
-        assert.deepEqual(log, [5, 0]);
+        assert.deepEqual(log, [5]);
         stop();
     });
 
-    it('(d) nested computed read in an inner batch, outer revert: outer() === 1', TODO, () => {
+    it('(d) nested computed read in an inner batch, outer revert: outer() === 1', () => {
         const r = createRegistry();
         const a = r.signal(0);
         const inner = r.computed(() => a());
@@ -85,7 +87,7 @@ describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
         assert.equal(outer(), 1);
     });
 
-    it('(e) onDisconnect writes b back inside a computed body: C() === 0 and b() === 0', TODO, () => {
+    it('(e) onDisconnect writes b back inside a computed body: C() === 0 and b() === 0', () => {
         const r = createRegistry();
         const b = r.signal(0), x = r.signal(0);
         const C = r.computed(() => { const v = b(); if (v === 0) x(); return v; });
@@ -112,15 +114,22 @@ describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
         f.stop();
     });
 
-    // DV-F5 coarseness: any body that ran in the batch disables later reverts, even an
-    // unrelated one. Plan says delta 1; the before kernel reads 0 so this is red there.
-    it('(g) DV-F5: batch{a.set(1); u(); a.set(0)} with u independent of a: effect delta 1', TODO, () => {
+    // DV-F5 coarseness: any body that ran in the batch disables later reverts, even an unrelated one (the p2 rule is
+    // per node: a body that ran AFTER the node's capture blocks that node's revert). A DIRECT reader of a shows it: the
+    // blocked revert re-runs it once (delta 1; before the fix the revert is silent: 0). The fixture effect reads a only
+    // through c = a*10, whose equality cutoff hides the blocked revert (c recomputes 0 == 0): fixture delta 0.
+    it("(g') DV-F5: batch{a.set(1); u(); a.set(0)} with u independent of a: direct reader delta 1, fixture delta 0", () => {
         const f = fixture();
         const z = f.r.signal(0);
         const u = f.r.computed(() => z() + 1);
-        const before = f.runs;
+        let direct = 0;
+        const stopD = f.r.effect(() => { direct++; f.a(); });
+        const before = f.runs, dBefore = direct;
         f.r.batch(() => { f.a.set(1); u(); f.a.set(0); });
-        assert.equal(f.runs - before, 1);
+        assert.equal(direct - dBefore, 1, 'direct reader re-runs once (blocked revert)');
+        assert.equal(f.runs - before, 0, 'fixture effect hidden by c equality cutoff');
+        assert.equal(f.seen, 0);
+        stopD();
         f.stop();
     });
 });
@@ -215,11 +224,10 @@ describe('A3 retention: batch{s.set(obj_i); c(); s.set(base)} x 1000', () => {
         assert.ok(worst <= 1);
     });
 
-    // Variant (spec shape; c() read inside the batch). On a1cand c() stays obj via F5, so the
-    // holder is c.value; the A3 fix releases it -> todo.
+    // Variant (spec shape; c() read inside the batch). Before FIX-R c() stayed obj via F5 (holder: c.value).
     // Variant: a top-level c() read after each batch re-evaluates c to base and drops obj_i,
     // so NOTHING may still hold obj_i (not c, not s's batch capture). Strict === 0 every cycle.
-    it('variant: after a top-level c() read, tracker.size() === 0 at the end of EVERY cycle', { todo: 'A3', skip: HAVE_GC ? false : 'needs --expose-gc' }, async () => {
+    it('variant: after a top-level c() read, tracker.size() === 0 at the end of EVERY cycle', { skip: HAVE_GC ? false : 'needs --expose-gc' }, async () => {
         const r = createRegistry();
         const base = { base: true };
         const s = r.signal(base);

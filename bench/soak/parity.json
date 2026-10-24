@@ -1,6 +1,6 @@
 {
   "files": {
-    "Signal.js": "0628127bc811edc50d864424bb57955291fc9632d3c3291856d10219d3cafa48",
+    "Signal.js": "0f75866f7085d68f24819092dc46623ba63bed8a9d14b24d0b52cf02a439ebd9",
     "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
     "bench/soak/model.mjs": "8b453cd6316e5eadcc8bcf961c061683b98245daf4790f9d109f517fb3648789",
@@ -26,7 +26,7 @@
     "bench/soak/wrap.mjs": "7279a0e5d2d58afa5c63558fe261747624b22a4e15488d6938626ff77adaf1d9",
     "bench/soak/wrap-repr.mjs": "6e21bc5be94ef62100e5d6c021e0d2d1e10365c22b35647968623249ee9e72e6",
     "bench/soak/wraprules.mjs": "de8293528e6535a628ef18d3ee41848b82a41562a23b2d7bf21871709c124275",
-    "bench/soak/nearwrap.mjs": "6cb1f9abbfec577bda84b1e31ad564df73093631358a3f4bd6fdae22067ada0b",
+    "bench/soak/nearwrap.mjs": "60018e9a15204859bf7f8ba8c184cfec77899096db9ccfa784614787a961a846",
     "bench/soak/kernel.mjs": "3bb9579913398d9c8946eef8785612647fb8838e60917181c54c0c1cfca85e75",
     "bench/torture/helpers/spin.mjs": "5823cad2d38c2ac9831631f4d774c2ae1ca4a0b5eab78cf06885ce0e1d970c6c",
     "bench/soak/adapters/lite.mjs": "b5fdfcc9b614db980b88d57772e4527cceb8b14eb9bbe76da397c121b281c683",
