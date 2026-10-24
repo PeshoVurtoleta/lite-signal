@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "task": "SPEC-B-S1cd TASK 11 (burst 8 B6): soak calibration -- DEFAULT_OPS, SCEN_MIN(_SMOKE), CHECK_FLOOR(_SMOKE), TAINT_SKIP_MAX",
- "tool": "node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --import-throughput <the earlier timed run>",
+ "tool": "node bench/soak/calibration/calibrate.mjs --write .handoff/b108-evidence/B3b/calib-import.json --import-throughput <the earlier timed run>",
  "guard": "test/41-soak-config.test.mjs (B6 drift guard): config values == cut, every binding cell clears its constant, live smoke re-measure == kernels.<k>.smoke, live main.mjs probe fold == probe.fold",
  "cut": {
   "seed": 12648430,
@@ -171,43 +171,48 @@
   }
  },
  "provenance": {
-  "date": "2026-10-23T01:22:53.763Z",
-  "gitHead": "c5abe0aa41c071a652e8e2825e3807e60ed4c3f5",
+  "date": "2026-10-24T01:58:04.726Z",
+  "gitHead": "25784e5125bcc447496fb008945d22e57343f7e1",
   "gitDirty": [
    " M CHANGELOG.md",
    " M LEDGER.md",
+   " M README.md",
    " M Signal.d.ts",
    " M Signal.js",
+   " M bench/soak/nearwrap.mjs",
    " M bench/soak/parity.json",
    " M llms.txt",
-   " M test/80-l45-op3-ghost.test.mjs",
+   " M test/37-batch-revert.test.mjs",
+   " M test/41-soak-config.test.mjs",
+   " M test/48-soak-wrap.test.mjs",
+   " M test/65-hot-body-pins.test.mjs",
    "?? BRIEF.md",
    "?? bench/bench-runs/",
-   "?? test/81-l46-op3-throw.test.mjs"
+   "?? test/82-f5-fixr.test.mjs"
   ],
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   2.39,
-   4.52,
-   4.39
+   3.49,
+   4.32,
+   4.26
   ],
   "loadavgAfterTimed": [
-   1.46,
-   2.04,
-   3.09
+   3.85,
+   4.21,
+   4.21
   ],
   "loadavgAfter": [
-   6.51,
-   4.5,
-   3.86
+   7.03,
+   6.01,
+   5.12
   ],
   "busyNodeBefore": [
-   "89997 8.0 node"
+   "65735 9.9 node"
   ],
-  "seconds": 912,
+  "seconds": 964,
   "timing": "PENDING (untimed run; throughput decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
@@ -1475,7 +1480,7 @@
    "files": [
     {
      "path": "Signal.js",
-     "sha256": "0628127bc811edc50d864424bb57955291fc9632d3c3291856d10219d3cafa48"
+     "sha256": "0f75866f7085d68f24819092dc46623ba63bed8a9d14b24d0b52cf02a439ebd9"
     },
     {
      "path": "Watch.js",

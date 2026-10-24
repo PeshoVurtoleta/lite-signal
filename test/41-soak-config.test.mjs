@@ -1352,7 +1352,7 @@ test('D4 NEARWRAP sign:8 end to end: header.nearwrap.derivedSha256 == kernel.fil
     assert.equal(h.nearwrap.k, 8);
     assert.equal(h.nearwrap.derivedSha256, h.kernel.files[0].sha256, 'the loaded kernel IS the derived one');
     assert.notEqual(h.nearwrap.derivedSha256, h.nearwrap.baseSha256);
-    assert.ok(h.nearwrap.rewrites.length >= 3 && h.nearwrap.rewrites.every((x) => x.to === String(2 ** 31 - 8)), JSON.stringify(h.nearwrap.rewrites));
+    assert.ok(h.nearwrap.rewrites.length >= 3 && h.nearwrap.rewrites.every((x) => x.to === String(x.arith === 'mask30' ? 2 ** 30 - 8 : 2 ** 31 - 8)), JSON.stringify(h.nearwrap.rewrites));
     assert.equal(h.kernel.override, false);
     assert.deepEqual(h.config.SOAK_NEARWRAP, { value: { phase: 'sign', k: 8 }, source: 'env' });
     const rep = spawnSync(process.execPath, [NW_REPORT, r.out], { encoding: 'utf8', timeout: 60000 });
