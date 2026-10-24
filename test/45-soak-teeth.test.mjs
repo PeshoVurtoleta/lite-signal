@@ -27,7 +27,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { universe, CHECKS, GAPS, UNREACHABLE, TEST_ANCHORS, audit, controlMatches } from '../bench/soak/teeth.mjs';
-import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, LONG_RE, SHORT_RE, wrapJudge } from '../bench/soak/_mustfail.mjs';
+import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, LONG_RE, SHORT_RE, wrapJudge, BASES, verifyControls } from '../bench/soak/_mustfail.mjs';
 import { GATES, oracleFamily, INCONCLUSIVE_CAUSES } from '../bench/soak/gates.mjs';
 import { GATE_N, WARMUP_CYCLES, MIN_ACTIVE_CYCLES } from '../bench/soak/config.mjs';
 import { SIGS } from '../bench/soak/oracles.mjs';
@@ -426,7 +426,7 @@ function wrapStream(over) {
 }
 
 test('teeth j: the wrap controls are long, run wrap.mjs with its flag trio and only SOAK_WRAP; validSpec refuses a burn-in shape', () => {
-    for (const n of ['L-REV-AUDIT-W5', 'L-WRAP-TREE']) {
+    for (const n of ['L-REV-AUDIT-W5', 'L-WRAP-TREE', 'L-WRAP-W2-PREFIXR']) {
         const c = CONTROLS.find((x) => x.name === n);
         assert.ok(c && c.run === 'wrap' && LONG_RE.test(n), n);
         assert.deepEqual(c.flags, ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4'], n);
@@ -478,14 +478,41 @@ test('teeth j: wrapJudge is [] on a consistent stream; a forged trackerSize 1 / 
     assert.ok(wrapJudge(WRAP_CTL(), wrapStream((r) => { r.splice(1, 1); r[1].seq = 1; }), 'INCONCLUSIVE', []).includes('wrap stream: no wrap record'));
 });
 
-test('teeth j: the wrap control specs are pinned (MD4: W5 evalCount at bop>=15; W1-W4 each by its counter)', () => {
+test('teeth j: the wrap control specs are pinned (MD4: W5 evalCount at bop>=15; W1 / W3 / W4 on the tree, W2 on prefixr)', () => {
     const w5 = CONTROLS.find((c) => c.name === 'L-REV-AUDIT-W5');
     assert.deepEqual([w5.base, w5.env, w5.expect.exit, w5.expect.kind, w5.expect.specs, w5.expect.extra],
         ['headpatched', { SOAK_WRAP: 'W5' }, 1, 'match', ['gate=wrap check=W5 counter=evalCount bop>=15'], { verdict: 'FAIL' }]);
     const tree = CONTROLS.find((c) => c.name === 'L-WRAP-TREE');
     assert.deepEqual([tree.base, tree.env, tree.expect.exit, tree.expect.kind, tree.expect.specs],
-        ['tree', { SOAK_WRAP: 'W1,W2,W3,W4' }, 1, 'match', ['gate=wrap check=W1 counter=globalVersion', 'gate=wrap check=W2 counter=batchEpoch',
+        ['tree', { SOAK_WRAP: 'W1,W2,W3,W4' }, 1, 'match', ['gate=wrap check=W1 counter=globalVersion',
             'gate=wrap check=W3 counter=gen', 'gate=wrap check=W4 counter=nodeSeq']]);
+});
+
+// b109 B1b (PLAN-A3-soak ADDENDUM A6, option (a)): A3 FIX-R (74ea021, Signal.js 0f75866f) closes W2 on the tree (live W2
+// PASS, .handoff/b109-evidence/wrap/W2-live.txt), so W2's tooth moved to the frozen pre-FIX-R kernel prefixr (25784e5,
+// Signal.js 0628127b: `BREACH gate=wrap check=W2 counter=batchEpoch ... c()=70 effect saw 70`, W2-0628127b.txt).
+test('teeth j: A6 -- L-WRAP-TREE names no W2 BREACH spec (W2 still runs there); L-WRAP-W2-PREFIXR breaches W2 on the pinned pre-FIX-R kernel', () => {
+    const tree = CONTROLS.find((c) => c.name === 'L-WRAP-TREE');
+    assert.deepEqual(tree.env, { SOAK_WRAP: 'W1,W2,W3,W4' }, 'W2 still runs on the tree');
+    assert.deepEqual(tree.expect.specs.filter((s) => s.split(' ').indexOf('check=W2') !== -1 || s.indexOf('batchEpoch') !== -1), [],
+        'no W2 / batchEpoch spec on the tree: FIX-R closed W2 there');
+    const w2 = CONTROLS.find((c) => c.name === 'L-WRAP-W2-PREFIXR');
+    assert.ok(w2, 'the pre-FIX-R W2 control exists');
+    assert.ok(LONG_RE.test(w2.name) && !SHORT_RE.test(w2.name), 'long battery (2^32 - 2 noop batches)');
+    assert.deepEqual([w2.run, w2.base, w2.env, w2.argv, w2.patches, w2.arm, w2.expect],
+        ['wrap', 'prefixr', { SOAK_WRAP: 'W2' }, [], [], null, { exit: 1, kind: 'match', lines: [], specs: ['gate=wrap check=W2 counter=batchEpoch'], extra: { verdict: 'FAIL' } }]);
+    assert.deepEqual(validSpec(w2), []);
+    // the base is the controls.json kernel prefixr, both sha256 pins verified (a drifted copy is a MISS, never a skip)
+    assert.ok(BASES.prefixr, 'prefixr is a _mustfail base');
+    assert.deepEqual([BASES.prefixr.dir.slice(ROOT.length).split('\\').join('/'), BASES.prefixr.pins, BASES.prefixr.pinName],
+        ['bench/soak/controls/prefixr', 'controls.json', 'prefixr']);
+    const ctl = JSON.parse(readFileSync(join(ROOT, 'bench/soak/controls.json'), 'utf8')).controls.find((x) => x && x.name === 'prefixr');
+    assert.ok(ctl, 'controls.json holds the prefixr control');
+    assert.deepEqual([ctl.dir, ctl.version, ctl.sha256], ['bench/soak/controls/prefixr', '1.6.0-dev 25784e5', {
+        'Signal.js': '0628127bc811edc50d864424bb57955291fc9632d3c3291856d10219d3cafa48',
+        'Watch.js': '065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80',
+    }]);
+    assert.deepEqual(verifyControls(['prefixr']), { ok: true, problems: {} });
 });
 
 test('teeth k: P-INTERIM-ERROR-clean is pinned: preb33 (no patches), ERROR at the control budget, explained by DIV-F5 / DIV-F6 / DIV-F22, short battery', () => {

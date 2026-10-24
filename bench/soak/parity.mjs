@@ -54,6 +54,7 @@ export const PARITY_FILES = Object.freeze([
     // S3 R0 (burst 92, S3-D1): the decorator adapter main / replay / calibrate load (it wraps the pinned lite.mjs)
     'bench/soak/adapters/lite-s3.mjs',
     'bench/soak/controls/preb33/Signal.js', 'bench/soak/controls/preb33/Watch.js',
+    'bench/soak/controls/prefixr/Signal.js', 'bench/soak/controls/prefixr/Watch.js',
     // unit 0s B1 (burst 64): the WIE lane decides its scripts and coverage (pinned before its roster flip, B2)
     'bench/soak/lanes/wie.mjs',
     // B-B3 (burst 81): gates.mjs imports the rss sampler's p95 / bandMedian, which decide the rss gate

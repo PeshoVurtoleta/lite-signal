@@ -29,8 +29,8 @@
       "description": "An effect or lazy computed idle across >= 2^31 - 1 writes elsewhere ignores the next real change (FINDINGS F1)."
     },
     {
-      "id": "DIV-F5", "kind": "fix", "finding": "F5", "since": "1.5.2", "fixedIn": null, "fixBy": "A3",
-      "decision": "fix (FIX-R): a batch revert after a mid-batch read restores the computed and its effects",
+      "id": "DIV-F5", "kind": "fix", "finding": "F5", "since": "1.5.2", "fixedIn": "A3-FIX-R", "fixBy": "A3",
+      "decision": "fixed (b109, PLAN-A3-soak TASK 1): fixedIn A3-FIX-R (74ea021, Signal.js 0f75866f, FIX-R: a batch revert after a mid-batch read restores the computed and its effects, a batch revert no longer outlives a body that ran; LEDGER #47). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. preb33 or rev152); on the tree an F5 shape is a regression (known=none)",
       "engines": ["lite"], "lanes": ["BATCH", "ERROR"], "oracles": ["O1c", "O1e", "O2"], "sigs": ["computed-mismatch", "computed-err-mismatch", "effect-stale", "glitch"],
       "ops": [], "scen": [], "worldScen": ["revert-after-mid-read"], "priorScen": [],
       "shapes": [
@@ -40,7 +40,7 @@
         { "pair": "O2:glitch", "detail": "^body#\\d+ read #\\d+ engine=.* model=.*$" }
       ],
       "attribution": null, "pending": null, "conformanceCases": [], "expectedThrow": null,
-      "description": "set(x), read a computed, set(back) inside one batch: the computed and its effects keep the intermediate value. 1.5.2 BATCH (200/200 worlds) and ERROR batches with reads; the stale value may surface at a later step's O1c, so the step scen is not required, the world scen is."
+      "description": "set(x), read a computed, set(back) inside one batch: the computed and its effects keep the intermediate value. 1.5.2 BATCH (200/200 worlds) and ERROR batches with reads; the stale value may surface at a later step's O1c, so the step scen is not required, the world scen is. FIXED in A3-FIX-R (b109): on the tree BATCH reads 0/2000 failing worlds (was 2000/2000) and the 10 ERROR worlds F5 stopped first now reach DIV-F22 (seed 0xC0FFEE, 2000 worlds). The b103-widened O1c computed-err-mismatch shape (engine=.*) stays: a pre-fix F5 world can carry an engine-side ERR(computed:N) (ERROR world 0x8992029a step 57, node#31 (hash), on preb33, rev152 and 0628127b; b109 Q1 census), so excluding engine=ERR( would leave it unexplained on the control kernels (maintainer ruling b109 A1: the census found one, so no shape edit)."
     },
     {
       "id": "DIV-F6", "kind": "fix", "finding": "F6", "since": "1.5.2", "fixedIn": "A2-FIX-T", "fixBy": "A2",

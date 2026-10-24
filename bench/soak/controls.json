@@ -36,6 +36,18 @@
       "role": "R2-M1 control (DELTA 4b-v2 T4): the last kernel before the F-b33-1 fix, so a write-cycle creation does NOT abort and the bomb CycleError surfaces at the cyc:1 set (exec creationAbort false). post-F21 (carries A2-F21); a DIV-F21 label here is a FAIL.",
       "recipe": "git show 7c65afd084887b79ebe0293abb8a5f00a66dfa9c:Signal.js > Signal.js; git show 7c65afd084887b79ebe0293abb8a5f00a66dfa9c:Watch.js > Watch.js (byte-identical to .handoff/frozen/head-7c65afd/). Frozen in-repo so CI needs no history.",
       "fixture": "byte-frozen; never edited. ASCII-only as of 2026-10-18 (0 non-ASCII bytes in both files)."
+    },
+    {
+      "name": "prefixr",
+      "dir": "bench/soak/controls/prefixr",
+      "version": "1.6.0-dev 25784e5",
+      "sha256": {
+        "Signal.js": "0628127bc811edc50d864424bb57955291fc9632d3c3291856d10219d3cafa48",
+        "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80"
+      },
+      "role": "L-WRAP-W2-PREFIXR: pre-FIX-R (A3) tree; W2 batchEpoch must BREACH",
+      "recipe": "git show 25784e5125bcc447496fb008945d22e57343f7e1:Signal.js > Signal.js; git show 25784e5125bcc447496fb008945d22e57343f7e1:Watch.js > Watch.js (25784e5 = 74ea021^, the last commit before A3 FIX-R; byte-identical to .handoff/b107-before/, the frozen b107 'before' build). Frozen in-repo so CI needs no history.",
+      "fixture": "byte-frozen; never edited. ASCII-only as of 2026-10-25 (0 non-ASCII bytes in both files)."
     }
   ],
   "notes": [
