@@ -366,7 +366,7 @@ k*2^30 body runs between the capture and the revert inside one batch, falling ba
 the 2^31 dormancy band and #44's gen wrap).
 
 Tests: test/82-f5-fixr.test.mjs (33 rows: R1-R7 on signal and box, G1-G4, source pin, 8-bit boundary, GC / retention),
-test/37 todos resolved ((c) KNOWN [5]), test/48 mask30 rows. Full suite: npm test 2196 tests / 2184 pass / 0 fail / 11 skip / 1 todo; npm run test:gc 2244 / 2241 pass / 0 fail / 2 skip / 1 todo (node v26.8.2, b108). Soak closure of #36 is pending.
+test/37 todos resolved ((c) KNOWN [5]), test/48 mask30 rows. Full suite: npm test 2196 tests / 2184 pass / 0 fail / 11 skip / 1 todo; npm run test:gc 2244 / 2241 pass / 0 fail / 2 skip / 1 todo (node v26.8.2, b108). Soak closure of #36: done in b109 (see "### Changed -- soak b109: DIV-F5 fixed in the registry, LEDGER #36 closed" below).
 
 ### Changed -- LEDGER #36 (F-MB) triaged: folded into DIV-F5 (docs only, not shipped)
 
@@ -778,6 +778,22 @@ FIX-T fixed F6, so DIV-F6 is retired and the test/41 (f) ERROR exemption set is 
 (computed-err-mismatch) entry no longer requires the step scenario revert-after-mid-read (it matches the world scenario too): a live
 soak world ERROR:7:0x8999219f had been known=none only because of that narrowing (the F5 bug: a batch revert restores
 preBatchVersion after a mid-batch re-run; 7-op repro; FIXED later in the engine by FIX-R, see "### Fixed -- engine (F5, DIV-F5; LEDGER #36 F-MB)" above). Maintainer ruling b103, PLAN-0s-fixt.md ADDENDUM 13.
+
+### Changed -- soak b109: DIV-F5 fixed in the registry, LEDGER #36 closed (dev-only, not shipped)
+
+FIX-R (LEDGER #47, `Signal.js` 0f75866f) fixed F5, so DIV-F5 is now fixedIn "A3-FIX-R" (74ea021) and explains only with
+includeFixed (control kernels preb33 / rev152 / prefixr); on the tree an F5 shape is known=none. The test/41 (f) ERROR
+exemption set is now `{ERROR: [DIV-F22]}` (was DIV-F5 and DIV-F22). Tree lanes (seed 0xC0FFEE, default ops): ERROR
+failingWorlds 1516, all DIV-F22, known=none 0; BATCH 0 failing (pre-fix 0628127b: 2000/2000). The 10 former-F5 ERROR worlds
+now reach DIV-F22 (pinned in test/44). The O1c shape was NOT re-narrowed: the census found one known=DIV-F5 line on preb33
+and rev152 (world 0x8992029a, step 57), so the widened shape stays (test/44 "b109 A1 fallback"). F-MB keys
+BATCH:1:0xb08f012b and BATCH:2:0xfd8b9606 replay clean on live at SOAK_OPS=1000000 and exit 1 on 0628127b: LEDGER #36 is
+CLOSED. The tagger gap (scenarios.mjs:303 onEffectCreated never fills b.mid) is recorded, not edited. test/46 FIXED_RE
+gains F5. Wrap re-anchor (A6): FIX-R closed W2 (batchEpoch cycle) on the tree except the KNOWN k*2^30 alias, so
+L-WRAP-TREE now expects W1/W3/W4 only, and the new must-fail L-WRAP-W2-PREFIXR (frozen pre-FIX-R kernel
+`bench/soak/controls/prefixr`, 25784e5, `Signal.js` 0628127b) expects BREACH check=W2 counter=batchEpoch; the miss existed
+since b108 (no long-control run in b108; only `soak:teeth:long` and the CI soak-nightly run it). Counts: npm test 2201 tests / 2189 pass / 0 fail / 11 skip / 1 todo; npm run test:gc 2249 / 2246 pass / 0 fail / 2 skip / 1 todo; torture 0 B/op; parity OK 45 files (b109 B3, node v26.8.2, untimed).
+Untimed counts, node v26.8.2, host PRELIMINARY (load1 2.21-16.94 across the b109 runs vs baseline 2.21; .handoff/b109-evidence/B3/uptime.txt).
 
 ### Changed -- soak NEST taint-skip triage (D6): in-flight frames taint only on a victim read (dev-only, not shipped)
 
