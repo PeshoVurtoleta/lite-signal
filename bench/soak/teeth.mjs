@@ -26,9 +26,9 @@
  *   - REASONS (gates.mjs:645): the verdict's input vocabulary (end / signal / fatal), a run fact and not a
  *     judgement; its outcomes are judged through cause:interrupted and test/46's verdict rows.
  *   - WRAP_CHECKS (config.mjs:140, W1-W5): the checks of ONE judged id, gate:wrap (wraprules.mjs WRAP_GATE, S2),
- *     not ids of their own. gate:wrap's teeth are L-REV-AUDIT-W5 (W5) and L-WRAP-TREE (W1-W4); its causes
- *     cause:wrap-crossing / cause:wrap-unmeasured are held by test/48's quoted rows. The fix-minus-one controls
- *     T-A3b/T-A3c/T-A4/T-A7a/T-A7b stay GAPS.
+ *     not ids of their own. gate:wrap's teeth are L-REV-AUDIT-W5 (W5), L-WRAP-TREE (W1 / W3 / W4) and
+ *     L-WRAP-W2-PREFIXR (W2, pre-FIX-R kernel prefixr); its causes cause:wrap-crossing / cause:wrap-unmeasured
+ *     are held by test/48's quoted rows. The fix-minus-one controls T-A3b/T-A3c/T-A4/T-A7a/T-A7b stay GAPS.
  *   - SOAK_NEARWRAP (nearwrap.mjs, zero:k / sign:k): a kernel knob (it presets the census counters near a
  *     ceiling), not a judged id. Its end-to-end tooth is L-NW-hp-zero, a second lane:GRAPH control (headpatched at
  *     zero:8 breaches GRAPH through F29).
@@ -129,8 +129,8 @@ export const CHECKS = deepFreeze({
     'cause:check-floor': ['T-floor-BATCH'],
     // test/67 drives the same patch on live AND headpatched NEST and checks each line is inconclusiveLine('taint-skip')
     'cause:taint-skip': ['P-NEST-TAINT-HALF', TEST67],
-    // S2 wrap gate (wrap.mjs): W5 evalCount past 2^31 on headpatched; W1-W4 on the tree kernel
-    'gate:wrap': ['L-REV-AUDIT-W5', 'L-WRAP-TREE'],
+    // S2 wrap gate (wrap.mjs): W5 evalCount past 2^31 on headpatched; W1 / W3 / W4 on the tree kernel; W2 on prefixr (pre-FIX-R 25784e5, A6)
+    'gate:wrap': ['L-REV-AUDIT-W5', 'L-WRAP-TREE', 'L-WRAP-W2-PREFIXR'],
     // no frozen kernel leaves a crossing unwitnessed or a W5 side unmeasured (burst 25: 0 INCONCLUSIVE on 3 kernels),
     // so the wrap causes' teeth are test/48 rows that drive wrapRule / inconclusiveLine to each cause by name
     'cause:wrap-crossing': [TEST48],

@@ -49,8 +49,9 @@
  * 33885/33885 at 32.5 ops/world, 1.5.2 36726/36726 at 30.0, b71 cut), so tree (clean, 425.0 ops/world, b74 TASK 0b)
  * carries NEST's full-length evidence (test/41 (f)). headpatched stays first: covOff and the headpatched NEST
  * cov-off sweep are unchanged. ERROR stays on the binding kernels: it fail-stops on every kernel (tree 17039/17050,
- * b74 0b; DIV-F5 / F6 / F22), exempt from (f) only while DIV-F5 or DIV-F22 is open (maintainer ruling b74; b103 R13.3:
- * DIV-F6, closed in A2-FIX-T, left the exemption set).
+ * b74 0b; DIV-F5 / F6 / F22), exempt from (f) only while DIV-F22 is open (maintainer ruling b74; b103 R13.3:
+ * DIV-F6, closed in A2-FIX-T, left the exemption set; b109: DIV-F5, closed in A3-FIX-R, left it too). The ruled
+ * exemption set itself is test/41's B6_F_EXEMPT_RULED constant, not a value of this tool or of soak-calibration.json.
  * HOOK -> headpatched only (S3 R1, burst 93; the WIE precedent): lite-1.5.2 (= the rev152 kernel) and tree both go
  * red on O8 ghost-listener by design (DIV-F9: an out-of-LIFO-order onGraphMutation unsubscribe resurrects a dead
  * listener), so neither is a HOOK evidence kernel while DIV-F9 is open; headpatched passes HOOK and stays first (covOff).

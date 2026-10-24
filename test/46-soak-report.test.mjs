@@ -394,7 +394,8 @@ test('a small GRAPH-only tree run at the parity.json pins, parity ok -> consiste
 test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x OPS_MIN) -> NOT A RELEASE SOAK -- volume', () => {
     // a tree run classifies with includeFixed false: every 1.5.2 world a FIXED entry explains re-tags as known null there --
     // its WIE worlds (DIV-B33) and, since b103 (DIV-F6 fixed in A2-FIX-T), its F6 ERROR worlds (DIV-F6, DIV-F6+DIV-F22)
-    const FIXED_RE = /(^|\+)DIV-(B33|F6)(\+|$)/;
+    // and, since b109 (DIV-F5 fixed in A3-FIX-R), its F5 BATCH/ERROR worlds
+    const FIXED_RE = /(^|\+)DIV-(B33|F5|F6)(\+|$)/;
     const retag = (recs) => {
         for (const c of cyclesOf(recs)) for (const f of c.failures) if (FIXED_RE.test(String(f.known))) Object.assign(f, { known: null, tag: null, failKnown: f.fails.map(() => null) });
         // b103: a retagged F6+F22 world also moves its DIV-F22 line to known=null (the whole world is unknown on the tree),

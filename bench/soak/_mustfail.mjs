@@ -94,7 +94,7 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 /**
  * Every base a control can start from. A base is a Signal.js + Watch.js directory with sha256 pins:
- * headpatched, rev152 and preb33 are pinned by controls.json (by control name), tree by parity.json (red while
+ * headpatched, rev152, preb33 and prefixr are pinned by controls.json (by control name), tree by parity.json (red while
  * the live Signal.js is mid-edit, amendment 10). The wrap control L-WRAP-TREE (S2) uses tree, and one main-run control,
  * P-NEST-TAINT-HALF (b71, NEST lane only: the tree NEST smoke is clean); no other main-run control does until A1-A3
  * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
@@ -107,6 +107,8 @@ export const BASES = Object.freeze({
     headpatched: Object.freeze({ dir: join(SOAK, 'controls', 'headpatched'), pins: 'controls.json', pinName: 'headpatched' }),
     rev152: Object.freeze({ dir: join(ROOT, 'node_modules', 'lite-signal-1.5.2'), pins: 'controls.json', pinName: 'rev152' }),
     preb33: Object.freeze({ dir: join(SOAK, 'controls', 'preb33'), pins: 'controls.json', pinName: 'preb33' }),
+    // b109 B1b (A6): 25784e5, the last kernel before A3 FIX-R (Signal.js 0628127b); L-WRAP-W2-PREFIXR's base
+    prefixr: Object.freeze({ dir: join(SOAK, 'controls', 'prefixr'), pins: 'controls.json', pinName: 'prefixr' }),
     tree: Object.freeze({ dir: ROOT.replace(/[\\/]$/, ''), pins: 'parity.json', pinName: null }),
 });
 
@@ -313,8 +315,9 @@ const P_TMARK_2 = Object.freeze([A_TMARK_PUSH, '// Intrusive push: t.nextMark ho
 const KNOWN_INTERIM = Object.freeze(['DIV-F21', 'DIV-F22']);
 // P-INTERIM-ERROR-clean (N17.2, N19.4): preb33 is a POST-F21 controls.json kernel (includeFixed true), so a DIV-F21
 // label there is not in this list -> MISS (A3': zero DIV-F21 on preb33); only DIV-F5 / DIV-F6 / DIV-F22 (no FIX-R /
-// FIX-T / A2 batch-error fix in preb33) may explain a BREACH. DIV-F5 / DIV-F22 are open; DIV-F6 is FIXED since b103
-// (fixedIn A2-FIX-T) and still explains here because preb33 is a named control kernel (includeFixed true).
+// FIX-T / A2 batch-error fix in preb33) may explain a BREACH. Only DIV-F22 is open; DIV-F5 (fixedIn A3-FIX-R, b109)
+// and DIV-F6 (fixedIn A2-FIX-T, b103) are FIXED and still explain here because preb33 is a named control kernel
+// (includeFixed true).
 const KNOWN_INTERIM_CLEAN = Object.freeze(['DIV-F5', 'DIV-F6', 'DIV-F22']);
 
 function deepFreeze(o) {
@@ -493,17 +496,29 @@ export const CONTROLS = deepFreeze([
     W('L-REV-AUDIT-W5', 'headpatched', { SOAK_WRAP: 'W5' }, {
         exit: 1, kind: 'match', lines: [], specs: ['gate=wrap check=W5 counter=evalCount bop>=15'], extra: { verdict: 'FAIL' },
     }),
-    // L-WRAP-TREE (S2): the tree kernel breaches W1-W4 in ONE spawn (burst 25 full size, every detail in .handoff/
-    // HISTORY.md "Proposed A-B3a control specs"): W1 band-observed / band-unobserved, W2 batchEpoch cycle c()=70, W3
-    // stale handle after 2^32 - 1 recycles, W4 nodeId out of [1, 2^31-1]. Matched by head only: the details flip
-    // when A4 / A7 land (then this control is re-specced). ~2 min.
+    // L-WRAP-TREE (S2): the tree kernel breaches W1 / W3 / W4 in ONE spawn (burst 25 full size, every detail in
+    // .handoff/HISTORY.md "Proposed A-B3a control specs"): W1 band-observed / band-unobserved, W3 stale handle after
+    // 2^32 - 1 recycles, W4 nodeId out of [1, 2^31-1]. Matched by head only: the details flip when A4 / A7 land (then
+    // this control is re-specced). W2 still runs here (SOAK_WRAP keeps it) but names no spec: A3 FIX-R (74ea021,
+    // Signal.js 0f75866f) closes W2 on the tree except the KNOWN k*2^30 alias (LEDGER #47) -- live W2 PASS, b109
+    // triage .handoff/b109-evidence/wrap/W2-live.txt (PLAN-A3-soak ADDENDUM A6, option (a)). The spec format matches
+    // BREACH / INCONCLUSIVE / NOTE lines only, so W2 PASS is not asserted here: a W2 BREACH on the tree is neither
+    // required nor refused by this control (wrap.mjs exits 1 on W1 / W3 / W4 either way). ~2 min.
     W('L-WRAP-TREE', 'tree', { SOAK_WRAP: 'W1,W2,W3,W4' }, {
         exit: 1, kind: 'match', lines: [], specs: [
             'gate=wrap check=W1 counter=globalVersion',
-            'gate=wrap check=W2 counter=batchEpoch',
             'gate=wrap check=W3 counter=gen',
             'gate=wrap check=W4 counter=nodeSeq',
         ],
+    }),
+    // L-WRAP-W2-PREFIXR (b109 B1b, PLAN-A3-soak ADDENDUM A6 option (a)): W2's tooth, moved off the tree. prefixr is the
+    // frozen pre-FIX-R kernel (25784e5 = 74ea021^, Signal.js 0628127b, controls.json): its batchEpoch wraps after
+    // 2^32 - 2 noop batches and the effect keeps the pre-wrap value -- `soak: BREACH gate=wrap check=W2
+    // counter=batchEpoch detail=batchEpoch cycle: c()=70 effect saw 70 after 4294967294 noop batches (expected 50 /
+    // 50)` (b109 triage .handoff/b109-evidence/wrap/W2-0628127b.txt, exit 1; the live tree reads W2 PASS, exit 0).
+    // So the spec has teeth: on the tree it is a MISS (no line matches). checkW2 (wrap.mjs) unchanged. ~10 s.
+    W('L-WRAP-W2-PREFIXR', 'prefixr', { SOAK_WRAP: 'W2' }, {
+        exit: 1, kind: 'match', lines: [], specs: ['gate=wrap check=W2 counter=batchEpoch'], extra: { verdict: 'FAIL' },
     }),
 
     /* ---- short (^(?!L-)) ---- */

@@ -30,8 +30,9 @@ const CONSTANTS = Object.freeze({
     // 0xC0FFEE, full-length cells (b74 D4: no failing world): 2724 hits (GRAPH deep-pull, both binding kernels;
     // tree NEST rarest 11388, lifecycle-callback-dispose, b74 TASK 0b) vs SCEN_MIN 8. SCEN_MIN's binding cell is
     // ERROR aggregate 22 (1.5.2; tree also 22, b74 0b), cut on FAIL-STOPPED worlds (1.5.2 17060/17071 failing, tree
-    // 17039/17050): exempt from test/41 (f) only while one of DIV-F5 / F22 is open (fixBy A3 / A2; DIV-F6, closed in
-    // A2-FIX-T, left the set, b103 R13.3), then ERROR is recut on tree. Smoke: ERROR aggregate 2 vs SCEN_MIN_SMOKE 1 (same exemption).
+    // 17039/17050): exempt from test/41 (f) only while DIV-F22 is open (fixBy A2; DIV-F6, closed in A2-FIX-T, left the
+    // set in b103 R13.3; DIV-F5, closed in A3-FIX-R, left it in b109), then ERROR is recut on tree. Smoke: ERROR aggregate
+    // 2 vs SCEN_MIN_SMOKE 1 (same exemption).
     DEFAULT_OPS: 100000,
     OPS_MIN: 1000,
     // 2^30 - 1: SOAK_OPS is a per-lane-cycle counter target, so it stays inside [-2^30, 2^30 - 1] (Smi on

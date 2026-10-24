@@ -235,20 +235,25 @@ test('DIV-F6: escape-computed (+ its O4) -> DIV-F6; near-misses -> null', () => 
     // (b53 N19.3: O4solo, the standalone O4 with ERR(computed) on the engine side, is now DIV-F6; see the b53 rows below)
 });
 
+// b109 A3: DIV-F5 is FIXED (fixedIn A3-FIX-R); these matcher rows run as a named control kernel does (FX), so a near-miss
+// null is the matcher's, never the fixedIn skip's. Q1 fell back (A1: the census found an engine=ERR( line that is a real
+// F5 world), so the O1c shape is unchanged: the captured engine-side F5err still matches; F5errM (model-side ERR) is an extra case.
+const F5errM = () => { const r = rec('F5err'); r.fails[0].detail = 'node#31 (hash) engine=420684 model=ERR(computed:31)'; return r; };
 test('DIV-F5: revert-after-mid-read worlds on BATCH and ERROR; near-misses -> null', () => {
-    assert.equal(known(rec('F5')), 'DIV-F5');
-    assert.equal(known(rec('F5later')), 'DIV-F5');
-    assert.equal(known(rec('F5err')), 'DIV-F5');
+    assert.equal(knownFx(rec('F5')), 'DIV-F5');
+    assert.equal(knownFx(rec('F5later')), 'DIV-F5');
+    assert.equal(knownFx(rec('F5err')), 'DIV-F5');
+    assert.equal(knownFx(F5errM()), 'DIV-F5');
     const noRevert = rec('F5later'); noRevert.worldScen = without(noRevert.worldScen, 'revert-after-mid-read');
-    assert.equal(classify(noRevert), null);
-    assert.equal(classify(rec('F5', { lane: 'GRAPH' })), null);
+    assert.equal(classifyFx(noRevert), null);
+    assert.equal(classifyFx(rec('F5', { lane: 'GRAPH' })), null);
     // b103 R13.2: computed-err-mismatch no longer needs the revert in the failing step (the step-scen narrowing went;
     // the entry's own rule: the world scen is required, the step scen is not) -- the WORLD revert still binds
     const cem = rec('F5err'); cem.scen = without(cem.scen, 'revert-after-mid-read');
-    assert.equal(known(cem), 'DIV-F5');
+    assert.equal(knownFx(cem), 'DIV-F5');
     cem.worldScen = without(cem.worldScen, 'revert-after-mid-read');
     if (cem.worldScenCounts !== undefined) delete cem.worldScenCounts['revert-after-mid-read'];
-    assert.equal(classify(cem), null);
+    assert.equal(classifyFx(cem), null);
 });
 
 test('DIV-F15: the TypeError headSub class with saved-cursor-hazard; near-misses -> null', () => {
@@ -701,10 +706,11 @@ test('b53 A5: an O4 effect-dead with ERR(computed) on the MODEL side only, stand
     assert.equal(classifyFx(r), null);
 });
 
-test('b53 A6: DIV-F5-shaped records still classify DIV-F5 (including the ERR(computed) F5err with the prewalk scenarios present)', () => {
+test('b53 A6: DIV-F5-shaped records still classify DIV-F5 (including the model-side ERR(computed) F5errM with the prewalk scenarios present)', () => {
     assert.equal(knownFx(rec('F5')), 'DIV-F5');
     assert.equal(knownFx(rec('F5later')), 'DIV-F5');
     assert.equal(knownFx(rec('F5err')), 'DIV-F5');
+    assert.equal(knownFx(F5errM()), 'DIV-F5');
     assert.equal(knownFx(rec('F5err')) === 'DIV-F6', false);
 });
 
@@ -771,18 +777,108 @@ test('DIV-F6 is fixed in A2-FIX-T (b103): the tree classifies every F6 shape nul
 // it; red on 1.5.2 too) is the OPEN F5 bug. Its O1c computed-err-mismatch shape used to require the STEP scen
 // revert-after-mid-read, against the entry's own description (the world scen is required, the step scen is not).
 const B103_F5 = {"engine":"lite","lane":"ERROR","step":255,"op":"stop","scen":["second-invalidation","dep-set-flip","recovery-after-throw"],"fails":[{"oracle":"O2","sig":"glitch","detail":"body#13 read #12 engine=-620903596 model=438374991"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#13 (cond) engine=-620903596 model=438374991"},{"oracle":"O1c","sig":"computed-err-mismatch","detail":"node#53 (cond) engine=-620903596 model=ERR(computed:53)"}],"worldScen":["diamond-write","equality-cutoff","dep-set-flip","second-invalidation","throw-in-batch","throwing-equals","throw-dep-effect-prewalk","recovery-after-throw","throw-dep-computed-prewalk","cycle-error-surfaces","multi-write-same-signal","revert-after-mid-read"],"worldScenCounts":{"diamond-write":39,"equality-cutoff":25,"dep-set-flip":147,"second-invalidation":161,"throw-in-batch":13,"throwing-equals":15,"throw-dep-effect-prewalk":22,"recovery-after-throw":88,"throw-dep-computed-prewalk":18,"cycle-error-surfaces":2,"multi-write-same-signal":6,"revert-after-mid-read":1}};
-test('b103 R13.2: the ERROR:7:0x8999219f record (O2 glitch + O1c computed-mismatch + O1c computed-err-mismatch) -> DIV-F5; F5 stays open', () => {
-    const c = classify(clone(B103_F5));
+test('b103 R13.2 + b109 A3: the ERROR:7:0x8999219f record (O2 glitch + O1c computed-mismatch + O1c computed-err-mismatch) -> DIV-F5 on a control kernel; DIV-F5 is FIXED in A3-FIX-R', () => {
+    const c = classifyFx(clone(B103_F5));
     assert.notEqual(c, null, 'every line of the triage world is explained');
     assert.equal(c.known, 'DIV-F5');
     assert.deepEqual(c.perFail.map((p) => p.slice()), [['DIV-F5'], ['DIV-F5'], ['DIV-F5']]);
     const e = fresh().entries.find((x) => x.id === 'DIV-F5');
-    assert.equal(e.fixedIn, null); assert.equal(e.fixBy, 'A3');
+    assert.equal(e.fixedIn, 'A3-FIX-R'); assert.equal(e.fixBy, 'A3');
     assert.ok(e.shapes.every((s) => !Object.prototype.hasOwnProperty.call(s, 'scen')), 'no DIV-F5 shape narrows on the step scen');
     // the entry worldScen still binds: the same lines in a world without revert-after-mid-read -> null
     const nw = clone(B103_F5); nw.worldScen = without(nw.worldScen, 'revert-after-mid-read'); delete nw.worldScenCounts['revert-after-mid-read'];
-    assert.equal(classify(nw), null);
+    assert.equal(classifyFx(nw), null);
     // the computed-err-mismatch line alone (the head that read known=none) -> DIV-F5
     const solo = clone(B103_F5); solo.fails = [solo.fails[2]];
-    assert.equal(known(solo), 'DIV-F5');
+    assert.equal(knownFx(solo), 'DIV-F5');
+});
+
+// b109 A3 (PLAN-A3-soak TASK 4; assertion A3): FIX-R (74ea021) closed DIV-F5 -- on the tree an F5 shape is a regression
+// (known=none), a named control kernel (includeFixed) still explains it. Red on the HEAD registry (fixedIn null: the
+// default classify returned DIV-F5).
+test('b109 A3: DIV-F5 is fixed in A3-FIX-R: the tree classifies every F5 shape null; a named control kernel explains it', () => {
+    const e = fresh().entries.find((x) => x.id === 'DIV-F5');
+    assert.equal(e.kind, 'fix');
+    assert.equal(e.fixedIn, 'A3-FIX-R');
+    assert.equal(e.fixBy, 'A3');
+    const recs = { F5: rec('F5'), F5later: rec('F5later'), F5err: rec('F5err'), F5errM: F5errM(), B103_F5: clone(B103_F5) };
+    for (const k of Object.keys(recs)) {
+        assert.equal(classify(clone(recs[k])), null, k + ': the default (tree: controls.name null)');
+        assert.equal(classify(clone(recs[k]), { includeFixed: false }), null, k + ': includeFixed false');
+        assert.equal(known(clone(recs[k]), FX()), 'DIV-F5', k + ': a named control kernel (preb33, rev152)');
+    }
+    // an unfixed copy (fixedIn null: the pre-b109 registry) explains without includeFixed
+    const u = fresh(); for (const x of u.entries) if (x.id === 'DIV-F5') x.fixedIn = null;
+    for (const k of Object.keys(recs)) assert.equal(known(clone(recs[k]), { registry: u }), 'DIV-F5', k + ': unfixed copy');
+    // a copy without DIV-F5 explains nothing (control for the registry copy)
+    const gone = fresh(); gone.entries = gone.entries.filter((x) => x.id !== 'DIV-F5');
+    assert.equal(classifyFx(clone(B103_F5), { registry: gone }), null);
+});
+
+// b109 A1 fallback (Q1): the census (.handoff/b109-evidence/soak/0f-census.txt) found ONE known=DIV-F5 engine=ERR( line on
+// preb33 and rev152 (world 0x8992029a, step 57), so the O1c detail is NOT narrowed: an engine-side ERR line in a
+// revert-after-mid-read world still classifies DIV-F5 on a control kernel (a real F5 world), null on the tree. Inlined verbatim from .handoff/b109-evidence/soak/0f-ERROR-preb33.jsonl line 1329 (rev152 line 1329 is byte-identical).
+const A1_ENGERR = {"engine":"lite","lane":"ERROR","step":57,"op":"batch","fails":[{"oracle":"O1c","sig":"computed-err-mismatch","detail":"node#31 (hash) engine=ERR(computed:31) model=420684"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#15 (select) engine=93 model=14"}],"scen":["dep-set-flip","multi-write-same-signal","revert-after-mid-read","second-invalidation","throw-dep-computed-prewalk"],"worldScen":["dep-set-flip","recovery-after-throw","diamond-write","equality-cutoff","second-invalidation","multi-write-same-signal","revert-after-mid-read","throw-dep-computed-prewalk"],"worldScenCounts":{"dep-set-flip":15,"recovery-after-throw":2,"diamond-write":1,"equality-cutoff":1,"second-invalidation":12,"multi-write-same-signal":1,"revert-after-mid-read":1,"throw-dep-computed-prewalk":1},"escape":[]};
+test('b109 A1 fallback: the engine=ERR( O1c line (census world 0x8992029a) is DIV-F5 under FX and null on the tree; a lookahead registry copy would drop it', () => {
+    assert.equal(known(clone(A1_ENGERR), FX()), 'DIV-F5');
+    assert.deepEqual(classifyFx(clone(A1_ENGERR)).perFail.map((p) => p.slice()), [['DIV-F5'], ['DIV-F5']]);
+    assert.equal(classify(clone(A1_ENGERR)), null, 'the tree: DIV-F5 is fixed');
+    assert.equal(classify(clone(A1_ENGERR), { includeFixed: false }), null);
+    // must-fail control: the Q1 lookahead detail in a registry copy turns that line into known=none
+    const la = fresh();
+    const sh = la.entries.find((x) => x.id === 'DIV-F5').shapes.find((x) => x.pair === 'O1c:computed-err-mismatch');
+    sh.detail = '^node#\\d+ \\(\\w+\\) engine=(?!ERR\\().* model=.*$';
+    assert.equal(classifyFx(clone(A1_ENGERR), { registry: la }), null, 'lookahead copy: the census line is unexplained');
+    assert.equal(knownFx(F5errM(), { registry: la }), 'DIV-F5', 'positive control: model-side ERR still matches');
+    // the shipped detail is the plain one (no lookahead)
+    const shipped = fresh().entries.find((x) => x.id === 'DIV-F5').shapes.find((x) => x.pair === 'O1c:computed-err-mismatch');
+    assert.equal(shipped.detail, '^node#\\d+ \\(\\w+\\) engine=.* model=.*$');
+});
+
+// b109 A2 (PLAN-A3-soak assertion A2): the 10 TASK 0c live records (ERROR failures on the tree, FIX-R in; evidence
+// .handoff/b109-evidence/soak/0c-live.jsonl, inlined verbatim -- they are ~1 KB each, nothing trimmed) are all DIV-F22.
+const LIVE_0C = [
+    {"engine":"lite","lane":"ERROR","step":391,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:391 x1 did not happen"}],"scen":["throw-in-batch","equality-cutoff","throw-dep-effect-prewalk"],"worldScen":["dep-set-flip","diamond-write","multi-write-same-signal","throw-in-batch","equality-cutoff","throwing-equals","second-invalidation","cycle-error-surfaces","recovery-after-throw","throw-dep-effect-prewalk","revert-after-mid-read","throw-dep-computed-prewalk","adversarial-equality","aggregate"],"worldScenCounts":{"dep-set-flip":251,"diamond-write":85,"multi-write-same-signal":16,"throw-in-batch":19,"equality-cutoff":90,"throwing-equals":18,"second-invalidation":344,"cycle-error-surfaces":5,"recovery-after-throw":120,"throw-dep-effect-prewalk":47,"revert-after-mid-read":1,"throw-dep-computed-prewalk":8,"adversarial-equality":1,"aggregate":4},"escape":[{"origin":"computed","token":"computed:71"}]},
+    {"engine":"lite","lane":"ERROR","step":315,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:315 x1 did not happen"}],"scen":["throw-in-batch","dep-set-flip","throw-dep-computed-prewalk","throw-dep-effect-prewalk"],"worldScen":["throw-in-batch","dep-set-flip","recovery-after-throw","throwing-equals","diamond-write","equality-cutoff","second-invalidation","throw-dep-effect-prewalk","adversarial-equality","multi-write-same-signal","revert-after-mid-read","cycle-error-surfaces","throw-dep-computed-prewalk","aggregate"],"worldScenCounts":{"throw-in-batch":18,"dep-set-flip":249,"recovery-after-throw":56,"throwing-equals":20,"diamond-write":66,"equality-cutoff":81,"second-invalidation":90,"throw-dep-effect-prewalk":13,"adversarial-equality":2,"multi-write-same-signal":7,"revert-after-mid-read":1,"cycle-error-surfaces":4,"throw-dep-computed-prewalk":13,"aggregate":1},"escape":[{"origin":"computed","token":"computed:48"}]},
+    {"engine":"lite","lane":"ERROR","step":272,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:272 x1 did not happen"}],"scen":["throw-in-batch","throw-dep-computed-prewalk","dep-set-flip","equality-cutoff","throw-dep-effect-prewalk","aggregate"],"worldScen":["throwing-equals","throw-dep-effect-prewalk","second-invalidation","dep-set-flip","recovery-after-throw","multi-write-same-signal","equality-cutoff","throw-in-batch","diamond-write","throw-dep-computed-prewalk","revert-after-mid-read","aggregate"],"worldScenCounts":{"throwing-equals":14,"throw-dep-effect-prewalk":97,"second-invalidation":146,"dep-set-flip":209,"recovery-after-throw":78,"multi-write-same-signal":8,"equality-cutoff":76,"throw-in-batch":11,"diamond-write":71,"throw-dep-computed-prewalk":11,"revert-after-mid-read":1,"aggregate":1},"escape":[{"origin":"computed","token":"computed:14"},{"origin":"computed","token":"computed:14"}]},
+    {"engine":"lite","lane":"ERROR","step":389,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:389 x1 did not happen"}],"scen":["throw-in-batch","dep-set-flip","throw-dep-effect-prewalk","equality-cutoff"],"worldScen":["throwing-equals","dep-set-flip","diamond-write","second-invalidation","throw-in-batch","multi-write-same-signal","equality-cutoff","throw-dep-effect-prewalk","recovery-after-throw","cycle-error-surfaces","throw-dep-computed-prewalk","revert-after-mid-read","aggregate"],"worldScenCounts":{"throwing-equals":18,"dep-set-flip":262,"diamond-write":77,"second-invalidation":192,"throw-in-batch":20,"multi-write-same-signal":15,"equality-cutoff":51,"throw-dep-effect-prewalk":41,"recovery-after-throw":63,"cycle-error-surfaces":5,"throw-dep-computed-prewalk":6,"revert-after-mid-read":1,"aggregate":1},"escape":[{"origin":"computed","token":"computed:38"}]},
+    {"engine":"lite","lane":"ERROR","step":101,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:101 x1 did not happen"}],"scen":["throw-in-batch","throw-dep-effect-prewalk","dep-set-flip"],"worldScen":["multi-write-same-signal","equality-cutoff","throw-dep-effect-prewalk","dep-set-flip","diamond-write","recovery-after-throw","throwing-equals","second-invalidation","throw-in-batch","revert-after-mid-read","adversarial-equality","throw-dep-computed-prewalk"],"worldScenCounts":{"multi-write-same-signal":3,"equality-cutoff":12,"throw-dep-effect-prewalk":5,"dep-set-flip":43,"diamond-write":8,"recovery-after-throw":7,"throwing-equals":2,"second-invalidation":11,"throw-in-batch":4,"revert-after-mid-read":1,"adversarial-equality":1,"throw-dep-computed-prewalk":1},"escape":[{"origin":"computed","token":"computed:13"}]},
+    {"engine":"lite","lane":"ERROR","step":379,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:379 x1 did not happen"}],"scen":["throw-in-batch","dep-set-flip","throw-dep-effect-prewalk","recovery-after-throw"],"worldScen":["throwing-equals","diamond-write","dep-set-flip","second-invalidation","cycle-error-surfaces","aggregate","equality-cutoff","recovery-after-throw","multi-write-same-signal","throw-dep-effect-prewalk","throw-in-batch","adversarial-equality","revert-no-read","revert-after-mid-read","throw-dep-computed-prewalk"],"worldScenCounts":{"throwing-equals":21,"diamond-write":43,"dep-set-flip":230,"second-invalidation":172,"cycle-error-surfaces":5,"aggregate":8,"equality-cutoff":74,"recovery-after-throw":73,"multi-write-same-signal":9,"throw-dep-effect-prewalk":48,"throw-in-batch":15,"adversarial-equality":2,"revert-no-read":1,"revert-after-mid-read":1,"throw-dep-computed-prewalk":3},"escape":[{"origin":"computed","token":"computed:67"}]},
+    {"engine":"lite","lane":"ERROR","step":362,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:362 x1 did not happen"}],"scen":["throw-in-batch","equality-cutoff","dep-set-flip","second-invalidation"],"worldScen":["throw-dep-effect-prewalk","second-invalidation","dep-set-flip","diamond-write","recovery-after-throw","throw-in-batch","equality-cutoff","cycle-error-surfaces","throwing-equals","multi-write-same-signal","adversarial-equality","throw-dep-computed-prewalk","revert-after-mid-read"],"worldScenCounts":{"throw-dep-effect-prewalk":76,"second-invalidation":195,"dep-set-flip":250,"diamond-write":77,"recovery-after-throw":84,"throw-in-batch":21,"equality-cutoff":104,"cycle-error-surfaces":3,"throwing-equals":21,"multi-write-same-signal":7,"adversarial-equality":1,"throw-dep-computed-prewalk":5,"revert-after-mid-read":1},"escape":[{"origin":"computed","token":"computed:11"}]},
+    {"engine":"lite","lane":"ERROR","step":273,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:273 x1 did not happen"}],"scen":["throw-in-batch","dep-set-flip","throw-dep-effect-prewalk","recovery-after-throw","second-invalidation","throw-dep-computed-prewalk"],"worldScen":["throw-in-batch","second-invalidation","dep-set-flip","diamond-write","throw-dep-effect-prewalk","recovery-after-throw","equality-cutoff","throwing-equals","multi-write-same-signal","revert-after-mid-read","cycle-error-surfaces","aggregate","throw-dep-computed-prewalk","adversarial-equality"],"worldScenCounts":{"throw-in-batch":12,"second-invalidation":79,"dep-set-flip":153,"diamond-write":39,"throw-dep-effect-prewalk":44,"recovery-after-throw":93,"equality-cutoff":34,"throwing-equals":11,"multi-write-same-signal":5,"revert-after-mid-read":1,"cycle-error-surfaces":2,"aggregate":2,"throw-dep-computed-prewalk":26,"adversarial-equality":2},"escape":[{"origin":"computed","token":"computed:11"}]},
+    {"engine":"lite","lane":"ERROR","step":425,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:425 x1 did not happen"}],"scen":["throw-in-batch","dep-set-flip","recovery-after-throw","throw-dep-effect-prewalk"],"worldScen":["dep-set-flip","diamond-write","second-invalidation","equality-cutoff","throw-in-batch","throwing-equals","multi-write-same-signal","revert-after-mid-read","throw-dep-effect-prewalk","recovery-after-throw","adversarial-equality","cycle-error-surfaces","throw-dep-computed-prewalk"],"worldScenCounts":{"dep-set-flip":215,"diamond-write":105,"second-invalidation":228,"equality-cutoff":82,"throw-in-batch":20,"throwing-equals":16,"multi-write-same-signal":6,"revert-after-mid-read":1,"throw-dep-effect-prewalk":28,"recovery-after-throw":66,"adversarial-equality":2,"cycle-error-surfaces":4,"throw-dep-computed-prewalk":2},"escape":[{"origin":"computed","token":"computed:111"}]},
+    {"engine":"lite","lane":"ERROR","step":392,"op":"batch","fails":[{"oracle":"O6","sig":"expected-escape-missing","detail":"predicted escape batch:392 x1 did not happen"}],"scen":["equality-cutoff","throw-in-batch","second-invalidation"],"worldScen":["dep-set-flip","recovery-after-throw","diamond-write","throwing-equals","multi-write-same-signal","equality-cutoff","throw-dep-effect-prewalk","throw-in-batch","second-invalidation","cycle-error-surfaces","revert-after-mid-read","aggregate","throw-dep-computed-prewalk","adversarial-equality"],"worldScenCounts":{"dep-set-flip":391,"recovery-after-throw":97,"diamond-write":73,"throwing-equals":19,"multi-write-same-signal":6,"equality-cutoff":103,"throw-dep-effect-prewalk":42,"throw-in-batch":16,"second-invalidation":237,"cycle-error-surfaces":2,"revert-after-mid-read":1,"aggregate":3,"throw-dep-computed-prewalk":5,"adversarial-equality":1},"escape":[{"origin":"computed","token":"computed:46"}]},
+];
+test('b109 A2: the 10 TASK 0c live ERROR records are DIV-F22 on the tree (includeFixed false); no DIV-F22 -> known=none', () => {
+    assert.equal(LIVE_0C.length, 10);
+    for (let k = 0; k < LIVE_0C.length; k++) {
+        const c = classify(clone(LIVE_0C[k]), { includeFixed: false });
+        assert.notEqual(c, null, 'record ' + k);
+        assert.equal(c.known, 'DIV-F22', 'record ' + k);
+        assert.deepEqual(c.perFail.map((p) => p.slice()), c.perFail.map(() => ['DIV-F22']), 'record ' + k + ' perFail');
+    }
+    const noF22 = fresh(); noF22.entries = noF22.entries.filter((x) => x.id !== 'DIV-F22');
+    for (let k = 0; k < LIVE_0C.length; k++) assert.equal(classify(clone(LIVE_0C[k]), { includeFixed: false, registry: noF22 }), null, 'control ' + k);
+});
+
+// b109 A3 pair: the pre-fix 0c records (FIX-R not in: the F5 bug present) are unexplained on the tree (a regression) and
+// DIV-F5 on a control kernel (inlined verbatim from .handoff/b109-evidence/soak/0c-before.jsonl).
+const BEFORE_0C = [
+    {"engine":"lite","lane":"ERROR","step":139,"op":"batch","fails":[{"oracle":"O2","sig":"glitch","detail":"body#20 read #10 engine=103 model=121"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#20 (identity) engine=103 model=121"},{"oracle":"O1e","sig":"effect-stale","detail":"effect#31 saw [#20=103,#18=66,#21=309349] model [#20=121,#18=66,#21=326647]"}],"scen":["multi-write-same-signal","revert-after-mid-read","throw-in-batch","dep-set-flip","equality-cutoff","second-invalidation"],"worldScen":["dep-set-flip","diamond-write","multi-write-same-signal","throw-in-batch","equality-cutoff","throwing-equals","second-invalidation","cycle-error-surfaces","recovery-after-throw","throw-dep-effect-prewalk","revert-after-mid-read"],"worldScenCounts":{"dep-set-flip":34,"diamond-write":20,"multi-write-same-signal":9,"throw-in-batch":8,"equality-cutoff":27,"throwing-equals":10,"second-invalidation":60,"cycle-error-surfaces":2,"recovery-after-throw":16,"throw-dep-effect-prewalk":6,"revert-after-mid-read":1},"escape":[{"origin":"batch","token":"batch:139"}]},
+    {"engine":"lite","lane":"ERROR","step":101,"op":"batch","fails":[{"oracle":"O2","sig":"glitch","detail":"body#24 read #18 engine=Infinity model=-1"},{"oracle":"O1e","sig":"effect-stale","detail":"effect#24 saw [#11=#refA,#21=Infinity,#18=Infinity] model [#11=#refA,#21=Infinity,#18=-1]"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#18 (select) engine=Infinity model=-1"}],"scen":["dep-set-flip","multi-write-same-signal","revert-after-mid-read","throw-in-batch","equality-cutoff"],"worldScen":["throw-in-batch","dep-set-flip","recovery-after-throw","throwing-equals","diamond-write","equality-cutoff","second-invalidation","throw-dep-effect-prewalk","adversarial-equality","multi-write-same-signal","revert-after-mid-read"],"worldScenCounts":{"throw-in-batch":6,"dep-set-flip":54,"recovery-after-throw":13,"throwing-equals":1,"diamond-write":17,"equality-cutoff":24,"second-invalidation":18,"throw-dep-effect-prewalk":5,"adversarial-equality":1,"multi-write-same-signal":1,"revert-after-mid-read":1},"escape":[{"origin":"batch","token":"batch:101"}]},
+    {"engine":"lite","lane":"ERROR","step":189,"op":"batch","fails":[{"oracle":"O1c","sig":"computed-mismatch","detail":"node#15 (cond) engine=42 model=37"}],"scen":["multi-write-same-signal","revert-after-mid-read","dep-set-flip","equality-cutoff","second-invalidation"],"worldScen":["throwing-equals","throw-dep-effect-prewalk","second-invalidation","dep-set-flip","recovery-after-throw","multi-write-same-signal","equality-cutoff","throw-in-batch","diamond-write","throw-dep-computed-prewalk","revert-after-mid-read"],"worldScenCounts":{"throwing-equals":8,"throw-dep-effect-prewalk":32,"second-invalidation":84,"dep-set-flip":118,"recovery-after-throw":50,"multi-write-same-signal":7,"equality-cutoff":47,"throw-in-batch":5,"diamond-write":42,"throw-dep-computed-prewalk":5,"revert-after-mid-read":1},"escape":[]},
+    {"engine":"lite","lane":"ERROR","step":344,"op":"batch","fails":[{"oracle":"O2","sig":"glitch","detail":"body#38 read #21 engine=46 model=false"},{"oracle":"O1e","sig":"effect-stale","detail":"effect#73 saw [#51=ERR(computed:38),#18=6,#46=65] model [#51=299,#18=6,#46=65]"}],"scen":["dep-set-flip","multi-write-same-signal","revert-after-mid-read","equality-cutoff","throw-dep-effect-prewalk"],"worldScen":["throwing-equals","dep-set-flip","diamond-write","second-invalidation","throw-in-batch","multi-write-same-signal","equality-cutoff","throw-dep-effect-prewalk","recovery-after-throw","cycle-error-surfaces","throw-dep-computed-prewalk","revert-after-mid-read"],"worldScenCounts":{"throwing-equals":17,"dep-set-flip":199,"diamond-write":63,"second-invalidation":154,"throw-in-batch":18,"multi-write-same-signal":13,"equality-cutoff":42,"throw-dep-effect-prewalk":22,"recovery-after-throw":38,"cycle-error-surfaces":4,"throw-dep-computed-prewalk":3,"revert-after-mid-read":1},"escape":[]},
+    {"engine":"lite","lane":"ERROR","step":86,"op":"batch","fails":[{"oracle":"O2","sig":"glitch","detail":"body#29 read #18 engine=true model=undefined"},{"oracle":"O1e","sig":"effect-stale","detail":"effect#29 saw [#18=true] model [#18=undefined]"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#36 (sum) engine=24 model=23"}],"scen":["multi-write-same-signal","revert-after-mid-read","throw-in-batch","second-invalidation"],"worldScen":["multi-write-same-signal","equality-cutoff","throw-dep-effect-prewalk","dep-set-flip","diamond-write","recovery-after-throw","throwing-equals","second-invalidation","throw-in-batch","revert-after-mid-read"],"worldScenCounts":{"multi-write-same-signal":3,"equality-cutoff":7,"throw-dep-effect-prewalk":3,"dep-set-flip":29,"diamond-write":5,"recovery-after-throw":3,"throwing-equals":2,"second-invalidation":7,"throw-in-batch":3,"revert-after-mid-read":1},"escape":[{"origin":"batch","token":"batch:86"}]},
+    {"engine":"lite","lane":"ERROR","step":153,"op":"set","fails":[{"oracle":"O2","sig":"glitch","detail":"body#20 read #16 engine=Infinity model=NaN"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#16 (identity) engine=Infinity model=NaN"}],"scen":["throw-dep-effect-prewalk","second-invalidation","dep-set-flip"],"worldScen":["throwing-equals","diamond-write","dep-set-flip","second-invalidation","cycle-error-surfaces","aggregate","equality-cutoff","recovery-after-throw","multi-write-same-signal","throw-dep-effect-prewalk","throw-in-batch","adversarial-equality","revert-no-read","revert-after-mid-read"],"worldScenCounts":{"throwing-equals":7,"diamond-write":11,"dep-set-flip":41,"second-invalidation":51,"cycle-error-surfaces":3,"aggregate":6,"equality-cutoff":7,"recovery-after-throw":10,"multi-write-same-signal":6,"throw-dep-effect-prewalk":5,"throw-in-batch":5,"adversarial-equality":1,"revert-no-read":1,"revert-after-mid-read":1}},
+    {"engine":"lite","lane":"ERROR","step":356,"op":"batch","fails":[{"oracle":"O2","sig":"glitch","detail":"body#41 read #12 engine=72 model=76"},{"oracle":"O1e","sig":"effect-stale","detail":"effect#41 saw [#12=72,#32=230] model [#12=76,#32=230]"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#12 (sum) engine=72 model=76"}],"scen":["multi-write-same-signal","revert-after-mid-read","second-invalidation"],"worldScen":["throw-dep-effect-prewalk","second-invalidation","dep-set-flip","diamond-write","recovery-after-throw","throw-in-batch","equality-cutoff","cycle-error-surfaces","throwing-equals","multi-write-same-signal","adversarial-equality","throw-dep-computed-prewalk","revert-after-mid-read"],"worldScenCounts":{"throw-dep-effect-prewalk":71,"second-invalidation":182,"dep-set-flip":231,"diamond-write":77,"recovery-after-throw":75,"throw-in-batch":20,"equality-cutoff":94,"cycle-error-surfaces":3,"throwing-equals":20,"multi-write-same-signal":7,"adversarial-equality":1,"throw-dep-computed-prewalk":5,"revert-after-mid-read":1},"escape":[]},
+    {"engine":"lite","lane":"ERROR","step":80,"op":"batch","fails":[{"oracle":"O1c","sig":"computed-mismatch","detail":"node#29 (sum) engine=141 model=76"},{"oracle":"O2","sig":"glitch","detail":"body#19 read #14 engine=65 model=\"0\""}],"scen":["multi-write-same-signal","revert-after-mid-read","second-invalidation"],"worldScen":["throw-in-batch","second-invalidation","dep-set-flip","diamond-write","throw-dep-effect-prewalk","recovery-after-throw","equality-cutoff","throwing-equals","multi-write-same-signal","revert-after-mid-read"],"worldScenCounts":{"throw-in-batch":5,"second-invalidation":6,"dep-set-flip":18,"diamond-write":7,"throw-dep-effect-prewalk":8,"recovery-after-throw":6,"equality-cutoff":4,"throwing-equals":2,"multi-write-same-signal":2,"revert-after-mid-read":1},"escape":[]},
+    {"engine":"lite","lane":"ERROR","step":100,"op":"batch","fails":[{"oracle":"O2","sig":"glitch","detail":"body#24 read #13 engine=8866 model=8773"},{"oracle":"O1e","sig":"effect-stale","detail":"effect#24 saw [#15=-1,#13=8866,#19=90] model [#15=-1,#13=8773,#19=90]"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#13 (hash) engine=8866 model=8773"}],"scen":["multi-write-same-signal","revert-after-mid-read"],"worldScen":["dep-set-flip","diamond-write","second-invalidation","equality-cutoff","throw-in-batch","throwing-equals","multi-write-same-signal","revert-after-mid-read"],"worldScenCounts":{"dep-set-flip":16,"diamond-write":3,"second-invalidation":20,"equality-cutoff":3,"throw-in-batch":1,"throwing-equals":1,"multi-write-same-signal":2,"revert-after-mid-read":1},"escape":[]},
+    {"engine":"lite","lane":"ERROR","step":182,"op":"batch","fails":[{"oracle":"O2","sig":"glitch","detail":"body#17 read #14 engine=226257 model=210881"},{"oracle":"O1e","sig":"effect-stale","detail":"effect#24 saw [#17=226349] model [#17=210973]"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#37 (sum) engine=226368 model=210992"}],"scen":["multi-write-same-signal","revert-after-mid-read","second-invalidation","dep-set-flip"],"worldScen":["dep-set-flip","recovery-after-throw","diamond-write","throwing-equals","multi-write-same-signal","equality-cutoff","throw-dep-effect-prewalk","throw-in-batch","second-invalidation","cycle-error-surfaces","revert-after-mid-read"],"worldScenCounts":{"dep-set-flip":92,"recovery-after-throw":15,"diamond-write":21,"throwing-equals":10,"multi-write-same-signal":5,"equality-cutoff":29,"throw-dep-effect-prewalk":8,"throw-in-batch":6,"second-invalidation":48,"cycle-error-surfaces":1,"revert-after-mid-read":1},"escape":[]},
+];
+test('b109 A3: the pre-fix 0c records classify null on the tree and DIV-F5 on a control kernel', () => {
+    assert.equal(BEFORE_0C.length, 10);
+    for (let k = 0; k < BEFORE_0C.length; k++) {
+        assert.equal(classify(clone(BEFORE_0C[k])), null, 'tree ' + k);
+        assert.equal(known(clone(BEFORE_0C[k]), FX()), 'DIV-F5', 'control kernel ' + k);
+    }
 });
