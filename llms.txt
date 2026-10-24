@@ -445,9 +445,7 @@ triggering write -- no `queueMicrotask`, no promises, no scheduler ticks.
   re-runs or is disposed, the engine cascade-disposes those observers before
   the new run. Plain signals are deliberately NOT owner-adopted so lazy-
   allocation wrappers (lite-store keys, lite-form fields) continue to survive
-  re-runs of the computed that allocated them. **Pre-batch revert:** inside a
-  `batch(...)`, set X then set X back (under the signal's `equals`) reverts the
-  version bump -- downstream effects/computeds do not fire. **AggregateError on
+  re-runs of the computed that allocated them. **Pre-batch revert (FIX-R, F5):** inside `batch(...)`, setting a signal back to its pre-batch value (under its `equals`) restores the old version and fires nothing ONLY IF no reactive body (computed or effect) has run since that signal's first write in the batch; if one ran, the set back is a normal write (downstream re-runs and sees the reverted value). KNOWN residuals: (a) a body (effect or computed) already running when `s` is first written in the batch (it, or a computed it reads, writes `s`) that then reads `s` in the same run does not block the revert, so it keeps the intermediate value (test/37 (c): `[5]`, ideal `[5,0]`); (b) the body-run counter is 30 bits, so a revert slips through only after exactly k*2^30 body runs between the capture and the revert inside one batch, falling back to the pre-fix behavior (same class as the 2^31 dormancy band and #44's gen wrap). **AggregateError on
   multi-throw:** two or more effects throwing in the same flush pass aggregate to
   `AggregateError` at the trigger; single-throw is unchanged. **Scheduler thunk
   caching:** the scheduler closure is cached on the node and gen-bound, so async
