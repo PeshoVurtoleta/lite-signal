@@ -339,13 +339,42 @@ b77 teeth vector V1 (old PASS / new FAIL), fail-closed rows, and a wiring row pi
 pass sites and no pass override); test/64 copies the judge into each mutant tree and prints its sha8. npm test (b78
 closing run): 1705 tests / 1691 pass / 0 fail / 7 skip / 7 todo.
 
+### Fixed -- engine (F5, DIV-F5; LEDGER #36 F-MB)
+
+A batch revert restored the pre-batch version even after a reactive body had observed the intermediate value (pre-existing
+since 1.2.0, in the signal set path and the box set path). Four observable shapes: (1) a computed re-evaluated mid-batch
+kept the intermediate value after the revert; (2) a reader created before the batch re-ran at close and read it stale
+(glitch); (3) an effect created mid-batch read the intermediate on its first run and never re-ran after the revert; (4) a
+mid-batch re-evaluation dropped a conditional dependency and the revert then hid a later write to the dropped source
+(effect dead).
+
+Fix (Signal.js 0628127b -> 0f75866f): inside `batch()`, setting a signal back to its pre-batch value (under its `equals`)
+restores the old version and fires nothing ONLY IF no reactive body (computed or effect) ran since that signal's first write
+in the batch; if one ran, the set back is a normal write (downstream re-runs and sees the reverted value). A node gains a
+`preBatchEvals` capture of the body-run counter at its first batch write.
+
+Cost (untimed, node v26.8.2; a statistical A/B is a PENDING release-gate step): bytecode fireRecompute 26 -> 45 (+19),
+read.set 252 -> 285 (+33), boxSet 204 -> 227 (+23); executeEffect 455, refreshComputed 782, the readers 106/200/96/99,
+allocateLink 572, flushEffects 440 and batch 108 unchanged; inlining census unchanged (executeEffect inlined into
+flushEffects in 8/8 lanes, 0 deopts); +8.00 B per node (eager 233.28 -> ~241.3 B/node at maxNodes 1e5); GC over a 1e6 batch
+set/read/revert loop: minor 0, major 0. Soak: shrinks ERROR:7:0x8999219f, BATCH:1:0xb08f012b and BATCH:2:0xfd8b9606 exit 1 -> 0;
+BATCH failingWorlds 2000 -> 0, ERROR 1523 -> 1516 (DIV-F5 lines dropped; 10 worlds now reach DIV-F22).
+
+KNOWN residuals: (a) a body (effect or computed) already running when `s` is first written in the batch (it, or a computed it reads, writes `s`) that then reads `s` in the same run does not block the revert, so it keeps the intermediate value
+(test/37 (c): `[5]`, ideal `[5,0]`); (b) the body-run counter is 30 bits, so a revert slips through only after exactly
+k*2^30 body runs between the capture and the revert inside one batch, falling back to the pre-fix behavior (same class as
+the 2^31 dormancy band and #44's gen wrap).
+
+Tests: test/82-f5-fixr.test.mjs (33 rows: R1-R7 on signal and box, G1-G4, source pin, 8-bit boundary, GC / retention),
+test/37 todos resolved ((c) KNOWN [5]), test/48 mask30 rows. Full suite: npm test 2196 tests / 2184 pass / 0 fail / 11 skip / 1 todo; npm run test:gc 2244 / 2241 pass / 0 fail / 2 skip / 1 todo (node v26.8.2, b108). Soak closure of #36 is pending.
+
 ### Changed -- LEDGER #36 (F-MB) triaged: folded into DIV-F5 (docs only, not shipped)
 
 The four known=none BATCH-lane lines (BATCH:1:0xb08f012b, BATCH:2:0xfd8b9606) are F5 (a batch revert after a mid-batch
 read leaves downstream stale): an effect created mid-batch that reads the intermediate (a new path), and a classic
 revert-after-mid-read whose re-evaluation drops a dependency (an O4 effect-dead line DIV-F5 does not list). Both
 shrunk worlds (4 and 9 ops) fail on the tree, preb33 and 1.5.2
-and pass on the tree plus the FIX-R hunks only. No engine, harness or registry change: the lines stay known=none in the
+and pass on the tree plus the FIX-R hunks only (FIX-R has since landed; see the F5 entry above). No engine, harness or registry change in this triage: the lines stayed known=none in the
 soak until FIX-R lands (A3). Contract ruling: a mid-batch effect re-runs at batch close iff a source it read changed
 after its first run; A3 amends the batch doc comment in Signal.js to match.
 
@@ -747,8 +776,8 @@ readers): 7 of 8 lanes measured inside the run's own A/A noise band; the 8th (`c
 
 FIX-T fixed F6, so DIV-F6 is retired and the test/41 (f) ERROR exemption set is now `{DIV-F5, DIV-F22}`. The DIV-F5 O1c
 (computed-err-mismatch) entry no longer requires the step scenario revert-after-mid-read (it matches the world scenario too): a live
-soak world ERROR:7:0x8999219f had been known=none only because of that narrowing (the OPEN F5 bug: a batch revert restores
-preBatchVersion after a mid-batch re-run; 7-op repro). F5 stays OPEN (fixBy A3). Maintainer ruling b103, PLAN-0s-fixt.md ADDENDUM 13.
+soak world ERROR:7:0x8999219f had been known=none only because of that narrowing (the F5 bug: a batch revert restores
+preBatchVersion after a mid-batch re-run; 7-op repro; FIXED later in the engine by FIX-R, see "### Fixed -- engine (F5, DIV-F5; LEDGER #36 F-MB)" above). Maintainer ruling b103, PLAN-0s-fixt.md ADDENDUM 13.
 
 ### Changed -- soak NEST taint-skip triage (D6): in-flight frames taint only on a victim read (dev-only, not shipped)
 

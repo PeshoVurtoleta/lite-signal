@@ -454,6 +454,14 @@ export interface Registry {
      * Passing an unrelated value is also a safe no-op.
      */
     dispose(api: Disposable): void;
+    /**
+     * Pre-batch revert: setting a signal back to its pre-batch value (under its
+     * equals) inside a batch restores the old version and fires nothing ONLY IF no
+     * computed or effect body ran since that signal's first write in the batch;
+     * otherwise the set back is a normal write. Known residuals: a body already running at the
+     * signal's first batch write that reads it later in that run (the revert is not blocked), and a 30-bit body-run counter
+     * (exactly k*2^30 runs between capture and revert).
+     */
     batch<T>(fn: () => T): T;
     untrack<T>(fn: () => T): T;
     /** True iff a read RIGHT NOW would record a dependency on this registry.
@@ -655,6 +663,14 @@ export function getOwner(): Owner;
 export function runWithOwner<T>(ownerHandle: Owner, fn: () => T): T;
 /** Universal disposal -- see {@link Registry.dispose}. */
 export function dispose(api: Disposable): void;
+/**
+ * Pre-batch revert: setting a signal back to its pre-batch value (under its
+ * equals) inside a batch restores the old version and fires nothing ONLY IF no
+ * computed or effect body ran since that signal's first write in the batch;
+ * otherwise the set back is a normal write. Known residuals: a body already running at the
+ * signal's first batch write that reads it later in that run (the revert is not blocked), and a 30-bit body-run counter
+ * (exactly k*2^30 runs between capture and revert).
+ */
 export function batch<T>(fn: () => T): T;
 export function untrack<T>(fn: () => T): T;
 /** Top-level binding of {@link Registry.isTracking} against the default registry. */
