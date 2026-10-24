@@ -595,6 +595,11 @@ export interface Registry {
      *
      * Pass `opts.handles` to receive the rebuilt handles keyed by id -- the
      * natural way to wire `fnsById` bodies to the new graph.
+     *
+     * `fnsById` bodies run in the RESTORED registry: call ITS untrack / batch /
+     * createRoot / runWithOwner (hold it in a `let r2` set from restore(); no body
+     * runs before restore returns). untrack is per-registry: another registry's
+     * untrack does not stop tracking in the restored registry (nor in live).
      */
     restore(snap: Snapshot, opts?: RestoreOptions): Registry;
 }
