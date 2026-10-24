@@ -15,6 +15,16 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md`, `llms.txt` and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
 
+### Tests / Docs -- LEDGER #43 closed, not an engine bug (b107)
+
+The b101 finding F-b101-1 ("restore re-runs an effect once more than live") was a harness error, not an engine defect: the probe and
+test/76's restored `fnsById` bodies called the LIVE registry's `untrack`, which is per-registry, so the restored effect tracked the
+read (one extra link; `snapshot()` records it). With the restored registry's `untrack`, run logs and full snapshots equal live after
+every write. `Signal.js` is unchanged (sha256/8 0628127b). test/76: the former KNOWN row is now a regression row (restored == live) plus
+a cross-registry row (a foreign `untrack` tracks in live and in the restored graph alike). Docs: `llms.txt` and `Signal.d.ts` (JSDoc
+only) now say that `fnsById` bodies must call the restored registry's `untrack` / `batch` / `createRoot` / `runWithOwner`. Evidence:
+`.handoff/b107-evidence/L43/`.
+
 ### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)
 
 `snapshot()` serializes the live graph of a registry to a plain `{ v: 1, gv, nextId, nodes: [...] }` object (one record per live
@@ -678,7 +688,7 @@ skipped).
   `get()` keeps the `pullComputed` wrapper, one extra frame per cold level (1945 warmed); re-walk depth is about 5055 on
   every build. The write plus one-level refresh path measured about 6% slower than the pre-FIX-T 1.6.0-dev build B0 (08401c2, `Signal.js` sha256/8 98295467; lane L6, B0/W2 0.940); clean computed
   reads measured about 3x faster than B0 in every round but inconclusive under the A/A band rule. Not gated: statistical tier.
-- Still OPEN, not part of this entry: LEDGER #43 (restore re-runs an effect once more than live). (#44, #45 and #46 are fixed, next entries.)
+- LEDGER #43 (restore re-runs an effect once more than live) was later closed as not an engine bug (see "### Tests / Docs -- LEDGER #43 closed" above). (#44, #45 and #46 are fixed, next entries.)
 
 ### Fixed -- engine: onGraphMutation now reports op 3 for an edge a throwing onConnect hook leaves live (LEDGER #46)
 

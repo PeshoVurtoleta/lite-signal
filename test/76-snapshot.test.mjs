@@ -1594,7 +1594,8 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         assert.equal(rec(snap, cId).clean, false); assert.deepEqual(rec(snap, cId).deps, [sId]);
         assert.equal(rec(snap, eId).clean, true); assert.deepEqual(rec(snap, eId).deps, [cId]);
         const H = {}, out = [];
-        r.restore(snap, { fnsById: { [cId]: () => H[sId]() * 2, [eId]: () => { out.push(H[cId]()); r.untrack(() => { if (H[sId]() < 2) H[sId].set(2); }); } }, handles: H });
+        let r2 = null;
+        r2 = r.restore(snap, { fnsById: { [cId]: () => H[sId]() * 2, [eId]: () => { out.push(H[cId]()); r2.untrack(() => { if (H[sId]() < 2) H[sId].set(2); }); } }, handles: H });
         const L0 = log.length;
         s.set(5); s.set(6); H[sId].set(5); H[sId].set(6);
         assert.deepEqual(log, [2, 10, 12]);
@@ -1697,9 +1698,9 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         return { s, c, e, log };
     };
     const restoreSelfWrite = (r, snap, ids, body, guard) => {
-        const H = {}, out = [];
-        const fns = { [ids.c]: () => body(H[ids.s]), [ids.e]: () => { try { out.push(H[ids.c]()); } catch (x) { out.push("E:" + x.message); } r.untrack(() => { if (H[ids.s]() < guard) H[ids.s].set(guard); }); } };
-        const r2 = r.restore(snap, { fnsById: fns, handles: H });
+        const H = {}, out = []; let r2 = null;
+        const fns = { [ids.c]: () => body(H[ids.s]), [ids.e]: () => { try { out.push(H[ids.c]()); } catch (x) { out.push("E:" + x.message); } r2.untrack(() => { if (H[ids.s]() < guard) H[ids.s].set(guard); }); } };
+        r2 = r.restore(snap, { fnsById: fns, handles: H });
         return { H, out, r2 };
     };
     test("D-I over-reaction (F-b98-1): an unchanged first re-run of a seeded dirty computed does not run its reader (live 0, restored 0)", () => {
@@ -1773,16 +1774,16 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
     });
     // --- D-I2 (b99): an ERRORED dirty computed is seeded too (value + version + FLAG_HAS_ERROR): restore copies the live
     // state and pullComputed decides. Rows compare restored against a live twin, so they hold before and after D-K.
-    // D-I2 (P2) -> KNOWN F-b101-1 pin (LEDGER #43, OPEN, its own A9 unit after FIX-T; PLAN-0s-fixt ADDENDUM 6 / 7 9b).
-    // A seeded errored dirty computed that LEAVES its error for a non-equal value re-runs the restored effect once
-    // more than live on the next unchanged write. PRE-EXISTING: same counts on HEAD 08401c2 (b101-before), so this
-    // row is green on both builds. Repro (LEDGER #43): s = signal(1); c = computed(() => { if (s() < 3) throw E;
+    // D-I2 (P2) -> REGRESSION pin for LEDGER #43 (F-b101-1), CLOSED not-an-engine-bug (b107, evidence .handoff/b107-evidence/L43/).
+    // The old harness (and the b101 probe) ran restored bodies that called the LIVE registry's untrack. untrack is
+    // per-registry, so inside r2's effect the "untracked" s() read was TRACKED: r2 gained an s -> e link live lacked
+    // and re-ran the effect at 6. With the RESTORED registry's untrack (r2, filled after restore returns) restored == live.
+    // Original repro shape (LEDGER #43): s = signal(1); c = computed(() => { if (s() < 3) throw E;
     // return "ok"; }); effect(() => { try { c(); } catch {} untrack(() => { if (s() < 2) s.set(2); }); });
     // snapshot -> restore; set 5 then 6 on both: live runs the effect at 5 only (k = 1), restored at 5 AND 6 (k + 1).
-    // The old P2 shape (E then the same E) went red only because D-K / D4 made it leave the error: on live it now
-    // shows the same live 1 / restored 2 (b101-before: 0 / 0, E -> E equal). Evidence .handoff/b102-evidence/B2/
-    // di2-probe.txt. The fix flips this row to restored == live.
-    test("D-I2 KNOWN F-b101-1 (LEDGER #43): a seeded errored computed leaving its error re-runs the restored effect once more (live 1, restored 2)", () => {
+    // set 5 then 6 on both: live runs the effect at 5 only; restored (own-registry untrack) matches. Evidence
+    // .handoff/b107-evidence/L43/DIAGNOSIS.md.
+    test("D-I2 REGRESSION #43 (closed, not an engine bug): a seeded errored computed leaving its error runs the restored effect exactly as live when restored bodies use the restored registry's untrack", () => {
         const E = new Error("low"); const body = (s) => { if (s() < 3) throw E; return "ok"; };
         const r = createRegistry(); const L = selfWritePair(r, (s) => r.computed(() => body(s)), 2);
         const ids = { s: r.nodeId(L.s), c: r.nodeId(L.c), e: r.nodeId(L.e) };
@@ -1795,7 +1796,39 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         assert.deepEqual(R.out, ["ok"], "restored: once at 5, like live");
         L.s.set(6); R.H[ids.s].set(6);
         assert.deepEqual(L.log.slice(L0), ["ok"], "live: no re-run at 6 (c unchanged)");
-        assert.deepEqual(R.out, ["ok", "ok"], "KNOWN F-b101-1: the restored effect re-runs at 6 (ideal: [\"ok\"])");
+        assert.deepEqual(R.out, L.log.slice(L0), "restored == live at 6 (no re-run)"); assert.deepEqual(R.out, ["ok"]);
+    });
+    // Row X (#43, A3): untrack is per-registry. A body that calls ANOTHER registry's untrack (r3) is not untracked in
+    // its own registry: live tracks the s() read, and restore copies live (snapshot records the s -> e link), so the
+    // restored twin tracks it too when its body also calls r3.untrack. Expected logs are by hand: set(5) runs the
+    // effect once (c "ok"); set(6) re-runs it in BOTH because s is a tracked dep of e (live and restored).
+    const foreignPair = (mkR3Untrack) => {
+        const E = new Error("low"); const body = (s) => { if (s() < 3) throw E; return "ok"; };
+        const r = createRegistry(), r3 = createRegistry();
+        const s = r.signal(1), c = r.computed(() => body(s)), log = [];
+        const e = r.effect(() => { try { log.push(c()); } catch (x) { log.push("E:" + x.message); } r3.untrack(() => { if (s() < 2) s.set(2); }); });
+        const ids = { s: r.nodeId(s), c: r.nodeId(c) }, eId = r.nodeId(e);
+        const snap = r.snapshot();
+        const H = {}, out = []; let r2 = null;
+        const un = (fn) => mkR3Untrack(r3, r2)(fn);
+        const fns = { [ids.c]: () => body(H[ids.s]), [eId]: () => { try { out.push(H[ids.c]()); } catch (x) { out.push("E:" + x.message); } un(() => { if (H[ids.s]() < 2) H[ids.s].set(2); }); } };
+        r2 = r.restore(snap, { fnsById: fns, handles: H });
+        const rDeps = rec(r2.snapshot(), eId).deps;
+        const L0 = log.length;
+        s.set(5); H[ids.s].set(5);
+        s.set(6); H[ids.s].set(6);
+        return { live: log.slice(L0), restored: out, lDeps: rec(snap, eId).deps, rDeps, want: [ids.c, ids.s] };
+    };
+    test("D-I2 row X (#43): live and restored bodies BOTH call a third registry's untrack -> the read is tracked in both: restored run log == live's, and live re-ran at 6", () => {
+        const R = foreignPair((r3) => r3.untrack);
+        assert.deepEqual(R.live, ["ok", "ok"], "live: runs at 5 and again at 6 (the foreign untrack tracks s)");
+        assert.deepEqual(R.restored, R.live);
+        assert.deepEqual(R.lDeps, R.want); assert.deepEqual(R.rDeps, R.want, "restore copied the foreign-untrack s -> e link");
+    });
+    test("D-I2 row X control (#43): live uses r3.untrack but restored uses r2.untrack -> the logs DIVERGE (X can see the difference)", () => {
+        const R = foreignPair((r3, r2) => r2.untrack);
+        assert.deepEqual(R.live, ["ok", "ok"]); assert.deepEqual(R.restored, ["ok"], "own-registry untrack: s untracked, no run at 6");
+        assert.notDeepEqual(R.restored, R.live);
     });
     test("D-I2 round-trip: snapshot(restore(s)) keeps a dirty errored computed's record (FLAG_HAS_ERROR, value, version)", () => {
         const body = (s) => { if (s() < 3) throw new Error("low"); return s(); };
