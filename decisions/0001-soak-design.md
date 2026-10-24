@@ -46,7 +46,7 @@ Per-op 0 B/op stays owned by test/32-perf-gate and test/torture.mjs, not by the 
 
 All S1 runs load the engine through one seam (kernel.mjs:1-20). By default the in-tree Signal.js; SOAK_KERNEL=<abs path
 to a Signal.js with a sibling Watch.js> swaps a control. The path is realpath-resolved once so the hashed files are the
-loaded files. controls.json pins two controls by sha256 [three since 2026-10-18: preb33 added, Amendment 2026-10-18]:
+loaded files. controls.json pins two controls by sha256 [three since 2026-10-18: preb33 added, Amendment 2026-10-18; four since 2026-10-25: prefixr added, section 14]:
 `rev152` (the published 1.5.2, exact devDependency alias `lite-signal-1.5.2`) and `headpatched` (the audit patch build,
 frozen in bench/soak/controls/headpatched, because /audit/ is git-ignored). parity.json pins 23 files [33 since eb5acc2, 34 since 92c0020, Amendment 2026-10-18; 35 since 2b87bfb: +
 bench/soak/rss.mjs; 36 since 3ef853a: + bench/soak/latency.mjs; 38 since 85d02e8: + bench/soak/anatomy.mjs,
@@ -149,7 +149,7 @@ b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer t
   ERROR worlds: known=none 2 -> 0 (b53 t2). FAIL_CAP (16 per cycle, config.mjs:59) caps the stored failure records
   only; every failing world reaches the BREACH log (main.mjs:492-493; b80 census: the 12 L- controls at FAIL_CAP 16
   vs 1e9 print the same BREACH keys). Not F-MB: the 4 BATCH known=none lines are LEDGER #36, triaged b77 and folded
-  into DIV-F5 (F5, OPEN, fixBy A3).
+  into DIV-F5 (F5, FIXED in A3-FIX-R, b109; was OPEN, fixBy A3).
 - Calibration (section 8, :247-251): recut again on 2026-10-17 23:39 UTC (calibrate.mjs --write --timed under
   quiet-lock, 737 s, node v26.8.2, M4 Pro, kernels headpatched and 1.5.2): every deterministic cell identical; only
   provenance and pinnedSha256 (exec / model / adapters/lite) moved. Throughput is PRELIMINARY: load 2.67 / 2.63 / 2.65
@@ -196,8 +196,8 @@ taint rule (p8, model.mjs:24) is narrowed to V1:
   quiet-lock, 2026-10-19): tree NEST full 2596 worlds / 1103300 ops / 0 failing, O7a 50367 (CHECK_FLOOR's binding cell,
   5.0x 10000); smoke 144 / 61200, O7a 2704 (5.4x CHECK_FLOOR_SMOKE 500); rarest NEST scenario lifecycle-callback-dispose
   11388 full / 621 smoke. test/41 clause (f): every rostered lane needs full-length evidence (full + smoke cells, 0
-  failing worlds) on a kernel that cuts it; the one exemption is ERROR (tree ERROR fails 17039/17050, DIV-F5/F6/F22),
-  valid only while one of those is open (fixedIn null) in divergences.json, up to A3 (DIV-F5 fixBy). The constants
+  failing worlds) on a kernel that cuts it; the one exemption is ERROR (tree ERROR fails 17039/17050, DIV-F5/F6/F22 at the time; since b109 {DIV-F22} only),
+  valid only while DIV-F22 is open (fixedIn null) in divergences.json (DIV-F5 fixed in A3-FIX-R, b109). The constants
   CHECK_FLOOR / CHECK_FLOOR_SMOKE / SCEN_MIN / SCEN_MIN_SMOKE / TAINT_SKIP_MAX are unchanged.
 
 Amendment 2026-10-20 (bursts 84-89; commits c11abf0, 3ef853a, 85d02e8, 4f5f200, 1dea069, 66b6a50; harness only):
@@ -418,6 +418,22 @@ gV rewrite"; its spec is not keyed on known= / sig=, so a DIV-F29 entry leaves i
   upload-artifact are pinned at v7 (all node24; upload-artifact v5 is still node20). The soak steps use the pinned
   PIN_NODE (26.8.2, renamed from SOAK_NODE because config rejects unknown SOAK_* env keys).
 - Known limits: Node 22 / 24 cells could not be run locally when the workflows were written (only Node 26 installed).
+
+### 14. Amendment 2026-10-25 (b109): DIV-F5 fixed, soak closure
+
+- DIV-F5 is fixedIn "A3-FIX-R" (74ea021; Signal.js 0f75866f, LEDGER #47) and explains only with includeFixed (control
+  kernels preb33 / rev152 / prefixr); on the tree an F5 shape is known=none. LEDGER #36 (F-MB) is CLOSED.
+- The test/41 (f) ERROR exemption set is {ERROR: [DIV-F22]}. Tree ERROR (seed 0xC0FFEE, default ops; untimed counts, node v26.8.2, host PRELIMINARY; .handoff/b109-evidence/soak/0b-ERROR-live.txt): failingWorlds 1516,
+  all DIV-F22, known=none 0.
+- Q1 census: the O1c shape was NOT re-narrowed. One known=DIV-F5 engine=ERR( line on preb33 and rev152 (world 0x8992029a,
+  w=1329, step 57) forced the A1 fallback; the shape is unchanged (test/44 "b109 A1 fallback").
+- Q2 tagger gap: scenarios.mjs:303 onEffectCreated never fills b.mid. Recorded, no edit: with DIV-F5 fixed an F5 line on
+  the tree is known=none whatever its tag.
+- A6 W2 re-anchor: FIX-R closed W2 (batchEpoch cycle) on the tree except the KNOWN k*2^30 alias (#47). L-WRAP-TREE expects
+  W1/W3/W4 only; the new must-fail L-WRAP-W2-PREFIXR (frozen kernel bench/soak/controls/prefixr, 25784e5, Signal.js
+  0628127b) expects BREACH check=W2 counter=batchEpoch. The miss existed since b108 (long controls run only in
+  soak:teeth:long and CI soak-nightly).
+- Controls (section 3 :49-51): controls.json pins FOUR controls (+ prefixr, 25784e5, byte-frozen in bench/soak/controls/prefixr/); parity.json pins 45 files (+ controls/prefixr/Signal.js, Watch.js; parity OK 45 files, b109 B3).
 
 ## Consequences
 
