@@ -96,7 +96,8 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * Every base a control can start from. A base is a Signal.js + Watch.js directory with sha256 pins:
  * headpatched, rev152, preb33 and prefixr are pinned by controls.json (by control name), tree by parity.json (red while
  * the live Signal.js is mid-edit, amendment 10). The wrap control L-WRAP-TREE (S2) uses tree, and one main-run control,
- * P-NEST-TAINT-HALF (b71, NEST lane only: the tree NEST smoke is clean); no other main-run control does until A1-A3
+ * P-NEST-TAINT-HALF (b71, NEST lane only: the tree NEST smoke is clean) and, since b112 B5, P-LC-TRIGGERLESS plus the
+ * five T-LC-* rows (LIFECYCLE at cov-off:lc-two-regs, clean of DIV-D3); no other main-run control does until A1-A3
  * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
  * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
@@ -300,6 +301,17 @@ const A_FLUSH_RUN = ' '.repeat(28) + 'if ((node.flags & FLAG_EFFECT) !== 0) exec
 // headpatched kernel (the allocateLink op-3 twin :597 carries mutationHook(3, ...) and does not match).
 const A_HOOK_OP4 = '        if (mutationHook !== null) mutationHook(4, source.id, target.id);\n';
 
+// T-LC anchors in the LIVE Signal.js (base tree; Signal.js 0f75866f lines :805 / :816 / :2661; b110 R2 B1 TASK 0b,
+// .handoff/b110-evidence/r2/anchors/anchors.json: each full line occurs exactly once; patchAll throws otherwise).
+// :805 fireConnect's onConnect call (8-space indent; `ok = true` gates the op-3 announce in the finally).
+const A_LC_CONN = '        try { e.onConnect(); ok = true; } finally {\n';
+// :816 fireDisconnect's onDisconnect call (8-space indent).
+const A_LC_DISC = '        try { e.onDisconnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }\n';
+// :2661 the observeObservers off() gen-stamp test (#40, 12-space indent). The bare `node.gen === g` occurs 4x
+// (:1389 :1412 :2309 :2661): never anchor on it.
+const A_LC_OFFGEN = '            if (node.gen === g && lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;\n';
+const LC_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE', SOAK_MUSTFAIL: 'cov-off:lc-two-regs' });
+
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
 const A_TMARK_VISIT = '                const t = link.target;\n                if (t.markEpoch !== gv) {\n                    t.markEpoch = gv;\n                    const flags = t.flags;\n';
@@ -407,6 +419,18 @@ export const CONTROLS = deepFreeze([
     // pairs (test/45 reads expect.specs).
     M('L-REV-HOOK', 'rev152', { SOAK_LANES: 'HOOK', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'explained', lines: [], specs: ['oracle=O8 lane=HOOK sig=ghost-listener'], known: ['DIV-F9'],
+    }),
+    // L-LC-preb33 (b112 B5, PLAN-R2-lifecycle CONTROLS + A2): preb33 predates #40 (the off() gen stamp) and keeps the
+    // D3 single-registration overwrite, so its LIFECYCLE lane is red on both, every head explained. MEASURED b112 B5
+    // (11 x 100000, default seed, .handoff/b112-evidence/B5/raw/preb33-full.err): exit 1, 5 BREACH heads --
+    // O7 stale-off known=DIV-F7 (replay LIFECYCLE:0:0xba99e6ce), O7 stale-off / missed-disconnect / missed-connect
+    // known=DIV-D3-independent-registrations, O7 dead-registration-fire known=DIV-F7 (O7a prints its family O7,
+    // gates.mjs oracleFamily). 'explained' with the stale-off and dead-registration-fire heads spelled out so
+    // lane:LIFECYCLE / sig:O7:stale-off / sig:O7a:dead-registration-fire pair (test/45 reads expect.specs).
+    M('L-LC-preb33', 'preb33', { SOAK_LANES: 'LIFECYCLE', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 1, kind: 'explained', lines: [],
+        specs: ['oracle=O7 lane=LIFECYCLE sig=stale-off', 'oracle=O7 lane=LIFECYCLE sig=dead-registration-fire'],
+        known: ['DIV-D3-independent-registrations', 'DIV-F7'],
     }),
     // L-P-INTERIM (amendment 13): the interim pass control on GRAPH,BATCH -- exit 0, no BREACH, 22 clean boundaries.
     M('L-P-INTERIM', 'headpatched', { SOAK_LANES: 'GRAPH,BATCH', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
@@ -572,6 +596,16 @@ export const CONTROLS = deepFreeze([
         exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=HOOK missing=hook-non-lifo-off'],
         specs: ['INCONCLUSIVE scenario lane=HOOK missing=hook-non-lifo-off'],
     }),
+    // P-LC-TRIGGERLESS (b112 B5, PLAN-R2-lifecycle CONTROLS): the tree LIFECYCLE lane with no target ever holding two
+    // live registrations (cov-off:lc-two-regs) must not false-fail: every DIV-D3 head needs two registrations, so the
+    // run is clean but INCONCLUSIVE. MEASURED b112 B5 (--smoke): exit 3, 0 BREACH, two scenario lines -- lc-two-regs and
+    // lc-off-sibling (a sibling off needs a second registration; the plain tree smoke covers it). Also the revert of
+    // every T-LC-* row (the same env and argv, patches []).
+    M('P-LC-TRIGGERLESS', 'tree', LC_ENV, ['--smoke'], {
+        exit: 3, kind: 'nobreach',
+        lines: ['soak: INCONCLUSIVE -- scenario lane=LIFECYCLE missing=lc-two-regs', 'soak: INCONCLUSIVE -- scenario lane=LIFECYCLE missing=lc-off-sibling'],
+        specs: ['INCONCLUSIVE scenario lane=LIFECYCLE missing=lc-two-regs'],
+    }),
     // T-cov-*: the coverage gate (gates.mjs:384), each at the smoke shape. BATCH's cov-off switch compares DECODED
     // values with Object.is (lanes/batch.mjs put, the test scenarios.mjs:236 counts a revert by), so it leaves 0
     // revert-after-mid-read hits per smoke run (burst 13; the code compare it replaced leaked 18 through the
@@ -626,6 +660,37 @@ export const CONTROLS = deepFreeze([
     M('T-hook-mirror', 'headpatched', { SOAK_LANES: 'HOOK' }, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O8 lane=HOOK sig=mirror-links known=none'],
     }, { patches: [[A_HOOK_OP4, '        /* MUSTFAIL T-hook-mirror: mutationHook(4, ...) removed */\n']] }),
+    // T-LC-* (b112 B5, PLAN-R2-lifecycle CONTROLS): one-line mutants of the live tree's lifecycle fire / off paths, each
+    // at P-LC-TRIGGERLESS's shape (cov-off:lc-two-regs, so no DIV-D3 head can fire: every BREACH is the mutant's,
+    // known=none). Replacements = the b110 pre-built mutants (.handoff/b110-evidence/r2/anchors/, sha256/8 listed).
+    // MEASURED b112 B5 (--smoke, .handoff/b112-evidence/B5/): every row exit 1; a row whose mutant also trips a second
+    // O7 sig spells that head out too (kind 'explained' cannot hold it: a known=none BREACH is never explained).
+    // dupconn (7610f51d): onConnect fires twice -> one head, spurious-connect.
+    M('T-LC-dupconn', 'tree', LC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=spurious-connect known=none'],
+    }, { patches: [[A_LC_CONN, '        try { e.onConnect(); e.onConnect(); ok = true; } finally {   /* MUSTFAIL T-LC-dupconn: onConnect fired twice */\n']] }),
+    // dupdisc (3822a1a8): onDisconnect fires twice -> one head, spurious-disconnect.
+    M('T-LC-dupdisc', 'tree', LC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=spurious-disconnect known=none'],
+    }, { patches: [[A_LC_DISC, '        try { e.onDisconnect(); e.onDisconnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }   /* MUSTFAIL T-LC-dupdisc: onDisconnect fired twice */\n']] }),
+    // dropconn (7f2aedeb): onConnect removed, `ok = true` kept (the finally still announces op 3) -> missed-connect, and
+    // the later disconnect of that never-connected pair reads spurious-disconnect (replay LIFECYCLE:0:0xf89476f8).
+    M('T-LC-dropconn', 'tree', LC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [],
+        specs: ['oracle=O7 lane=LIFECYCLE sig=missed-connect known=none', 'oracle=O7 lane=LIFECYCLE sig=spurious-disconnect known=none'],
+    }, { patches: [[A_LC_CONN, '        try { /* MUSTFAIL T-LC-dropconn: e.onConnect() removed */ ok = true; } finally {\n']] }),
+    // dropdisc (f7cec030): onDisconnect removed -> missed-disconnect (replay LIFECYCLE:0:0xfbf44357); the still-connected
+    // pair also reads stale-off (the FIRST head, LIFECYCLE:0:0xba99e6ce) and spurious-connect on reconnect (cycle 1).
+    M('T-LC-dropdisc', 'tree', LC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [],
+        specs: ['oracle=O7 lane=LIFECYCLE sig=missed-disconnect known=none', 'oracle=O7 lane=LIFECYCLE sig=stale-off known=none',
+            'oracle=O7 lane=LIFECYCLE sig=spurious-connect known=none'],
+    }, { patches: [[A_LC_DISC, '        try { /* MUSTFAIL T-LC-dropdisc: e.onDisconnect() removed */ } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }\n']] }),
+    // offgen (2ca90fa2): off() without the #40 gen-stamp test drops the slot's next resident's registration -> one
+    // head, stale-off (dead target).
+    M('T-LC-offgen', 'tree', LC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=stale-off known=none'],
+    }, { patches: [[A_LC_OFFGEN, '            if (/* MUSTFAIL T-LC-offgen: #40 gen-stamp test removed */ lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;\n']] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375

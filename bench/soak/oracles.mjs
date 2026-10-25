@@ -14,6 +14,10 @@
  *   O5   checkCounts / checkTeardown   per-kind counts, activeNodes, activeLinks in [E, E + 0] (G4)
  *   O6   checkEscape     the escape set of one guarded call equals the predicted set (tokens, CycleError)
  *   O7a  checkFire       a lifecycle callback fires only for a live registration on a live target
+ *   O7   checkLcFire     (LIFECYCLE lane, S3 R2) a fire matches the registration's phase: onConnect only while
+ *                        disconnected, onDisconnect only while connected (lanes/lifecycle.mjs calls it after O7a passes)
+ *        checkLcRest     at rest, each live registration on a live target agrees with model.sinkCount (connected iff
+ *                        > 0), and a target whose sink set did not move saw no fire (exec.mjs lcAtRest, exec.lc !== null)
  *   OB   checkBatchRun   an effect that already ran re-runs while a batch is open (exec decides when; the
  *                        first run of an effect created inside a batch is synchronous by design, p2)
  *   O8   checkHookFire   a graph-mutation event reached the TOP LIVE listener, never an off'd or a lower one
@@ -24,9 +28,9 @@
  */
 
 import { Model } from './model.mjs';
-import { SoakThrow, sameValue, showValue } from './kinds.mjs';
+import { SoakThrow, sameValue, showValue, specRefs } from './kinds.mjs';
 
-export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'OB', 'O8']);
+export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8']);
 
 /** The sig vocabulary (SPEC-B section 6; escape-<origin> / escape-<Ctor> are open families). */
 export const SIGS = Object.freeze({
@@ -37,6 +41,7 @@ export const SIGS = Object.freeze({
     O5: ['node-count', 'kind-count', 'link-count', 'teardown-residue'],
     O6: ['escape-*', 'expected-escape-missing', 'equals-mutated', 'escape-empty'],
     O7a: ['dead-registration-fire'],
+    O7: ['spurious-connect', 'missed-disconnect', 'stale-off', 'spurious-disconnect', 'missed-connect'],   // S3-D5 order
     OB: ['batch-early-run'],
     O8: ['ghost-listener', 'mirror-links'],
 });
@@ -218,6 +223,92 @@ export function checkFire(model, r, kind) {
     if (why === null) return null;
     const g = model.regs[r];
     return { oracle: 'O7a', sig: 'dead-registration-fire', detail: cut((kind || 'callback') + ' fired for registration r' + r + ' on #' + (g ? g.target : '?') + ': ' + why) };
+}
+
+/**
+ * O7 for one fire of LIFECYCLE registration r (lanes/lifecycle.mjs, only after O7a checkFire passed). lc: the world's
+ * LcState; lc.regs[r] = { r, target, live, phase (-1 | 0 | 1), fires[], co, sibOff, deadOff }. Pushes kind onto
+ * fires (the first FIRE_KEEP kinds since the last rest). A phase -1 registration (made inside a callback) takes the
+ * phase the fire implies. Otherwise onConnect while connected = spurious-connect, onDisconnect while disconnected =
+ * spurious-disconnect (the phase is left as it was); a legal fire flips the phase. Returns null or a failure.
+ */
+const FIRE_KEEP = 16;
+
+export function checkLcFire(lc, r, kind) {
+    const g = lc.regs[r];
+    // a fire for a registration LcState never recorded is a harness bug (O7a passed, so the model holds it): fail closed
+    if (g === undefined) throw new Error('checkLcFire: fire ' + kind + ' for registration r' + r + ' that LcState never recorded');
+    if (g.fires.length < FIRE_KEEP) g.fires.push(kind);
+    const on = kind === 'onConnect';
+    if (g.phase === -1) { g.phase = on ? 1 : 0; return null; }
+    if (on && g.phase === 1) return { oracle: 'O7', sig: 'spurious-connect', detail: cut('r' + r + ' on #' + g.target + ': onConnect while connected') };
+    if (!on && g.phase === 0) return { oracle: 'O7', sig: 'spurious-disconnect', detail: cut('r' + r + ' on #' + g.target + ': onDisconnect while disconnected') };
+    g.phase = on ? 1 : 0;
+    return null;
+}
+
+/**
+ * O7 at rest (exec.mjs lcAtRest). For every live registration on a live target (a disposed target ends its
+ * registration: no disconnect is owed, L4), with sinks = model.sinkSet(target) and k = its size:
+ *   phase -1, no fire   adopts (k > 0 ? 1 : 0) and reports nothing (stated weakness: one transition can be missed)
+ *   (a) quiet target    fires since the last rest, the sink set equals the previous rest's (lc.prev; key absent = the
+ *                       target did not exist then) and no node that ran this op is a sink or reads the target directly
+ *                       (spec refs: a run that linked and dropped it inside the op) -> spurious-<first kind>
+ *   (b) phase != (k > 0)  missed-connect / missed-disconnect, + ' (co-registered r<M>)' when g.co is non-empty
+ *   (c) (b) after an off  stale-off: g.sibOff (an off of another registration on the same target) first, else g.deadOff
+ *                       (an off on a dead target that died before this target was created)
+ * One failure per registration. Returns a list of { oracle: 'O7', sig, detail, r } (empty = consistent). ran: the
+ * Set of node indices whose body ran this op. Mutates only the phase of a phase -1 registration.
+ */
+export function checkLcRest(lc, model, memo, ran) {
+    const out = [];
+    const regs = lc.regs;
+    for (let r = 0; r < regs.length; r++) {
+        const g = regs[r];
+        if (g === undefined || !g.live) continue;
+        const t = g.target;
+        const tn = model.n[t];
+        if (tn === undefined || !tn.live) continue;
+        const sinks = model.sinkSet(t, memo);
+        const k = sinks.size;
+        if (g.phase === -1) {
+            if (g.fires.length === 0) g.phase = k > 0 ? 1 : 0;
+            continue;
+        }
+        const head = 'r' + r + ' on #' + t + ': ';
+        if (g.fires.length > 0 && lcQuiet(lc, model, t, sinks, ran)) {
+            const f = g.fires[0];
+            out.push({ oracle: 'O7', sig: f === 'onConnect' ? 'spurious-connect' : 'spurious-disconnect', detail: cut(head + f + ' on a quiet target (sinks ' + k + ')'), r });
+            continue;
+        }
+        if (g.phase === (k > 0 ? 1 : 0)) continue;
+        const base = head + (g.phase === 1 ? 'connected' : 'disconnected') + ' at rest, sinks ' + k;
+        if (g.sibOff !== null) {
+            out.push({ oracle: 'O7', sig: 'stale-off', detail: cut(base + ' after off of r' + g.sibOff.r + ' on #' + t + ' (sibling) at step ' + g.sibOff.step), r });
+        } else if (g.deadOff !== null) {
+            const d = g.deadOff;
+            const who = d.r !== undefined ? 'off of r' + d.r + ' on #' + d.d : 'a late off';
+            out.push({ oracle: 'O7', sig: 'stale-off', detail: cut(base + ' after ' + who + ' (dead target) at step ' + d.step), r });
+        } else {
+            let co = '';
+            for (const m of g.co) { co = ' (co-registered r' + m + ')'; break; }
+            out.push({ oracle: 'O7', sig: g.phase === 1 ? 'missed-disconnect' : 'missed-connect', detail: cut(base + co), r });
+        }
+    }
+    return out;
+}
+
+/** Rule (a): target t's sink set did not move since the last rest and no run this op could have linked it. */
+function lcQuiet(lc, model, t, sinks, ran) {
+    const prev = lc.prev.get(t);
+    if (prev === undefined || prev.size !== sinks.size) return false;
+    for (const s of sinks) if (!prev.has(s)) return false;
+    for (const j of ran) {
+        if (sinks.has(j)) return false;
+        const nd = model.n[j];
+        if (nd !== undefined && nd.spec !== null && nd.spec.k !== undefined && specRefs(nd.spec).indexOf(t) !== -1) return false;
+    }
+    return true;
 }
 
 /**

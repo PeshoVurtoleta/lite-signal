@@ -52,8 +52,9 @@ const GAP_COVERED = [
 ];
 // CHECKS holds at least this many ids (31 at burst 10; 34 at burst 27: gate:wrap, cause:wrap-crossing,
 // cause:wrap-unmeasured; 35 at burst 68: lane:WIE; 36 at burst 81: gate:rss; 40 at burst 93: lane:HOOK, oracle:O8,
-// sig:O8:ghost-listener, sig:O8:mirror-links). A dropped id is a lost tooth; raise it when one lands.
-const CHECKS_MIN = 40;
+// sig:O8:ghost-listener, sig:O8:mirror-links; 47 at burst 112: lane:LIFECYCLE, oracle:O7 and the five sig:O7:* ids).
+// A dropped id is a lost tooth; raise it when one lands.
+const CHECKS_MIN = 47;
 
 const copy = (x) => structuredClone(x);
 const live = (over) => audit(Object.assign({ controls: CONTROL_NAMES.slice(), ceiling: GAPS_CEILING.slice(), max: GAPS_MAX }, over || {}));
@@ -72,7 +73,7 @@ test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 23-n
     assert.deepEqual(live(), []);
 });
 
-test('teeth a: GAPS cover exactly the literal 11 ids; CHECKS holds >= 40 ids (a tooth never quietly becomes a gap)', () => {
+test('teeth a: GAPS cover exactly the literal 11 ids; CHECKS holds >= 47 ids (a tooth never quietly becomes a gap)', () => {
     assert.equal(GAP_COVERED.length, 11);
     assert.deepEqual(coveredBy(GAPS), GAP_COVERED.slice().sort());
     assert.ok(Object.keys(CHECKS).length >= CHECKS_MIN, 'CHECKS ids ' + Object.keys(CHECKS).length + ' < ' + CHECKS_MIN);
@@ -680,4 +681,73 @@ test('teeth o: T-flushdrop is pinned: headpatched GRAPH smoke, flushEffects drop
     const fd = ctl.find((x) => x.name === 'T-flushdrop');
     fd.expect.specs = fd.expect.specs.map((s) => s.replace('lane=GRAPH', 'lane=BATCH'));
     assert.deepEqual(pairing(CHECKS, ctl), ['lane:GRAPH: T-flushdrop -- no BREACH spec naming lane=GRAPH']);
+});
+
+/* ---- p. the LIFECYCLE teeth (b112 B5, PLAN-R2-lifecycle CONTROLS) ---------------------------------------------- */
+
+const LC_ROWS = [
+    // [name, the full-line anchor in the live Signal.js, the sig its smoke run must head]
+    ['T-LC-dupconn', '        try { e.onConnect(); ok = true; } finally {\n', 'spurious-connect'],
+    ['T-LC-dupdisc', '        try { e.onDisconnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }\n', 'spurious-disconnect'],
+    ['T-LC-dropconn', '        try { e.onConnect(); ok = true; } finally {\n', 'missed-connect'],
+    ['T-LC-dropdisc', '        try { e.onDisconnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }\n', 'missed-disconnect'],
+    ['T-LC-offgen', '            if (node.gen === g && lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;\n', 'stale-off'],
+];
+const LC_ENV = { SOAK_LANES: 'LIFECYCLE', SOAK_MUSTFAIL: 'cov-off:lc-two-regs' };
+
+test('teeth p: the LIFECYCLE ids have teeth -- L-LC-preb33, P-LC-TRIGGERLESS and five one-line T-LC-* tree mutants; each pairs', () => {
+    const NEW = ['lane:LIFECYCLE', 'oracle:O7', 'sig:O7:spurious-connect', 'sig:O7:spurious-disconnect', 'sig:O7:missed-connect',
+        'sig:O7:missed-disconnect', 'sig:O7:stale-off'];
+    const u = universe();
+    for (const id of NEW) {
+        assert.ok(u.includes(id), id + ' is a judged id');
+        assert.ok(Array.isArray(CHECKS[id]) && CHECKS[id].length >= 1, id + ' has a CHECKS control');
+    }
+    assert.ok(CHECKS['sig:O7a:dead-registration-fire'].includes('L-LC-preb33'));
+    assert.ok(CHECKS['sig:O7:stale-off'].includes('L-LC-preb33'));
+    assert.ok(CHECKS['cause:scenario'].includes('P-LC-TRIGGERLESS'));
+    for (const id of ['lane:LIFECYCLE', 'oracle:O7']) for (const n of ['L-LC-preb33'].concat(LC_ROWS.map((r) => r[0]))) assert.ok(CHECKS[id].includes(n), id + ' -> ' + n);
+    // the pass / revert control: tree unpatched at the T-LC shape, exit 3 on the two measured scenario lines
+    const p = CONTROLS.find((x) => x.name === 'P-LC-TRIGGERLESS');
+    assert.deepEqual([p.run, p.base, p.env, p.argv, p.patches, p.arm, p.expect.exit, p.expect.kind], ['main', 'tree', LC_ENV, ['--smoke'], [], null, 3, 'nobreach']);
+    assert.deepEqual(p.expect.lines, ['soak: INCONCLUSIVE -- scenario lane=LIFECYCLE missing=lc-two-regs', 'soak: INCONCLUSIVE -- scenario lane=LIFECYCLE missing=lc-off-sibling']);
+    // the preb33 row: unpatched, long, explained by exactly the two registry ids
+    const l = CONTROLS.find((x) => x.name === 'L-LC-preb33');
+    assert.ok(LONG_RE.test(l.name));
+    assert.deepEqual([l.base, l.patches, l.expect.exit, l.expect.kind, l.expect.known], ['preb33', [], 1, 'explained', ['DIV-D3-independent-registrations', 'DIV-F7']]);
+    assert.deepEqual(l.expect.specs, ['oracle=O7 lane=LIFECYCLE sig=stale-off', 'oracle=O7 lane=LIFECYCLE sig=dead-registration-fire']);
+    // each mutant: one exactly-once full-line anchor in the live Signal.js, one line changed, P-LC-TRIGGERLESS's shape
+    // LC_ROWS is a hand list: it must name every T-LC-* row the registry holds, in order
+    assert.deepEqual(CONTROLS.filter((x) => x.name.indexOf('T-LC-') === 0).map((x) => x.name), LC_ROWS.map((r) => r[0]));
+    const base = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
+    for (const [name, anchor, sig] of LC_ROWS) {
+        const c = CONTROLS.find((x) => x.name === name);
+        assert.ok(c && SHORT_RE.test(name), name + ' exists in the short battery');
+        assert.deepEqual([c.run, c.base, c.env, c.argv, c.arm, c.expect.exit, c.expect.kind], ['main', 'tree', LC_ENV, ['--smoke'], null, 1, 'match'], name);
+        assert.deepEqual(validSpec(c), [], name);
+        assert.equal(c.patches.length, 1, name);
+        assert.equal(c.patches[0][0], anchor, name + ' anchors the full line');
+        assert.equal(base.split(anchor).length - 1, 1, name + ': the anchor occurs exactly once in Signal.js');
+        assert.equal(buildKernel(c).src, base.replace(anchor, () => c.patches[0][1]), name + ': the kernel = Signal.js with exactly that line replaced');
+        const a = base.split('\n'), b = buildKernel(c).src.split('\n');
+        assert.equal(a.length, b.length, name + ': a one-line mutant');
+        assert.equal(a.filter((x, i) => x !== b[i]).length, 1, name + ': exactly one line differs');
+        assert.equal(c.expect.specs[0], 'oracle=O7 lane=LIFECYCLE sig=' + sig + ' known=none', name + ' heads its own sig');
+        assert.ok(c.expect.specs.every((s) => s.endsWith(' known=none')), name + ': no D3 head under cov-off:lc-two-regs');
+    }
+    // the bare gen test is ambiguous in Signal.js: never an anchor
+    assert.equal(base.split('node.gen === g').length - 1, 4);
+    assert.deepEqual(pairing(CHECKS, CONTROLS), []);
+    // must-fail: a T-LC row whose spec names another sig does not back its sig id; one naming another lane not lane:LIFECYCLE
+    const ctl = copy(CONTROLS);
+    const off = ctl.find((x) => x.name === 'T-LC-offgen');
+    off.expect.specs = ['oracle=O7 lane=LIFECYCLE sig=missed-connect known=none'];
+    assert.deepEqual(pairing(CHECKS, ctl), ['sig:O7:stale-off: T-LC-offgen -- no BREACH spec naming oracle=O7 with sig in stale-off']);
+    off.expect.specs = ['oracle=O7 lane=HOOK sig=stale-off known=none'];
+    assert.deepEqual(pairing(CHECKS, ctl), ['lane:LIFECYCLE: T-LC-offgen -- no BREACH spec naming lane=LIFECYCLE']);
+    // must-fail: the registry without the LIFECYCLE CHECKS leaves all seven ids uncovered
+    const c2 = copy(CHECKS);
+    for (const id of NEW) delete c2[id];
+    const probs = live({ checks: c2 });
+    for (const id of NEW) hasProblem(probs, 'uncovered: ' + id + ' has no CHECKS control, no GAP and no UNREACHABLE proof');
 });

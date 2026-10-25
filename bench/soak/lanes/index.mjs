@@ -14,6 +14,7 @@ import { ERROR } from './error.mjs';
 import { NEST } from './nest.mjs';
 import { WIE } from './wie.mjs';
 import { HOOK } from './hook.mjs';
+import { LIFECYCLE } from './lifecycle.mjs';
 import { SCENARIOS } from '../scenarios.mjs';
 import { LANE_LIMIT, remapCollision } from '../seeds.mjs';
 
@@ -41,8 +42,9 @@ export function checkLaneIndex(table, roster) {
     }
 }
 
-export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK']);   // HOOK (index 6) last: S3 R1
-const BY_NAME = { GRAPH, BATCH, ERROR, NEST, WIE, HOOK };
+// HOOK (index 6) landed S3 R1; LIFECYCLE (index 5) S3 R2 (b111) is appended last, so the span stays 7
+export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE']);
+const BY_NAME = { GRAPH, BATCH, ERROR, NEST, WIE, HOOK, LIFECYCLE };
 checkLaneIndex(LANE_INDEX, ROSTER);
 
 /**

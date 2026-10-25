@@ -85,6 +85,8 @@ export const LANE_KERNELS = Object.freeze({
     NEST: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
     // HOOK (S3 R1, b93): red-by-design on lite-1.5.2 and tree (DIV-F9 ghost-listener, header); headpatched only
     HOOK: Object.freeze(['headpatched']),
+    // LIFECYCLE (S3 R2, b111 A1 Q1): tree only while DIV-D3 is open; ends with the A5 rung / P-LC-tree
+    LIFECYCLE: Object.freeze(['tree']),
 });
 /** The kernel ids that cut `lane` (a fresh array). */
 export const kernelsFor = (lane) => (own(LANE_KERNELS, lane) ? LANE_KERNELS[lane].slice() : Object.keys(KERNELS));
@@ -153,7 +155,9 @@ const PINNED = Object.freeze([
 export { PINNED };
 // A lane's own descriptor file is pinned only while the lane is rostered (b67 B2a Q2): pinning lanes/wie.mjs before
 // the roster flip would turn (p) red with no cut to clear it.
-export const LANE_PINS = Object.freeze({ WIE: 'bench/soak/lanes/wie.mjs', HOOK: 'bench/soak/lanes/hook.mjs' });
+export const LANE_PINS = Object.freeze({
+    WIE: 'bench/soak/lanes/wie.mjs', HOOK: 'bench/soak/lanes/hook.mjs', LIFECYCLE: 'bench/soak/lanes/lifecycle.mjs',
+});
 /** PINNED + the pins of the rostered lanes (roster order). */
 export const pinnedFor = (roster) => PINNED.concat(roster.filter((l) => own(LANE_PINS, l)).map((l) => LANE_PINS[l]));
 
