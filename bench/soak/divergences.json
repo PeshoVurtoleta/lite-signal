@@ -58,23 +58,31 @@
       "description": "A dependency pre-walk has no catch, so a throwing computed dependency escapes it. EFFECT pre-walk: the token escapes set()/batch() unpredicted and the effect stays queued forever (O6 escape-computed + O4 effect-dead in the same step). COMPUTED pre-walk (burst 53 triage, PLAN-F-b33-1 N19; .handoff/b53-evidence/triage-SUMMARY.md, repro-a / repro-b): the token escapes an intermediate computed's pre-walk, so it neither re-runs nor bumps its version; the reader records the error, and on recovery the intermediate returns its old value, the equality cutoff keeps its version, and the reader is never refreshed: an effect stays dead with a stale ERR(computed:N) on the ENGINE side (standalone O4, no O6 in the step), a computed reader keeps a stale cached ERR(computed:N) (O1c computed-err-mismatch, and O2 glitch in a body that reads it). The reader may also get the error as a CACHED rethrow (pullComputed fast path: the throwing dependency already ran this version, so it runs no body); the soak tagger counts throw-dep-computed-prewalk only at the end of a body frame, so it misses that path (b53 t2 triage, N19.6; a tagger gap, and the tag is world-level, so it is not causal anyway). The standalone shapes therefore need a world that carries recovery-after-throw and NOT revert-after-mid-read (that world is DIV-F5's), with no throw-dep-computed-prewalk clause. Same root and same fix (FIX-T at BOTH pre-walk sites, as headpatched); ships in 1.5.2. Still NOT matched: a standalone O4 with ERR only on the model side, an O1c computed-mismatch (non-error), an O1e effect-stale, an O2 glitch or O1c computed-err-mismatch whose engine side is not ERR(computed:N), and any of these shapes in a world that lacks recovery-after-throw or carries revert-after-mid-read."
     },
     {
-      "id": "DIV-F7", "kind": "fix", "finding": "F7", "since": "1.5.2", "fixedIn": null, "fixBy": "A5",
-      "decision": "fix (FIX-O) and contract D3 (DIV-D3-independent-registrations)",
-      "engines": ["lite"], "lanes": ["NEST"], "oracles": ["O7a"], "sigs": ["dead-registration-fire"],
+      "id": "DIV-F7", "kind": "fix", "finding": "F7", "since": "1.5.2", "fixedIn": "0v-#40", "fixBy": "0v",
+      "decision": "fix (FIX-O) and contract D3 (DIV-D3-independent-registrations). fixed: fixedIn 0v-#40 (73d6a90, burst 62 unit 0v: disposeNode drops observeObservers hooks via dropLifecycleHooks; LEDGER #40)",
+      "engines": ["lite"], "lanes": ["NEST", "LIFECYCLE"], "oracles": ["O7a", "O7"], "sigs": ["dead-registration-fire", "stale-off"],
       "ops": [], "scen": [], "worldScen": [], "priorScen": [],
       "shapes": [
-        { "pair": "O7a:dead-registration-fire", "detail": "^on(?:Connect|Disconnect) fired for registration r\\d+ on #(\\d+): target #\\1 disposed$" }
+        { "pair": "O7a:dead-registration-fire", "detail": "^on(?:Connect|Disconnect) fired for registration r\\d+ on #(\\d+): target #\\1 disposed$" },
+        { "pair": "O7:stale-off", "detail": "^r\\d+ on #\\d+: (?:connected at rest, sinks 0|disconnected at rest, sinks [1-9]\\d*) after off of r\\d+ on #\\d+ \\(dead target\\) at step \\d+$" }
       ],
       "attribution": null, "pending": null, "conformanceCases": [], "expectedThrow": null,
       "description": "observeObservers registrations are keyed by the pooled node: a recycled slot inherits the dead target's callbacks. A fire after off() ('registration off') is a different defect and is not matched."
     },
     {
-      "id": "DIV-F8", "kind": "fix", "finding": "F8", "since": "1.5.2", "fixedIn": null, "fixBy": "A1",
-      "decision": "fix: subsumed by the F15 cursor repair (VERIFICATION section 4, FIX-Q)",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
-      "pending": "S1 NEST shows it only inside the F15 class (TypeError headSub, every world tagged saved-cursor-hazard): classified DIV-F15; a separable lifecycle-callback lane is S3",
+      "id": "DIV-F8", "kind": "fix", "finding": "F8", "since": "1.5.2", "fixedIn": "A1.4", "fixBy": "A1",
+      "decision": "fix: subsumed by the F15 cursor repair (VERIFICATION section 4, FIX-Q). fixed: fixedIn A1.4 (fc1f826, A1 cursor safety: severTail pop-front, Signal.js:1131 'A1.4, F8'); LIFECYCLE reaches it on rev152 via L7a and L7c (b111 B2d / B2e)",
+      "engines": ["lite"], "lanes": ["LIFECYCLE"], "oracles": ["O6", "O5", "O7"], "sigs": ["escape-TypeError", "link-count", "node-count", "missed-disconnect"],
+      "ops": [], "scen": [], "worldScen": [], "priorScen": [],
+      "shapes": [
+        { "pair": "O6:escape-TypeError", "detail": "^engine error escaped: TypeError: Cannot set properties of null \\(setting 'headSub'\\)$" },
+        { "pair": "O5:link-count", "detail": "^activeLinks engine=\\d+ expected=\\d+ \\(slack 0\\)$", "with": ["O6:escape-TypeError"] },
+        { "pair": "O5:node-count", "detail": "^activeNodes engine=\\d+ model=\\d+$", "with": ["O6:escape-TypeError"] },
+        { "pair": "O7:missed-disconnect", "detail": "^r\\d+ on #\\d+: connected at rest, sinks 0$", "with": ["O6:escape-TypeError"] }
+      ],
+      "attribution": null, "pending": null,
       "conformanceCases": [], "expectedThrow": null,
-      "description": "A lifecycle callback that disposes another dependency mid-walk crashes disposeNode/severTail (FINDINGS F8)."
+      "description": "A lifecycle callback that disposes another dependency mid-walk crashes disposeNode/severTail (FINDINGS F8). S1 NEST shows it only inside the F15 class (TypeError headSub, every world tagged saved-cursor-hazard), classified DIV-F15; LIFECYCLE (b112 B4) reaches it on rev152 as its own head."
     },
     {
       "id": "DIV-F9", "kind": "fix", "finding": "F9", "since": "1.5.2", "fixedIn": null, "fixBy": "A5",
@@ -179,12 +187,18 @@
       "description": "Flips llms.txt 'Safe to call mid-flight' and test/12-coverage's mid-flush destroy pin (PLAN-1.6.0 D2)."
     },
     {
-      "id": "DIV-D3-independent-registrations", "kind": "contract", "finding": "F7", "since": "1.6.0", "fixedIn": null, "fixBy": null,
+      "id": "DIV-D3-independent-registrations", "kind": "contract", "finding": "F7", "since": "1.6.0", "fixedIn": null, "fixBy": "A5",
       "decision": "D3: every observeObservers registration is independent; replaces the merge-into-one-entry behaviour",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
-      "pending": "S3 O7 (spurious-connect, missed-disconnect, stale-off) and the conformance per-test diff",
+      "engines": ["lite"], "lanes": ["LIFECYCLE"], "oracles": ["O7"], "sigs": ["missed-connect", "missed-disconnect", "stale-off"],
+      "ops": [], "scen": [], "worldScen": [], "priorScen": [],
+      "shapes": [
+        { "pair": "O7:missed-connect", "detail": "^r\\d+ on #\\d+: disconnected at rest, sinks [1-9]\\d* \\(co-registered r\\d+\\)$" },
+        { "pair": "O7:missed-disconnect", "detail": "^r\\d+ on #\\d+: connected at rest, sinks 0 \\(co-registered r\\d+\\)$" },
+        { "pair": "O7:stale-off", "detail": "^r\\d+ on #(\\d+): (?:connected at rest, sinks 0|disconnected at rest, sinks [1-9]\\d*) after off of r\\d+ on #\\1 \\(sibling\\) at step \\d+$" }
+      ],
+      "attribution": null, "pending": null,
       "conformanceCases": [], "expectedThrow": null,
-      "description": "A second registration no longer overwrites the first; an unsubscribe removes only its own registration."
+      "description": "A second registration no longer overwrites the first; an unsubscribe removes only its own registration. LIFECYCLE O7 (b112 B4): the tree's merge behaviour reads missed-connect / missed-disconnect with a ' (co-registered rM)' attribution and stale-off after an off of a SIBLING registration on the same target (#N twice); a stale-off after an off on a dead target is DIV-F7, a plain (unattributed) missed-* is not matched. Structural allowance A1 Q3 (generator rule of lanes/lifecycle.mjs, not a gen.mjs GEN_RULES id, so it has no allowances.structural slot): no lifecycle callback throws in R2; follow-up R2b (L11 probe: throwing lifecycle callbacks; O6 predicts the escape). Still open: the conformance per-test diff; spurious-connect is not matched."
     },
     {
       "id": "DIV-D4-id-window", "kind": "contract", "finding": "F14", "since": "1.6.0", "fixedIn": null, "fixBy": "A10/A7",

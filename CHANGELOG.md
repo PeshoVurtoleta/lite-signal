@@ -15,6 +15,31 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md`, `llms.txt` and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
 
+### Tests / Docs -- soak: LIFECYCLE lane + O7 (R2, b110-b112)
+
+Dev-only (`bench/soak/`, not shipped). `Signal.js` is unchanged (sha256/8 0f75866f); no engine claim is made here.
+- New LIFECYCLE lane, the 7th rostered lane (appended last in `lanes/index.mjs` ROSTER; `LANE_INDEX.LIFECYCLE` = 5, HOOK = 6).
+  It drives `observeObservers` `onConnect` / `onDisconnect` registrations (ops `lreg` / `loff`, several registrations per
+  handle, callbacks that dispose, register, unregister and write) over a GRAPH-vocabulary world with no batch.
+- Oracles: the new O7 (phase model, five sigs: `spurious-connect`, `missed-disconnect`,
+  `stale-off`, `spurious-disconnect`, `missed-connect`; checked at each fire and at rest),
+  run after the existing O7a (fire time, `dead-registration-fire`).
+- Generator shapes: L7a (a callback disposes the walk's next source), L7c (a retrack trim whose first `onDisconnect` disposes the
+  trim's next link; the one shape whose effect body is not a GRAPH kind: a try-mode `outer` body switched to early exit) and
+  L8c (a mirror pair of registrations that off each other).
+  No lifecycle callback throws in this rung (a follow-up, R2b, owns throwing callbacks).
+- Calibrated on the tree kernel only; LIFECYCLE is exempt in test/41 while DIV-D3 stays open.
+- Divergences: DIV-D3-independent-registrations is now matched on LIFECYCLE; by maintainer ruling (b112) DIV-F7's `fixedIn`
+  is set to 0v-#40 (73d6a90) and DIV-F8's to A1.4 (fc1f826): the soak registry's record of the rung after which the tree no
+  longer shows the shape; the A1 repair's own entry still waits for its campaign (intro above).
+- Seven must-fail controls: L-LC-preb33, P-LC-TRIGGERLESS, T-LC-dupconn, T-LC-dupdisc, T-LC-dropconn, T-LC-dropdisc,
+  T-LC-offgen.
+- `soak:parity` now pins 47 files (+ `lanes/lifecycle.mjs`, `adapters/contract.mjs`). The timed calibration recut (b111; one
+  run, 2026-10-25, Node v26.8.2, Apple M4 Pro, quiet-lock) took 998 s wall (`seconds` 997 in soak-calibration.json); launched
+  QUIET (load1 3.06, baseline 2.21), load1 6.67 at the end. REPORTED tier: it gates nothing and makes no speed claim.
+Plan and evidence: `.handoff/PLAN-R2-lifecycle.md` (addenda A1-A4, AD5-AD9); `audit/2026-10-07/verification/SPEC-B.md`
+addendum 13.
+
 ### Tests / Docs -- LEDGER #43 closed, not an engine bug (b107)
 
 The b101 finding F-b101-1 ("restore re-runs an effect once more than live") was a harness error, not an engine defect: the probe and

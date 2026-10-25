@@ -32,8 +32,8 @@
  *   - SOAK_NEARWRAP (nearwrap.mjs, zero:k / sign:k): a kernel knob (it presets the census counters near a
  *     ceiling), not a judged id. Its end-to-end tooth is L-NW-hp-zero, a second lane:GRAPH control (headpatched at
  *     zero:8 breaches GRAPH through F29).
- *   - MUSTFAIL_MODES (config.mjs:106, cov-off): teeth knobs, the mechanism of the T-cov-* / P-NEST-TRIGGERLESS
- *     controls rather than a judged id; the parser is held by T-cfg-mustfail-unknown.
+ *   - MUSTFAIL_MODES (config.mjs:106, cov-off): teeth knobs, the mechanism of the T-cov-* / P-NEST-TRIGGERLESS /
+ *     P-LC-TRIGGERLESS / T-LC-* controls rather than a judged id; the parser is held by T-cfg-mustfail-unknown.
  *
  * COLD module. Kernel-free.
  */
@@ -87,6 +87,10 @@ export const CHECKS = deepFreeze({
     // b93 S3 R1c (PLAN-0s-s3-r1 TASK 9): rev152 heads `oracle=O8 lane=HOOK sig=ghost-listener known=DIV-F9` (F9, LIFO-only
     // off); T-hook-mirror (headpatched, freeLink's op-4 hook fire removed) heads `oracle=O8 lane=HOOK sig=mirror-links`
     'lane:HOOK': ['L-REV-HOOK', 'T-hook-mirror'],
+    // b112 B5 (PLAN-R2-lifecycle CONTROLS): preb33 heads `oracle=O7 lane=LIFECYCLE sig=stale-off known=DIV-F7` and
+    // `sig=dead-registration-fire known=DIV-F7` (+ three DIV-D3 heads); each T-LC-* tree mutant (cov-off:lc-two-regs)
+    // heads its own O7 sig known=none (.handoff/b112-evidence/B5/)
+    'lane:LIFECYCLE': ['L-LC-preb33', 'T-LC-dupconn', 'T-LC-dupdisc', 'T-LC-dropconn', 'T-LC-dropdisc', 'T-LC-offgen'],
     'gate:oracle': ['L-REV-152'],
     // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
     // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
@@ -114,6 +118,7 @@ export const CHECKS = deepFreeze({
     'oracle:O6': ['L-REV-152'],
     'oracle:O7a': ['L-REV-152'],
     'oracle:O8': ['L-REV-HOOK', 'T-hook-mirror'],
+    'oracle:O7': ['L-LC-preb33', 'T-LC-dupconn', 'T-LC-dupdisc', 'T-LC-dropconn', 'T-LC-dropdisc', 'T-LC-offgen'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
     'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
@@ -121,11 +126,16 @@ export const CHECKS = deepFreeze({
     'sig:O6:expected-escape-missing': ['L-REV-152'],
     'sig:O5:link-count': ['T-sever'],
     'sig:O6:escape-*': ['L-REV-152'],   // `oracle=O6 lane=ERROR sig=escape-computed`
-    'sig:O7a:dead-registration-fire': ['L-REV-152'],
+    'sig:O7a:dead-registration-fire': ['L-REV-152', 'L-LC-preb33'],   // L-LC-preb33 prints family oracle=O7
+    'sig:O7:spurious-connect': ['T-LC-dupconn'],
+    'sig:O7:spurious-disconnect': ['T-LC-dupdisc'],
+    'sig:O7:missed-connect': ['T-LC-dropconn'],
+    'sig:O7:missed-disconnect': ['T-LC-dropdisc'],
+    'sig:O7:stale-off': ['T-LC-offgen', 'L-LC-preb33'],
     'sig:O8:ghost-listener': ['L-REV-HOOK'],
     'sig:O8:mirror-links': ['T-hook-mirror'],
     'cause:interrupted': ['L-I1', 'L-I2'],
-    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS']),
+    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'P-LC-TRIGGERLESS']),
     'cause:check-floor': ['T-floor-BATCH'],
     // test/67 drives the same patch on live AND headpatched NEST and checks each line is inconclusiveLine('taint-skip')
     'cause:taint-skip': ['P-NEST-TAINT-HALF', TEST67],

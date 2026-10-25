@@ -31,6 +31,8 @@ export const SCENARIOS = Object.freeze([
     'wie-stale-effect', 'wie-stale-computed', 'wie-prewalk', 'wie-untrack', 'wie-write-before-read',
     // HOOK (S3 R1; lanes/hook.mjs, in the roster since R1b)
     'hook-multi', 'hook-non-lifo-off', 'hook-mirror-dispose', 'hook-recompute',
+    // LIFECYCLE (S3 R2; lanes/lifecycle.mjs, not rostered until R2 B3)
+    'lc-two-regs', 'lc-off-sibling', 'lc-late-off-recycle', 'lc-callback-dispose', 'lc-callback-register', 'lc-callback-off-sibling',
 ]);
 
 const DEEP_PULL_MIN = 16;
@@ -326,6 +328,40 @@ export class Detectors {
     /** An hoff of a live listener; above: a live listener sits above its target (a NON-LIFO off). */
     onHookOff(above) {
         if (above) this.count('hook-non-lifo-off');
+    }
+
+    /* ---- LIFECYCLE (called by lanes/lifecycle.mjs only: no other lane pays for them) ------------------ */
+
+    /**
+     * An lreg reached the engine call. others: live registrations already on the same LIVE target; inCb: made from
+     * inside a lifecycle callback.
+     *   lc-two-regs           the target now holds >= 2 live registrations (the DIV-D3 overwrite trigger)
+     *   lc-callback-register  the registration was made inside a lifecycle callback (phase-free, L8a)
+     */
+    onLcReg(others, inCb) {
+        if (others > 0) this.count('lc-two-regs');
+        if (inCb) this.count('lc-callback-register');
+    }
+
+    /**
+     * An loff of a live registration. siblings: other live registrations on the same LIVE target; recycled: the
+     * target is dead and a live registration sits on a node created after it died (L10: the off may hit the slot's
+     * new tenant); inCb: from inside a lifecycle callback.
+     *   lc-off-sibling           an off with a sibling registration live on the same target (L2 / L2b)
+     *   lc-late-off-recycle      the late off of a dead target with a newer node registered (L10)
+     *   lc-callback-off-sibling  lc-off-sibling, from inside a lifecycle callback (B0-2 shape, optional)
+     */
+    onLcOff(siblings, recycled, inCb) {
+        if (siblings > 0) {
+            this.count('lc-off-sibling');
+            if (inCb) this.count('lc-callback-off-sibling');
+        }
+        if (recycled) this.count('lc-late-off-recycle');
+    }
+
+    /** A lifecycle callback's armed action disposes a LIVE node (L7 shapes: mid connect / disconnect walk). */
+    onLcCallbackDispose() {
+        this.count('lc-callback-dispose');
     }
 
     /* ---- ERROR -------------------------------------------------------------------------------------- */

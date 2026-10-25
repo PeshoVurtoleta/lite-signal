@@ -282,6 +282,47 @@ export class Model {
         return total;
     }
 
+    /**
+     * O7 (S3 R2, lanes/lifecycle.mjs): the reverse link index, source -> Set of the LIVE observers whose link list
+     * holds it. Same source rule as expectedLinks: a live effect whose body never ran is charged the sources its
+     * body WOULD track now (evalBody, untracked reads excluded); a computed never pulled has no links (lazy); a
+     * pulled, unobserved computed keeps its links (p4 / L6). Built once per check call and kept in the CALLER's
+     * memo under the string key 'lc:sinks' (val() keys are node indices, so the two never collide).
+     */
+    sinkIndex(memo) {
+        const got = memo.get('lc:sinks');
+        if (got !== undefined) return got;
+        const idx = new Map();
+        for (let k = 0; k < this.n.length; k++) {
+            const nd = this.n[k];
+            if (nd === undefined || !nd.live || nd.t === 's') continue;
+            let list = nd.links;
+            if (list === null) {
+                if (nd.t !== 'e') continue;   // a computed never pulled has no links (lazy)
+                list = [];
+                for (const e of this.evalBody(k, memo).seen) if (!e.u) list.push(e.r);
+            }
+            for (let j = 0; j < list.length; j++) {
+                let s = idx.get(list[j]);
+                if (s === undefined) { s = new Set(); idx.set(list[j], s); }
+                s.add(k);
+            }
+        }
+        memo.set('lc:sinks', idx);
+        return idx;
+    }
+
+    /** The distinct LIVE observers of node i (sinkIndex). A fresh empty Set when i has none. memo: one check. */
+    sinkSet(i, memo) {
+        const s = this.sinkIndex(memo).get(i);
+        return s === undefined ? new Set() : s;
+    }
+
+    /** How many distinct LIVE observers node i has (O7: connected iff > 0). memo: one check. */
+    sinkCount(i, memo) {
+        return this.sinkSet(i, memo).size;
+    }
+
     addReg(r, target) {
         this.regs[r] = { r, target, live: true };
     }

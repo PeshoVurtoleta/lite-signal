@@ -241,7 +241,7 @@ test('model: owner rule kills children recursively; a disposed handle reads unde
 /* -- 4. G0 determinism ---------------------------------------------------------------------------------- */
 
 test('G0: the script is a pure function of (lane, seed); distinct seeds differ', () => {
-    assert.deepEqual(ROSTER, ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK']);
+    assert.deepEqual(ROSTER, ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE']);
     for (const d of LANES) {
         for (const seed of [1, 0x9e3779b9, 0xdeadbeef]) {
             const a = scriptJson(generateWorld(d, seed, { steps: 120 }));
@@ -367,7 +367,7 @@ const { createHash: qHash } = await import('node:crypto');
 const vm = await import('node:vm');
 const { MAX_DEPTH } = await import('../bench/soak/gen.mjs');
 const qScript = (ops, lane) => ({ genVersion: 1, lane: lane || 'GRAPH', seed: 1, large: false, covOff: null, flushPasses: null, ops });
-const ZERO_CHECKS = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, OB: 0, O8: 0 };
+const ZERO_CHECKS = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0 };
 const ZERO_SKIPS = { O1c: 0, O1e: 0, O2: 0, O4: 0 };
 
 // mutants (kinds.mjs normalizeEscape): `e.errors.length > 0` -> `> 1` (a one-leaf AggregateError stays

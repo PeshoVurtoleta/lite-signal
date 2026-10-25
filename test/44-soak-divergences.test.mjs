@@ -294,12 +294,14 @@ test('b70 DIV-F15 widening must-fails: another effect#, no O6 co-fail, an O6 wit
 });
 
 test('DIV-F7: a fire for a disposed target; near-misses -> null', () => {
-    assert.equal(known(rec('F7')), 'DIV-F7');
+    // DIV-F7 is FIXED (fixedIn 0v-#40, b112 B4): the matcher rows run as a named control kernel; the tree is null
+    assert.equal(knownFx(rec('F7')), 'DIV-F7');
+    assert.equal(classify(rec('F7')), null, 'tree: a fixed F7 fire is a regression');
     const off = rec('F7'); off.fails[0].detail = 'onConnect fired for registration r3 on #51: registration off';
-    assert.equal(classify(off), null);
+    assert.equal(classifyFx(off), null);
     const other = rec('F7'); other.fails[0].detail = 'onConnect fired for registration r3 on #51: target #52 disposed';
-    assert.equal(classify(other), null);
-    assert.equal(classify(rec('F7', { lane: 'GRAPH' })), null);
+    assert.equal(classifyFx(other), null);
+    assert.equal(classifyFx(rec('F7', { lane: 'GRAPH' })), null);
 });
 
 // ---- 3. DIV-F22 ---------------------------------------------------------------------------------------
@@ -881,4 +883,128 @@ test('b109 A3: the pre-fix 0c records classify null on the tree and DIV-F5 on a 
         assert.equal(classify(clone(BEFORE_0C[k])), null, 'tree ' + k);
         assert.equal(known(clone(BEFORE_0C[k]), FX()), 'DIV-F5', 'control kernel ' + k);
     }
+});
+
+// ---- 8. b112 B4: the LIFECYCLE lane (S3 R2, oracle O7) -- DIV-D3, DIV-F7 (dead target), DIV-F8 -------------
+// Independent oracle: the census detail strings (200 worlds per kernel, .handoff/b111-evidence/r2-b2d / r2-b2e /
+// r2-census census-*.txt, first world seed@step per head), never the registry regex source. Each row has a
+// known=none twin that changes ONE thing (attribution sibling <-> co-registered <-> dead target, oracle, lane).
+// LC_PLAIN is the oracles.mjs checkLcRest (b) line with no co attribution (the census prints it as [PLAIN] only;
+// its numbers are format-derived, not a verbatim world).
+const LC_D = {
+    // tree 0f75866f LIFECYCLE heads
+    MC: 'r0 on #12: disconnected at rest, sinks 1 (co-registered r2)',                                   // 0xfbf44357@66
+    MD: 'r25 on #101: connected at rest, sinks 0 (co-registered r39)',                                   // 0x570255ea@199
+    SS: 'r6 on #51: connected at rest, sinks 0 after off of r5 on #51 (sibling) at step 60',             // 0xba99e6ce@102
+    SS1: 'r9 on #83: disconnected at rest, sinks 1 after off of r10 on #83 (sibling) at step 92',        // preb33 0xf325a4d4@101 (r2-census)
+    // preb33 a5c64df9 / rev152 f8dd50f8 heads
+    SD: 'r16 on #78: connected at rest, sinks 0 after off of r15 on #75 (dead target) at step 96',       // 0xba99e6ce@97
+    FIRE: 'onConnect fired for registration r6 on #49: target #49 disposed',                             // preb33 0xe28e771@105
+    // rev152 F8 (L7a 0xf325a4d4@89, L7c 0xc110b69@86)
+    TE: "engine error escaped: TypeError: Cannot set properties of null (setting 'headSub')",
+    LINKS: 'activeLinks engine=90 expected=89 (slack 0)',                                                // 0xf325a4d4@89
+    NODES: 'activeNodes engine=81 model=80',                                                             // 0xf325a4d4@89
+    LINKS7C: 'activeLinks engine=104 expected=103 (slack 0)',                                            // 0xc110b69@86
+    PLAIN: 'r7 on #60: connected at rest, sinks 0',
+    // headpatched fa2871f0 B0-2 (feeds the A5 engine-rung brief; NOT a LIFECYCLE entry)
+    HP: "engine error escaped: TypeError: Cannot read properties of undefined (reading 'live')",
+};
+const lcf = (oracle, sig, detail) => ({ oracle, sig, detail });
+const lcRec = (fails, lane) => ({ engine: 'lite', lane: lane || 'LIFECYCLE', step: 66, op: 'set', fails, scen: [], worldScen: [] });
+const D3 = 'DIV-D3-independent-registrations';
+const lcK = (fails, inc, lane) => known(lcRec(fails, lane), { includeFixed: inc });
+const both = (fails, lane) => [lcK(fails, false, lane), lcK(fails, true, lane)];
+
+test('b112 B4: DIV-D3 / DIV-F7 / DIV-F8 entry fields (A1 ruling: D3 open fixBy A5; F7 fixedIn 0v-#40; F8 fixedIn A1.4)', () => {
+    const by = new Map(fresh().entries.map((e) => [e.id, e]));
+    const d3 = by.get(D3), f7 = by.get('DIV-F7'), f8 = by.get('DIV-F8');
+    assert.deepEqual([d3.lanes, d3.oracles, d3.sigs, d3.fixedIn, d3.fixBy, d3.pending], [['LIFECYCLE'], ['O7'], ['missed-connect', 'missed-disconnect', 'stale-off'], null, 'A5', null]);
+    assert.deepEqual([f7.lanes, f7.oracles, f7.sigs, f7.fixedIn, f7.fixBy], [['NEST', 'LIFECYCLE'], ['O7a', 'O7'], ['dead-registration-fire', 'stale-off'], '0v-#40', '0v']);
+    assert.match(f7.decision, /fixed: fixedIn 0v-#40 \(73d6a90, burst 62 unit 0v: disposeNode drops observeObservers hooks via dropLifecycleHooks; LEDGER #40\)$/);
+    assert.deepEqual([f8.lanes, f8.fixedIn, f8.fixBy, f8.pending], [['LIFECYCLE'], 'A1.4', 'A1', null]);
+    assert.match(f8.decision, /fixed: fixedIn A1\.4 \(fc1f826, A1 cursor safety: severTail pop-front, Signal\.js:1131 'A1\.4, F8'\); LIFECYCLE reaches it on rev152 via L7a and L7c \(b111 B2d \/ B2e\)$/);
+    // A1 Q3 has no allowances.structural slot (keys are gen.mjs GEN_RULES only): it is recorded in DIV-D3's description
+    assert.equal(GEN_RULES.indexOf('Q3'), -1);
+    assert.match(d3.description, /A1 Q3 .*no lifecycle callback throws in R2; follow-up R2b \(L11 probe: throwing lifecycle callbacks; O6 predicts the escape\)/);
+    assert.ok(ROSTER.indexOf('LIFECYCLE') !== -1, 'LIFECYCLE is rostered');
+});
+
+test('b112 B4: DIV-D3 explains the three tree heads on every kernel; each attribution twin is not D3', () => {
+    for (const [sig, d] of [['missed-connect', LC_D.MC], ['missed-disconnect', LC_D.MD], ['stale-off', LC_D.SS], ['stale-off', LC_D.SS1]]) {
+        assert.deepEqual(both([lcf('O7', sig, d)]), [D3, D3], d);
+    }
+    // co-registered <-> plain: the unattributed missed-* is not D3 (and nothing else)
+    assert.deepEqual(both([lcf('O7', 'missed-disconnect', LC_D.PLAIN)]), [null, null]);
+    assert.deepEqual(both([lcf('O7', 'missed-connect', 'r0 on #12: disconnected at rest, sinks 1')]), [null, null]);
+    // the attribution swapped between sigs: a co-registered tail on stale-off, a sibling tail on missed-connect
+    assert.deepEqual(both([lcf('O7', 'stale-off', LC_D.MC)]), [null, null]);
+    assert.deepEqual(both([lcf('O7', 'missed-connect', LC_D.SS)]), [null, null]);
+    // the phase/sinks pairing the oracle never emits (missed-connect with sinks 0, missed-disconnect with sinks > 0)
+    assert.deepEqual(both([lcf('O7', 'missed-connect', 'r0 on #12: disconnected at rest, sinks 0 (co-registered r2)')]), [null, null]);
+    assert.deepEqual(both([lcf('O7', 'missed-disconnect', 'r25 on #101: connected at rest, sinks 1 (co-registered r39)')]), [null, null]);
+    // sibling means the SAME target: an off on another live target is not a sibling stale-off
+    assert.deepEqual(both([lcf('O7', 'stale-off', 'r6 on #51: connected at rest, sinks 0 after off of r5 on #52 (sibling) at step 60')]), [null, null]);
+    // other oracle, other lane
+    assert.deepEqual(both([lcf('O7a', 'missed-connect', LC_D.MC)]), [null, null]);
+    for (const lane of ['NEST', 'HOOK', 'GRAPH']) assert.deepEqual(both([lcf('O7', 'missed-connect', LC_D.MC)], lane), [null, null], lane);
+});
+
+test('b112 B4: the dead-target stale-off is DIV-F7 (fixed): explained only under includeFixed, never by DIV-D3', () => {
+    assert.deepEqual(both([lcf('O7', 'stale-off', LC_D.SD)]), [null, 'DIV-F7']);
+    // sibling / co-registered twins of the dead-target line are never F7 (the F7 shape names the dead target only)
+    assert.equal(lcK([lcf('O7', 'stale-off', LC_D.SS)], true), D3);
+    assert.equal(lcK([lcf('O7', 'missed-connect', LC_D.MC)], true), D3);
+    assert.equal(lcK([lcf('O7', 'missed-disconnect', LC_D.MD)], true), D3);
+    // dead target -> sibling text swap on the same numbers: D3 needs the same #N twice, so neither entry claims it
+    assert.deepEqual(both([lcf('O7', 'stale-off', LC_D.SD.replace('(dead target)', '(sibling)'))]), [null, null]);
+    // and the reverse twin: the sibling line with (dead target) is F7 only (fixed), never D3
+    assert.deepEqual(both([lcf('O7', 'stale-off', LC_D.SS.replace('(sibling)', '(dead target)'))]), [null, 'DIV-F7']);
+    // 'a late off' is a branch the lane never emits (deadOff always names its registration): not matched
+    assert.deepEqual(both([lcf('O7', 'stale-off', 'r16 on #78: connected at rest, sinks 0 after a late off (dead target) at step 96')]), [null, null]);
+    // the LIFECYCLE O7a fire matches the kept NEST shape too (fixed)
+    assert.deepEqual(both([lcf('O7a', 'dead-registration-fire', LC_D.FIRE)]), [null, 'DIV-F7']);
+    // other lane: an O7 dead-target line outside LIFECYCLE / NEST
+    assert.deepEqual(both([lcf('O7', 'stale-off', LC_D.SD)], 'HOOK'), [null, null]);
+});
+
+test('b112 B4: DIV-F8 (fixed A1.4): the rev152 L7a / L7c co-fail sets explain only under includeFixed', () => {
+    const TE = lcf('O6', 'escape-TypeError', LC_D.TE);
+    const L7A = [lcf('O5', 'link-count', LC_D.LINKS), lcf('O5', 'node-count', LC_D.NODES), TE];
+    const L7C = [lcf('O5', 'link-count', LC_D.LINKS7C), TE, lcf('O7', 'missed-disconnect', LC_D.PLAIN)];
+    assert.deepEqual(both(L7A), [null, 'DIV-F8']);
+    assert.deepEqual(both(L7C), [null, 'DIV-F8']);
+    assert.deepEqual(both([TE]), [null, 'DIV-F8']);
+    // 0x7641fd80@52: L7c + an O7a dead-registration fire -> F7 + F8 (both fixed)
+    assert.deepEqual(both(L7C.concat([lcf('O7a', 'dead-registration-fire', 'onConnect fired for registration r3 on #42: target #42 disposed')])), [null, 'DIV-F7+DIV-F8']);
+    // the co-fails need the O6 TypeError in the same step
+    for (const f of [L7A[0], L7A[1], L7C[2]]) assert.deepEqual(both([f]), [null, null], f.detail);
+    // the headpatched B0-2 TypeError is not F8 (it is the A5 engine-rung brief, no entry)
+    assert.deepEqual(both([lcf('O6', 'escape-TypeError', LC_D.HP)]), [null, null]);
+    assert.deepEqual(both([L7A[0], lcf('O6', 'escape-TypeError', LC_D.HP)]), [null, null]);
+    // the body-named variant (F15's NEST shape) is not the LIFECYCLE head; other lane
+    assert.deepEqual(both([lcf('O6', 'escape-TypeError', "body#30 read #12: TypeError: Cannot set properties of null (setting 'headSub')")]), [null, null]);
+    assert.deepEqual(both(L7A, 'GRAPH'), [null, null]);
+    // other oracle on the same text
+    assert.deepEqual(both([lcf('O5', 'escape-TypeError', LC_D.TE)]), [null, null]);
+});
+
+test('b112 B4: a fixed F7 / F8 with fixedIn back to null would explain on the tree (the includeFixed rule is what keeps it a regression)', () => {
+    const r = fresh();
+    for (const e of r.entries) if (e.id === 'DIV-F7' || e.id === 'DIV-F8') e.fixedIn = null;
+    assert.deepEqual(validate(r), []);
+    assert.equal(known(lcRec([lcf('O7', 'stale-off', LC_D.SD)]), { registry: r }), 'DIV-F7');
+    assert.equal(known(lcRec([lcf('O6', 'escape-TypeError', LC_D.TE)]), { registry: r }), 'DIV-F8');
+    // the shipped registry: the tree classifies both null
+    assert.equal(classify(lcRec([lcf('O7', 'stale-off', LC_D.SD)])), null);
+    assert.equal(classify(lcRec([lcf('O6', 'escape-TypeError', LC_D.TE)])), null);
+});
+
+test('b112 B4 validate: dropping a new shape or the LIFECYCLE lane fails closed (no-slack rule)', () => {
+    const mut = (id, fn) => { const r = fresh(); fn(r.entries.find((e) => e.id === id)); return validate(r); };
+    assert.ok(mut(D3, (e) => { e.shapes.pop(); }).some((p) => /pair O7:stale-off has no shape/.test(p)));
+    assert.ok(mut('DIV-F7', (e) => { e.shapes.pop(); }).some((p) => /pair O7:stale-off has no shape/.test(p)));
+    assert.ok(mut('DIV-F8', (e) => { e.shapes.pop(); }).some((p) => /pair O7:missed-disconnect has no shape/.test(p)));
+    assert.ok(mut(D3, (e) => { e.lanes = []; }).length > 0);
+    assert.ok(mut(D3, (e) => { e.lanes = ['LIFECYCLES']; }).some((p) => /unknown lane LIFECYCLES/.test(p)));
+    assert.ok(mut('DIV-F8', (e) => { e.pending = 'x'; }).some((p) => /pending set/.test(p)));
 });

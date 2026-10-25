@@ -68,6 +68,9 @@ export const PARITY_FILES = Object.freeze([
     'bench/soak/report-html.mjs', 'bench/soak/baseline.mjs',
     // S3 R1 (burst 93): the HOOK lane decides its scripts and coverage; the link mirror decides its O8 checks
     'bench/soak/lanes/hook.mjs', 'bench/soak/mirror.mjs',
+    // S3 R2 (b111): the LIFECYCLE lane decides its scripts, O7 rest checks and coverage; contract.mjs decides
+    // the hard-oracle caps
+    'bench/soak/lanes/lifecycle.mjs', 'bench/soak/adapters/contract.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
