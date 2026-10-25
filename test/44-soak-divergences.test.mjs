@@ -817,9 +817,10 @@ test('b109 A3: DIV-F5 is fixed in A3-FIX-R: the tree classifies every F5 shape n
     assert.equal(classifyFx(clone(B103_F5), { registry: gone }), null);
 });
 
-// b109 A1 fallback (Q1): the census (.handoff/b109-evidence/soak/0f-census.txt) found ONE known=DIV-F5 engine=ERR( line on
-// preb33 and rev152 (world 0x8992029a, step 57), so the O1c detail is NOT narrowed: an engine-side ERR line in a
-// revert-after-mid-read world still classifies DIV-F5 on a control kernel (a real F5 world), null on the tree. Inlined verbatim from .handoff/b109-evidence/soak/0f-ERROR-preb33.jsonl line 1329 (rev152 line 1329 is byte-identical).
+// b109 A1 fallback (Q1): the census (.handoff/b109-evidence/soak/0f-census.txt) found ONE known=DIV-F5 engine=ERR( line
+// on preb33 and rev152 (world 0x8992029a, step 57), so the O1c detail is NOT narrowed: an engine-side ERR line in a
+// revert-after-mid-read world still classifies DIV-F5 on a control kernel (a real F5 world), null on the tree. Inlined
+// verbatim from .handoff/b109-evidence/soak/0f-ERROR-preb33.jsonl line 1329 (rev152 line 1329 is byte-identical).
 const A1_ENGERR = {"engine":"lite","lane":"ERROR","step":57,"op":"batch","fails":[{"oracle":"O1c","sig":"computed-err-mismatch","detail":"node#31 (hash) engine=ERR(computed:31) model=420684"},{"oracle":"O1c","sig":"computed-mismatch","detail":"node#15 (select) engine=93 model=14"}],"scen":["dep-set-flip","multi-write-same-signal","revert-after-mid-read","second-invalidation","throw-dep-computed-prewalk"],"worldScen":["dep-set-flip","recovery-after-throw","diamond-write","equality-cutoff","second-invalidation","multi-write-same-signal","revert-after-mid-read","throw-dep-computed-prewalk"],"worldScenCounts":{"dep-set-flip":15,"recovery-after-throw":2,"diamond-write":1,"equality-cutoff":1,"second-invalidation":12,"multi-write-same-signal":1,"revert-after-mid-read":1,"throw-dep-computed-prewalk":1},"escape":[]};
 test('b109 A1 fallback: the engine=ERR( O1c line (census world 0x8992029a) is DIV-F5 under FX and null on the tree; a lookahead registry copy would drop it', () => {
     assert.equal(known(clone(A1_ENGERR), FX()), 'DIV-F5');
