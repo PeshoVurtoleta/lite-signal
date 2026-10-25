@@ -25,7 +25,7 @@
  *   - REPORT_ONLY_GATES (gates.mjs:427): recorded, never judged; none can make a run FAIL or INCONCLUSIVE.
  *   - REASONS (gates.mjs:645): the verdict's input vocabulary (end / signal / fatal), a run fact and not a
  *     judgement; its outcomes are judged through cause:interrupted and test/46's verdict rows.
- *   - WRAP_CHECKS (config.mjs:140, W1-W5): the checks of ONE judged id, gate:wrap (wraprules.mjs WRAP_GATE, S2),
+ *   - WRAP_CHECKS (config.mjs:144, W1-W5): the checks of ONE judged id, gate:wrap (wraprules.mjs WRAP_GATE, S2),
  *     not ids of their own. gate:wrap's teeth are L-REV-AUDIT-W5 (W5), L-WRAP-TREE (W1 / W3 / W4) and
  *     L-WRAP-W2-PREFIXR (W2, pre-FIX-R kernel prefixr); its causes cause:wrap-crossing / cause:wrap-unmeasured
  *     are held by test/48's quoted rows. The fix-minus-one controls T-A3b/T-A3c/T-A4/T-A7a/T-A7b stay GAPS.

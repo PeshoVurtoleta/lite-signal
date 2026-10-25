@@ -281,7 +281,7 @@ test('Q3: a throwing lifecycle callback escapes as O6 escape-TypeError (reported
 
 /* ---- gate-teeth rows (round 1) --------------------------------------------------------------------------------- */
 
-test('X1: quiet rule a -- a ran member / a ran direct reader un-quiets the registration', () => {
+test('X1: rule a -- a ran non-reader keeps the target quiet; a ran direct reader un-quiets it', () => {
     const m = world(1); m.addSignal(2, 1, {}); m.addEffect(3, { k: 'sum', d: [2] }); m.n[3].runs = 1; m.n[3].links = [2]; m.addEffect(4, { k: 'sum', d: [0] }); m.n[4].runs = 1; m.n[4].links = []; const prev = [[0, new Set([1])]];
     assert.deepEqual(sigs(oneOf(m, reg({ phase: 1, fires: ['onConnect'] }), prev, new Set([3]))), ['spurious-connect']);
     assert.deepEqual(oneOf(m, reg({ phase: 1, fires: ['onConnect'] }), prev, new Set([4])), []);

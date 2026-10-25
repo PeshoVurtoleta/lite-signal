@@ -521,7 +521,7 @@ export const CONTROLS = deepFreeze([
         exit: 1, kind: 'match', lines: [], specs: ['gate=wrap check=W5 counter=evalCount bop>=15'], extra: { verdict: 'FAIL' },
     }),
     // L-WRAP-TREE (S2): the tree kernel breaches W1 / W3 / W4 in ONE spawn (burst 25 full size, every detail in
-    // .handoff/HISTORY.md "Proposed A-B3a control specs"): W1 band-observed / band-unobserved, W3 stale handle after
+    // .handoff/archive/HISTORY-b7-b97.md (~:7702) "Proposed A-B3a control specs"): W1 band-observed / band-unobserved, W3 stale handle after
     // 2^32 - 1 recycles, W4 nodeId out of [1, 2^31-1]. Matched by head only: the details flip when A4 / A7 land (then
     // this control is re-specced). W2 still runs here (SOAK_WRAP keeps it) but names no spec: A3 FIX-R (74ea021,
     // Signal.js 0f75866f) closes W2 on the tree except the KNOWN k*2^30 alias (LEDGER #47) -- live W2 PASS, b109

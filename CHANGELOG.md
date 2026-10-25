@@ -1097,6 +1097,11 @@ null), and the new gate rules. README's VersionMatrix section lists all seven wo
 int32 closure counters allocate on pointer-compressed V8; open) and #35 (F21, stale queue after a
 CycleError; fixed in this cycle, with KNOWN residuals R1 / R2). New `decisions/0001-soak-design.md` (dev-only ADR) records the soak design, the
 F5 / F6 decisions and their rejected alternatives.
+README's "Counter widths and wrap limits" table (inside "The case for object pooling", also in `llms.txt`) states each
+engine counter's width, exact wrap condition and pin; its `nodeSeq` row spells out the consequences of node id 0 at
+allocation k * 2^32 (an `onGraphMutation` listener that reads `intB === 0` as "no second id" without the opcode misreads
+a link to node 0; `restore()` throws a `TypeError` on a node id or `ownerId` of 0) and that `destroy()` does not reset
+`nodeSeq`. Docs only; no engine change.
 
 ## [1.5.2] -- 2026-09-19
 

@@ -306,10 +306,10 @@ Release eligibility reads no verdict: a consistent release-size tree stream exit
 ### 10. The teeth registry (a gate that cannot fail is not a gate)
 
 bench/soak/teeth.mjs holds, by import and never by copy:
-- `universe()` (47 ids at 35bbf26, 48 since 2b87bfb: + gate:rss): lane:, gate:, oracle:, sig:<oracle>:<sig>, cause:
+- `universe()` (47 ids at 35bbf26, 48 since 2b87bfb: + gate:rss; 59 at 767f808 (R2)): lane:, gate:, oracle:, sig:<oracle>:<sig>, cause:
   ids plus `config` and `report`.
   Excluded on purpose (teeth.mjs:24-31): REPORT_ONLY_GATES, REASONS, WRAP_CHECKS, MUSTFAIL_MODES.
-- `CHECKS` (35 ids at 35bbf26, 36 since 2b87bfb: + gate:rss): id -> controls that turn it red. `T-cfg-*` must resolve
+- `CHECKS` (35 ids at 35bbf26, 36 since 2b87bfb: + gate:rss, 47 at 767f808 (R2)): id -> controls that turn it red. `T-cfg-*` must resolve
   every config control (>= 16);
   `report` maps to test/46's TEST_ANCHORS.
 - `GAPS` (24 at 35bbf26, 23 since 4f5f200: T-mark left it): controls the SPEC asks for that cannot exist yet, each with why (file:line), until, and `covers`
@@ -320,7 +320,7 @@ bench/soak/teeth.mjs holds, by import and never by copy:
 - `audit({controls, ceiling, max})` REQUIRES all three (never defaulted); returns the problem list.
 test/45 (22 tests at 35bbf26, 25 at c5cf442, 27 at 66b6a50, no child process) holds the shrink-only literals: the
 24-name GAPS ceiling and max 24 (23 and 23 since 4f5f200), the 11 GAP-covered universe ids (exact set equality),
-CHECKS_MIN 35 (an exact floor; 36 since 2b87bfb), EVIDENCE_CAUSE {coverage: 'scenario'} (interim: the coverage cause
+CHECKS_MIN 35 (an exact floor; 36 since 2b87bfb, 47 at 767f808 (R2)), EVIDENCE_CAUSE {coverage: 'scenario'} (interim: the coverage cause
 is still built inside LaneGates), and a pairing check: EVERY mapped control must expect the text its id would print
 (oracle=/sig= via oracleFamily, lane=, gate=, the INCONCLUSIVE head, a CONFIG line, test anchors). It also checks the
 ^L- / ^(?!L-) partition, validSpec for all controls, staleAnchors and a 1-byte anchor mutant ("2 matches" for the
