@@ -790,36 +790,88 @@ export function createRegistry(config) {
     let nodeSeq = 1 | 0;
     let lifecycleCount = 0 | 0;
     const lifecycleMap = new WeakMap();
+    // A5a (F7 / DIV-D3): lifecycleMap maps node -> entry {head, tail}, a FIFO list of independent
+    // registrations reg {onConnect, onDisconnect, phase, live, prev, next}. A fire walks the list and
+    // drives each live reg's phase (0 = disconnected, 1 = connected) to the node's state, calling the
+    // matching callback on each 0->1 / 1->0 step. A reg added during a fire was born in the target
+    // phase, so that fire skips it; an off() clears `live` at once (EventTarget semantics). Every
+    // callback runs in its own try/catch: one error is rethrown as-is, >= 2 become an AggregateError
+    // in registration order (only the error path allocates).
     // LEDGER #45: returns true when the hook disposed either endpoint (gen moved), i.e. the new
     // edge is gone; allocateLink then skips op 3. Only a boolean crosses the call (cold path).
     function fireConnect(source, target) {
         const e = lifecycleMap.get(source);
-        if (e === undefined || e.onConnect === undefined) return false;
+        if (e === undefined) return false;
         // A1.6: #30 gen-safe restore -- a callback that disposes the observer does not re-seat it.
         const po = currentObserver, pg = po !== null ? po.gen : 0;
         const sg = source.gen, tg = target.gen;
         currentObserver = null;
-        // LEDGER #46: a throwing onConnect leaves the edge live; announce it before the error propagates,
-        // unless the hook removed an endpoint (#45). A throwing op-3 listener here replaces the error.
-        let ok = false;
-        try { e.onConnect(); ok = true; } finally {
-            currentObserver = (po !== null && po.gen === pg) ? po : null;
-            if (!ok && mutationHook !== null && source.gen === sg && target.gen === tg) mutationHook(3, source.id, target.id);
+        let threw = false, err0 = undefined, errs = null;
+        // A dispose of `source` inside a callback ends the walk (disposeNode dropped its entry).
+        for (let r = e.head; r !== null && source.gen === sg; r = r.next) {
+            if (!r.live || r.phase !== 0 || source.headSub === null) continue;
+            r.phase = 1;
+            const f = r.onConnect;
+            if (f === undefined) continue;
+            try { f(); } catch (err) {
+                if (!threw) { err0 = err; threw = true; }
+                else if (errs === null) errs = [err0, err];
+                else errs.push(err);
+            }
+        }
+        currentObserver = (po !== null && po.gen === pg) ? po : null;
+        if (threw) {
+            // LEDGER #46: a throwing onConnect leaves the edge live; announce it ONCE before the error
+            // propagates, unless a hook removed an endpoint (#45). A throwing op-3 listener here
+            // replaces the error.
+            if (mutationHook !== null && source.gen === sg && target.gen === tg) mutationHook(3, source.id, target.id);
+            if (errs === null) throw err0;
+            throw new AggregateError(errs, "observeObservers: onConnect callbacks threw");
         }
         return source.gen !== sg || target.gen !== tg;
     }
     function fireDisconnect(node) {
         const e = lifecycleMap.get(node);
-        if (e === undefined || e.onDisconnect === undefined) return;
+        if (e === undefined) return;
         const po = currentObserver, pg = po !== null ? po.gen : 0;
+        const g = node.gen;
         currentObserver = null;
-        try { e.onDisconnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }
+        let threw = false, err0 = undefined, errs = null;
+        for (let r = e.head; r !== null && node.gen === g; r = r.next) {
+            if (!r.live || r.phase !== 1 || node.headSub !== null) continue;
+            r.phase = 0;
+            const f = r.onDisconnect;
+            if (f === undefined) continue;
+            try { f(); } catch (err) {
+                if (!threw) { err0 = err; threw = true; }
+                else if (errs === null) errs = [err0, err];
+                else errs.push(err);
+            }
+        }
+        // Restored on every path (each callback is caught above), as the 1.5 try/finally did.
+        currentObserver = (po !== null && po.gen === pg) ? po : null;
+        if (threw) {
+            if (errs === null) throw err0;
+            throw new AggregateError(errs, "observeObservers: onDisconnect callbacks threw");
+        }
     }
     // LEDGER #40: the node object is pooled, so its lifecycleMap entry would outlive the handle
     // and hand its hooks to the slot's next resident. Cold: disposeNode / destroy call it only
     // while some registration is live (lifecycleCount !== 0).
     function dropLifecycleHooks(node) {
-        if (lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;
+        const e = lifecycleMap.get(node);
+        if (e === undefined) return;
+        // A5a (F-a): kill every reg, so an off handle the user keeps (never called) does not
+        // retain its callbacks -- or, through reg.next, a later reg's -- once the node is gone.
+        // next / prev stay: a fire walking this list stops on its gen check (the caller bumps
+        // node.gen right after this call), and the dead shells they reach hold no callbacks.
+        for (let r = e.head; r !== null; r = r.next) {
+            r.onConnect = undefined;
+            r.onDisconnect = undefined;
+            r.live = false;
+        }
+        lifecycleMap.delete(node);
+        lifecycleCount = (lifecycleCount - 1) | 0;
     }
     let isFlushing = false;
 
@@ -853,7 +905,9 @@ export function createRegistry(config) {
      * @private
      */
     // --- Graph-mutation hook (1.2.1 keystone prototype) ---------------------
-    // Single nullable listener; every fire point is `if (mutationHook !== null)`
+    // Live-entry stack, any-order off; the newest live entry is active and `mutationHook`
+    // mirrors its wrapper (null = none, or a `null` "clear" entry on top). Every fire point
+    // is `if (mutationHook !== null)`
     // -- branch-predicted free when absent, allocation-free when present
     // (opcode + two int args). Enables push-based devtools (watchGraph) and the
     // recompute profiler. Opcodes: 1 node-create, 2 node-dispose, 3 link-add,
@@ -863,15 +917,34 @@ export function createRegistry(config) {
     // exists only while a listener is registered; snapshot() refuses while it is > 0. Smi
     // (bounded by the JS stack). Fire points are unchanged: they call the wrapper.
     let hookDepth = 0;
+    // A5b / DIV-F9 (1.6.0): registration stack, newest on top. Entry = {w, below, above, live};
+    // off() unlinks its own entry in any order (a dead entry never comes back) and, when it
+    // was the top, re-points mutationHook at the next live entry below. Cold path only.
+    let hookTop = null;
     function onGraphMutation(fn) {
         if (fn !== null && typeof fn !== "function") throw new TypeError("onGraphMutation: listener must be a function or null");
-        const prev = mutationHook;
         const w = fn === null ? null : (op, a, b) => {
             hookDepth++;
             try { fn(op, a, b); } finally { hookDepth--; }
         };
+        return hookPush(w);
+    }
+    // Separate function so the off closure's context holds only its entry, never the
+    // listener: a held off retains nothing once it has run (w / below / above nulled).
+    function hookPush(w) {
+        const e = {w: w, below: hookTop, above: null, live: true};
+        if (hookTop !== null) hookTop.above = e;
+        hookTop = e;
         mutationHook = w;
-        return () => { if (mutationHook === w) mutationHook = prev; };
+        return () => {
+            if (!e.live) return;
+            e.live = false;
+            const below = e.below, above = e.above;
+            if (below !== null) below.above = above;
+            if (above !== null) above.below = below;
+            else { hookTop = below; mutationHook = below === null ? null : below.w; }
+            e.w = null; e.below = null; e.above = null;
+        };
     }
 
     function allocateLink(source, target) {
@@ -2377,8 +2450,10 @@ export function createRegistry(config) {
      * write in the batch (its capture). If one ran (a computed read mid-batch,
      * an effect created mid-batch), the set back is a normal write: it bumps the
      * version and marks downstream, so no reader keeps the intermediate value.
-     * A body that is already running when it writes the signal does not count
-     * (KNOWN residual). The body-run counter is 30-bit: exactly k*2^30 body runs
+     * A body (effect or computed) already running when the signal is first
+     * written in the batch (it, or a computed it reads, writes the signal) that
+     * then reads it in the same run does not block the revert (KNOWN
+     * residual (a)). The body-run counter is 30-bit: exactly k*2^30 body runs
      * between the capture and the set back fall back to the pre-fix revert (KNOWN).
      *
      * NOT transactional: an exception inside the body does NOT roll back applied
@@ -2643,22 +2718,41 @@ export function createRegistry(config) {
         if (node === undefined) throw new TypeError("observeObservers: argument is not a reactive handle");
         const onConnect = (opts !== undefined) ? opts.onConnect : undefined;
         const onDisconnect = (opts !== undefined) ? opts.onDisconnect : undefined;
+        // A5a: every call appends its own reg at the tail (FIFO), born in the node's current phase.
+        // lifecycleCount counts NODES with >= 1 registration (the first reg makes the entry).
         let e = lifecycleMap.get(node);
         if (e === undefined) {
-            e = {onConnect: undefined, onDisconnect: undefined};
+            e = {head: null, tail: null};
             lifecycleMap.set(node, e);
             lifecycleCount = (lifecycleCount + 1) | 0;
         }
-        if (onConnect !== undefined) e.onConnect = onConnect;
-        if (onDisconnect !== undefined) e.onDisconnect = onDisconnect;
+        const reg = {onConnect: onConnect, onDisconnect: onDisconnect, phase: node.headSub !== null ? 1 : 0,
+            live: true, prev: e.tail, next: null};
+        if (e.tail !== null) e.tail.next = reg; else e.head = reg;
+        e.tail = reg;
         // LEDGER #40: gen-stamped -- an off() that outlives its node (disposed, slot re-seated)
         // is a no-op; disposeNode already dropped the entry, and the live one is a stranger's.
+        // `!reg.live` is the first guard (the stamp backs it): dropLifecycleHooks kills every reg (live = false) when the
+        // node is disposed. The stamp matters only when dispose SKIPPED dropLifecycleHooks
+        // (lifecycleCount wrapped to 0 while an entry was live). off() captures `reg`, never the
+        // entry, and drops the dead reg's callbacks, so a kept off handle does not retain the
+        // user's closures (test/80 RETENTION).
         const g = node.gen;
-        let live = true;
         return () => {
-            if (!live) return;
-            live = false;
-            if (node.gen === g && lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;
+            if (!reg.live) return;
+            reg.live = false;
+            reg.onConnect = undefined;
+            reg.onDisconnect = undefined;
+            if (node.gen !== g) return;
+            // Unlink; reg.next is NOT cleared, so a fire walking through `reg` continues past it.
+            const le = lifecycleMap.get(node);
+            const p = reg.prev, n = reg.next;
+            if (p !== null) p.next = n; else le.head = n;
+            if (n !== null) n.prev = p; else le.tail = p;
+            if (le.head === null) {
+                lifecycleMap.delete(node);
+                lifecycleCount = (lifecycleCount - 1) | 0;
+            }
         };
     }
     function describeNode(node) {

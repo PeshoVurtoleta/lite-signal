@@ -48,6 +48,18 @@
       "role": "L-WRAP-W2-PREFIXR: pre-FIX-R (A3) tree; W2 batchEpoch must BREACH",
       "recipe": "git show 25784e5125bcc447496fb008945d22e57343f7e1:Signal.js > Signal.js; git show 25784e5125bcc447496fb008945d22e57343f7e1:Watch.js > Watch.js (25784e5 = 74ea021^, the last commit before A3 FIX-R; byte-identical to .handoff/b107-before/, the frozen b107 'before' build). Frozen in-repo so CI needs no history.",
       "fixture": "byte-frozen; never edited. ASCII-only as of 2026-10-25 (0 non-ASCII bytes in both files)."
+    },
+    {
+      "name": "prea5",
+      "dir": "bench/soak/controls/prea5",
+      "version": "1.6.0-dev 767f808",
+      "sha256": {
+        "Signal.js": "0f75866f7085d68f24819092dc46623ba63bed8a9d14b24d0b52cf02a439ebd9",
+        "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80"
+      },
+      "role": "A5b T-A5b: pre-A5 tree, the last kernel before A5a/A5b; HOOK O8 ghost-listener must FAIL, explained DIV-F9",
+      "recipe": "git show 767f808d77e8c05de9f23f2b766fd29f6cc65201:Signal.js > Signal.js; git show 767f808d77e8c05de9f23f2b766fd29f6cc65201:Watch.js > Watch.js (byte-identical to .handoff/b113-before/, the frozen A5a 'before' build). Frozen in-repo so CI needs no history.",
+      "fixture": "byte-frozen; never edited. ASCII-only as of 2026-10-26 (0 non-ASCII bytes in both files)."
     }
   ],
   "notes": [

@@ -3,7 +3,7 @@
 // of the exact body text), V8-independent; there is no bytecode gate. A body = from the start of the unique line
 // `    function NAME(` (4-space indent) through its matching close brace. The extractor is a small lexer: braces inside
 // string / template / regex literals and comments do not count; ${...} inside templates nests. Regex detection is the
-// usual previous-token heuristic, so the test also asserts the 8 bodies hold NO regex literal (fail closed: a body
+// usual previous-token heuristic, so the test also asserts the pinned bodies hold NO regex literal (fail closed: a body
 // that gains one needs this extractor re-checked by hand before it is re-pinned).
 // Fail closed: a name that is missing, or whose `function NAME(` occurs more than once, is an error naming it.
 // RE-PIN = DELIBERATE: any edit to one of these bodies turns this test red by design. Re-pin in the SAME commit as the
@@ -16,6 +16,8 @@
 // b104 (LEDGER #44, PLAN-44 TASK 6): the four readers are pinned too (12 bodies). boxGet + boxComputedGet by name;
 // the two `const read = () => {` closures as readSignal / readComputed via an anchor extractor that searches only
 // inside the 4-space `function signal(` / `function computed(` body and fails closed on 0 or >1 hits there.
+// b115 (A5a, PLAN-A5a-lifecycle TASK 2): allocateLink + freeLink are pinned too (14 bodies), values unchanged since
+// the A5a B0 freeze. dropLifecycleHooks is a cold path (dispose-time only), so it is NOT pinned here.
 // Kernel: LITE_SIGNAL_KERNEL (absolute path to a Signal.js), default ../Signal.js. Source is read, never imported.
 import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +29,8 @@ const KPATH = process.env.LITE_SIGNAL_KERNEL ?? fileURLToPath(new URL('../Signal
 const SRC = readFileSync(KPATH, 'utf8');
 
 // Pinned on Signal.js sha256/8 d07e0b17 (burst 63); pullComputed re-pinned + refreshComputed added on 4292ebea (b102);
-// the four readers added on e912e302 (b104, LEDGER #44); createNode + disposeNode re-pinned on 0f75866f (b108, A3 FIX-R).
+// the four readers added on e912e302 (b104, LEDGER #44); createNode + disposeNode re-pinned on 0f75866f (b108, A3 FIX-R);
+// allocateLink + freeLink pinned on aa51b2f5 (b115, A5a; byte-identical to the B0 values on 767f808 / 0f75866f).
 const PINS = {
     flushEffects: { sha16: 'b4b77b7b0a6a8e2f', bytes: 2270 },
     executeEffect: { sha16: 'b054d7c092b84fa2', bytes: 3475 },
@@ -41,9 +44,11 @@ const PINS = {
     boxComputedGet: { sha16: '5940c249c8717ecf', bytes: 618 },
     readSignal: { sha16: 'bb06aefbf682ef8f', bytes: 605 },
     readComputed: { sha16: 'bb6f6be2c79aeb23', bytes: 991 },
+    allocateLink: { sha16: 'e3e657b390cc8d35', bytes: 5017 },
+    freeLink: { sha16: '4db6ffe559493a41', bytes: 1767 },
 };
 const NAMES = ['flushEffects', 'executeEffect', 'createNode', 'nodeMiss', 'disposeNode', 'effectTail', 'pullComputed',
-    'refreshComputed', 'boxGet', 'boxComputedGet', 'readSignal', 'readComputed'];
+    'refreshComputed', 'boxGet', 'boxComputedGet', 'readSignal', 'readComputed', 'allocateLink', 'freeLink'];
 
 const ID_CHAR = /[A-Za-z0-9_$]/;
 const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw',
@@ -209,8 +214,9 @@ test('kernel under test', (t) => {
         }
         console.log('// HOT_BODY_PRINT (sha256/8 ' + sha.slice(0, 8) + ')\nconst PINS = {\n' + rows.join('\n') + '\n};');
     }
-    assert.equal(NAMES.length, 12, 'exactly 12 hot bodies (PLAN-0w C2 + b102 refreshComputed + b104 the four readers)');
-    assert.deepEqual(Object.keys(PINS).sort(), NAMES.slice().sort(), 'pin table must cover exactly the 12 hot bodies');
+    assert.equal(NAMES.length, 14,
+        'exactly 14 hot bodies (PLAN-0w C2 + b102 refreshComputed + b104 the four readers + b115 A5a allocateLink/freeLink)');
+    assert.deepEqual(Object.keys(PINS).sort(), NAMES.slice().sort(), 'pin table must cover exactly the 14 hot bodies');
 });
 
 describe('extractor self-test (synthetic sources)', () => {

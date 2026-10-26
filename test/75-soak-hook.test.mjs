@@ -9,7 +9,8 @@
 //       the real tree kernel, and a delivery to an off'd listener is the DIV-F9 ghost shape.
 // Part 2 (batch R1b):
 //   A3  the HOOK lane (lanes/hook.mjs): roster / wiring, the generator rules (L0 at op 0, H2, 2..5 live, cov-off
-//       LIFO), headpatched passes with one O8 per op, rev152 + tree are red with the DIV-F9 ghost, mirror-links has
+//       LIFO), headpatched passes with one O8 per op, rev152 is red with the DIV-F9 ghost (the tree passes since A5b,
+//       b117: one O8 per op, every required scenario reached), mirror-links has
 //       teeth (op-4 deliveries dropped), exec fails closed on malformed hook ops, S1 lanes perform no O8.
 //   A4  retention: 1000 HOOK worlds on lite-s3 over headpatched, lite-leak tracker.size() === 0 per 100-world block.
 
@@ -228,7 +229,12 @@ test('A2 checkHookFire: a live NON-top receiver and an unknown index get details
     assert.equal(none.detail, 'L0 received op1 after off at step 3 (expected none)');
 });
 
-const f9 = (detail, worldScen) => { const c = classify({ engine: 'lite', lane: 'HOOK', step: 40, op: 'sig', fails: [{ oracle: 'O8', sig: 'ghost-listener', detail }], scen: [], worldScen }); return c === null ? null : c.known; };
+// b117 (B1: DIV-F9 fixedIn "A5b"): a fixed entry explains only on a control kernel, so the registry rows run with includeFixed
+const f9rec = (detail, worldScen) => ({ engine: 'lite', lane: 'HOOK', step: 40, op: 'sig', fails: [{ oracle: 'O8', sig: 'ghost-listener', detail }], scen: [], worldScen });
+const f9 = (detail, worldScen) => { const c = classify(f9rec(detail, worldScen), { includeFixed: true }); return c === null ? null : c.known; };
+test('DIV-F9 is fixed (A5b): on the tree (no includeFixed) the ghost in a non-LIFO world classifies as null', () => {
+    assert.equal(classify(f9rec('L2 received op1 after off at step 7 (expected L1)', ['hook-non-lifo-off', 'hook-multi'])), null);
+});
 test('DIV-F9 (live registry, classify) explains only an off\'d receiver in a world with a non-LIFO off', () => {
     const NL = ['hook-non-lifo-off', 'hook-multi'];
     assert.equal(f9('L2 received op1 after off at step 7 (expected L1)', NL), 'DIV-F9');
@@ -340,9 +346,27 @@ test('A3 HOOK on headpatched passes: one O8 per op, every required scenario reac
     for (const s of HOOK_DESC.required) assert.ok(scen[s] > 0, s + ' reached (' + scen[s] + ')');
 });
 
-for (const kn of ['rev152', 'tree']) {
+// b117 B2 (A5b task 4, PLAN-b117-soak TASK 6): A5b fixed DIV-F9 on the tree, so 'tree' left the red loop for the pass row
+// below. The loop stays on rev152 only: CONTROL is an explicit map (headpatched, rev152), it does not resolve
+// controls/<kn>, so prea5 is not added here (T-A5b runs it through _mustfail, TASK 9).
+test('A3 HOOK on tree passes (A5b, DIV-F9 fixed): failure null on 30/30 worlds, one O8 per op, every required scenario reached', () => {
+    const scen = Object.create(null);
+    let worlds = 0;
+    for (let w = 0; w < 30; w++) {
+        const r = runWorld(liteS3Adapter, generateWorld(HOOK_DESC, HOOK_SEED(w), {}));
+        assert.equal(r.failure, null, 'world ' + w + ': ' + JSON.stringify(r.failure));
+        assert.equal(r.checks.O8, r.ops, 'world ' + w + ': O8 performed once per op');
+        for (const k of Object.keys(r.scen)) scen[k] = (scen[k] || 0) + r.scen[k];
+        worlds++;
+    }
+    assert.equal(worlds, 30, 'all 30 worlds ran');
+    assert.ok(HOOK_DESC.required.length > 0, 'HOOK_DESC.required is non-empty');
+    for (const s of HOOK_DESC.required) assert.ok(scen[s] > 0, s + ' reached (' + scen[s] + ')');
+});
+
+for (const kn of ['rev152']) {
     test('A3 HOOK on ' + kn + ' is red: O8 ghost-listener in the DIV-F9 shape after a non-LIFO off', async () => {
-        const ad = kn === 'tree' ? liteS3Adapter : await controlAdapter(kn);
+        const ad = await controlAdapter(kn);
         let ghost = null, failed = 0;
         for (let w = 0; w < 30; w++) {
             const r = runWorld(ad, generateWorld(HOOK_DESC, HOOK_SEED(w), {}));

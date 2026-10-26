@@ -1293,23 +1293,23 @@ describe("A9 round 2 -- settle guards", () => {
         assert.equal(fired, before, "unsubscribed listener no longer fires");
         assert.equal(r.snapshot().nodes.length, 2);
     });
-    test("D-B2 control: stacked listeners unsubscribed out of order keep the single-slot prev chaining", () => {
+    test("D-B2 control: stacked listeners unsubscribed in any order never resurrect a dead listener (A5b / DIV-F9)", () => {
         const r = createRegistry();
         const seen = [];
         const offA = r.onGraphMutation((op) => { if (op === 1) seen.push("A"); });
         const offB = r.onGraphMutation((op) => { if (op === 1) seen.push("B"); });
         r.signal(1);                       // B on top
-        offA();                            // A is not on top: no-op
+        offA();                            // A is below the top: unlinked, B stays active
         r.signal(2);                       // still B
-        offB();                            // B on top: restores its prev (A)
-        r.signal(3);                       // A again (pre-existing single-slot semantics)
-        assert.deepEqual(seen, ["B", "B", "A"]);
+        offB();                            // B was the top; nothing live below it
+        r.signal(3);                       // nothing delivered (A5b / DIV-F9: A stays dead)
+        assert.deepEqual(seen, ["B", "B"]);
         assert.equal(r.snapshot().nodes.length, 3, "no listener running: settled");
-        const offC = r.onGraphMutation(null);   // null clears the slot; its unsubscribe restores the prev
+        const offC = r.onGraphMutation(null);   // a null "clear" entry on an empty stack
         r.signal(4);
-        offC();
+        offC();                            // nothing live below: still nothing
         r.signal(5);
-        assert.deepEqual(seen, ["B", "B", "A", "A"]);
+        assert.deepEqual(seen, ["B", "B"]);
         assert.equal(r.snapshot().nodes.length, 5);
     });
 

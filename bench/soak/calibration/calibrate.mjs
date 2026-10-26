@@ -409,11 +409,35 @@ function gitHead() {
     return { head: r.status === 0 ? r.stdout.trim() : null, dirty: s.status === 0 ? porcelainLines(s.stdout) : null };
 }
 
-function busyNode() {
-    const r = spawnSync('ps', ['-Ao', 'pid,pcpu,comm'], { encoding: 'utf8' });
-    if (r.status !== 0) return null;
-    return r.stdout.split('\n').filter((l) => /node/.test(l) && !l.includes(String(process.pid))).map((l) => l.trim().replace(/\s+/g, ' '));
+// b118 FILLER 2a: a busy node = ANOTHER node process at >= BUSY_NODE_PCT %CPU (the quiet-host NOISY rule). "Another"
+// excludes this process and the unbroken chain of NODE ancestors directly above it (its launcher: the quiet-lock wrapper,
+// npm); the walk stops at the first non-node ancestor, so a busy node above the shell is still reported. Each entry is
+// 'pid pcpu command'; [] = none, null = ps failed (unknown, never "none"). An unparsable %CPU is kept (fail closed).
+export const BUSY_NODE_PCT = 10;
+/** Pure: the busy-node list of `ps -Ao pid=,ppid=,pcpu=,comm=` stdout, seen from process `pid` with parent `ppid`. */
+export function busyNodeFrom(stdout, pid, ppid) {
+    if (typeof stdout !== 'string') return null;
+    const rows = [], up = new Map(), cmd = new Map();
+    for (const l of stdout.split('\n')) {
+        const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*\S)\s*$/.exec(l);
+        if (m !== null) { rows.push(m); up.set(Number(m[1]), Number(m[2])); cmd.set(Number(m[1]), m[4]); }
+    }
+    const mine = new Set([pid]);
+    for (let p = ppid; cmd.has(p) && /(^|\/)node$/.test(cmd.get(p)) && !mine.has(p); p = up.get(p)) mine.add(p);
+    const out = [];
+    for (const m of rows) {
+        if (mine.has(Number(m[1])) || !/(^|\/)node$/.test(m[4]) || Number(m[3]) < BUSY_NODE_PCT) continue;
+        out.push(m[1] + ' ' + m[3] + ' ' + m[4]);
+    }
+    return out;
 }
+function busyNode() {
+    // LC_ALL=C: a comma-decimal locale would print %CPU as 9,5 (NaN -> kept as busy)
+    const r = spawnSync('ps', ['-Ao', 'pid=,ppid=,pcpu=,comm='], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } });
+    if (r.status !== 0 || typeof r.stdout !== 'string') return null;
+    return busyNodeFrom(r.stdout, process.pid, process.ppid);
+}
+const busyText = (b) => (b === null ? 'unknown (ps failed)' : b.length === 0 ? 'none' : b.join('; '));
 
 /** Worst cells of one folded lane: rarest required scenario, least-performed applicable oracle, highest skip ratio. */
 export function worstCells(lane, f) {
@@ -505,7 +529,7 @@ export function importThroughput(old) {
         if (!isObj(op)) throw new Error('timed throughput with no provenance object');
         return {
             note: 'REPORTED tier, decides no gate: an earlier timed run of the same child loop (same seed / cycles / ops), held under quiet-lock; its counts were identical to kernels.*',
-            date: op.date, gitHead: op.gitHead, node: op.node, cpu: op.cpu, loadavgBefore: op.loadavgBefore, loadavgAfter: op.loadavgAfter,
+            date: op.date, gitHead: op.gitHead, ...(own(op, 'engineSha256') ? { engineSha256: op.engineSha256 } : {}), node: op.node, cpu: op.cpu, loadavgBefore: op.loadavgBefore, loadavgAfter: op.loadavgAfter,
             busyNodeBefore: op.busyNodeBefore, seconds: op.seconds, timing: op.timing, perKernel: per,
         };
     }
@@ -543,6 +567,15 @@ export function importCountsSame(old, kernels) {
 }
 
 async function write(outPath, timed, importFrom) {
+    // b118 FILLER 2: provenance at LAUNCH. t0 is the origin of provenance.seconds AND of every "(N s)" stamp (one wall
+    // clock for the whole run); busy0 is also printed (the recut.log "busy node before:" line); engine0 = the sha256 of
+    // <root>/Signal.js, the tree kernel's engine, re-checked at the end (FILLER 2c)
+    const t0 = Date.now();
+    const load0 = loadavg().map((x) => Math.round(x * 100) / 100);
+    const busy0 = busyNode();
+    const engine0 = sha256File(join(ROOT, 'Signal.js'));
+    const note = (m) => process.stderr.write('calibrate: ' + m + ' (' + Math.round((Date.now() - t0) / 1000) + ' s)\n');
+    note('busy node before: ' + busyText(busy0) + ' (other node processes >= ' + BUSY_NODE_PCT + '% CPU); engine Signal.js ' + engine0.slice(0, 8));
     // --import-throughput is read and shape-checked FIRST (fail fast, before the ~15 min sweep); its counts are
     // compared with this cut at the end (importCountsSame needs the new kernels)
     let importOld = null, importRun = null;
@@ -559,15 +592,12 @@ async function write(outPath, timed, importFrom) {
     const bound = (k) => lanesFor(k, ROSTER);
     const lanesArg = (k) => ['--lanes', bound(k).join(',')];
     const parityFiles = JSON.parse(readFileSync(join(ROOT, 'bench/soak/parity.json'), 'utf8')).files;
-    const load0 = loadavg().map((x) => Math.round(x * 100) / 100);
-    const busy0 = busyNode();
-    const t0 = Date.now();
-    const note = (m) => process.stderr.write('calibrate: ' + m + ' (' + Math.round((Date.now() - t0) / 1000) + ' s)\n');
     const base = ['--cycles', String(CFG.DEFAULT_CYCLES), '--ops', String(CFG.DEFAULT_OPS)].concat(timed ? ['--timed'] : []);
     // 1) the cut: every kernel over its bound lanes, DEFAULT_SEED, DEFAULT_CYCLES x DEFAULT_OPS, smoke prefix
     // (sequential: timed)
     const kernels = {};
     const meta = {};
+    const tCut = Date.now();
     for (const k of KS) {
         const res = runChild(['--kernel', kernelPath(k)].concat(lanesArg(k), base));
         // D7: a lane-only kernel's cells are evidence only for the parity-pinned engine (laneOnlyProblems:
@@ -595,7 +625,9 @@ async function write(outPath, timed, importFrom) {
         if (!own(meta, name)) die('lane ' + name + ' was cut on no kernel');
         laneMeta[name] = meta[name];
     }
-    const loadAfterTimed = loadavg().map((x) => Math.round(x * 100) / 100);
+    // b118 FILLER 2d: an untimed run (incl. --import-throughput) has no timed phase -> null, never a misleading number
+    const loadAfterTimed = timed ? loadavg().map((x) => Math.round(x * 100) / 100) : null;
+    const cutSeconds = Math.round((Date.now() - tCut) / 1000);
     // 2) main.mjs: the calibration loop must equal main's loop, field for field
     // smoke AND the default full run, every kernel on SOAK_LANES = its bound lanes, concurrently (untimed). The full
     // fold is the only check of main's loop past the smoke prefix (a GRAPH smoke cycle never reaches its first LARGE world).
@@ -695,6 +727,10 @@ async function write(outPath, timed, importFrom) {
             worst[k][sh][name] = worstCells(laneMeta[name], kernels[k][sh][name]);
         }
     }
+    const engine1 = sha256File(join(ROOT, 'Signal.js'));
+    if (engine1 !== engine0) die('Signal.js moved during the run (' + engine0.slice(0, 8) + ' -> ' + engine1.slice(0, 8) + '): the cut is not one engine');
+    const treeSig = own(kernels, 'tree') && Array.isArray(kernels.tree.files) ? kernels.tree.files.find((f) => f.path === 'Signal.js') : undefined;
+    if (own(kernels, 'tree') && (treeSig === undefined || treeSig.sha256 !== engine0)) die('kernels.tree Signal.js sha ' + String(treeSig && treeSig.sha256) + ' != the launch engine ' + engine0);
     const git = gitHead();
     const pinned = {};
     for (const p of pinnedFor(ROSTER)) pinned[p] = sha256File(join(ROOT, p));
@@ -714,9 +750,15 @@ async function write(outPath, timed, importFrom) {
         },
         lanes: laneMeta,
         provenance: {
-            date: new Date(t0).toISOString(), gitHead: git.head, gitDirty: git.dirty, node: process.version, v8: process.versions.v8,
-            cpu: cpus()[0] && cpus()[0].model, host: hostname(), loadavgBefore: load0, loadavgAfterTimed: loadAfterTimed, loadavgAfter: loadavg().map((x) => Math.round(x * 100) / 100),
-            busyNodeBefore: busy0, seconds: Math.round((Date.now() - t0) / 1000),
+            date: new Date(t0).toISOString(), gitHead: git.head, gitDirty: git.dirty, engineSha256: engine0,
+            engineNote: 'sha256 of <root>/Signal.js (the tree kernel), equal at launch, at the end and in kernels.tree.files (--write dies otherwise): the engine actually cut, also on a dirty tree',
+            node: process.version, v8: process.versions.v8,
+            cpu: cpus()[0] && cpus()[0].model, host: hostname(), loadavgBefore: load0, loadavgAfterTimed: loadAfterTimed,
+            ...(timed ? {} : { loadavgAfterTimedNote: 'null: untimed run, no timed phase' + (importFrom !== undefined ? ' (the imported timed run is throughputRun)' : '') }),
+            loadavgAfter: loadavg().map((x) => Math.round(x * 100) / 100),
+            busyNodeBefore: busy0, busyNodeRule: 'other node processes (not this process or its node launcher chain, e.g. the quiet-lock wrapper) >= ' + BUSY_NODE_PCT + '% CPU at launch, as pid pcpu command; [] = none, null = ps failed',
+            seconds: Math.round((Date.now() - t0) / 1000), cutSeconds,
+            secondsClock: 'wall clock (Date.now), whole seconds: seconds = --write entry to the evidence write (every step; the origin of the "(N s)" log stamps); cutSeconds = step 1, the cut (the only timed phase under --timed)',
             timing: timed ? 'timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)' : 'PENDING (untimed run; throughput decides no gate)',
             pinnedSha256: pinned,
         },

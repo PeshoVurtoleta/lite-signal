@@ -26,7 +26,8 @@ import assert from 'node:assert/strict';
 import { Model } from '../bench/soak/model.mjs';
 import * as O from '../bench/soak/oracles.mjs';
 import { LANE_INDEX, ALL_SCENARIOS } from '../bench/soak/lanes/index.mjs';
-import { liteAdapter } from '../bench/soak/adapters/lite.mjs';
+import { liteAdapter, liteAdapterFor } from '../bench/soak/adapters/lite.mjs';
+import { K } from '../bench/soak/kernel.mjs';
 import { runWorld } from '../bench/soak/exec.mjs';
 
 const CAPS = { childEffects: 'parent-run' };
@@ -279,6 +280,75 @@ test('Q3: a throwing lifecycle callback escapes as O6 escape-TypeError (reported
     const sw = runWorld(throwing, script({ on: 1, k: 'disp', x: 2 }), { laneOps: L.ops }).failure; assert.equal(sw.fails[0].oracle, 'O6'); assert.match(sw.fails[0].detail, /^lifecycle callback r0 onConnect: TypeError: injected dispose/);
 });
 
+/* ---- b117 B1 (PLAN-b117-soak TASK 4; A5a task 4 FILLER 1): cbOf fail-closed + O7 per checked registration ----- */
+// A stub exec driving the lane's own lreg op (LIFECYCLE.ops.lreg = opLreg -> regLc -> cbOf): the stub's W.lifecycle
+// keeps every callbacks object, so a test fires a registration's callback exactly as the engine would. Independent
+// count: checkLcFire pushes each kind it checks onto lc.regs[r].fires (C2), so sum(fires.length) = checked fires.
+function lcStub(nTargets) {
+    const m = new Model(CAPS);
+    const cbs = [];
+    const x = {
+        M: m, H: [], lc: null, cbDepth: 0, unmodelled: null, checks: { O7a: 0, O7: 0 }, fails: [], errors: [],
+        did(o) { this.checks[o]++; }, failF(f) { this.fails.push(f); }, engineError(e, where) { this.errors.push(where + ': ' + e.message); },
+        guard(fn) { fn(); }, D: { onLcReg() {}, onLcOff() {}, onLcCallbackDispose() {} },
+        W: { lifecycle(h, c) { cbs.push(c); return () => {}; } },
+    };
+    for (let i = 0; i < nTargets; i++) { m.addSignal(i, i + 1, {}); x.H[i] = { i }; }
+    return { m, x, cbs };
+}
+const checkedFires = (lc) => lc.regs.reduce((n, g) => n + (g === undefined ? 0 : g.fires.length), 0);
+
+test('b117 cbOf: a fire (O7a passed) for a registration LcState never recorded is exec.unmodelled, never an O6 engine error', async () => {
+    const { LIFECYCLE: L } = await import('../bench/soak/lanes/lifecycle.mjs');
+    const { x, cbs } = lcStub(1);
+    L.ops.lreg(x, { o: 'lreg', r: 0, i: 0 }, 1);
+    assert.equal(cbs.length, 1);
+    delete x.lc.regs[0];   // the model still holds r0 (O7a passes); LcState lost it: a harness bug
+    assert.doesNotThrow(() => cbs[0].onConnect(), 'the callback never throws into the engine (Q3)');
+    assert.ok(x.unmodelled instanceof Error, 'exec.unmodelled is set (exec.run rethrows it after the op)');
+    assert.equal(x.unmodelled.message, 'exec: unmodelled lifecycle op: fire onConnect for registration r0 that LcState never recorded');
+    assert.deepEqual(x.errors, [], 'not reported through engineError (no O6 mislabel)');
+    assert.deepEqual(x.fails, []);
+    assert.deepEqual([x.checks.O7a, x.checks.O7], [1, 0], 'O7a ran; O7 did not count an unchecked registration');
+    assert.equal(x.cbDepth, 0);
+});
+
+test('b117 cbOf: checks.O7 counts once per checked registration fire on a 3-registration world (O7a fail and unrecorded fires excluded)', async () => {
+    const { LIFECYCLE: L } = await import('../bench/soak/lanes/lifecycle.mjs');
+    const { m, x, cbs } = lcStub(3);
+    for (let r = 0; r < 3; r++) L.ops.lreg(x, { o: 'lreg', r, i: r }, 1 + r);
+    assert.equal(cbs.length, 3);
+    const lc = x.lc;
+    cbs[0].onConnect();       // r0 checked (phase 0 -> 1)
+    cbs[1].onConnect();       // r1 checked
+    cbs[0].onDisconnect();    // r0 checked (phase 1 -> 0)
+    m.offReg(1);              // r1 off in the model only: its next fire fails O7a, so O7 never checks it
+    cbs[1].onDisconnect();
+    delete lc.regs[2];        // r2 unrecorded: unmodelled, not checked
+    cbs[2].onConnect();
+    assert.equal(x.checks.O7a, 5, 'every fire runs O7a');
+    assert.equal(checkedFires(lc), 3, 'checkLcFire checked 3 fires (r0 twice, r1 once)');
+    assert.equal(x.checks.O7, checkedFires(lc), 'checks.O7 == the checked registration fires');
+    assert.deepEqual(x.fails.map((f) => f.oracle + ':' + f.sig), ['O7a:dead-registration-fire']);
+    assert.ok(x.unmodelled instanceof Error);
+    assert.deepEqual(x.errors, []);
+});
+
+test('b117 fix: an unrecorded-registration fire in the END pull (exec.run o1c) throws, never failure === null (fail closed)', async () => {
+    const { LIFECYCLE: L } = await import('../bench/soak/lanes/lifecycle.mjs');
+    // test-only lane op on the REAL exec: LcState forgets r (the model keeps it, so O7a passes)
+    const forget = (x, op) => { delete x.lc.regs[op.r]; };
+    // #1 is never pulled during the ops (no pull, no read, no chk): its first pull is the end o1c, which links #0
+    // and fires r0's onConnect there -- the only fire of the world (O7a 1 on the twin)
+    const script = (f) => ({ genVersion: 1, lane: 'LIFECYCLE', seed: 1, large: false, covOff: null, flushPasses: null,
+        ops: [{ o: 'sig', i: 0, v: 1 }, { o: 'lreg', r: 0, i: 0 }].concat(f ? [{ o: 'forget', r: 0 }] : [], [{ o: 'comp', i: 1, spec: { k: 'sum', d: [0] } }]) });
+    const ops = { ...L.ops, forget };
+    const twin = runWorld(liteAdapter, script(false), { laneOps: ops });
+    assert.deepEqual([twin.failure, twin.checks.O7a], [null, 1], 'twin: one fire (the end pull), no failure');
+    assert.throws(() => runWorld(liteAdapter, script(true), { laneOps: ops }),
+        /^Error: exec: unmodelled lifecycle op: fire onConnect for registration r0 that LcState never recorded$/);
+});
+
 /* ---- gate-teeth rows (round 1) --------------------------------------------------------------------------------- */
 
 test('X1: rule a -- a ran non-reader keeps the target quiet; a ran direct reader un-quiets it', () => {
@@ -319,6 +389,8 @@ async function armedSeqs(covOff) {
     return { L, worlds };
 }
 const armedOf = (q) => q.filter((s) => s.o === 'lreg' && s.a !== undefined);
+// the L8c mirror pair: both registrations of the seq armed 'loff' (an 'lself' seq, b118, arms exactly one)
+const isMirror = (q) => { const gs = armedOf(q); return gs.length === 2 && gs.every((g) => g.a.k === 'loff'); };
 const effOf = (q) => q.find((s) => s.o === 'eff');
 // A standalone script from one generated seq: node and registration ids renumbered from 0 (exec needs fresh ids).
 function seqScript(q) {
@@ -369,9 +441,8 @@ test('B2d L8c: the loff arm is a mirror pair on one fresh target, A first (A off
         let hit = false;
         for (const q of w) {
             const gs = armedOf(q);
-            if (!gs.some((g) => g.a.k === 'loff')) continue;
+            if (!isMirror(q)) continue;   // b118: an 'lself' seq arms one loff (rows B118 below)
             assert.equal(q.filter((s) => s.o === 'lreg').length, 2, 'exactly the pair, no unarmed sibling');
-            assert.equal(gs.length, 2, 'both registrations armed');
             const [A, B] = gs;
             assert.ok(A.a.k === 'loff' && B.a.k === 'loff' && A.a.on === B.a.on);
             assert.ok(A.i === B.i && B.r === A.r + 1 && q.indexOf(A) < q.indexOf(B), 'A registered first on the same target');
@@ -392,7 +463,7 @@ test('B2d fire is certain on the tree (overwrite) kernel: the generated L7a and 
     const { L, worlds } = await armedSeqs(null);
     const all = worlds.flat();
     const q7 = all.find((q) => armedOf(q).some((g) => g.a.k === 'disp' && g.a.on === 0 && g.a.x === effOf(q).spec.d[1]));
-    const q8 = all.find((q) => armedOf(q).some((g) => g.a.k === 'loff'));
+    const q8 = all.find(isMirror);
     assert.ok(q7 !== undefined && q8 !== undefined, 'both shapes generated');
     const r7 = runWorld(liteAdapter, seqScript(q7), { laneOps: L.ops });
     assert.equal(r7.failure, null);
@@ -408,7 +479,7 @@ test('B2d G0: the shadow applies every armed disp victim and both offs of the mi
     for (let w = 0; w < 40; w++) { const g = new Gen(L, worldSeed(seedFor(0xC0FFEE, L.index, 0), w), {}); g.large = false; L.init(g);
         for (let s = 0; s < 400; s++) { const k = g.ops.length; L.step(g); const o = g.ops[k]; if (o === undefined || o.o !== 'seq') continue;
             for (const r of o.ops) if (r.o === 'lreg' && r.a !== undefined && r.a.k === 'disp') { n7++; assert.equal(g.M.n[r.a.x].live, false, 'disp victim live in the shadow'); }
-            else if (r.o === 'lreg' && r.a !== undefined && r.a.k === 'loff') { n8++; assert.equal(g.M.regs[r.r].live, false, 'pair reg live in the shadow'); } } }
+            else if (r.o === 'lreg' && r.a !== undefined && r.a.k === 'loff' && isMirror(o.ops)) { n8++; assert.equal(g.M.regs[r.r].live, false, 'pair reg live in the shadow'); } } }
     assert.ok(n7 >= 100 && n8 >= 100, 'disp ' + n7 + ' loff ' + n8);
 });
 
@@ -504,4 +575,130 @@ test('B2e L7c fire is certain on the tree kernel: every generated trim runs a\'s
         assert.equal(r.failure, null);
         assert.equal(r.scen['lc-callback-dispose'], 1);
     }
+});
+
+/* ---- b118 B1 (PLAN-b118-lane TASK 4; D-b117-2 / T-LC-iter): the 'lself' arm, O7 per checked registration, close() ---- */
+// An 'lself' seq (lanes/lifecycle.mjs cbarmOps) arms ONE registration rA with { k: 'loff' }: SELF = [rA (offs rA), rB],
+// NEXT = [rA (offs rB), rB, rC], every registration on E's first read. Expected fires come from the A5a semantics
+// (test/84): FIFO walk order, an off is immediate (an off'd registration not yet visited does not fire).
+function lselfShape(q) {
+    const regs = q.filter((s) => s.o === 'lreg');
+    const gs = armedOf(q).filter((g) => g.a.k === 'loff');
+    if (gs.length !== 1) return null;
+    const [A] = gs;
+    if (regs.length === 2 && regs[0] === A && A.a.r === A.r && regs[1].a === undefined) return 'self';
+    if (regs.length === 3 && regs[0] === A && A.a.r === regs[1].r && regs[1].a === undefined && regs[2].a === undefined) return 'next';
+    return 'other';
+}
+
+test('B118 4a census: 40 default worlds carry the SELF and NEXT lself shapes (every loff seq is mirror / self / next), deterministic, O5 0/0', async () => {
+    const { L, worlds } = await armedSeqs(null);
+    let wSelf = 0, wNext = 0, nSelf = 0, nNext = 0;
+    for (const w of worlds) {
+        let s = 0, n = 0;
+        for (const q of w) {
+            if (isMirror(q)) continue;
+            const sh = lselfShape(q);
+            if (sh === null) continue;
+            assert.notEqual(sh, 'other', 'an loff-armed seq is the mirror pair, SELF or NEXT: ' + JSON.stringify(q.filter((x) => x.o === 'lreg')));
+            const regs = q.filter((x) => x.o === 'lreg');
+            assert.ok(regs.every((g) => g.i === regs[0].i) && effOf(q).spec.d[0] === regs[0].i, 'one fresh target, E\'s first read');
+            assert.ok(regs.every((g, j) => g.r === regs[0].r + j), 'consecutive registration ids');
+            assert.equal(q.some((x) => x.o === 'stop' && x.i === effOf(q).i), regs[0].a.on === 0, 'on 0 <=> E is stopped in the same seq');
+            if (sh === 'self') s++; else n++;
+        }
+        if (s > 0) wSelf++;
+        if (n > 0) wNext++;
+        nSelf += s; nNext += n;
+    }
+    // MEASURED b118 B1 (cycle seedFor(0xC0FFEE, LIFECYCLE, 0)): self 31/40 worlds (62 seqs), next 18/40 (25 seqs)
+    assert.ok(wSelf >= 30, 'worlds with a SELF lself seq: ' + wSelf + '/40 (' + nSelf + ' seqs)');
+    assert.ok(wNext >= 15, 'worlds with a NEXT lself seq: ' + wNext + '/40 (' + nNext + ' seqs)');
+    const again = await armedSeqs(null);
+    assert.deepEqual(again.worlds, worlds, 'the same seed generates the same scripts');
+    // ASSERTION 4: every census world runs clean on the tree kernel, its teardown residue 0 / 0 (O5)
+    const { generateWorld } = await import('../bench/soak/gen.mjs');
+    const { seedFor, worldSeed } = await import('../bench/soak/seeds.mjs');
+    const res = [];
+    const spy = { ...liteAdapter, open(o) { const w = liteAdapter.open(o); return { ...w, close() { const r = w.close(); res.push(r); return r; } }; } };
+    for (let w = 0; w < 40; w++) {
+        const r = runWorld(spy, generateWorld(L, worldSeed(seedFor(0xC0FFEE, L.index, 0), w), { covOff: null }), { laneOps: L.ops });
+        assert.equal(r.failure, null, 'world ' + w + ': ' + JSON.stringify(r.failure));
+    }
+    assert.equal(res.length, 40);
+    assert.ok(res.every((x) => x.nodes === 0 && x.links === 0), 'teardown residue nodes / links 0 / 0 in every world');
+});
+
+test('B118 4b G0: the shadow offs rA (SELF) or rB (NEXT) and nothing else of the seq (40 worlds)', async () => {
+    const { LIFECYCLE: L } = await import('../bench/soak/lanes/lifecycle.mjs'); const { Gen } = await import('../bench/soak/gen.mjs'); const { seedFor, worldSeed } = await import('../bench/soak/seeds.mjs');
+    let nSelf = 0, nNext = 0;
+    for (let w = 0; w < 40; w++) {
+        const g = new Gen(L, worldSeed(seedFor(0xC0FFEE, L.index, 0), w), {}); g.large = false; L.init(g);
+        for (let s = 0; s < 400; s++) {
+            const k = g.ops.length; L.step(g); const o = g.ops[k]; if (o === undefined || o.o !== 'seq' || isMirror(o.ops)) continue;
+            const sh = lselfShape(o.ops);
+            if (sh === null) continue;
+            const live = o.ops.filter((x) => x.o === 'lreg').map((x) => g.M.regs[x.r].live);
+            if (sh === 'self') { nSelf++; assert.deepEqual(live, [false, true], 'SELF: rA off, rB live in the shadow'); }
+            else { nNext++; assert.deepEqual(live, [true, false, true], 'NEXT: rB off, rA and rC live in the shadow'); }
+        }
+    }
+    assert.ok(nSelf >= 30 && nNext >= 15, 'self ' + nSelf + ' next ' + nNext);
+});
+
+test('B118 4c both lself shapes fire on the tree kernel: FIFO fires, the off is immediate, no failure', async () => {
+    const { L, worlds } = await armedSeqs(null);
+    const all = worlds.flat();
+    // A5a: SELF on 1 = rA, rB connect (2); on 0 = + rA, rB disconnect (4). NEXT on 1 = rA, rC connect (rB off before
+    // its visit: 2); on 0 = rA, rB, rC connect then rA, rC disconnect (5)
+    const FIRES = { self: [4, 2], next: [5, 2] };
+    let ran = 0;
+    for (const sh of ['self', 'next']) {
+        for (const on of [0, 1]) {
+            const q = all.find((x) => !isMirror(x) && lselfShape(x) === sh && armedOf(x)[0].a.on === on);
+            assert.ok(q !== undefined, sh + ' on ' + on + ' generated');
+            const r = runWorld(liteAdapter, seqScript(q), { laneOps: L.ops });
+            assert.equal(r.failure, null, sh + ' on ' + on);
+            assert.equal(r.checks.O7a, FIRES[sh][on], sh + ' on ' + on + ': fires');
+            assert.equal(r.scen['lc-callback-off-sibling'], 1, sh + ' on ' + on + ': the off ran inside rA\'s callback with a live sibling');
+            ran++;
+        }
+    }
+    assert.equal(ran, 4);
+});
+
+test('B118 4d checks.O7 at rest counts once per checked registration, not once per op', async () => {
+    const { LIFECYCLE: L } = await import('../bench/soak/lanes/lifecycle.mjs');
+    const script = (ops) => ({ genVersion: 1, lane: 'LIFECYCLE', seed: 1, large: false, covOff: null, flushPasses: null, ops });
+    const rd = { o: 'read', is: [0] };
+    // r0 is checked once (the lreg op's rest); after the loff nothing is live: 3 reads + the end pass check nothing
+    const one = runWorld(liteAdapter, script([{ o: 'sig', i: 0, v: 1 }, { o: 'lreg', r: 0, i: 0 }, { o: 'loff', r: 0 }, rd, rd, rd]), { laneOps: L.ops });
+    assert.equal(one.failure, null);
+    assert.equal(one.checks.O7, 1, 'one checked registration (was 6: one per op from the lreg on, + the end pass)');
+    // two live registrations: 1 (lreg) + 2 (lreg) + 2 (read) + 2 (end pass) = 7 (was 4)
+    const two = runWorld(liteAdapter, script([{ o: 'sig', i: 0, v: 1 }, { o: 'lreg', r: 0, i: 0 }, { o: 'lreg', r: 1, i: 0 }, rd]), { laneOps: L.ops });
+    assert.equal(two.failure, null);
+    assert.equal(two.checks.O7, 7);
+    // a phase -1 registration's adoption pass is not a check (oracle-level tally)
+    const tally = { n: 0 };
+    assert.deepEqual(O.checkLcRest(lcOf([reg({ r: 1, phase: -1 }), reg({ r: 2, phase: 0 }), reg({ r: 3, live: false }), reg({ r: 4, target: 9 })], [[0, new Set()]]), world(0), new Map(), new Set(), tally), []);
+    assert.equal(tally.n, 1, 'r2 checked; r1 adopted, r3 off, r4 on an absent target');
+    assert.doesNotThrow(() => O.checkLcRest(lcOf([reg({ phase: 0 })], []), world(0), new Map(), new Set()), 'tally is optional');
+});
+
+test('B118 4e a fail raised inside close() is a teardown failure (never wiped); the real-kernel twin is clean', async () => {
+    const { LIFECYCLE: L } = await import('../bench/soak/lanes/lifecycle.mjs');
+    // a wrapper kernel whose observeObservers returns a no-op off: close() cannot retire the registration, so the
+    // dispose of E fires r0's onDisconnect after exec's teardown offed r0 in the model -> O7a inside close()
+    const noOff = liteAdapterFor({ createRegistry(cfg) { const r = K.createRegistry(cfg); return { ...r, observeObservers(h, cbs) { r.observeObservers(h, cbs); return () => {}; } }; } });
+    const script = { genVersion: 1, lane: 'LIFECYCLE', seed: 1, large: false, covOff: null, flushPasses: null,
+        ops: [{ o: 'sig', i: 0, v: 1 }, { o: 'lreg', r: 0, i: 0 }, { o: 'eff', i: 1, spec: { k: 'sum', d: [0], try: true } }] };
+    const bad = runWorld(noOff, script, { laneOps: L.ops });
+    assert.ok(bad.failure !== null, 'the close()-time fire is reported');
+    assert.equal(bad.failure.op, 'teardown');
+    assert.equal(bad.failure.step, script.ops.length);
+    assert.deepEqual(bad.failure.fails.map((f) => f.oracle + ':' + f.sig), ['O7a:dead-registration-fire']);
+    const twin = runWorld(liteAdapter, script, { laneOps: L.ops });
+    assert.equal(twin.failure, null);
+    assert.equal(twin.checks.O7a, 1, 'twin: the connect fire only');
 });

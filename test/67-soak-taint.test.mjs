@@ -147,10 +147,14 @@ test('unpatched live NEST smoke passes the taint-skip gate (A3\': max(O1c, O1e) 
 });
 
 // b71 B2 T4: live NEST smoke @0xC0FFEE (SOAK_LANES=NEST, --smoke), perLane.NEST.totals, measured on the V1 exec.mjs.
+// b117 B4 re-pin: the A5a/A5b engine (Signal.js 2f7974f3) moved O1c -100 / O1e -398 checks into skipTainted
+// (+100 / +398); O2, O4, worlds and ops unchanged. Two identical live runs (.handoff/b117-evidence/b4/nest-run1.txt,
+// nest-run2.txt). The old pin (O1c 804723 / 127174, O1e 990282 / 279682) is reproduced exactly on the 767f808
+// kernel (SOAK_KERNEL=.handoff/b113-before/Signal.js, b117-evidence/b0/f-nest-smoke.txt + b4/nest-b113-before.txt).
 const LIVE_PIN = Object.freeze({
     worlds: 144, ops: 61200,
-    checks: Object.freeze({ O1c: 804723, O1e: 990282, O2: 220419, O4: 1149360 }),
-    skipTainted: Object.freeze({ O1c: 127174, O1e: 279682, O2: 138, O4: 89124 }),
+    checks: Object.freeze({ O1c: 804623, O1e: 989884, O2: 220419, O4: 1149360 }),
+    skipTainted: Object.freeze({ O1c: 127274, O1e: 280080, O2: 138, O4: 89124 }),
 });
 
 test('live NEST smoke @0xC0FFEE: the exact performed and skipTainted counts of every skipping oracle (b70 ruling)', () => {

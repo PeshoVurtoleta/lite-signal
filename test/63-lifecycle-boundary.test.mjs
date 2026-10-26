@@ -76,7 +76,8 @@ describe('P3-P4 registration multiplicity / reuse', () => {
         const r = mk(); const lc = lcOf(r); const a = counter(), b = counter();
         const s = r.signal(0); const n = nodeOf(s);
         const o1 = r.observeObservers(s, { onConnect: a.f }); const o2 = r.observeObservers(s, { onDisconnect: b.f });
-        assert.equal(lc(), 1, 'second registration merges into the same entry');
+        // A5a (b114): registrations are independent; the second is its own reg on the node's entry (lc still counts NODES -> 1).
+        assert.equal(lc(), 1, 'second registration is its own reg on the same node (lc counts nodes)');
         r.dispose(s); assert.equal(lc(), 0);
         const s2 = reuse(r, n); const c2 = counter(); r.observeObservers(s2, { onConnect: c2.f });
         o1(); o2(); o1();
@@ -162,9 +163,12 @@ describe('P9-P11 iteration / re-entrancy / duplicates', () => {
         r.observeObservers(s, { onConnect: () => { first++; r.observeObservers(s, { onConnect: c2.f }); s.set(first); } });
         readThenStop(r, s);
         assert.equal(lc(), 1); assert.equal(s(), 1);
-        readThenStop(r, s); assert.deepEqual([first, c2.n], [1, 1], 're-entrant registration replaced onConnect');
+        // A5a (b114): the reg added inside the first fire is independent and skipped by that fire; cycle 2 fires both (first 2, c2 1; the first reg's second-cycle set(2) makes s() 2).
+        readThenStop(r, s); assert.deepEqual([first, c2.n], [2, 1], 're-entrant registration is an independent reg (fires from cycle 2; onConnect not replaced)');
+        assert.equal(s(), 2);
         r.dispose(s); assert.equal(lc(), 0);
-        readThenStop(r, reuse(r, n)); assert.deepEqual([first, c2.n], [1, 1]);
+        // A5a (b114): no stale fire after dispose + reuse; counts stay [2, 1].
+        readThenStop(r, reuse(r, n)); assert.deepEqual([first, c2.n], [2, 1]);
         r.destroy();
     });
     it('P11 duplicate dispose / stop / off never drives lc below 0', () => {
@@ -286,4 +290,9 @@ describe('P16 lifecycleCount START just below the int32 wrap (white-box START re
             r.destroy(); assert.equal(lc(), START | 0);
         });
     }
+});
+
+// P17 (REPORT blocker 3, probe P6): kills M3 (no gen stamp). START = -1: lifecycleCount wraps to 0 with an entry live.
+describe('P17 START = -1 (white-box)', () => {
+    it('P17 START = -1: dispose skips the drop (count 0, entry live); the kept off() is a no-op', async () => { const W = await load(-1); const r = mk(W); const lc = lcOf(r); const s = r.signal(0); const off = r.observeObservers(s, {}); assert.equal(lc(), 0); r.dispose(s); off(); assert.equal(lc(), 0, 'off() of a disposed node moved the counter'); r.destroy(); });
 });

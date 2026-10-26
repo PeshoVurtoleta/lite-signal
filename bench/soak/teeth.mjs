@@ -17,6 +17,9 @@
  *   GAPS         control name -> { why (file:line), until, covers: [universe ids it stands in for] }.
  *                covers [] = a planned control outside this universe (pass controls, fix-minus-one, S2 lanes).
  *   UNREACHABLE  id -> { proof, anchor: { file, text } }; text occurs EXACTLY once in file.
+ *   NOT_TEETH    control name -> one-line reason: the _mustfail controls that are a tooth of NO universe id on
+ *                purpose (pass controls, report-only NOTE teeth). Every other control must be listed under some
+ *                CHECKS id (b119 B5: `orphan control: <name>`), so a new control cannot land unmapped.
  *   audit(opts)  the list of problems (empty = consistent). REQUIRED: controls (the _mustfail control names),
  *                ceiling (the literal GAPS name list) and max (its size); audit() never defaults them, so the
  *                ceiling lives in the test, not next to GAPS. Reads only the anchor files.
@@ -26,14 +29,15 @@
  *   - REASONS (gates.mjs:645): the verdict's input vocabulary (end / signal / fatal), a run fact and not a
  *     judgement; its outcomes are judged through cause:interrupted and test/46's verdict rows.
  *   - WRAP_CHECKS (config.mjs:144, W1-W5): the checks of ONE judged id, gate:wrap (wraprules.mjs WRAP_GATE, S2),
- *     not ids of their own. gate:wrap's teeth are L-REV-AUDIT-W5 (W5), L-WRAP-TREE (W1 / W3 / W4) and
- *     L-WRAP-W2-PREFIXR (W2, pre-FIX-R kernel prefixr); its causes cause:wrap-crossing / cause:wrap-unmeasured
- *     are held by test/48's quoted rows. The fix-minus-one controls T-A3b/T-A3c/T-A4/T-A7a/T-A7b stay GAPS.
+ *     not ids of their own. gate:wrap's teeth are L-REV-AUDIT-W5 (W5), L-WRAP-TREE (W1 / W3 / W4; it also asserts
+ *     W2 PASS on the tree, expect.extra.pass) and L-WRAP-W2-PREFIXR (W2, pre-FIX-R kernel prefixr); its causes
+ *     cause:wrap-crossing / cause:wrap-unmeasured are held by test/48's quoted rows. The fix-minus-one controls
+ *     T-A3b/T-A3c/T-A4/T-A7a/T-A7b stay GAPS.
  *   - SOAK_NEARWRAP (nearwrap.mjs, zero:k / sign:k): a kernel knob (it presets the census counters near a
  *     ceiling), not a judged id. Its end-to-end tooth is L-NW-hp-zero, a second lane:GRAPH control (headpatched at
  *     zero:8 breaches GRAPH through F29).
  *   - MUSTFAIL_MODES (config.mjs:106, cov-off): teeth knobs, the mechanism of the T-cov-* / P-NEST-TRIGGERLESS /
- *     P-LC-TRIGGERLESS / T-LC-* controls rather than a judged id; the parser is held by T-cfg-mustfail-unknown.
+ *     T-cov-LIFECYCLE / T-LC-* controls rather than a judged id; the parser is held by T-cfg-mustfail-unknown.
  *
  * COLD module. Kernel-free.
  */
@@ -85,12 +89,19 @@ export const CHECKS = deepFreeze({
     // b75 (PLAN-0s-e TASK 5): the published 1.5.2 also predates F-b33-1 -- L-WIE-rev152, same O1e head, DIV-B33
     'lane:WIE': ['L-WIE-preb33', 'L-WIE-rev152'],
     // b93 S3 R1c (PLAN-0s-s3-r1 TASK 9): rev152 heads `oracle=O8 lane=HOOK sig=ghost-listener known=DIV-F9` (F9, LIFO-only
-    // off); T-hook-mirror (headpatched, freeLink's op-4 hook fire removed) heads `oracle=O8 lane=HOOK sig=mirror-links`
-    'lane:HOOK': ['L-REV-HOOK', 'T-hook-mirror'],
+    // off); T-hook-mirror (headpatched, freeLink's op-4 hook fire removed) heads `oracle=O8 lane=HOOK sig=mirror-links`.
+    // b117 B3b (PLAN-A5b task 4): T-A5b, A5b's fix-minus-one, heads the same ghost-listener on prea5 (767f808, pre-A5),
+    // known=DIV-F9 (fixedIn A5b); it left GAPS.
+    'lane:HOOK': ['L-REV-HOOK', 'T-hook-mirror', 'T-A5b'],
     // b112 B5 (PLAN-R2-lifecycle CONTROLS): preb33 heads `oracle=O7 lane=LIFECYCLE sig=stale-off known=DIV-F7` and
     // `sig=dead-registration-fire known=DIV-F7` (+ three DIV-D3 heads); each T-LC-* tree mutant (cov-off:lc-two-regs)
-    // heads its own O7 sig known=none (.handoff/b112-evidence/B5/)
-    'lane:LIFECYCLE': ['L-LC-preb33', 'T-LC-dupconn', 'T-LC-dupdisc', 'T-LC-dropconn', 'T-LC-dropdisc', 'T-LC-offgen'],
+    // heads its own O7 sig known=none (.handoff/b112-evidence/B5/). b117 B3a: the T-LC-* rows run the full tree lane
+    // (P-LC-tree's shape, no cov-off), + T-LC-merge (.handoff/b117-evidence/b3a/). b117 B3a r2 (maintainer D-b117-1):
+    // T-LC-offgen retargeted to T-LC-offlive (off() without `!reg.live`), which heads
+    // `oracle=O6 lane=LIFECYCLE sig=escape-TypeError known=none`; the gen stamp is UNREACHABLE 'lc-off-gen-stamp'.
+    // b118 B2 (D-b117-2 closed): T-LC-iter (off() clears reg.next, reached by the lifecycle 'lself' SELF arm) left
+    // GAPS; it heads `oracle=O7 lane=LIFECYCLE sig=stale-off known=none` (MUSTFAIL_HEADS=1, .handoff/b118-evidence/b2/).
+    'lane:LIFECYCLE': ['L-LC-preb33', 'T-LC-dupconn', 'T-LC-dupdisc', 'T-LC-dropconn', 'T-LC-dropdisc', 'T-LC-offlive', 'T-LC-merge', 'T-LC-iter'],
     'gate:oracle': ['L-REV-152'],
     // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
     // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
@@ -115,27 +126,29 @@ export const CHECKS = deepFreeze({
     // a future second O5 tooth: rev152 / headpatched NEST also emit O5 link-count (the planned L-REV-AUDIT spec,
     // SPEC-B.md:454); not mapped until its 3/3 calibration lands
     'oracle:O5': ['T-sever'],
-    'oracle:O6': ['L-REV-152'],
+    'oracle:O6': ['L-REV-152', 'T-LC-offlive'],
     'oracle:O7a': ['L-REV-152'],
-    'oracle:O8': ['L-REV-HOOK', 'T-hook-mirror'],
-    'oracle:O7': ['L-LC-preb33', 'T-LC-dupconn', 'T-LC-dupdisc', 'T-LC-dropconn', 'T-LC-dropdisc', 'T-LC-offgen'],
+    'oracle:O8': ['L-REV-HOOK', 'T-hook-mirror', 'T-A5b'],
+    'oracle:O7': ['L-LC-preb33', 'T-LC-dupconn', 'T-LC-dupdisc', 'T-LC-dropconn', 'T-LC-dropdisc', 'T-LC-merge', 'T-LC-iter'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
     'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
     'sig:O4:effect-dead': ['L-REV-152', 'T-flushdrop'],
     'sig:O6:expected-escape-missing': ['L-REV-152'],
     'sig:O5:link-count': ['T-sever'],
-    'sig:O6:escape-*': ['L-REV-152'],   // `oracle=O6 lane=ERROR sig=escape-computed`
+    'sig:O6:escape-*': ['L-REV-152', 'T-LC-offlive'],   // `oracle=O6 lane=ERROR sig=escape-computed`; T-LC-offlive `sig=escape-TypeError`
     'sig:O7a:dead-registration-fire': ['L-REV-152', 'L-LC-preb33'],   // L-LC-preb33 prints family oracle=O7
     'sig:O7:spurious-connect': ['T-LC-dupconn'],
     'sig:O7:spurious-disconnect': ['T-LC-dupdisc'],
-    'sig:O7:missed-connect': ['T-LC-dropconn'],
+    'sig:O7:missed-connect': ['T-LC-dropconn', 'T-LC-merge'],
     'sig:O7:missed-disconnect': ['T-LC-dropdisc'],
-    'sig:O7:stale-off': ['T-LC-offgen', 'L-LC-preb33'],
-    'sig:O8:ghost-listener': ['L-REV-HOOK'],
+    'sig:O7:stale-off': ['L-LC-preb33', 'T-LC-merge', 'T-LC-iter'],   // T-LC-merge's measured stale-off head (b117 B3a); T-LC-iter's only head (b118 B2)
+    'sig:O8:ghost-listener': ['L-REV-HOOK', 'T-A5b'],
     'sig:O8:mirror-links': ['T-hook-mirror'],
     'cause:interrupted': ['L-I1', 'L-I2'],
-    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'P-LC-TRIGGERLESS']),
+    // b119 B5 (orphan rule): P-HOOK-TREE-COVOFF (b93) prints `INCONCLUSIVE -- scenario lane=HOOK missing=hook-non-lifo-off`,
+    // P-NEST-TRIGGERLESS's shape, and was mapped nowhere
+    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'T-cov-LIFECYCLE', 'P-HOOK-TREE-COVOFF']),
     'cause:check-floor': ['T-floor-BATCH'],
     // test/67 drives the same patch on live AND headpatched NEST and checks each line is inconclusiveLine('taint-skip')
     'cause:taint-skip': ['P-NEST-TAINT-HALF', TEST67],
@@ -176,7 +189,6 @@ export const GAPS = deepFreeze({
     'T-A3c': fixMinusOne(517, 'A3 + S2 wrap.mjs'),
     'T-A4': fixMinusOne(518, 'A4 + S2 wrap.mjs'),
     'T-A5a': fixMinusOne(519, 'A5 + S3 LIFECYCLE lane'),
-    'T-A5b': fixMinusOne(520, 'A5 + S3 HOOK lane'),
     'T-A6': fixMinusOne(521, 'A6 + S3 REGISTRY lane'),
     'T-A7a': fixMinusOne(522, 'A7 + S2 wrap.mjs + S3 RECYCLE lane', NEARWRAP_WHY),
     'T-A7b': fixMinusOne(523, 'A7 + S2 wrap.mjs', NEARWRAP_WHY),
@@ -224,10 +236,30 @@ export const UNREACHABLE = deepFreeze({
         proof: 'unreachable from argv or a stream: every throw report() can meet there is Integrity / Refusal (bad / refuse), GateInputError, TypeError or RangeError (gates.mjs, Totals, built-ins on a bad type), all mapped before CRASH, and classify\'s plain Errors are caught as known-tag. Reachable only from a corrupted checkout (controls.json / parity.json unreadable or unparsable in checkHeader / checkRelease) or a report bug (untested).',
         anchor: { file: 'bench/soak/SoakReport.mjs', text: "return { exitCode: 1, out, err: ['soak:report: CRASH -- '" },
     },
+    'lc-off-gen-stamp': {
+        proof: 'redundant behind !reg.live: dispose clears every registration (b114 F-a); a one-line mutant of it is equivalent on the lane (b117 probe). Signal.js 2f7974f3 observeObservers off(): dropLifecycleHooks sets live = false on every reg of a disposed node, so the !reg.live return (:2742) precedes the #40 gen stamp (:2746) on every off that outlives its node; the stamp is reachable only when dispose skipped dropLifecycleHooks (lifecycleCount 0 while an entry is live); gen moves only at Signal.js :1272 and :2658, each behind dropLifecycleHooks; lifecycleCount moves only with lifecycleMap set/delete and is bounded by nodePool.length. Measured b117 B3a: the stamp removed -> exit 0, 0 BREACH (.handoff/b117-evidence/b3a/heads-census-1.txt).',
+        anchor: { file: 'Signal.js', text: '            if (node.gen !== g) return;\n' },
+    },
     'report-registry-config': {
         proof: 'unreachable from argv or a stream: REGISTRY_PROBLEMS is computed at import from this tree\'s divergences.json (divergences.mjs REGISTRY_URL, module-relative). Reachable only from a corrupted checkout (untested).',
         anchor: { file: 'bench/soak/SoakReport.mjs', text: 'if (REGISTRY_PROBLEMS.length > 0) return config(' },
     },
+});
+
+const MF = 'bench/soak/_mustfail.mjs';
+/**
+ * _mustfail controls that are a tooth of no universe id, by design (b119 B5): each reason cites the comment that
+ * says so. Pass controls stand outside the universe (this header, GAPS covers []; SPEC-B.md:541 "Only the base of
+ * the pass controls changes"); T-mark's NOTE is report-only (gates.mjs REPORT_ONLY_GATES 'shape').
+ */
+export const NOT_TEETH = deepFreeze({
+    'L-P-INTERIM': 'interim pass control, GRAPH,BATCH on headpatched (' + MF + ' L-P-INTERIM comment; ' + SPEC + ':500, :541-543)',
+    'L-P-INTERIM-ERROR': 'interim pass control, ERROR on headpatched, explained by tolerated divergences only (' + SPEC + ':501, :541-543)',
+    'P-INTERIM-ERROR-clean': "L-P-INTERIM-ERROR's run on preb33 (" + MF + ' P-INTERIM-ERROR-clean comment: a false DIV-F21 label is a MISS; F21 teeth: test/58)',
+    'P-HOOK-HP': 'the HOOK pass control on headpatched (' + MF + ' P-HOOK-HP comment)',
+    'P-HOOK-TREE': 'the HOOK pass control on the tree (' + MF + ' P-HOOK-TREE comment)',
+    'P-LC-tree': 'the LIFECYCLE pass control on the tree, the revert of every T-LC-* row (' + MF + ' P-LC-tree comment)',
+    'T-mark': 'performance-only NOTE tooth: shape[GRAPH] markDedupe is report-only, no gate reads it (config.mjs MARK_DEDUPE_NOTE comment; gates.mjs REPORT_ONLY_GATES shape)',
 });
 
 /** Does control `name` (or prefix pattern `X-*`) name something in `controls`? Returns the matches. */
@@ -270,8 +302,8 @@ const isNames = (a) => Array.isArray(a) && a.every((x) => typeof x === 'string' 
  * Audit the registry. opts:
  *   REQUIRED  controls: [the _mustfail control names]; ceiling: [the literal GAPS names]; max: their count (a safe
  *             integer). Missing or malformed is a problem, never a skipped check; never defaulted from this file.
- *   optional  universe, gates, checks, gaps, unreachable, testAnchors, root (defaults: the live tables / repo root;
- *             for mutation tests).
+ *   optional  universe, gates, checks, gaps, unreachable, testAnchors, notTeeth, root (defaults: the live tables /
+ *             repo root; for mutation tests).
  * Returns an array of problem strings (empty = consistent).
  */
 export function audit(opts) {
@@ -282,6 +314,7 @@ export function audit(opts) {
     const gaps = o.gaps === undefined ? GAPS : o.gaps;
     const unreachable = o.unreachable === undefined ? UNREACHABLE : o.unreachable;
     const testAnchors = o.testAnchors === undefined ? TEST_ANCHORS : o.testAnchors;
+    const notTeeth = o.notTeeth === undefined ? NOT_TEETH : o.notTeeth;
     const root = o.root === undefined ? ROOT : o.root;
     const probs = [];
     const read = (file) => { try { return readFileSync(join(root, file), 'utf8'); } catch (e) { return null; } };
@@ -354,6 +387,15 @@ export function audit(opts) {
             for (const c of fam) if (!got.has(c)) probs.push('control ' + c + ' is not resolved by CHECKS ' + id);
         }
     }
+    // 5b. no orphan control: every _mustfail control is resolved by some CHECKS id, or NOT_TEETH says why not (b119 B5)
+    const listed = new Set();
+    if (controls !== null) for (const name of used) for (const c of controlMatches(name, controls)) listed.add(c);
+    for (const name of Object.keys(notTeeth)) {
+        if (!(typeof notTeeth[name] === 'string' && notTeeth[name].length > 0 && notTeeth[name].indexOf('\n') === -1)) probs.push('NOT_TEETH ' + name + ' must be a one-line reason');
+        if (controls !== null && controls.indexOf(name) === -1) probs.push('stale NOT_TEETH: ' + name + ' is no _mustfail control');
+        if (used.has(name) || listed.has(name)) probs.push('stale NOT_TEETH: ' + name + ' is a CHECKS control');
+    }
+    if (controls !== null) for (const c of controls) if (!listed.has(c) && !own(notTeeth, c)) probs.push('orphan control: ' + c);
     // 6. UNREACHABLE: a proof and an exactly-once anchor
     for (const id of Object.keys(unreachable)) {
         const u = unreachable[id];

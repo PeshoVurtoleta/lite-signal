@@ -55,6 +55,8 @@ export const PARITY_FILES = Object.freeze([
     'bench/soak/adapters/lite-s3.mjs',
     'bench/soak/controls/preb33/Signal.js', 'bench/soak/controls/preb33/Watch.js',
     'bench/soak/controls/prefixr/Signal.js', 'bench/soak/controls/prefixr/Watch.js',
+    // b117 B2 (A5b Q1 = a): 767f808, the pre-A5 kernel (Signal.js 0f75866f); T-A5b's base
+    'bench/soak/controls/prea5/Signal.js', 'bench/soak/controls/prea5/Watch.js',
     // unit 0s B1 (burst 64): the WIE lane decides its scripts and coverage (pinned before its roster flip, B2)
     'bench/soak/lanes/wie.mjs',
     // B-B3 (burst 81): gates.mjs imports the rss sampler's p95 / bandMedian, which decide the rss gate

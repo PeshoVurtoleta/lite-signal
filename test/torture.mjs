@@ -111,6 +111,31 @@
 //     (creation-time CycleError caught, then a new effect in a recycled slot),
 //     destroy()} -> lite-leak tracker.size() === 0 (a cycle's marker is released
 //     only when the shape behaved and destroy() returned)
+//   * MREG (A5a, PLAN-A5a-lifecycle TASK 2): observeObservers registrations on
+//     one node are independent. Fire half: one source with three hoisted
+//     registrations, a toggle effect reads it on odd steps only, so every step
+//     is one connect or one disconnect fire walking all three -> in-process
+//     maxMajor 0 and minor 0 (gc() first) over 1e5 steps -- best effort only:
+//     minor 0 is blind once earlier phases have grown new space -- and, the
+//     real gate, the pinned NEST child gated on the WHOLE measured run: every
+//     window 1..8 <= 0.05 B/op net (max, not min, so a transient that dirties
+//     only some windows fails) and no scavenge in any window (null === 0);
+//     every step must fire every registration (conn + disc ===
+//     steps per reg) or the lane is blind. Retention half: 1e4 cycles, each
+//     with fresh callbacks: A offs itself in its onConnect, B registers a new D
+//     from inside its first onConnect (D must skip that fire), C disposes a
+//     scratch signal from inside its first onDisconnect; observe / unobserve
+//     twice, FIFO order checked on all four fires, then the source is disposed
+//     with the B / C / D off handles KEPT (never called, held in a module array
+//     through the census) -> the F-a drop must clear their callbacks. Oracles:
+//     WeakRefs to the six callbacks of every 64th cycle + the last 4
+//     (MREG_SAMPLED = 161) all collected after forced GC (the NEST census
+//     control proves gc + WeakRef clearing work here); a lite-leak marker per
+//     cycle released only when the shape behaved (size() === 0); stats() back
+//     to baseline. The registration cycle itself allocates by API design (an
+//     entry, a reg and an off closure per observeObservers call), so only the
+//     fire half carries a B/op gate. Must-fail: the M9 mutant (dropLifecycleHooks
+//     without the F-a clearing) keeps the kept offs' callbacks alive (cb > 0).
 //
 // The untrack path is the LEDGER #30 keystone: untrack() nulls currentObserver
 // for its window and restores it gen-safely (only if the observer survived the
@@ -160,6 +185,23 @@ function steadyMin(per, base) {
   }
   return m === null ? null : (m < 0 ? 0 : m);
 }
+// Whole-run view (b116, MREG lane only): the MAX net B/op over windows 1..n-1 (negative clamped
+// to 0; a window with a null side is skipped here and counted by windowNulls), and the count of
+// windows 1..n-1 where the lane or the baseline was hit by a scavenge (fail closed: unmeasured).
+function windowMax(per, base) {
+  let m = null;
+  for (let w = 1; w < per.length; w++) {
+    if (per[w] === null || base[w] === null) continue;
+    const v = per[w] - base[w];
+    if (m === null || v > m) m = v;
+  }
+  return m === null ? null : (m < 0 ? 0 : m);
+}
+function windowNulls(per, base) {
+  let n = 0;
+  for (let w = 1; w < per.length; w++) if (per[w] === null || base[w] === null) n++;
+  return n;
+}
 if (process.argv.includes('--nest-lane')) {
   const pinned = process.execArgv.includes('--min-semi-space-size=4') &&
     process.execArgv.includes('--max-semi-space-size=4');
@@ -190,22 +232,38 @@ if (process.argv.includes('--nest-lane')) {
   const stopQ1 = effect(() => { sQ(); qRuns++; }, { scheduler: qScheduler });
   const stopQ2 = effect(() => { sQ(); qPlain++; });
   const qsStep = (i) => { qN = (qN + 1) & 0x3FFFFFFF; sQ.set(qN); };
+  // MREG lane (A5a): three independent registrations on mS; the effect reads mS on odd mT
+  // only, so every step is one connect or one disconnect fire over all three. Hooks are
+  // hoisted; per-reg counters live in Int32Array slots [connA, connB, connC, discA, discB, discC].
+  const mS = signal(0), mT = signal(0);
+  const MC = new Int32Array(6);
+  let mN = 0, mSteps = 0;
+  const mOffA = observeObservers(mS, { onConnect: () => { MC[0]++; }, onDisconnect: () => { MC[3]++; } });
+  const mOffB = observeObservers(mS, { onConnect: () => { MC[1]++; }, onDisconnect: () => { MC[4]++; } });
+  const mOffC = observeObservers(mS, { onConnect: () => { MC[2]++; }, onDisconnect: () => { MC[5]++; } });
+  const stopM = effect(() => { if ((mT() & 1) === 1) mS(); });
+  const mregStep = (i) => { mSteps++; mN = (mN + 1) & 0x3FFFFFFF; mT.set(mN); };
   const BOX = ['tagged'];   // PACKED_ELEMENTS: a double stored here is a fresh HeapNumber
   const boxStep = (i) => { BOX[0] = i + 0.5; };   // control: one 16 B HeapNumber per op
-  for (let i = 0; i < 50000; i++) { nestStep(i); emptyStep(i); boxStep(i); watchStep(i); qsStep(i); }   // warm up
+  for (let i = 0; i < 50000; i++) { nestStep(i); emptyStep(i); boxStep(i); watchStep(i); qsStep(i); mregStep(i); }   // warm up
   const base = laneBytesPerOp(emptyStep);
   const nest = laneBytesPerOp(nestStep);
   const wat = laneBytesPerOp(watchStep);
   const ctl = laneBytesPerOp(boxStep);
   const qs = laneBytesPerOp(qsStep);
+  const mr = laneBytesPerOp(mregStep);
   stopN();
   stopW();
   stopQ1();
   stopQ2();
+  stopM();
+  mOffA(); mOffB(); mOffC();
   console.log(JSON.stringify({ pinned, nest: steadyMin(nest, base), watch: steadyMin(wat, base),
     control: steadyMin(ctl, base), window0: nest[0], watchWindow0: wat[0],
     watchFires: firesW, watchSteps: stepsW, sink: sinkN + sinkW,
-    qs: steadyMin(qs, base), qsWindow0: qs[0], qsSteps: qN, qsRuns: qRuns, qsPlain: qPlain, qsSched: qSched }));
+    qs: steadyMin(qs, base), qsWindow0: qs[0], qsSteps: qN, qsRuns: qRuns, qsPlain: qPlain, qsSched: qSched,
+    mreg: steadyMin(mr, base), mregMax: windowMax(mr, base), mregNull: windowNulls(mr, base), mregPer: mr,
+    mregBase: base, mregWindow0: mr[0], mregSteps: mSteps, mregCounts: Array.from(MC) }));
   process.exit(0);
 }
 
@@ -809,8 +867,142 @@ const f21Live = tracker.size();
 f21Markers.fill(null);
 const f21Ok = f21Live === 0 && f21Fail === 0;
 
+// ---- phase 8: MREG (A5a, observeObservers registrations are independent) -----
+// 8a: fire half, GC budget. Three hoisted registrations on mgS; the effect reads mgS on odd
+// mgT only, so each step is one connect or one disconnect fire walking all three regs.
+// Counters are Int32Array slots [connA, connB, connC, discA, discB, discC].
+const mgS = signal(0), mgT = signal(0);
+const MG = new Int32Array(6);
+let mgN = 0;
+const mgOffA = observeObservers(mgS, { onConnect: () => { MG[0]++; }, onDisconnect: () => { MG[3]++; } });
+const mgOffB = observeObservers(mgS, { onConnect: () => { MG[1]++; }, onDisconnect: () => { MG[4]++; } });
+const mgOffC = observeObservers(mgS, { onConnect: () => { MG[2]++; }, onDisconnect: () => { MG[5]++; } });
+const mgStop = effect(() => { if ((mgT() & 1) === 1) mgS(); });
+const mgStep = () => { mgN = (mgN + 1) & 0x3FFFFFFF; mgT.set(mgN); };
+globalThis.gc?.();   // empty new space first; minor 0 is best effort, the pinned child gates B/op
+const mggc = new GcProfiler().start();
+for (let i = 0; i < HOT; i++) {
+  mgStep();
+  if ((i & 8191) === 0) mggc.sampleHeap(performance.now(), process.memoryUsage().heapUsed);
+}
+await new Promise((r) => setTimeout(r, 50));
+const mgs = mggc.summary();
+const mgGcReport = checkNoGc(mgs, { maxMajor: 0, maxMinor: 0, maxPauseMs: 4 });
+mggc.stop();
+// Blind unless every step fired every registration once (steps start at mgN = 1: connect first).
+const mgFired = mgN === HOT && MG[0] === HOT / 2 && MG[1] === HOT / 2 && MG[2] === HOT / 2 &&
+  MG[3] === HOT / 2 && MG[4] === HOT / 2 && MG[5] === HOT / 2;
+mgStop();
+mgOffA(); mgOffB(); mgOffC();
+dispose(mgT);
+dispose(mgS);
+// The same fire step in the pinned child (phase 4b). Blind unless conn + disc === steps for
+// every reg and conn - disc is 0 or 1 (the child's steps also start with a connect).
+const mregChildFired = nestLane !== null && nestLane.mregSteps > 0 && Array.isArray(nestLane.mregCounts) &&
+  nestLane.mregCounts.length === 6 && [0, 1, 2].every((k) => {
+    const c = nestLane.mregCounts[k], d = nestLane.mregCounts[k + 3];
+    return c + d === nestLane.mregSteps && (c - d === 0 || c - d === 1);
+  });
+// Whole-run gate (b116): the steady-state MIN alone cannot see a transient (allocation in only
+// some windows), so EVERY window 1..8 must be <= NEST_BUDGET net (mregMax) and none may have been
+// hit by a scavenge (mregNull === 0). Missing fields fail closed.
+const mregChildOk = nestOk && mregChildFired && typeof nestLane.mreg === 'number' && nestLane.mreg <= NEST_BUDGET &&
+  typeof nestLane.mregMax === 'number' && nestLane.mregMax <= NEST_BUDGET && nestLane.mregNull === 0;
+const mregChildLabel = (nestLane === null || typeof nestLane.mreg !== 'number' ? 'unmeasured' : nestLane.mreg.toFixed(3)) +
+  ' B/op max=' + (nestLane === null || typeof nestLane.mregMax !== 'number' ? 'unmeasured' : nestLane.mregMax.toFixed(3)) +
+  ' B/op null=' + (nestLane === null || typeof nestLane.mregNull !== 'number' ? 'unmeasured' : nestLane.mregNull);
+
+// 8b: retention half. Per cycle, fresh callbacks on a fresh source (one cycle per call, so its
+// locals die on return): connect #1 = A (offs itself), B (registers D: born connected, so this
+// fire skips it), C; disconnect #1 = C (disposes the scratch signal), D; connect #2 = B, C, D;
+// disconnect #2 = C, D. ord records the FIFO order of each fire (base 8: A=1, B=2, C=3, D=4).
+// Then dispose(src) with offB / offC / offD KEPT in MREG_KEPT (never called) until after the
+// census: the F-a drop must clear their callbacks. Exact oracles: (1) WeakRefs to cbA, cbB,
+// cbCc, cbCd, cbDc, cbDd of every sampled cycle all collected; (2) a lite-leak marker per
+// cycle, released only when the shape behaved (size() counts the failed cycles); (3) stats()
+// back to mregBase. Held-value contract: tag is a number, cleanup is null.
+const MREG_CYCLES = 10000;
+const MREG_SAMPLED = Math.ceil(MREG_CYCLES / 64) + 4;   // (i & 63) === 0, plus the last 4 cycles
+const MREG_KEPT = new Array(MREG_CYCLES * 3).fill(null);
+const mregMarkers = new Array(MREG_CYCLES).fill(null);
+const mregRefs = [];
+let mregFail = 0, mregSampled = 0;
+const mtracker = createLeakTracker({
+  name: 'torture-mreg',
+  onLeak: (r) => leaks.push(String(r.tag)),
+  onWarning: (w) => warns.push(w.kind + ':' + w.reason),
+});
+const mregBase = stats();
+function mregCycle(i, sample) {
+  if (sample) mregSampled++;
+  const marker = { i };
+  mregMarkers[i] = marker;
+  const handle = mtracker.track(marker, null, 300000 + i, { audit: true });
+  let clean = false;
+  try {
+    const src = signal(0), scratch = signal(0);
+    let ord = 0, nA = 0, nB = 0, nCc = 0, nCd = 0, nDc = 0, nDd = 0, scratchGone = false;
+    let offA = null, offD = null;
+    const cbA = () => { nA++; ord = ord * 8 + 1; offA(); };
+    const cbDc = () => { nDc++; ord = ord * 8 + 4; };
+    const cbDd = () => { nDd++; ord = ord * 8 + 4; };
+    const cbB = () => {
+      nB++; ord = ord * 8 + 2;
+      if (offD === null) offD = observeObservers(src, { onConnect: cbDc, onDisconnect: cbDd });
+    };
+    const cbCc = () => { nCc++; ord = ord * 8 + 3; };
+    const cbCd = () => { nCd++; ord = ord * 8 + 3; if (!scratchGone) { scratchGone = true; dispose(scratch); } };
+    offA = observeObservers(src, { onConnect: cbA });
+    const offB = observeObservers(src, { onConnect: cbB });
+    const offC = observeObservers(src, { onConnect: cbCc, onDisconnect: cbCd });
+    if (sample) {
+      mregRefs.push(new WeakRef(cbA)); mregRefs.push(new WeakRef(cbB)); mregRefs.push(new WeakRef(cbCc));
+      mregRefs.push(new WeakRef(cbCd)); mregRefs.push(new WeakRef(cbDc)); mregRefs.push(new WeakRef(cbDd));
+    }
+    const body = () => { src(); };
+    const stop1 = effect(body);
+    const o1 = ord; ord = 0;
+    const d1 = nDc;   // D registered during connect #1: that fire must skip it
+    stop1();
+    const o2 = ord; ord = 0;
+    const stop2 = effect(body);
+    const o3 = ord; ord = 0;
+    stop2();
+    const o4 = ord;
+    dispose(src);
+    MREG_KEPT[3 * i] = offB; MREG_KEPT[3 * i + 1] = offC; MREG_KEPT[3 * i + 2] = offD;
+    const st = stats();
+    clean = o1 === (1 * 8 + 2) * 8 + 3 && o2 === 3 * 8 + 4 && o3 === (2 * 8 + 3) * 8 + 4 && o4 === 3 * 8 + 4 &&
+      d1 === 0 && nA === 1 && nB === 2 && nCc === 2 && nCd === 2 && nDc === 1 && nDd === 2 && scratchGone &&
+      offD !== null && st.activeLinks === mregBase.activeLinks && st.activeNodes === mregBase.activeNodes &&
+      st.signals === mregBase.signals && st.effects === mregBase.effects;
+  } catch {
+    clean = false;
+  }
+  if (clean) mtracker.untrack(handle); else mregFail++;
+}
+for (let i = 0; i < MREG_CYCLES; i++) mregCycle(i, (i & 63) === 0 || i >= MREG_CYCLES - 4);
+const mregLive = mtracker.size();
+const mregFindings = mtracker.audit();
+mregMarkers.fill(null);
+globalThis.gc?.();
+await new Promise((r) => setTimeout(r, 50));
+globalThis.gc?.();
+await new Promise((r) => setTimeout(r, 0));   // WeakRef targets stay alive until the job that read them ends
+globalThis.gc?.();
+let mregAlive = 0;
+for (let i = 0; i < mregRefs.length; i++) if (mregRefs[i].deref() !== undefined) mregAlive++;
+let mregKept = 0;   // the off handles must still be held at census time, or the F-a check is vacuous
+for (let i = 0; i < MREG_KEPT.length; i++) if (typeof MREG_KEPT[i] === 'function') mregKept++;
+MREG_KEPT.fill(null);
+const mregAfter = stats();
+const mregOk = mgGcReport.ok && mgFired && mregChildOk && mregFail === 0 && mregSampled === MREG_SAMPLED &&
+  mregRefs.length === MREG_SAMPLED * 6 && mregAlive === 0 && mregKept === MREG_CYCLES * 3 &&
+  mregLive === 0 && mregFindings.length === 0 && ctlAlive && ctlDead &&
+  mregAfter.activeNodes === mregBase.activeNodes && mregAfter.activeLinks === mregBase.activeLinks;
+
 // ---- verdict --------------------------------------------------------------
-const ok = gcReport.ok && allocOk && selfOk && nestGcReport.ok && nestOk && watchOk && nestRetOk && pinOk && qsOk && f21Ok &&
+const ok = gcReport.ok && allocOk && selfOk && nestGcReport.ok && nestOk && watchOk && nestRetOk && pinOk && qsOk && f21Ok && mregOk &&
   live === 0 && findings.length === 0 && leaks.length === 0 && warns.length === 0 &&
   nodesBaseline && linksBaseline;
 
@@ -827,6 +1019,8 @@ console.log(
   ' | qs gc major=' + qs.gc.major + ' minor=' + qs.gc.minor + ' alloc=' + qsBpcLabel + ' B/op child=' + qsChildLabel + ' B/op' +
   ' k=' + qsKLabel + ' K=' + qsAttempts.length + ' ctl=' + qsCtlLabel + ',K=' + qsCtlAttempts.length +
   ' | f21 size=' + f21Live + '/0 fail=' + f21Fail + '/' + F21_CYCLES +
+  ' | mreg gc major=' + mgs.gc.major + ' minor=' + mgs.gc.minor + ' fire=' + mregChildLabel +
+  ' cb=' + mregAlive + '/' + mregRefs.length + ' size=' + mregLive + '/0 fail=' + mregFail + '/' + MREG_CYCLES +
   ' | ' + (ok ? 'ok' : 'FAIL')
 );
 
@@ -878,6 +1072,16 @@ if (!ok) {
     }
   }
   if (!f21Ok) console.error('  f21 retention: size=' + f21Live + ' fail=' + f21Fail + '/' + F21_CYCLES);
+  if (!mregOk) console.error('  mreg: fired=' + mgFired + ' steps=' + mgN + ' counts=' + Array.from(MG).join(',') +
+    (mgGcReport.ok ? '' : ' gc ' + mgGcReport.violations.map((v) => v.metric + '=' + v.actual).join(',')) +
+    ' child=' + (nestLane === null ? 'no result' : mregChildLabel + ' window0=' + nestLane.mregWindow0 +
+      ' per=' + JSON.stringify(nestLane.mregPer) + ' base=' + JSON.stringify(nestLane.mregBase) +
+      ' steps=' + nestLane.mregSteps + ' counts=' + String(nestLane.mregCounts)) + ' childFired=' + mregChildFired +
+    ' budget<=' + NEST_BUDGET + (nestOk ? '' : ' (child lane failed: control/pin)') +
+    ' | cycles fail=' + mregFail + '/' + MREG_CYCLES + ' sampled=' + mregSampled + '/' + MREG_SAMPLED +
+    ' cb alive=' + mregAlive + '/' + mregRefs.length + ' kept=' + mregKept + '/' + (MREG_CYCLES * 3) +
+    ' size=' + mregLive + ' findings=' + mregFindings.length + ' control alive=' + (ctlAlive ? 1 : 0) + ' dead=' + (ctlDead ? 1 : 0) +
+    ' nodes ' + mregBase.activeNodes + '->' + mregAfter.activeNodes + ' links ' + mregBase.activeLinks + '->' + mregAfter.activeLinks);
   for (const v of gcReport.violations) console.error('  gc violation ' + v.metric + ' limit=' + v.limit + ' actual=' + v.actual);
   const alShow = (at) => 'Dlo=' + at.lo + ' Dhi=' + at.hi + ' minOdd=' + at.hiMin +
     ' (Dlo = min even, Dhi = 2nd-smallest odd; pass iff Dhi <= Dlo) batches ' +

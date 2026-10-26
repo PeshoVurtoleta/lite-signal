@@ -1,0 +1,263 @@
+import { effect, untrack } from "./Signal.js";
+
+/**
+ * Sentinel for "first run" in `watch`. Distinguishes a legitimate `undefined`
+ * source value from the uninitialized state -- necessary because a naive
+ * `oldValue === undefined` check would conflate them.
+ * @private
+ */
+const UNINITIALIZED = Symbol("watch.uninitialized");
+
+/**
+ * Track a reactive source and run a callback whenever its projected value
+ * changes. The callback receives `(newValue, oldValue, stop)` -- the third
+ * argument is a dispose function that can be called from inside the callback
+ * to terminate the watcher (matching MobX's `reaction` ergonomics).
+ *
+ * Internal reads inside the callback are untracked: a callback that reads
+ * other signals to perform side-effects won't re-fire when those unrelated
+ * signals change.
+ *
+ * Uses `Object.is` to guard against the raw-getter case where a dep mutation
+ * fires the effect but the projected value is unchanged (e.g.,
+ * `watch(() => health() <= 0, ...)` where many `health` changes produce the
+ * same boolean). Wrapping the source in a `computed` would achieve the same
+ * via the computed's own equality check -- the guard makes that wrapping
+ * optional.
+ *
+ * @example
+ *   const count = signal(0);
+ *   const stop = watch(count, (next, prev) => console.log(prev, "->", next));
+ *   count.set(1);  // logs: 0 -> 1
+ *   stop();
+ *
+ * @example  // Self-disposing on a condition
+ *   const status = signal("loading");
+ *   watch(status, (next, prev, stop) => {
+ *       if (next === "ready") { initialize(); stop(); }
+ *   });
+ *
+ * @example  // Immediate fire
+ *   watch(count, (n, p) => render(n), { immediate: true });
+ *
+ * @param {() => T} source                    Reactive read function.
+ * @param {(newValue: T, oldValue: T | undefined, stop: () => void) => void} callback
+ * @param {{ immediate?: boolean }} [options] `immediate: true` runs callback
+ *                                            once on registration with
+ *                                            `oldValue = undefined`.
+ * @returns {() => void}                      Dispose function. Idempotent;
+ *                                            the first call releases the
+ *                                            last observed value, source,
+ *                                            callback and the engine dispose
+ *                                            handle. Called inside source(),
+ *                                            the callback does not run. A
+ *                                            watcher disposed by its OWNER
+ *                                            keeps all four until this
+ *                                            handle is called or dropped
+ *                                            (as a raw effect() handle
+ *                                            keeps its registry).
+ * @template T
+ */
+export function watch(source, callback, options) {
+    const immediate = options !== undefined && options.immediate === true;
+    let oldValue = UNINITIALIZED;
+    let currentNewValue;            // shared mutable state, read by untrackedFire
+    let stopFn = null;
+    let wantsStopEarly = false;
+    let stopped = false;
+
+    // Late-binding stop handle: safe to call before `stopFn` is assigned (e.g.,
+    // synchronously inside the immediate fire), and safe to call multiple times.
+    // The first call drops both value slots, source, callback and the engine
+    // dispose handle, so a stop handle the caller keeps does not keep the last
+    // observed value, whatever source / callback close over, or the effect node
+    // reachable. Later calls are no-ops.
+    const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        oldValue = UNINITIALIZED;
+        currentNewValue = undefined;
+        source = null;
+        callback = null;
+        if (stopFn !== null) {
+            const dispose = stopFn;
+            stopFn = null;
+            dispose();
+        } else {
+            wantsStopEarly = true;
+        }
+    };
+
+    // ZERO-GC HOT PATH: the untrack body is hoisted into a closure allocated
+    // ONCE at registration time. If this were declared inline as
+    // `untrack(() => { ... })` inside the effect body, V8 would allocate a
+    // fresh closure on every fire -- at 120fps that's 7,200 allocations per
+    // minute per watcher. The shared `currentNewValue` variable is the price
+    // for keeping the per-fire cost at exactly zero allocations.
+    //
+    // The baseline is committed BEFORE the callback runs: `next` / `prev` are
+    // captured into locals and `oldValue` is advanced first, so a callback that
+    // throws cannot leave a stale `oldValue` behind for the next fire.
+    const untrackedFire = () => {
+        const next = currentNewValue;
+        const prev = oldValue;
+        oldValue = next;
+        if (prev === UNINITIALIZED) {
+            if (immediate) callback(next, undefined, stop);
+        } else if (!Object.is(next, prev)) {
+            callback(next, prev, stop);
+        }
+    };
+
+    stopFn = effect(() => {
+        const value = source();
+        if (stopped) return;   // stop() ran inside source(): nothing fires, nothing is kept
+        currentNewValue = value;
+        untrack(untrackedFire);
+    });
+
+    // If the immediate callback called stop() before stopFn was assigned,
+    // honor it now (stop() already cleared the value slots).
+    if (wantsStopEarly) {
+        const dispose = stopFn;
+        stopFn = null;
+        dispose();
+    }
+    return stop;
+}
+
+/**
+ * Fire `callback` exactly once when `predicate` first returns a truthy value,
+ * then auto-dispose. If `predicate` is already truthy at registration, fires
+ * synchronously and disposes immediately.
+ *
+ * Models MobX's `when(predicate, effect)` semantics. The returned dispose
+ * function can be called to cancel the watcher before it fires (useful for
+ * conditional registration that should be revocable).
+ *
+ * @example  // Trigger on state transition
+ *   when(() => user.isAuthenticated, () => redirect("/dashboard"));
+ *
+ * @example  // Cancellable
+ *   const cancel = when(() => slow.ready, () => start());
+ *   if (userBacked) cancel();
+ *
+ * @param {() => unknown} predicate Reactive read function; fired when truthy.
+ * @param {() => void} callback     Called once when predicate first truthy.
+ *                                  Internal reads are untracked.
+ * @returns {() => void}            Dispose function. Idempotent; once the
+ *                                  watcher has fired or been cancelled, the
+ *                                  handle holds nothing of it (predicate,
+ *                                  callback and the engine dispose handle
+ *                                  are released). Cancelled inside
+ *                                  predicate(), the callback does not run.
+ *                                  A callback that throws on a later fire
+ *                                  skips the auto-dispose: the handle keeps
+ *                                  the live effect, predicate and callback
+ *                                  until cancel() (as on 1.5.2). A watcher
+ *                                  disposed by its OWNER keeps them until
+ *                                  this handle is called or dropped (as a
+ *                                  raw effect() handle keeps its registry).
+ */
+export function when(predicate, callback) {
+    let stopFn = null;
+    let wantsStopEarly = false;
+    let done = false;
+
+    // Runs on fire and on cancel. Marks the watcher done and drops predicate,
+    // callback and the engine dispose handle before calling it, so a cancel
+    // handle the caller keeps does not keep whatever they close over, or the
+    // effect node (and through it the registry), reachable. Later calls find
+    // stopFn null: no-ops (wantsStopEarly is read only once, at registration).
+    const stop = () => {
+        done = true;
+        predicate = null;
+        callback = null;
+        if (stopFn !== null) {
+            const dispose = stopFn;
+            stopFn = null;
+            dispose();
+        } else {
+            wantsStopEarly = true;
+        }
+    };
+
+    stopFn = effect(() => {
+        // Reached after a callback threw on a later fire (done is set, stop()
+        // was skipped, the effect stays live and later writes re-run it), and
+        // the defense against any re-run after stop(): never fire twice.
+        if (done) return;
+        if (predicate()) {
+            if (done) return;  // cancel() ran inside predicate(): cancelled wins, callback never runs
+            done = true;
+            untrack(callback);
+            stop();
+        }
+    });
+
+    // If the predicate was truthy at registration, the fire's stop() ran before
+    // stopFn was assigned: dispose and drop the handle now.
+    if (wantsStopEarly) {
+        const dispose = stopFn;
+        stopFn = null;
+        dispose();
+    }
+    return stop;
+}
+
+/**
+ * Promise-returning variant of {@link when}. The returned promise resolves
+ * when `predicate` first returns a truthy value. Composes with `await` for
+ * declarative async control flow against reactive state.
+ *
+ * ! **HOT-PATH WARNING -- DO NOT USE PER FRAME.** This function calls
+ * `new Promise(...)`, which is a heap allocation. Every call allocates a
+ * Promise object plus its executor closure plus internal Promise infrastructure
+ * (resolve function, microtask state). This is unavoidable -- Promises require
+ * heap allocation by the language spec.
+ *
+ * **Use `whenAsync` for:** high-level scene/UI orchestration, boot sequences,
+ * waiting for user input, awaiting network state, level transitions. Anything
+ * that runs once or rarely.
+ *
+ * **NEVER use `whenAsync` for:** per-frame entity updates, render-loop logic,
+ * animation tick handlers, anywhere that runs at 60/120 fps. The Promise
+ * allocations will be visible in GC traces and will cause frame-time spikes
+ * under sustained load.
+ *
+ * **Zero-GC alternative:** use {@link when} with a callback. `when` is
+ * allocation-free per evaluation in its hot path (two closures total at
+ * registration, zero per predicate check).
+ *
+ * Note: this promise never rejects. If the predicate never becomes truthy,
+ * the promise never settles. Wrap in `Promise.race` for timeout semantics.
+ *
+ * @example  // OK -- high-level orchestration
+ *   await whenAsync(() => user.isAuthenticated);
+ *   navigate("/dashboard");
+ *
+ * @example  // OK -- boot sequence
+ *   await whenAsync(() => assets.loaded);
+ *   startGame();
+ *
+ * @example  // NOT OK -- per-frame, allocates a Promise every frame
+ *   function animate() {
+ *       whenAsync(() => physics.settled).then(render);  // GC pressure!
+ *       requestAnimationFrame(animate);
+ *   }
+ *
+ * @example  // Same use case, zero-GC
+ *   when(() => physics.settled, render);  // no Promise, no GC pressure
+ *
+ * @example  // With timeout
+ *   await Promise.race([
+ *     whenAsync(() => api.ready),
+ *     new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 5000))
+ *   ]);
+ *
+ * @param {() => unknown} predicate Reactive read function; resolves promise when truthy.
+ * @returns {Promise<void>}         Resolves when predicate first truthy.
+ */
+export function whenAsync(predicate) {
+    return new Promise((resolve) => when(predicate, resolve));
+}

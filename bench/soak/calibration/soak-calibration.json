@@ -194,52 +194,72 @@
   }
  },
  "provenance": {
-  "date": "2026-10-25T01:35:23.061Z",
-  "gitHead": "3408036ac015a7484ce21772009f940f4ca5c517",
+  "date": "2026-10-26T05:17:27.484Z",
+  "gitHead": "87c5715dd0148d4ef270ffa9ae7b8f4dc287a02d",
   "gitDirty": [
-   " M bench/soak/adapters/contract.mjs",
+   " M LEDGER.md",
+   " M Signal.js",
+   " M bench/soak/_mustfail.mjs",
    " M bench/soak/calibration/calibrate.mjs",
+   " M bench/soak/calibration/golden/scripts-1000.json",
+   " M bench/soak/controls.json",
+   " M bench/soak/divergences.json",
    " M bench/soak/exec.mjs",
-   " M bench/soak/gates.mjs",
-   " M bench/soak/lanes/index.mjs",
-   " M bench/soak/model.mjs",
+   " M bench/soak/lanes/lifecycle.mjs",
    " M bench/soak/oracles.mjs",
-   " M bench/soak/scenarios.mjs",
+   " M bench/soak/parity.json",
+   " M bench/soak/parity.mjs",
+   " M bench/soak/teeth.mjs",
    " M test/41-soak-config.test.mjs",
-   " M test/43-soak-model.test.mjs",
+   " M test/44-soak-divergences.test.mjs",
+   " M test/45-soak-teeth.test.mjs",
+   " M test/46-soak-report.test.mjs",
+   " M test/63-lifecycle-boundary.test.mjs",
+   " M test/65-hot-body-pins.test.mjs",
+   " M test/67-soak-taint.test.mjs",
+   " M test/70-calibrate-d7.test.mjs",
+   " M test/74-soak-s3-seam.test.mjs",
+   " M test/75-soak-hook.test.mjs",
+   " M test/76-snapshot.test.mjs",
+   " M test/83-soak-lifecycle.test.mjs",
+   " M test/torture.mjs",
    "?? BRIEF.md",
    "?? bench/bench-runs/",
-   "?? bench/soak/lanes/lifecycle.mjs",
-   "?? test/83-soak-lifecycle.test.mjs"
+   "?? bench/soak/controls/prea5/",
+   "?? test/84-lifecycle-independent.test.mjs",
+   "?? test/85-f9-hook-non-lifo.test.mjs"
   ],
+  "engineSha256": "2f7974f342824929740d6b1241cae2120aaa03d4bf9f58881c208d19f9370b70",
+  "engineNote": "sha256 of <root>/Signal.js (the tree kernel), equal at launch, at the end and in kernels.tree.files (--write dies otherwise): the engine actually cut, also on a dirty tree",
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   3.06,
-   3.23,
-   3.24
+   2.45,
+   2.67,
+   3.33
   ],
   "loadavgAfterTimed": [
-   4.6,
-   4.15,
-   3.59
+   3.01,
+   2.98,
+   3.16
   ],
   "loadavgAfter": [
-   6.67,
-   5.77,
-   4.62
+   6.11,
+   5.12,
+   4.16
   ],
-  "busyNodeBefore": [
-   "99616 9.2 node"
-  ],
-  "seconds": 997,
+  "busyNodeBefore": [],
+  "busyNodeRule": "other node processes (not this process or its node launcher chain, e.g. the quiet-lock wrapper) >= 10% CPU at launch, as pid pcpu command; [] = none, null = ps failed",
+  "seconds": 1003,
+  "cutSeconds": 551,
+  "secondsClock": "wall clock (Date.now), whole seconds: seconds = --write entry to the evidence write (every step; the origin of the \"(N s)\" log stamps); cutSeconds = step 1, the cut (the only timed phase under --timed)",
   "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
-   "bench/soak/exec.mjs": "156db4a14400987babea18f22b819085c55aad64287eff2ea6be58285cdcf533",
-   "bench/soak/oracles.mjs": "c42936ee07e660ebc4dc7185b01a7c12380b825c07f0b13bd472a094cbe22a14",
+   "bench/soak/exec.mjs": "b45d8cbe78131622ad551cff341021aa7b87d6c58e547894202df5e0874bccb4",
+   "bench/soak/oracles.mjs": "30f7dac1c3a88a074267dbd377ebbfd0b9751376eb3936097e4e3750e2e44d74",
    "bench/soak/model.mjs": "a0cf3bcd6b970cdb220940367af8c5d8b91b4101536d1f7e6c0b2de24ec12646",
    "bench/soak/scenarios.mjs": "6675246b14825bb1484329aab4d4f1cf0f63bd296252b36323d90f8888627c60",
    "bench/soak/seeds.mjs": "b68b535f7dcc83c2e12582c488fea1299704d41b492420854279e768010e9ff5",
@@ -256,7 +276,7 @@
    "bench/soak/mirror.mjs": "11998b7aebdd0e2003e10e68a146720d943598f6c71575dcddcffa0634935be7",
    "bench/soak/lanes/wie.mjs": "67aebd356665312b11c0f323e756485caf8cf50f8bec277322937bbf067a0e34",
    "bench/soak/lanes/hook.mjs": "9108a30a1a5a17fdecec2ad221d886a6c2540f29dc6fdf476c7ec9fcdc8cb5f3",
-   "bench/soak/lanes/lifecycle.mjs": "27a7a5eeae4b747853be7c16fa26e20eee035a43aedca6a2b101598c99bb4f3d"
+   "bench/soak/lanes/lifecycle.mjs": "1be1721a7f04caa993ed6e16ea18490602322c2452befbb9f80efc8544c43a4c"
   }
  },
  "worst": {
@@ -529,15 +549,15 @@
     "NEST": {
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 11388
+      "hits": 11613
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 50367
+      "performed": 51184
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.22215589895234253
+      "ratio": 0.2222522457996358
      }
     },
     "WIE": {
@@ -557,15 +577,15 @@
     "LIFECYCLE": {
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 10073
+      "hits": 12568
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 191718
+      "performed": 293856
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10466333752741432
+      "ratio": 0.10711167499604919
      }
     }
    },
@@ -573,15 +593,15 @@
     "NEST": {
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 621
+      "hits": 640
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2704
+      "performed": 2758
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.2202282899357777
+      "ratio": 0.22054168464617896
      }
     },
     "WIE": {
@@ -601,15 +621,15 @@
     "LIFECYCLE": {
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 513
+      "hits": 713
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 9959
+      "performed": 16264
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.11063433089726317
+      "ratio": 0.10991933931080446
      }
     }
    }
@@ -1118,93 +1138,93 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      13624,
-      13795,
-      13659,
-      13954,
-      13298,
-      13219,
-      13608,
-      13483,
-      13495,
-      13254,
-      13490
+      13045,
+      13423,
+      13693,
+      13545,
+      13244,
+      12990,
+      12855,
+      12821,
+      13223,
+      13076,
+      13307
      ],
-     "min": 13219,
-     "median": 13495,
-     "max": 13954
+     "min": 12821,
+     "median": 13223,
+     "max": 13693
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      47064,
-      47636,
-      48295,
-      47082,
-      47230,
-      47088,
-      47700,
-      47623,
-      48982,
-      48699,
-      48416
+      46152,
+      47871,
+      48365,
+      47670,
+      47404,
+      47686,
+      48332,
+      47752,
+      47657,
+      47512,
+      47210
      ],
-     "min": 47064,
-     "median": 47636,
-     "max": 48982
+     "min": 46152,
+     "median": 47670,
+     "max": 48365
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      45827,
-      46540,
-      45984,
-      48074,
-      49627,
-      48693,
-      48531,
-      49923,
-      48371,
-      49295,
-      48443
+      46561,
+      46787,
+      46711,
+      46417,
+      47586,
+      46889,
+      47020,
+      48008,
+      46650,
+      47062,
+      46948
      ],
-     "min": 45827,
-     "median": 48443,
-     "max": 49923
+     "min": 46417,
+     "median": 46889,
+     "max": 48008
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      33117,
-      36038,
-      36098,
-      36148,
-      35815,
-      36278,
-      35951,
-      36108,
-      36062,
-      36136,
-      36085
+      26654,
+      35162,
+      35103,
+      35181,
+      34733,
+      33910,
+      34390,
+      35171,
+      34730,
+      34535,
+      35058
      ],
-     "min": 33117,
-     "median": 36085,
-     "max": 36278
+     "min": 26654,
+     "median": 34733,
+     "max": 35181
     },
     "HOOK": {
      "opsPerSecPerCycle": [
-      37743,
-      37971,
-      37165,
-      37575,
-      38139,
-      37968,
-      38646,
-      36937,
-      37987,
-      36287,
-      36402
+      37366,
+      37592,
+      36729,
+      36755,
+      37900,
+      37385,
+      38019,
+      36450,
+      38326,
+      37001,
+      36699
      ],
-     "min": 36287,
-     "median": 37743,
-     "max": 38646
+     "min": 36450,
+     "median": 37366,
+     "max": 38326
     }
    }
   },
@@ -1624,75 +1644,75 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      12838,
-      13140,
-      12964,
-      12448,
-      11677,
-      12464,
-      12768,
-      12782,
-      12035,
-      12080,
-      12287
+      12874,
+      13600,
+      13763,
+      13964,
+      12926,
+      12995,
+      13232,
+      12856,
+      13397,
+      12712,
+      12811
      ],
-     "min": 11677,
-     "median": 12464,
-     "max": 13140
+     "min": 12712,
+     "median": 12995,
+     "max": 13964
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      18088,
-      19463,
-      19778,
-      19612,
-      19767,
-      19680,
-      19902,
-      19818,
-      19736,
-      19852,
-      19301
+      19446,
+      19655,
+      19905,
+      19924,
+      20336,
+      20486,
+      20405,
+      20236,
+      19596,
+      19608,
+      19750
      ],
-     "min": 18088,
-     "median": 19736,
-     "max": 19902
+     "min": 19446,
+     "median": 19905,
+     "max": 20486
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      44754,
-      61359,
-      61900,
-      56941,
-      63550,
-      64624,
-      60401,
-      63337,
-      60025,
-      64006,
-      63306
+      46472,
+      64434,
+      65535,
+      64308,
+      65920,
+      65949,
+      65111,
+      66302,
+      64736,
+      63928,
+      64109
      ],
-     "min": 44754,
-     "median": 61900,
-     "max": 64624
+     "min": 46472,
+     "median": 64736,
+     "max": 66302
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      30027,
-      33028,
-      33219,
-      32532,
-      32454,
-      32438,
-      32478,
-      32565,
-      32808,
-      32633,
-      32646
+      30732,
+      33611,
+      33531,
+      34109,
+      34121,
+      34421,
+      34194,
+      34440,
+      34297,
+      34427,
+      33776
      ],
-     "min": 30027,
-     "median": 32565,
-     "max": 33219
+     "min": 30732,
+     "median": 34121,
+     "max": 34440
     }
    }
   },
@@ -1702,7 +1722,7 @@
    "files": [
     {
      "path": "Signal.js",
-     "sha256": "0f75866f7085d68f24819092dc46623ba63bed8a9d14b24d0b52cf02a439ebd9"
+     "sha256": "2f7974f342824929740d6b1241cae2120aaa03d4bf9f58881c208d19f9370b70"
     },
     {
      "path": "Watch.js",
@@ -1717,50 +1737,50 @@
      "failingWorlds": 0,
      "crashes": 0,
      "scenarios": {
-      "saved-cursor-hazard": 88479,
+      "saved-cursor-hazard": 88563,
       "live-cursor-hazard": 31071,
       "child-first-run-dispose": 94864,
       "nested-computed-dispose": 200280,
       "untrack-dispose": 42295,
-      "outer-computed": 21007,
-      "early-exit-after-dispose": 35914,
-      "lifecycle-callback-dispose": 11388,
-      "lifecycle-dispose-recycle": 62964,
+      "outer-computed": 21033,
+      "early-exit-after-dispose": 35983,
+      "lifecycle-callback-dispose": 11613,
+      "lifecycle-dispose-recycle": 62963,
       "dispose-outer-observer": 67476
      },
      "performed": {
-      "O1c": 14683900,
-      "O1e": 18342705,
-      "O2": 3985156,
-      "O4": 21438456,
+      "O1c": 14682211,
+      "O1e": 18340433,
+      "O2": 3985148,
+      "O4": 21436763,
       "O5": 1105896,
       "O6": 2379554,
-      "O7a": 50367,
+      "O7a": 51184,
       "O7": 0,
       "OB": 0,
       "O8": 0
      },
      "skipTainted": {
-      "O1c": 2280620,
-      "O1e": 5238762,
-      "O2": 2759,
-      "O4": 1570149
+      "O1c": 2282309,
+      "O1e": 5241034,
+      "O2": 2761,
+      "O4": 1571842
      },
      "taintRatio": {
-      "O1c": 0.13443469075458664,
-      "O1e": 0.22215589895234253,
-      "O2": 0.0006918402222715379,
-      "O4": 0.06824181648561484
+      "O1c": 0.1345342514848637,
+      "O1e": 0.2222522457996358,
+      "O2": 0.0006923427791356322,
+      "O4": 0.06831539765231312
      },
      "scenarioMinPerCycle": {
-      "saved-cursor-hazard": 7879,
+      "saved-cursor-hazard": 7886,
       "live-cursor-hazard": 2740,
       "child-first-run-dispose": 8460,
       "nested-computed-dispose": 17813,
       "untrack-dispose": 3731,
       "outer-computed": 1831,
-      "early-exit-after-dispose": 3219,
-      "lifecycle-callback-dispose": 982,
+      "early-exit-after-dispose": 3227,
+      "lifecycle-callback-dispose": 997,
       "lifecycle-dispose-recycle": 5663,
       "dispose-outer-observer": 5977
      }
@@ -1812,49 +1832,49 @@
     },
     "LIFECYCLE": {
      "cycles": 11,
-     "worlds": 7704,
-     "ops": 1101205,
-     "failingWorlds": 7520,
+     "worlds": 2427,
+     "ops": 1102855,
+     "failingWorlds": 0,
      "crashes": 0,
      "scenarios": {
-      "lc-two-regs": 34364,
-      "lc-off-sibling": 18895,
-      "lc-late-off-recycle": 27620,
-      "lc-callback-dispose": 15276,
-      "lc-callback-register": 10073,
-      "lc-callback-off-sibling": 5091
+      "lc-two-regs": 52322,
+      "lc-off-sibling": 37332,
+      "lc-late-off-recycle": 41201,
+      "lc-callback-dispose": 19309,
+      "lc-callback-register": 12568,
+      "lc-callback-off-sibling": 12904
      },
      "performed": {
-      "O1c": 10367347,
-      "O1e": 12794343,
-      "O2": 3721469,
-      "O4": 13603439,
-      "O5": 1101389,
-      "O6": 1668462,
-      "O7a": 191718,
-      "O7": 910649,
+      "O1c": 15886242,
+      "O1e": 27086287,
+      "O2": 5064459,
+      "O4": 29157694,
+      "O5": 1105282,
+      "O6": 1984823,
+      "O7a": 293856,
+      "O7": 29509383,
       "OB": 0,
       "O8": 0
      },
      "skipTainted": {
       "O1c": 0,
-      "O1e": 1495637,
+      "O1e": 3249295,
       "O2": 0,
-      "O4": 147417
+      "O4": 387823
      },
      "taintRatio": {
       "O1c": 0,
-      "O1e": 0.10466333752741432,
+      "O1e": 0.10711167499604919,
       "O2": 0,
-      "O4": 0.010720568959488776
+      "O4": 0.013126289176121034
      },
      "scenarioMinPerCycle": {
-      "lc-two-regs": 3032,
-      "lc-off-sibling": 1673,
-      "lc-late-off-recycle": 2419,
-      "lc-callback-dispose": 1354,
-      "lc-callback-register": 868,
-      "lc-callback-off-sibling": 434
+      "lc-two-regs": 4660,
+      "lc-off-sibling": 3285,
+      "lc-late-off-recycle": 3678,
+      "lc-callback-dispose": 1659,
+      "lc-callback-register": 1088,
+      "lc-callback-off-sibling": 1135
      }
     }
    },
@@ -1866,50 +1886,50 @@
      "failingWorlds": 0,
      "crashes": 0,
      "scenarios": {
-      "saved-cursor-hazard": 4900,
+      "saved-cursor-hazard": 4907,
       "live-cursor-hazard": 1717,
       "child-first-run-dispose": 5174,
       "nested-computed-dispose": 11089,
       "untrack-dispose": 2207,
-      "outer-computed": 1119,
-      "early-exit-after-dispose": 1973,
-      "lifecycle-callback-dispose": 621,
+      "outer-computed": 1120,
+      "early-exit-after-dispose": 1980,
+      "lifecycle-callback-dispose": 640,
       "lifecycle-dispose-recycle": 3437,
       "dispose-outer-observer": 3762
      },
      "performed": {
-      "O1c": 804723,
-      "O1e": 990282,
+      "O1c": 804623,
+      "O1e": 989884,
       "O2": 220419,
       "O4": 1149360,
       "O5": 61344,
       "O6": 131173,
-      "O7a": 2704,
+      "O7a": 2758,
       "O7": 0,
       "OB": 0,
       "O8": 0
      },
      "skipTainted": {
-      "O1c": 127174,
-      "O1e": 279682,
+      "O1c": 127274,
+      "O1e": 280080,
       "O2": 138,
       "O4": 89124
      },
      "taintRatio": {
-      "O1c": 0.13646787144931252,
-      "O1e": 0.2202282899357777,
+      "O1c": 0.1365751794457971,
+      "O1e": 0.22054168464617896,
       "O2": 0.0006256885975054068,
       "O4": 0.07196217310841319
      },
      "scenarioMinPerCycle": {
-      "saved-cursor-hazard": 1568,
+      "saved-cursor-hazard": 1569,
       "live-cursor-hazard": 560,
       "child-first-run-dispose": 1715,
       "nested-computed-dispose": 3612,
       "untrack-dispose": 643,
       "outer-computed": 344,
-      "early-exit-after-dispose": 621,
-      "lifecycle-callback-dispose": 198,
+      "early-exit-after-dispose": 622,
+      "lifecycle-callback-dispose": 205,
       "lifecycle-dispose-recycle": 1118,
       "dispose-outer-observer": 1226
      }
@@ -1961,106 +1981,106 @@
     },
     "LIFECYCLE": {
      "cycles": 3,
-     "worlds": 442,
-     "ops": 60510,
-     "failingWorlds": 432,
+     "worlds": 134,
+     "ops": 60816,
+     "failingWorlds": 0,
      "crashes": 0,
      "scenarios": {
-      "lc-two-regs": 1856,
-      "lc-off-sibling": 1009,
-      "lc-late-off-recycle": 1493,
-      "lc-callback-dispose": 725,
-      "lc-callback-register": 513,
-      "lc-callback-off-sibling": 258
+      "lc-two-regs": 2882,
+      "lc-off-sibling": 2059,
+      "lc-late-off-recycle": 2258,
+      "lc-callback-dispose": 1107,
+      "lc-callback-register": 713,
+      "lc-callback-off-sibling": 695
      },
      "performed": {
-      "O1c": 549966,
-      "O1e": 653497,
-      "O2": 201813,
-      "O4": 698358,
-      "O5": 60520,
-      "O6": 89502,
-      "O7a": 9959,
-      "O7": 48526,
+      "O1c": 856834,
+      "O1e": 1493129,
+      "O2": 289362,
+      "O4": 1608520,
+      "O5": 60950,
+      "O6": 110096,
+      "O7a": 16264,
+      "O7": 1632690,
       "OB": 0,
       "O8": 0
      },
      "skipTainted": {
       "O1c": 0,
-      "O1e": 81293,
+      "O1e": 184392,
       "O2": 0,
-      "O4": 8030
+      "O4": 24274
      },
      "taintRatio": {
       "O1c": 0,
-      "O1e": 0.11063433089726317,
+      "O1e": 0.10991933931080446,
       "O2": 0,
-      "O4": 0.01136769027786429
+      "O4": 0.014866541645792427
      },
      "scenarioMinPerCycle": {
-      "lc-two-regs": 613,
-      "lc-off-sibling": 322,
-      "lc-late-off-recycle": 461,
-      "lc-callback-dispose": 234,
-      "lc-callback-register": 160,
-      "lc-callback-off-sibling": 78
+      "lc-two-regs": 937,
+      "lc-off-sibling": 678,
+      "lc-late-off-recycle": 710,
+      "lc-callback-dispose": 358,
+      "lc-callback-register": 226,
+      "lc-callback-off-sibling": 225
      }
     }
    },
    "throughput": {
     "NEST": {
      "opsPerSecPerCycle": [
-      46756,
-      47509,
-      49261,
-      47883,
-      46736,
-      47378,
-      48508,
-      47087,
-      47030,
-      48546,
-      48166
+      47511,
+      48212,
+      49022,
+      49528,
+      48789,
+      47673,
+      49881,
+      49580,
+      49915,
+      50316,
+      49609
      ],
-     "min": 46736,
-     "median": 47509,
-     "max": 49261
+     "min": 47511,
+     "median": 49528,
+     "max": 50316
     },
     "WIE": {
      "opsPerSecPerCycle": [
-      10215,
-      10013,
-      9935,
-      10070,
-      10279,
-      9817,
-      9987,
-      9886,
-      10263,
-      10069,
-      10098
+      10537,
+      10120,
+      9799,
+      10129,
+      10193,
+      9640,
+      9895,
+      9855,
+      10222,
+      10083,
+      10153
      ],
-     "min": 9817,
-     "median": 10069,
-     "max": 10279
+     "min": 9640,
+     "median": 10120,
+     "max": 10537
     },
     "LIFECYCLE": {
      "opsPerSecPerCycle": [
-      39265,
-      39411,
-      39137,
-      39091,
-      40561,
-      40064,
-      39836,
-      38822,
-      38307,
-      38923,
-      39804
+      28313,
+      29786,
+      29686,
+      30174,
+      30043,
+      30355,
+      29846,
+      29013,
+      29464,
+      29252,
+      29644
      ],
-     "min": 38307,
-     "median": 39265,
-     "max": 40561
+     "min": 28313,
+     "median": 29686,
+     "max": 30355
     }
    }
   }
@@ -2088,7 +2108,7 @@
     ]
    },
    "tree": {
-    "mainExit": 1,
+    "mainExit": 0,
     "lanesEqual": [
      "NEST",
      "WIE",
@@ -2117,7 +2137,7 @@
     ]
    },
    "tree": {
-    "mainExit": 1,
+    "mainExit": 0,
     "lanesEqual": [
      "NEST",
      "WIE",
@@ -2495,12 +2515,12 @@
     "failingWorlds": 0,
     "performed": {
      "O1c": 185792,
-     "O1e": 233698,
+     "O1e": 233663,
      "O2": 50290,
-     "O4": 271044,
+     "O4": 270843,
      "O5": 14058,
      "O6": 30200,
-     "O7a": 672,
+     "O7a": 692,
      "O7": 0,
      "OB": 0,
      "O8": 0
@@ -2508,15 +2528,15 @@
     "worst": {
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 142
+      "hits": 144
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 672
+      "performed": 692
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.21670113389933335
+      "ratio": 0.2168184453881502
      }
     }
    },
@@ -2554,33 +2574,33 @@
    },
    "LIFECYCLE": {
     "cycles": 11,
-    "ops": 11905,
-    "worlds": 91,
-    "failingWorlds": 89,
+    "ops": 14997,
+    "worlds": 33,
+    "failingWorlds": 0,
     "performed": {
-     "O1c": 101563,
-     "O1e": 129350,
-     "O2": 35812,
-     "O4": 139069,
-     "O5": 11907,
-     "O6": 17340,
-     "O7a": 2036,
-     "O7": 9519,
+     "O1c": 213998,
+     "O1e": 354250,
+     "O2": 71689,
+     "O4": 382315,
+     "O5": 15030,
+     "O6": 27225,
+     "O7a": 4002,
+     "O7": 392594,
      "OB": 0,
      "O8": 0
     },
     "worst": {
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 94
+      "hits": 160
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2036
+      "performed": 4002
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.11310560454177694
+      "ratio": 0.11324438659290595
      }
     }
    }
@@ -2871,28 +2891,28 @@
    "ops": 60816,
    "worlds": 134,
    "performed": {
-    "O1c": 855614,
-    "O1e": 1507978,
-    "O2": 291896,
-    "O4": 1604814,
+    "O1c": 856192,
+    "O1e": 1514537,
+    "O2": 288027,
+    "O4": 1612567,
     "O5": 60950,
-    "O6": 108941,
-    "O7a": 15697,
-    "O7": 70101,
+    "O6": 108643,
+    "O7a": 15694,
+    "O7": 1653424,
     "OB": 0,
     "O8": 0
    },
    "skipTainted": {
     "O1c": 0,
-    "O1e": 168543,
+    "O1e": 169511,
     "O2": 0,
-    "O4": 25904
+    "O4": 26522
    },
    "taintRatio": {
     "O1c": 0,
-    "O1e": 0.10053139805585495,
+    "O1e": 0.10065686963792006,
     "O2": 0,
-    "O4": 0.015885027331519
+    "O4": 0.016180939534094853
    },
    "worst": {
     "rarestRequired": {
@@ -2901,11 +2921,11 @@
     },
     "leastPerformed": {
      "oracle": "O7a",
-     "performed": 15697
+     "performed": 15694
     },
     "maxTaint": {
      "oracle": "O1e",
-     "ratio": 0.10053139805585495
+     "ratio": 0.10065686963792006
     }
    }
   }
@@ -4026,71 +4046,71 @@
      "seed": 2654435769,
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 588
+      "hits": 604
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2724
+      "performed": 2780
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.22200127699437158
+      "ratio": 0.2220836136144378
      }
     },
     {
      "seed": 1013904242,
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 638
+      "hits": 647
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2791
+      "performed": 2847
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.22791637632815384
+      "ratio": 0.22802530155291834
      }
     },
     {
      "seed": 3668340011,
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 606
+      "hits": 616
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2759
+      "performed": 2792
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.2175354654254187
+      "ratio": 0.21754243119177297
      }
     },
     {
      "seed": 2027808484,
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 605
+      "hits": 617
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2711
+      "performed": 2756
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.22874168317296126
+      "ratio": 0.2288286911428913
      }
     },
     {
      "seed": 387276957,
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 663
+      "hits": 667
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2860
+      "performed": 2891
      },
      "maxTaint": {
       "oracle": "O1e",
@@ -4101,26 +4121,26 @@
      "seed": 3041712726,
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 637
+      "hits": 647
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2783
+      "performed": 2821
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.23213415630579914
+      "ratio": 0.232155895012541
      }
     },
     {
      "seed": 1401181199,
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 657
+      "hits": 667
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2786
+      "performed": 2821
      },
      "maxTaint": {
       "oracle": "O1e",
@@ -4131,15 +4151,15 @@
      "seed": 4055616968,
      "rarestRequired": {
       "scenario": "lifecycle-callback-dispose",
-      "hits": 631
+      "hits": 648
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 2721
+      "performed": 2771
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.22627554554172277
+      "ratio": 0.2265043772677492
      }
     }
    ],
@@ -4270,120 +4290,120 @@
      "seed": 2654435769,
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 577
+      "hits": 703
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 10738
+      "performed": 16146
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.1069858557725284
+      "ratio": 0.10662556494570606
      }
     },
     {
      "seed": 1013904242,
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 587
+      "hits": 755
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 10497
+      "performed": 16389
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.09932724041634933
+      "ratio": 0.11163836850566523
      }
     },
     {
      "seed": 3668340011,
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 568
+      "hits": 727
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 10553
+      "performed": 15951
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.1050027810636981
+      "ratio": 0.11007175924096993
      }
     },
     {
      "seed": 2027808484,
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 555
+      "hits": 740
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 10796
+      "performed": 16248
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.1024534799229141
+      "ratio": 0.10761615277159772
      }
     },
     {
      "seed": 387276957,
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 562
+      "hits": 723
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 10958
+      "performed": 16420
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10444130008336405
+      "ratio": 0.1090263306448314
      }
     },
     {
      "seed": 3041712726,
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 508
+      "hits": 688
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 10001
+      "performed": 15793
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10203630938113539
+      "ratio": 0.11058123935579471
      }
     },
     {
      "seed": 1401181199,
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 571
+      "hits": 684
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 10806
+      "performed": 15900
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10546455474693764
+      "ratio": 0.1086339359031646
      }
     },
     {
      "seed": 4055616968,
      "rarestRequired": {
       "scenario": "lc-callback-register",
-      "hits": 518
+      "hits": 728
      },
      "leastPerformed": {
       "oracle": "O7a",
-      "performed": 10388
+      "performed": 16190
      },
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10169502420912155
+      "ratio": 0.10501153814785141
      }
     }
    ]
@@ -5936,7 +5956,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.14919716239410435
+      "ratio": 0.14920769725720787
      }
     },
     {
@@ -5952,7 +5972,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.15202343554507883
+      "ratio": 0.15202582627669053
      }
     },
     {
@@ -5960,7 +5980,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.14709338765277344
+      "ratio": 0.14712521544970228
      }
     },
     {
@@ -5968,7 +5988,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.16194123618953318
+      "ratio": 0.16197962035708244
      }
     },
     {
@@ -5976,7 +5996,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.15288230979282627
+      "ratio": 0.15289155586786743
      }
     },
     {
@@ -5992,7 +6012,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.16131878535786623
+      "ratio": 0.16132188947780943
      }
     },
     {
@@ -6000,7 +6020,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.15315098204602964
+      "ratio": 0.15317731570627277
      }
     },
     {
@@ -6008,7 +6028,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.16179254068493
+      "ratio": 0.16179731637855968
      }
     },
     {
@@ -6016,7 +6036,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.15452756953007052
+      "ratio": 0.1545503749979095
      }
     },
     {
@@ -6024,7 +6044,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.14651037808946238
+      "ratio": 0.14652989112538994
      }
     },
     {
@@ -6032,7 +6052,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.15518458324765208
+      "ratio": 0.1552044321892668
      }
     },
     {
@@ -6040,7 +6060,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.15572144443456692
+      "ratio": 0.1559120537998938
      }
     },
     {
@@ -6048,7 +6068,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.158519851054401
+      "ratio": 0.15853711677298787
      }
     },
     {
@@ -6056,7 +6076,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.15148872921501924
+      "ratio": 0.15150383111308938
      }
     },
     {
@@ -6064,7 +6084,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.1576390171225472
+      "ratio": 0.15771714101283282
      }
     }
    ],
@@ -6074,7 +6094,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10053139805585495
+      "ratio": 0.10065686963792006
      }
     },
     {
@@ -6082,7 +6102,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.09988378397505596
+      "ratio": 0.09687949741136011
      }
     },
     {
@@ -6090,7 +6110,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10541913759844379
+      "ratio": 0.0998813000179271
      }
     },
     {
@@ -6098,7 +6118,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10072856472926194
+      "ratio": 0.09980541626190506
      }
     },
     {
@@ -6106,7 +6126,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10301166275663116
+      "ratio": 0.1017128350753385
      }
     },
     {
@@ -6114,7 +6134,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.09925301365843171
+      "ratio": 0.10078111153457198
      }
     },
     {
@@ -6122,7 +6142,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10699519949577695
+      "ratio": 0.10101533471266488
      }
     },
     {
@@ -6130,7 +6150,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.0973126836862203
+      "ratio": 0.09437037733865943
      }
     },
     {
@@ -6138,7 +6158,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.09918035521647742
+      "ratio": 0.10107153661216106
      }
     },
     {
@@ -6146,7 +6166,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.09834880537924894
+      "ratio": 0.10009411452108877
      }
     },
     {
@@ -6154,7 +6174,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.09993404132202452
+      "ratio": 0.09767624247540194
      }
     },
     {
@@ -6162,7 +6182,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10208350415078937
+      "ratio": 0.1011527003499429
      }
     },
     {
@@ -6170,7 +6190,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.09929996734988313
+      "ratio": 0.1042362567268355
      }
     },
     {
@@ -6178,7 +6198,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10500557364306809
+      "ratio": 0.10073912297541049
      }
     },
     {
@@ -6186,7 +6206,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10188482164009276
+      "ratio": 0.10016825487992774
      }
     },
     {
@@ -6194,7 +6214,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10251272847584386
+      "ratio": 0.10180968569675591
      }
     },
     {
@@ -6202,7 +6222,7 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
-      "ratio": 0.10236434643763873
+      "ratio": 0.10413849520371486
      }
     }
    ]

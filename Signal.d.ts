@@ -337,7 +337,11 @@ export type GraphMutationOpcode = 1 | 2 | 3 | 4 | 5;
  */
 export type GraphMutationListener = (opcode: GraphMutationOpcode, intA: number, intB: number) => void;
 
-/** Idempotent unsubscriber returned by {@link Registry.onGraphMutation}. */
+/**
+ * Idempotent unsubscriber returned by {@link Registry.onGraphMutation}. Unsubscribes in any order (1.6.0+); the
+ * newest still-live listener is active, a removed listener never fires again, and a held unsubscriber, once
+ * called, does not retain its listener.
+ */
 export type GraphMutationUnsubscribe = () => void;
 
 // --- Errors -------------------------------------------------------------------
@@ -473,6 +477,12 @@ export interface Registry {
     /** Auto-pause hook: fires `onConnect` on the 0->1 observer transition and `onDisconnect`
      *  on 1->0, after registration (transition-only -- no immediate fire if already observed).
      *  Re-tracking a persistently-read source does not churn. Returns an idempotent unobserve.
+     *  Each call is an independent registration (1.6.0+): callbacks fire in registration order; a
+     *  registration added during a fire is skipped by that fire; the unobserve takes effect
+     *  immediately, even mid-fire; callbacks are called with `this === undefined`; disposing the
+     *  observed node drops every registration. Every callback still runs when some throw: one error
+     *  is rethrown as-is, two or more become an `AggregateError` (`errors` in registration order,
+     *  message `observeObservers: onConnect callbacks threw` / `observeObservers: onDisconnect callbacks threw`).
      *  @throws TypeError if `handle` is not a reactive handle. */
     observeObservers(handle: ReactiveHandle, hooks?: ObserveObserversHooks): Unobserve;
     /** Walk the observers (subscribers) of `handle`, newest-first. No-op on a non-handle. */
@@ -496,8 +506,10 @@ export interface Registry {
      *  forEachSource/forEachOwned/ownerOf. Descriptors are gen-stamped (1.2.1+): a
      *  descriptor obtained pre-recycle goes stale and walks as undefined post-recycle. */
     describe(handle: ReactiveHandle): NodeDescriptor | undefined;
-    /** Register a single graph-mutation listener (1.2.1+). Replaces any existing
-     *  listener and returns an unsubscribe that restores the previous one on call.
+    /** Register a graph-mutation listener (1.2.1+). Registrations form a live-entry stack
+     *  (1.6.0+): the newest still-live one is the active listener, and the returned unsubscribe
+     *  unlinks only its own entry, in any order (it never revives a removed listener). A held
+     *  unsubscribe, once called, does not retain the listener.
      *  Listener is invoked synchronously at each mutation point with three integers:
      *  `(opcode, intA, intB)` -- see {@link GraphMutationOpcode}. Cost when no
      *  listener is registered: one branch-predicted `null` check per mutation point.

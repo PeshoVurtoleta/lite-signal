@@ -916,10 +916,10 @@ const D3 = 'DIV-D3-independent-registrations';
 const lcK = (fails, inc, lane) => known(lcRec(fails, lane), { includeFixed: inc });
 const both = (fails, lane) => [lcK(fails, false, lane), lcK(fails, true, lane)];
 
-test('b112 B4: DIV-D3 / DIV-F7 / DIV-F8 entry fields (A1 ruling: D3 open fixBy A5; F7 fixedIn 0v-#40; F8 fixedIn A1.4)', () => {
+test('b112 B4 + b117: DIV-D3 / DIV-F7 / DIV-F8 entry fields (D3 fixedIn A5a fixBy A5, b117 ruling A5b Q3; F7 fixedIn 0v-#40; F8 fixedIn A1.4)', () => {
     const by = new Map(fresh().entries.map((e) => [e.id, e]));
     const d3 = by.get(D3), f7 = by.get('DIV-F7'), f8 = by.get('DIV-F8');
-    assert.deepEqual([d3.lanes, d3.oracles, d3.sigs, d3.fixedIn, d3.fixBy, d3.pending], [['LIFECYCLE'], ['O7'], ['missed-connect', 'missed-disconnect', 'stale-off'], null, 'A5', null]);
+    assert.deepEqual([d3.lanes, d3.oracles, d3.sigs, d3.fixedIn, d3.fixBy, d3.pending], [['LIFECYCLE'], ['O7'], ['missed-connect', 'missed-disconnect', 'stale-off'], 'A5a', 'A5', null]);
     assert.deepEqual([f7.lanes, f7.oracles, f7.sigs, f7.fixedIn, f7.fixBy], [['NEST', 'LIFECYCLE'], ['O7a', 'O7'], ['dead-registration-fire', 'stale-off'], '0v-#40', '0v']);
     assert.match(f7.decision, /fixed: fixedIn 0v-#40 \(73d6a90, burst 62 unit 0v: disposeNode drops observeObservers hooks via dropLifecycleHooks; LEDGER #40\)$/);
     assert.deepEqual([f8.lanes, f8.fixedIn, f8.fixBy, f8.pending], [['LIFECYCLE'], 'A1.4', 'A1', null]);
@@ -930,9 +930,11 @@ test('b112 B4: DIV-D3 / DIV-F7 / DIV-F8 entry fields (A1 ruling: D3 open fixBy A
     assert.ok(ROSTER.indexOf('LIFECYCLE') !== -1, 'LIFECYCLE is rostered');
 });
 
-test('b112 B4: DIV-D3 explains the three tree heads on every kernel; each attribution twin is not D3', () => {
+// b117: DIV-D3 is FIXED (fixedIn A5a, A5a independent registrations): its heads explain only under includeFixed (a named
+// control kernel, e.g. preb33 / prea5); on the tree each one is a regression (null)
+test('b112 B4 + b117: DIV-D3 (fixed A5a) explains the three pre-A5a heads only under includeFixed; each attribution twin is not D3', () => {
     for (const [sig, d] of [['missed-connect', LC_D.MC], ['missed-disconnect', LC_D.MD], ['stale-off', LC_D.SS], ['stale-off', LC_D.SS1]]) {
-        assert.deepEqual(both([lcf('O7', sig, d)]), [D3, D3], d);
+        assert.deepEqual(both([lcf('O7', sig, d)]), [null, D3], d);
     }
     // co-registered <-> plain: the unattributed missed-* is not D3 (and nothing else)
     assert.deepEqual(both([lcf('O7', 'missed-disconnect', LC_D.PLAIN)]), [null, null]);
@@ -998,6 +1000,24 @@ test('b112 B4: a fixed F7 / F8 with fixedIn back to null would explain on the tr
     // the shipped registry: the tree classifies both null
     assert.equal(classify(lcRec([lcf('O7', 'stale-off', LC_D.SD)])), null);
     assert.equal(classify(lcRec([lcf('O6', 'escape-TypeError', LC_D.TE)])), null);
+});
+
+// b117 (A5b Q3 ruling): DIV-F9 is FIXED in A5b (onGraphMutation live-entry stack); fixedIn ids are exactly A5a / A5b
+test('b117: DIV-F9 fixedIn A5b, DIV-D3 fixedIn A5a; the tree classifies their heads null, a named control explains them', () => {
+    const by = new Map(fresh().entries.map((e) => [e.id, e]));
+    // the FULL entries (every key, in file order): a flipped decision / worldScen / shape / description is red
+    assert.deepEqual(by.get('DIV-F9'), {"id":"DIV-F9","kind":"fix","finding":"F9","since":"1.5.2","fixedIn":"A5b","fixBy":"A5","decision":"fix (FIX-H): live-entry stack for onGraphMutation listeners. fixed: fixedIn A5b (no commit yet: Signal.js 2f7974f3, burst 116 A5b: onGraphMutation live-entry stack, an off in any order removes only its own listener)","engines":["lite"],"lanes":["HOOK"],"oracles":["O8"],"sigs":["ghost-listener"],"ops":[],"scen":[],"worldScen":["hook-non-lifo-off"],"priorScen":[],"shapes":[{"pair":"O8:ghost-listener","detail":"^L\\d+ received op[1-5] after off at step \\d+ \\(expected L\\d+\\)$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"onGraphMutation unsubscribe only works in LIFO order; an out-of-order unsubscribe resurrects a dead listener. S3 HOOK lane (R1): O8 ghost-listener with an off'd receiver, in a world that carries hook-non-lifo-off. Still NOT matched: a live listener that is not the top live one, a receiver that is not a subscribed listener, an off'd receiver when no listener is live ('expected none'), and any O8 mirror-links fail."});
+    assert.deepEqual(by.get(D3), {"id":"DIV-D3-independent-registrations","kind":"contract","finding":"F7","since":"1.6.0","fixedIn":"A5a","fixBy":"A5","decision":"D3: every observeObservers registration is independent; replaces the merge-into-one-entry behaviour. fixed: fixedIn A5a (no commit yet: Signal.js aa51b2f5, bursts 114-115 A5a: observeObservers keeps one independent registration per call; off() removes only its own)","engines":["lite"],"lanes":["LIFECYCLE"],"oracles":["O7"],"sigs":["missed-connect","missed-disconnect","stale-off"],"ops":[],"scen":[],"worldScen":[],"priorScen":[],"shapes":[{"pair":"O7:missed-connect","detail":"^r\\d+ on #\\d+: disconnected at rest, sinks [1-9]\\d* \\(co-registered r\\d+\\)$"},{"pair":"O7:missed-disconnect","detail":"^r\\d+ on #\\d+: connected at rest, sinks 0 \\(co-registered r\\d+\\)$"},{"pair":"O7:stale-off","detail":"^r\\d+ on #(\\d+): (?:connected at rest, sinks 0|disconnected at rest, sinks [1-9]\\d*) after off of r\\d+ on #\\1 \\(sibling\\) at step \\d+$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"A second registration no longer overwrites the first; an unsubscribe removes only its own registration. LIFECYCLE O7 (b112 B4): the tree's merge behaviour reads missed-connect / missed-disconnect with a ' (co-registered rM)' attribution and stale-off after an off of a SIBLING registration on the same target (#N twice); a stale-off after an off on a dead target is DIV-F7, a plain (unattributed) missed-* is not matched. Structural allowance A1 Q3 (generator rule of lanes/lifecycle.mjs, not a gen.mjs GEN_RULES id, so it has no allowances.structural slot): no lifecycle callback throws in R2; follow-up R2b (L11 probe: throwing lifecycle callbacks; O6 predicts the escape). Still open: the conformance per-test diff; spurious-connect is not matched."});
+    assert.deepEqual([by.get('DIV-F9').fixedIn, by.get(D3).fixedIn], ['A5b', 'A5a']);
+    const ghost = { engine: 'lite', lane: 'HOOK', step: 40, op: 'sig', fails: [lcf('O8', 'ghost-listener', 'L2 received op1 after off at step 7 (expected L1)')], scen: [], worldScen: ['hook-non-lifo-off', 'hook-multi'] };
+    assert.deepEqual([known(ghost), known(ghost, FX())], [null, 'DIV-F9']);
+    assert.deepEqual([known(lcRec([lcf('O7', 'missed-connect', LC_D.MC)])), known(lcRec([lcf('O7', 'missed-connect', LC_D.MC)]), FX())], [null, D3]);
+    // either fixedIn back to null: the head explains on the tree again (the includeFixed rule is what makes it a regression)
+    const r = fresh();
+    for (const e of r.entries) if (e.id === 'DIV-F9' || e.id === D3) e.fixedIn = null;
+    assert.deepEqual(validate(r), []);
+    assert.equal(known(ghost, { registry: r }), 'DIV-F9');
+    assert.equal(known(lcRec([lcf('O7', 'missed-connect', LC_D.MC)]), { registry: r }), D3);
 });
 
 test('b112 B4 validate: dropping a new shape or the LIFECYCLE lane fails closed (no-slack rule)', () => {
