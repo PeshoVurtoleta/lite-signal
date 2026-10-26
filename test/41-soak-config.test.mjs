@@ -614,9 +614,9 @@ test('QA boundary formatReplayKey: cycle 0 and CYCLES_MAX - 1, seed 0 and 2^32 -
 //       rare scenarios, taint). TWO exemptions: ERROR (maintainer ruling b74), only while DIV-F22 is open
 //       (fixedIn === null) in bench/soak/divergences.json (b103 R13.3: DIV-F6, closed in A2-FIX-T, left the set; b109:
 //       DIV-F5, closed in A3-FIX-R, left it; the 'b103 (f)' row pins ruled set == open set); closed (or absent) is
-//       red (cut ERROR on tree, drop the exemption); LIFECYCLE (b111 A1 Q1), only while
-//       DIV-D3-independent-registrations is open (cut on tree only; ends with the A5 rung / P-LC-tree); an exemption
-//       set other than exactly {ERROR: [DIV-F22], LIFECYCLE: [DIV-D3-independent-registrations]} is red
+//       red (cut ERROR on tree, drop the exemption). LIFECYCLE was exempt while DIV-D3-independent-registrations was
+//       open (b111 A1 Q1); b117: DIV-D3 fixedIn A5a, so LIFECYCLE left the set and needs full-length evidence like
+//       every other lane. An exemption set other than exactly {ERROR: [DIV-F22]} is red
 //   (q) doc.probe is the calibrate.mjs PROBE (lane, kernel, cycles, ops); PROBE.cycles === MIN_ACTIVE_CYCLES (main
 //       rejects SOAK_CYCLES below it); every one of the probe's cycles ran >= 1 LARGE world
 // Per-lane kernel map (b67 B2a, D7): every kernel x lane check runs kernel-major over calibrate.mjs kernelsOf(roster),
@@ -658,8 +658,9 @@ const b6SeedsOk = (cells) => JSON.stringify(cells.map((c) => (c || {}).seed)) ==
 const b6FullLength = (f) => f !== null && typeof f === 'object' && b6Count(f.failingWorlds) && f.failingWorlds === 0
     && b6Count(f.worlds) && f.worlds > 0;
 // the ONE (f) exemption the maintainer ruled (b74): ERROR, while one of these divergences is open
-// b103 R13.3: DIV-F6 dropped (fixed, A2-FIX-T); b109: DIV-F5 dropped (fixed, A3-FIX-R); b111 A1 Q1: + LIFECYCLE while DIV-D3 is open
-const B6_F_EXEMPT_RULED = '{"ERROR":["DIV-F22"],"LIFECYCLE":["DIV-D3-independent-registrations"]}';
+// b103 R13.3: DIV-F6 dropped (fixed, A2-FIX-T); b109: DIV-F5 dropped (fixed, A3-FIX-R); b111 A1 Q1: + LIFECYCLE while DIV-D3 is open;
+// b117: LIFECYCLE dropped (DIV-D3 fixed, A5a)
+const B6_F_EXEMPT_RULED = '{"ERROR":["DIV-F22"]}';
 const B6_F_EXEMPT = Object.freeze(JSON.parse(B6_F_EXEMPT_RULED));
 const B6_DIVS = JSON.parse(readFileSync(join(SOAK, 'divergences.json'), 'utf8'));
 // the ids of `ids` still open in a divergences doc: an entry with fixedIn === null (absent = closed: fail closed)
@@ -792,16 +793,16 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
         p.push('(e) CHECK_FLOOR_SMOKE=' + C.CHECK_FLOOR_SMOKE + ' is below 1/8 of the least full-length smoke cell ' + smokeMin);
     }
     // (f) b74 D4: every rostered lane has full-length evidence on some kernel that cuts it (header); ERROR is exempt
-    // only while DIV-F22 is open (b109: DIV-F5 closed), LIFECYCLE only while DIV-D3-independent-registrations is open
-    // (b111 A1 Q1), and the exemption set is exactly the ruled one
-    // second literal on purpose: editing :654 (B6_F_EXEMPT_RULED, the default source only) alone is red; fail closed
+    // only while DIV-F22 is open (b109: DIV-F5 closed; b117: the LIFECYCLE exemption ended with DIV-D3, fixed A5a), and
+    // the exemption set is exactly the ruled one
+    // second literal on purpose: editing B6_F_EXEMPT_RULED (the default source only) alone is red; fail closed
     // -- a non-object exempt (null) is red, never a TypeError
-    // b79 C1: each ruled lane's list (exempt.ERROR, exempt.LIFECYCLE) is read ONCE and compared + printed element by
+    // b79 C1: each ruled lane's list (exempt.ERROR) is read ONCE and compared + printed element by
     // element (an indexed loop: no JSON.stringify, toJSON or iterator on it), so a toJSON-spoofed ['DIV-F7'] is red and
     // its line shows ["DIV-F7"]
     const exK = exempt !== null && typeof exempt === 'object' ? Reflect.ownKeys(exempt) : null;
-    // b109: DIV-F5 closed in A3-FIX-R; b111 A1 Q1: LIFECYCLE tied to DIV-D3 (ends with the A5 rung / P-LC-tree)
-    const exRuled = { ERROR: ['DIV-F22'], LIFECYCLE: ['DIV-D3-independent-registrations'] };
+    // b109: DIV-F5 closed in A3-FIX-R; b117: LIFECYCLE (tied to DIV-D3 since b111 A1 Q1) left with DIV-D3 fixed in A5a
+    const exRuled = { ERROR: ['DIV-F22'] };
     const exElt = (v) => (typeof v === 'string' ? '"' + v + '"'
         : v !== null && (typeof v === 'object' || typeof v === 'function') ? '<' + typeof v + '>' : String(v));
     let exOk = true, exS = '', exR = '';
@@ -823,7 +824,7 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
         const shown = exK === null ? 'null' : JSON.stringify(exK.map(String)) + exS;
         p.push('(f) the exemption set ' + shown + ' != ' + JSON.stringify(Object.keys(exRuled)) + exR
             + ' (maintainer rulings b74: ERROR tied to DIV-F22 while open, b103 R13.3 dropped DIV-F6, b109 dropped DIV-F5;'
-            + ' b111 A1 Q1: LIFECYCLE tied to DIV-D3-independent-registrations while open)');
+            + ' b111 A1 Q1 tied LIFECYCLE to DIV-D3-independent-registrations; b117: DIV-D3 fixed in A5a, LIFECYCLE left)');
     }
     for (const d of lanes) {
         let ok = false;
@@ -1115,7 +1116,7 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     // F_IDS: the ids the registry manipulations below close / delete; EX_IDS: the ruled exemption set (F22 only)
     const F_IDS = ['DIV-F5', 'DIV-F22'];
     const EX_IDS = ['DIV-F22'];
-    const EX_LC = ['DIV-D3-independent-registrations'];   // b111 A1 Q1: the ruled LIFECYCLE exemption
+    const D3_IDS = ['DIV-D3-independent-registrations'];   // b117: the ENDED LIFECYCLE exemption (b111 A1 Q1; DIV-D3 fixed A5a)
     const closeDivs = (ids) => { const d = b6Copy(B6_DIVS); for (const e of d.entries) if (ids.indexOf(e.id) !== -1) e.fixedIn = 'A2'; return d; };
     red(B6_DOC, B6_C, '(f) ERROR: the exemption expired', 'DIV-F5 / F22 both closed (the exemption expired: recut ERROR)', b6ShaOf, B6_PROBE, closeDivs(F_IDS));
     const absent = b6Copy(B6_DIVS);
@@ -1129,20 +1130,37 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     assert.equal(B6_DIVS.entries.find((e) => e.id === 'DIV-F5').fixedIn, 'A3-FIX-R', 'b109: DIV-F5 closed');
     assert.deepEqual(B6_F_EXEMPT.ERROR, ['DIV-F22'], 'b109 (f): the ruled set');
     assert.deepEqual(b6DivOpen(B6_F_EXEMPT.ERROR, B6_DIVS), B6_F_EXEMPT.ERROR, 'b103 (f): ruled set == open set');
-    assert.deepEqual(B6_F_EXEMPT.LIFECYCLE, EX_LC, 'b111 A1 Q1 (f): the ruled LIFECYCLE set');
-    assert.deepEqual(b6DivOpen(B6_F_EXEMPT.LIFECYCLE, B6_DIVS), EX_LC, 'b111 (f): DIV-D3 is open (fixedIn null)');
-    // b111 A1 Q1: the LIFECYCLE exemption expires with DIV-D3 (closed or absent -> red), and dropping it is red
-    red(B6_DOC, B6_C, '(f) LIFECYCLE: the exemption expired', 'b111: DIV-D3 closed (the exemption expired: recut LIFECYCLE)', b6ShaOf, B6_PROBE, closeDivs(EX_LC));
-    const lcAbsent = b6Copy(B6_DIVS);
-    lcAbsent.entries = lcAbsent.entries.filter((e) => EX_LC.indexOf(e.id) === -1);
-    red(B6_DOC, B6_C, '(f) LIFECYCLE: the exemption expired', 'b111: DIV-D3 absent from divergences.json', b6ShaOf, B6_PROBE, lcAbsent);
-    red(B6_DOC, B6_C, '(f) the exemption set ["ERROR"] ERROR=["DIV-F22"] LIFECYCLE=undefined != ', 'b111: the pre-R2 set {ERROR: [DIV-F22]} (no LIFECYCLE)', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: EX_IDS.slice() });
-    red(B6_DOC, B6_C, '(f) the exemption set ', 'b111: LIFECYCLE tied to another divergence', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: EX_IDS.slice(), LIFECYCLE: ['DIV-F7'] });
-    const lcOk = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, B6_DIVS, { ERROR: EX_IDS.slice(), LIFECYCLE: EX_LC.slice() });
-    assert.deepEqual(lcOk.filter((x) => x.indexOf('(f)') === 0), [], 'control: a fresh copy of the ruled set is clean');
-    red(B6_DOC, B6_C, '(f) the exemption set ', 'b103: the pre-R13.3 set {ERROR: [DIV-F5, DIV-F6, DIV-F22]}', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F5', 'DIV-F6', 'DIV-F22'], LIFECYCLE: EX_LC.slice() });
+    // b117 (PLAN-b117-soak TASK 3, A5a): DIV-D3 is CLOSED (fixedIn A5a), so LIFECYCLE left the exemption set: the ruled
+    // set is ERROR only, a fail-stopped LIFECYCLE cell is red like any lane's, and re-adding {LIFECYCLE: [DIV-D3]} is red
+    assert.deepEqual(Reflect.ownKeys(B6_F_EXEMPT), ['ERROR'], 'b117 (f): the ruled set has no LIFECYCLE');
+    assert.equal(B6_DIVS.entries.find((e) => e.id === D3_IDS[0]).fixedIn, 'A5a', 'b117: DIV-D3 fixed in A5a');
+    assert.deepEqual(b6DivOpen(D3_IDS, B6_DIVS), [], 'b117 (f): DIV-D3 is not open');
+    assert.equal(b6FExempt('LIFECYCLE'), false, 'b117 (f): LIFECYCLE is not exempt');
+    // fixture: the tree LIFECYCLE cells made full-length, so these rows never ride on the pre-A5a cut (7520/7704
+    // failing worlds, red until the recut); fOf = the (f) problems of a doc / registry / exemption set
+    const fOf = (doc, divs, exempt) => calibrationProblems(doc, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, divs, exempt).filter((x) => x.indexOf('(f)') === 0);
+    const lcFull = b6Copy(B6_DOC);
+    for (const sh of ['full', 'smoke']) lcFull.kernels.tree[sh].LIFECYCLE.failingWorlds = 0;
+    assert.deepEqual(fOf(lcFull, B6_DIVS, B6_F_EXEMPT), [], 'control: full-length tree LIFECYCLE cells + the ruled set are clean');
+    assert.deepEqual(fOf(lcFull, B6_DIVS, { ERROR: EX_IDS.slice() }), [], 'control: a fresh copy of the ruled set is clean');
+    // re-adding the ended exemption is red twice: not the ruled set, and DIV-D3 is closed (or absent): it expired
+    for (const [why, divs] of [['DIV-D3 closed (A5a)', B6_DIVS], ['DIV-D3 absent', Object.assign(b6Copy(B6_DIVS), { entries: B6_DIVS.entries.filter((e) => e.id !== D3_IDS[0]) })]]) {
+        const readd = fOf(lcFull, divs, { ERROR: EX_IDS.slice(), LIFECYCLE: D3_IDS.slice() });
+        assert.ok(readd.some((x) => x.indexOf('(f) the exemption set ["ERROR","LIFECYCLE"] ERROR=["DIV-F22"] != ["ERROR"] ERROR=["DIV-F22"] ') === 0), 'b117 re-added {LIFECYCLE: [DIV-D3]}, ' + why + ': ' + JSON.stringify(readd));
+        assert.ok(readd.some((x) => x.indexOf('(f) LIFECYCLE: the exemption expired (["DIV-D3-independent-registrations"] ') === 0), 'b117 re-added exemption expired, ' + why + ': ' + JSON.stringify(readd));
+    }
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'b111 shape: LIFECYCLE tied to another divergence', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: EX_IDS.slice(), LIFECYCLE: ['DIV-F7'] });
+    // a fail-stopped LIFECYCLE cell is red now; with DIV-D3 reopened (fixedIn null) the old exemption hid it (the rule that ended)
+    const lcStop = b6Copy(lcFull);
+    lcStop.kernels.tree.full.LIFECYCLE.failingWorlds = 1;
+    const NOFL = '(f) LIFECYCLE: no full-length evidence -- tree full 1/' + lcStop.kernels.tree.full.LIFECYCLE.worlds + ' failing';
+    assert.ok(fOf(lcStop, B6_DIVS, B6_F_EXEMPT).some((x) => x.indexOf(NOFL) === 0), 'b117: one failing tree LIFECYCLE world is red');
+    const d3Open = b6Copy(B6_DIVS);
+    for (const e of d3Open.entries) if (e.id === D3_IDS[0]) e.fixedIn = null;
+    assert.ok(!fOf(lcStop, d3Open, { ERROR: EX_IDS.slice(), LIFECYCLE: D3_IDS.slice() }).some((x) => x.indexOf(NOFL) === 0), 'control: the b111 exemption (DIV-D3 open) skipped the fail-stopped cell');
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'b103: the pre-R13.3 set {ERROR: [DIV-F5, DIV-F6, DIV-F22]}', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F5', 'DIV-F6', 'DIV-F22'] });
     // b109 A4: the pre-A3-FIX-R set {ERROR: [DIV-F5, DIV-F22]} is red (DIV-F5 is closed; ruled set == open set)
-    red(B6_DOC, B6_C, '(f) the exemption set ["ERROR","LIFECYCLE"] ERROR=["DIV-F5","DIV-F22"] LIFECYCLE=["DIV-D3-independent-registrations"] != ', 'b109: the pre-A3-FIX-R set {ERROR: [DIV-F5, DIV-F22]}', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: F_IDS.slice(), LIFECYCLE: EX_LC.slice() });
+    red(B6_DOC, B6_C, '(f) the exemption set ["ERROR"] ERROR=["DIV-F5","DIV-F22"] != ', 'b109: the pre-A3-FIX-R set {ERROR: [DIV-F5, DIV-F22]}', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: F_IDS.slice() });
     // (f) b6DivOpen: only fixedIn === null is open; a missing fixedIn key or '' is closed, so the exemption expires
     // (a `== null` or `!e.fixedIn` open test would keep ERROR exempt on a malformed registry: fail open)
     const noKey = b6Copy(B6_DIVS);
@@ -1160,26 +1178,26 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     red(B6_DOC, B6_C, '(f) the exemption set ', 'exempt = null (a non-object exemption set)',
         b6ShaOf, B6_PROBE, B6_DIVS, null);
     // (f) the exemption set must be exactly the ruled one: a second lane, or another divergence id -> red
-    red(B6_DOC, B6_C, '(f)', 'NEST added to the exemption', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: EX_IDS.slice(), LIFECYCLE: EX_LC.slice(), NEST: ['DIV-F15'] });
-    red(B6_DOC, B6_C, '(f)', 'the ERROR exemption tied to a never-closing divergence', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F7'], LIFECYCLE: EX_LC.slice() });
-    const hidden = { ERROR: EX_IDS.slice(), LIFECYCLE: EX_LC.slice() };   // a non-enumerable own key is still an exemption (b6Has is hasOwnProperty)
+    red(B6_DOC, B6_C, '(f)', 'NEST added to the exemption', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: EX_IDS.slice(), NEST: ['DIV-F15'] });
+    red(B6_DOC, B6_C, '(f)', 'the ERROR exemption tied to a never-closing divergence', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F7'] });
+    const hidden = { ERROR: EX_IDS.slice() };   // a non-enumerable own key is still an exemption (b6Has is hasOwnProperty)
     Object.defineProperty(hidden, 'GRAPH', { value: ['DIV-F7'] });
     red(B6_DOC, B6_C, '(f) the exemption set ', 'a non-enumerable GRAPH key on the exemption set',
         b6ShaOf, B6_PROBE, B6_DIVS, hidden);
     const hiddenP = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, B6_DIVS, hidden);
-    assert.ok(hiddenP.some((x) => x.indexOf('(f) the exemption set ["ERROR","LIFECYCLE","GRAPH"]') === 0),
+    assert.ok(hiddenP.some((x) => x.indexOf('(f) the exemption set ["ERROR","GRAPH"]') === 0),
         'the (f) line names the hidden key (not the JSON of its enumerable keys): ' + JSON.stringify(hiddenP));
     // b79 C1: ERROR compared element by element: a toJSON serialising the ruled ids does not hide ['DIV-F7'], and
     // the line prints the real elements; a trailing 4th slot (undefined), or an array-like with the ruled ids -> red
-    const spoof = { ERROR: Object.assign(['DIV-F7'], { toJSON: () => EX_IDS.slice() }), LIFECYCLE: EX_LC.slice() };
+    const spoof = { ERROR: Object.assign(['DIV-F7'], { toJSON: () => EX_IDS.slice() }) };
     red(B6_DOC, B6_C, '(f) the exemption set ', 'a toJSON-spoofed ERROR list', b6ShaOf, B6_PROBE, B6_DIVS, spoof);
     const spoofP = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, B6_DIVS, spoof);
-    assert.ok(spoofP.some((x) => x.indexOf('(f) the exemption set ["ERROR","LIFECYCLE"] ERROR=["DIV-F7"] LIFECYCLE=["DIV-D3-independent-registrations"] != ') === 0),
+    assert.ok(spoofP.some((x) => x.indexOf('(f) the exemption set ["ERROR"] ERROR=["DIV-F7"] != ') === 0),
         'the (f) line shows the real elements, not the toJSON: ' + JSON.stringify(spoofP));
     red(B6_DOC, B6_C, '(f) the exemption set ', 'a trailing undefined 2nd slot on ERROR', b6ShaOf, B6_PROBE, B6_DIVS,
-        { ERROR: EX_IDS.concat([undefined]), LIFECYCLE: EX_LC.slice() });
+        { ERROR: EX_IDS.concat([undefined]) });
     red(B6_DOC, B6_C, '(f) the exemption set ', 'an array-like (not an Array) ERROR', b6ShaOf, B6_PROBE, B6_DIVS,
-        { ERROR: { 0: 'DIV-F22', length: 1 }, LIFECYCLE: EX_LC.slice() });
+        { ERROR: { 0: 'DIV-F22', length: 1 } });
     // (e) b74 D4: a hollowVolume row counts only when full-length; every row failing -> the floor reads hollow
     const hvFail = b6Copy(B6_DOC);
     for (const k of Object.keys(hvFail.hollowVolume)) for (const l of Object.keys(hvFail.hollowVolume[k])) hvFail.hollowVolume[k][l].failingWorlds = 1;
@@ -1192,9 +1210,10 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     const roster4 = B6_ROSTER.filter((l) => l !== 'WIE' && l !== 'HOOK' && l !== 'LIFECYCLE');
     const roster5 = B6_ROSTER.slice();
     assert.deepEqual(b6KernelsFor('WIE'), ['tree']);
-    // S3 R1 (b93): HOOK is cut on headpatched only (DIV-F9 ghost-listener reds lite-1.5.2 and tree by design)
+    // S3 R1 (b93): HOOK is cut on headpatched only (DIV-F9 ghost-listener reddened lite-1.5.2 and tree; b117: DIV-F9
+    // fixed in A5b, the tree passes HOOK, calibrate.mjs LANE_KERNELS unchanged until the recut decides)
     assert.deepEqual(b6KernelsFor('HOOK'), ['headpatched']);
-    // S3 R2 (b111 A1 Q1): LIFECYCLE is cut on tree only while DIV-D3 is open (exempt from (f); ends with A5 / P-LC-tree)
+    // S3 R2 (b111 A1 Q1): LIFECYCLE is cut on tree only; b117: DIV-D3 fixed in A5a, no (f) exemption (full-length evidence)
     assert.deepEqual(b6KernelsFor('LIFECYCLE'), ['tree']);
     assert.deepEqual(b6LanesFor('headpatched', roster5), roster4.concat(['HOOK']));
     assert.deepEqual(b6KernelsFor('GRAPH'), Object.keys(B6_KERNELS));

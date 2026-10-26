@@ -195,15 +195,18 @@ class Exec {
             this.o1c((this.script.seed ^ END_CHECK_SALT) >>> 0);
             // O7 after the end pull (b111 B3, A3 NIT): a missed connect / disconnect that final pull caused is checked too
             if (this.lc !== null) this.lcAtRest();
+            if (this.unmodelled !== null) throw this.unmodelled;
             if (this.stepFails.length > 0) failure = { step: ops.length, op: 'end', fails: this.stepFails, scen: Array.from(this.D.step) };
         }
         // teardown: registrations off, everything disposed, residue must be 0 / 0 (O5)
         for (let r = 0; r < this.M.regs.length; r++) if (this.M.regs[r] !== undefined) this.M.offReg(r);
         let residue = null;
         let closeErr = NONE;
+        // reset BEFORE close() (b118): a fail raised inside close() (a lifecycle callback or hook delivery fired by its
+        // dispose walk) is a teardown failure, never wiped
+        if (failure === null) this.stepFails = [];
         try { residue = this.W.close(); } catch (e) { closeErr = e; }
         if (failure === null) {
-            this.stepFails = [];
             this.did('O5');   // the teardown residue check (counted like the at-rest O5: before close()'s outcome is read)
             if (closeErr !== NONE) this.engineError(closeErr, 'close()');
             else { const f = O.checkTeardown(residue); if (f !== null) this.failF(f); }
@@ -760,14 +763,17 @@ class Exec {
     /**
      * O7 at rest (LIFECYCLE lane only, S3 R2): every live registration's phase vs model.sinkCount (oracles.mjs
      * checkLcRest; the per-fire phase check runs inside each callback after O7a). Runs after the op's O1c pull and
-     * O8, so every fire of the op is in. One performed O7 per op; then the LcState snapshots the sink sets, drops
-     * the op's unfired actions and moves to the next step (lanes/lifecycle.mjs LcState.rest).
+     * O8, so every fire of the op is in. One performed O7 per registration checkLcRest checks (b118: its tally, live
+     * registrations on live targets past the phase -1 adoption; was one per op); then the LcState snapshots the sink
+     * sets, drops the op's unfired actions and moves to the next step (lanes/lifecycle.mjs LcState.rest).
      */
     lcAtRest() {
         const lc = this.lc;
-        this.did('O7');
         const memo = new Map();   // one check call
-        for (const f of O.checkLcRest(lc, this.M, memo, this.ran)) this.failF({ oracle: 'O7', sig: f.sig, detail: f.detail });
+        const tally = { n: 0 };
+        for (const f of O.checkLcRest(lc, this.M, memo, this.ran, tally)) this.failF({ oracle: 'O7', sig: f.sig, detail: f.detail });
+        const c = this.checks.O7 + tally.n;
+        this.checks.O7 = c < COUNTER_CAP ? c : COUNTER_CAP;
         lc.rest(this.M, memo);
     }
 }

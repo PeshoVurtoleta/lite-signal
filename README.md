@@ -448,7 +448,7 @@ ownerOf(innerComputedDesc);                                  // descriptor of th
 Eight functions (top-level + per-registry) -- four in 1.1.4, two in 1.1.5, two more in 1.2.1 -- for auto-pausing wrappers and graph inspection:
 
 - **`hasObservers(handle)` -> `boolean`** -- O(1) (`node.headSub !== null`). The auto-pause predicate.
-- **`observeObservers(handle, { onConnect?, onDisconnect? })` -> `unobserve`** -- fires on the 0->1 and 1->0 observer transitions *after* registration (transition-only -- no immediate fire if already observed). Re-tracking a persistently-read source does **not** churn. Disposing the observed handle (or `destroy()`) drops its hooks; the unobserve is then a no-op. This is the hook `lite-time` / `lite-raf` use to run a clock only while a derived value is watched. Throws `TypeError` on a non-handle.
+- **`observeObservers(handle, { onConnect?, onDisconnect? })` -> `unobserve`** -- fires on the 0->1 and 1->0 observer transitions *after* registration (transition-only -- no immediate fire if already observed). Re-tracking a persistently-read source does **not** churn. Disposing the observed handle (or `destroy()`) drops its hooks; the unobserve is then a no-op. This is the hook `lite-time` / `lite-raf` use to run a clock only while a derived value is watched. Throws `TypeError` on a non-handle. Each call is an independent registration (1.6.0): callbacks fire in registration order (FIFO); a registration added during a fire is skipped by that fire (it starts in the node's current phase); `unobserve` takes effect immediately, even mid-fire; callbacks run with `this === undefined`. If callbacks throw, every callback still runs: one error is rethrown as-is, two or more become an `AggregateError` (`errors` in registration order, message `observeObservers: onConnect callbacks threw` / `observeObservers: onDisconnect callbacks threw`).
 - **`forEachObserver(handle, fn)` / `forEachSource(handle, fn)`** -- walk subscribers / dependencies; `fn` gets a `{ id, kind, value }` descriptor (`kind` in `"signal" | "computed" | "effect"`; `id` added in 1.1.5). No-op on a non-handle.
 - **`nodeId(handle)` -> `number | undefined`** *(1.1.5)* -- the node's stable per-allocation id; the dedupe key for graph traversal. `undefined` on a non-handle.
 - **`describe(handle)` -> `{ id, kind, value } | undefined`** *(1.1.5)* -- the handle's own descriptor. **Re-walkable**: pass it back into any `forEach*` to recurse the graph. `undefined` on a non-handle.
@@ -482,15 +482,15 @@ const unsub = onGraphMutation((opcode, intA, intB) => {
   }
 });
 
-// Stop listening -- restores the previous registration (or null), engine returns to zero-cost state.
+// Stop listening -- any order; the newest still-live listener stays active (none left: zero-cost state).
 unsub();
 ```
 
-A registry-level (and top-level) debug hook for push-based tooling -- the connection point lite-devtools 1.1 and lite-studio 1.1 use to walk away from polling. Single nullable listener; every fire point in the engine is one `if (mutationHook !== null) mutationHook(opcode, intA, intB)`:
+A registry-level (and top-level) debug hook for push-based tooling -- the connection point lite-devtools 1.1 and lite-studio 1.1 use to walk away from polling. One active listener (the newest still-live registration); every fire point in the engine is one `if (mutationHook !== null) mutationHook(opcode, intA, intB)`:
 
 - **Zero cost when unregistered** -- branch-predicted null check per mutation point, same as the lifecycle counter pattern.
 - **Allocation-free when registered** -- three integers, no objects, no closures. Worst-case measured cost on a dynamic-retracking torture loop (11.4M events over 400K writes) is +29% -- a debug-mode tax proportional to event volume, paid only while a consumer is attached.
-- **LIFO stacking** -- `onGraphMutation(a); onGraphMutation(b); unsubB()` restores `a`. Used by lite-devtools 1.1 to multiplex multiple consumers behind one engine registration.
+- **Live-entry stack (1.6.0)** -- registrations stack, newest on top, and only the newest live one is called. An unsubscribe works in any order and unlinks only its own entry: `onGraphMutation(a); onGraphMutation(b); unsubB()` re-activates `a`; `unsubA(); unsubB()` leaves none, and a removed listener never fires again (before 1.6.0 only LIFO order worked). A held unsubscriber, once called, no longer retains its listener. Used by lite-devtools 1.1 to multiplex multiple consumers behind one engine registration.
 
 **Flag values (1.6.0):** op 1 and op 2 carry the node's flags. Callable `signal` / `computed` / `effect` report 32 / 1 / 2; `signalBox` and `computedBox` nodes also carry the box bit (128) and report 160 / 129. Op 2 can additionally carry bit 6 (64, the internal stale-read mark) when a node a write flagged mid-run is disposed before that flag clears; op 1 never does.
 

@@ -35,7 +35,8 @@
  * key. It passes on the same exit / spec / line / CRASH / END checks, and wrapJudge replaces the SoakReport step
  * (SoakReport has no wrap-stream dispatch yet): wraprules.mjs wrapStreamProblems(stream) is [], wrapRule over the
  * stream's wrap records equals the END verdict, every wrap record's boundary reads trackerSize 0 / weakAlive 0,
- * and no INCONCLUSIVE line appears that the control does not expect. expect.extra.boundaries (the burn-in's
+ * and no INCONCLUSIVE line appears that the control does not expect; every check in expect.extra.pass (wrap-only)
+ * must PASS: >= 1 wrap record, each status PASS, and no BREACH line naming it. expect.extra.boundaries (the burn-in's
  * cycle-record count) is rejected on a wrap control.
  * A config control (run 'cfg') passes only with exit 2, exactly ONE stderr line EQUAL to its expected
  * `soak: CONFIG --` line (or starting with it, expect.configMatch 'prefix', for the two rows whose tail is not
@@ -66,7 +67,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB, GATE_N, WARMUP_CYCLES, MARK_DEDUPE_NOTE } from './config.mjs';
+import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB, GATE_N, WARMUP_CYCLES, MARK_DEDUPE_NOTE, VERDICT } from './config.mjs';
 import { wrapRule, wrapStreamProblems } from './wraprules.mjs';
 import { inconclusiveLine } from './gates.mjs';
 
@@ -94,10 +95,12 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 /**
  * Every base a control can start from. A base is a Signal.js + Watch.js directory with sha256 pins:
- * headpatched, rev152, preb33 and prefixr are pinned by controls.json (by control name), tree by parity.json (red while
- * the live Signal.js is mid-edit, amendment 10). The wrap control L-WRAP-TREE (S2) uses tree, and one main-run control,
- * P-NEST-TAINT-HALF (b71, NEST lane only: the tree NEST smoke is clean) and, since b112 B5, P-LC-TRIGGERLESS plus the
- * five T-LC-* rows (LIFECYCLE at cov-off:lc-two-regs, clean of DIV-D3); no other main-run control does until A1-A3
+ * headpatched, rev152, preb33, prefixr and prea5 are pinned by controls.json (by control name), tree by parity.json (red
+ * while the live Signal.js is mid-edit, amendment 10). The wrap control L-WRAP-TREE (S2) uses tree, and one main-run
+ * control, P-NEST-TAINT-HALF (b71, NEST lane only: the tree NEST smoke is clean) and, since b112 B5, the LIFECYCLE rows
+ * (b117: P-LC-tree, T-cov-LIFECYCLE and the six T-LC-* mutants; the tree is clean of DIV-D3 since A5a), and the HOOK
+ * rows P-HOOK-TREE-COVOFF (b93) and P-HOOK-TREE (b117 B3b; the tree is clean of DIV-F9 since A5b); no other main-run
+ * control does until A1-A3
  * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
  * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
@@ -110,6 +113,8 @@ export const BASES = Object.freeze({
     preb33: Object.freeze({ dir: join(SOAK, 'controls', 'preb33'), pins: 'controls.json', pinName: 'preb33' }),
     // b109 B1b (A6): 25784e5, the last kernel before A3 FIX-R (Signal.js 0628127b); L-WRAP-W2-PREFIXR's base
     prefixr: Object.freeze({ dir: join(SOAK, 'controls', 'prefixr'), pins: 'controls.json', pinName: 'prefixr' }),
+    // b117 B3b (PLAN-A5b Q1 (a)): 767f808, the last kernel before A5a / A5b (Signal.js 0f75866f); T-A5b's base
+    prea5: Object.freeze({ dir: join(SOAK, 'controls', 'prea5'), pins: 'controls.json', pinName: 'prea5' }),
     tree: Object.freeze({ dir: ROOT.replace(/[\\/]$/, ''), pins: 'parity.json', pinName: null }),
 });
 
@@ -301,16 +306,34 @@ const A_FLUSH_RUN = ' '.repeat(28) + 'if ((node.flags & FLAG_EFFECT) !== 0) exec
 // headpatched kernel (the allocateLink op-3 twin :597 carries mutationHook(3, ...) and does not match).
 const A_HOOK_OP4 = '        if (mutationHook !== null) mutationHook(4, source.id, target.id);\n';
 
-// T-LC anchors in the LIVE Signal.js (base tree; Signal.js 0f75866f lines :805 / :816 / :2661; b110 R2 B1 TASK 0b,
-// .handoff/b110-evidence/r2/anchors/anchors.json: each full line occurs exactly once; patchAll throws otherwise).
-// :805 fireConnect's onConnect call (8-space indent; `ok = true` gates the op-3 announce in the finally).
-const A_LC_CONN = '        try { e.onConnect(); ok = true; } finally {\n';
-// :816 fireDisconnect's onDisconnect call (8-space indent).
-const A_LC_DISC = '        try { e.onDisconnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }\n';
-// :2661 the observeObservers off() gen-stamp test (#40, 12-space indent). The bare `node.gen === g` occurs 4x
-// (:1389 :1412 :2309 :2661): never anchor on it.
-const A_LC_OFFGEN = '            if (node.gen === g && lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;\n';
-const LC_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE', SOAK_MUSTFAIL: 'cov-off:lc-two-regs' });
+// T-LC anchors in the LIVE Signal.js (base tree; re-anchored b117 B3a on the A5a registration list, Signal.js
+// 2f7974f3 lines :814 / :843 / :2742 / :2731 / :2751; .handoff/b117-evidence/b3a/: each full line occurs exactly
+// once; patchAll throws otherwise).
+// :814 fireConnect's per-registration onConnect read (12-space indent; `r.phase = 1` is set on the line above).
+const A_LC_CONN = '            const f = r.onConnect;\n';
+// :843 fireDisconnect's per-registration onDisconnect read (12-space indent; `r.phase = 0` above).
+const A_LC_DISC = '            const f = r.onDisconnect;\n';
+// :2742 the observeObservers off() first guard (12-space indent). The #40 gen stamp behind it (:2746) is redundant
+// (dispose clears every registration, b114 F-a) and has no tooth: teeth.mjs UNREACHABLE 'lc-off-gen-stamp' (D-b117-1).
+// The bare `node.gen !== g` occurs 5x and `node.gen === g` 4x in Signal.js: never anchor on either.
+const A_LC_OFFLIVE = '            if (!reg.live) return;\n';
+// :2731 observeObservers appends the new registration at the tail (8-space indent).
+const A_LC_APPEND = '        if (e.tail !== null) e.tail.next = reg; else e.head = reg;\n';
+// :2751 off()'s unlink of the registration's successor (12-space indent; reg.next is never cleared, A5a).
+const A_LC_UNLINK = '            if (n !== null) n.prev = p; else le.tail = p;\n';
+/**
+ * T-LC-iter (D-b117-2, closed b118 B2; the row is in CONTROLS below): off() clears reg.next, so a fire walking through
+ * the offed registration stops there. b117 B3a measured exit 0, 0 BREACH (the lane then never offed the registration a
+ * walk stands on: an armed loff offed a SIBLING, whose predecessor is relinked past it). b118 B1 added the lifecycle
+ * 'lself' cbarm (lanes/lifecycle.mjs: SELF = rA offs itself in its own callback, rB unarmed after it; NEXT = rA offs
+ * rA+1), and only SELF reaches the patch (off-NEXT rewires the predecessor, p.next = n: equivalent under the patch).
+ */
+export const LC_ITER_PATCH = Object.freeze([A_LC_UNLINK,
+    '            if (n !== null) n.prev = p; else le.tail = p; reg.next = null;   /* MUSTFAIL T-LC-iter: off clears reg.next */\n']);
+// The tree LIFECYCLE lane, every scenario on (A5a: no DIV-D3 head on the tree, census b117 b0 0/200).
+const LC_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE' });
+// T-cov-LIFECYCLE: no handle ever holds two live registrations (rule single-reg, lanes/lifecycle.mjs covOff).
+const LC_COV_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE', SOAK_MUSTFAIL: 'cov-off:lc-two-regs' });
 
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
@@ -523,17 +546,18 @@ export const CONTROLS = deepFreeze([
     // L-WRAP-TREE (S2): the tree kernel breaches W1 / W3 / W4 in ONE spawn (burst 25 full size, every detail in
     // .handoff/archive/HISTORY-b7-b97.md (~:7702) "Proposed A-B3a control specs"): W1 band-observed / band-unobserved, W3 stale handle after
     // 2^32 - 1 recycles, W4 nodeId out of [1, 2^31-1]. Matched by head only: the details flip when A4 / A7 land (then
-    // this control is re-specced). W2 still runs here (SOAK_WRAP keeps it) but names no spec: A3 FIX-R (74ea021,
+    // this control is re-specced). W2 still runs here (SOAK_WRAP keeps it) and names no BREACH spec: A3 FIX-R (74ea021,
     // Signal.js 0f75866f) closes W2 on the tree except the KNOWN k*2^30 alias (LEDGER #47) -- live W2 PASS, b109
-    // triage .handoff/b109-evidence/wrap/W2-live.txt (PLAN-A3-soak ADDENDUM A6, option (a)). The spec format matches
-    // BREACH / INCONCLUSIVE / NOTE lines only, so W2 PASS is not asserted here: a W2 BREACH on the tree is neither
-    // required nor refused by this control (wrap.mjs exits 1 on W1 / W3 / W4 either way). ~2 min.
+    // triage .handoff/b109-evidence/wrap/W2-live.txt (PLAN-A3-soak ADDENDUM A6, option (a)). b119 B5 (A6 follow-up):
+    // expect.extra.pass ['W2'] asserts that PASS -- wrapJudge needs >= 1 W2 wrap record, every one status PASS, and no
+    // BREACH line naming check=W2, else a MISS (wrap.mjs exits 1 on W1 / W3 / W4 either way, so the exit cannot). ~2 min.
     W('L-WRAP-TREE', 'tree', { SOAK_WRAP: 'W1,W2,W3,W4' }, {
         exit: 1, kind: 'match', lines: [], specs: [
             'gate=wrap check=W1 counter=globalVersion',
             'gate=wrap check=W3 counter=gen',
             'gate=wrap check=W4 counter=nodeSeq',
         ],
+        extra: { pass: ['W2'] },
     }),
     // L-WRAP-W2-PREFIXR (b109 B1b, PLAN-A3-soak ADDENDUM A6 option (a)): W2's tooth, moved off the tree. prefixr is the
     // frozen pre-FIX-R kernel (25784e5 = 74ea021^, Signal.js 0628127b, controls.json): its batchEpoch wraps after
@@ -589,6 +613,12 @@ export const CONTROLS = deepFreeze([
     M('P-HOOK-HP', 'headpatched', { SOAK_LANES: 'HOOK', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { boundaries: MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'PASS' },
     }),
+    // P-HOOK-TREE (b117 B3b, PLAN-A5b task 4 + Q2): the HOOK pass control on the tree, P-HOOK-HP's shape. A5b gave
+    // onGraphMutation a live-entry stack (an off in any order removes only its own listener; DIV-F9 fixedIn A5b), so
+    // the full tree HOOK lane -- non-LIFO offs included -- is clean: exit 0, END verdict=PASS, zero BREACH lines.
+    M('P-HOOK-TREE', 'tree', { SOAK_LANES: 'HOOK', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { boundaries: MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'PASS' },
+    }),
     // P-HOOK-TREE-COVOFF (b93 S3 R1c): the tree HOOK lane with every off kept LIFO (cov-off:hook-non-lifo-off) must not
     // false-fail: the F9 ghost needs a non-LIFO off, so the run is clean but INCONCLUSIVE on the missing scenario.
     // MEASURED b93 R1b (--smoke): exit 3, 0 BREACH, missing=hook-non-lifo-off.
@@ -596,12 +626,26 @@ export const CONTROLS = deepFreeze([
         exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=HOOK missing=hook-non-lifo-off'],
         specs: ['INCONCLUSIVE scenario lane=HOOK missing=hook-non-lifo-off'],
     }),
-    // P-LC-TRIGGERLESS (b112 B5, PLAN-R2-lifecycle CONTROLS): the tree LIFECYCLE lane with no target ever holding two
-    // live registrations (cov-off:lc-two-regs) must not false-fail: every DIV-D3 head needs two registrations, so the
-    // run is clean but INCONCLUSIVE. MEASURED b112 B5 (--smoke): exit 3, 0 BREACH, two scenario lines -- lc-two-regs and
-    // lc-off-sibling (a sibling off needs a second registration; the plain tree smoke covers it). Also the revert of
-    // every T-LC-* row (the same env and argv, patches []).
-    M('P-LC-TRIGGERLESS', 'tree', LC_ENV, ['--smoke'], {
+    // T-A5b (b117 B3b, PLAN-A5b task 4 + Q1 (a); SPEC-B :520): A5b's fix-minus-one control. prea5 (767f808, pre-A5)
+    // unsubscribes onGraphMutation listeners LIFO only (F9), so a non-LIFO off resurrects a dead listener: O8
+    // ghost-listener, explained by the FIXED entry DIV-F9 (fixedIn A5b; includeFixed: prea5 is a controls.json kernel).
+    // HOOK ONLY on purpose: exec.mjs:86 gives a named control creationAbort false, so a write-cycle world would predict
+    // its CycleError at the cyc:1 set -- false on a post-b33 kernel like prea5. The HOOK lane emits no cyc op (the only
+    // cyc:1 emitter is lanes/error.mjs:96) and no write cycle (GRAPH writers carry no inc: model.mjs writeEdge).
+    // B2 census (lite-s3, test/75's HOOK_SEED, .handoff/b117-evidence/b2/): HOOK on prea5 fails 19/30; smoke: 150/214 worlds, every one O8 ghost-listener; the tree 0/30.
+    M('T-A5b', 'prea5', { SOAK_LANES: 'HOOK' }, ['--smoke'], {
+        exit: 1, kind: 'explained', lines: [], specs: ['oracle=O8 lane=HOOK sig=ghost-listener'], known: ['DIV-F9'],
+    }),
+    // P-LC-tree (b117 B3a, PLAN-A5a task 5): the LIFECYCLE pass control on the tree. A5a made every registration
+    // independent (DIV-D3 fixedIn A5a), so the full lane -- two registrations per target included -- is clean.
+    // Also the revert of every T-LC-* row (the same env and argv, patches []).
+    M('P-LC-tree', 'tree', LC_ENV, ['--smoke'], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { verdict: 'SMOKE' },
+    }),
+    // T-cov-LIFECYCLE (b112 B5 P-LC-TRIGGERLESS, renamed b117 B3a per PLAN-A5a OQ4 (A)): the tree LIFECYCLE lane with
+    // no target ever holding two live registrations (cov-off:lc-two-regs) is clean but INCONCLUSIVE on two scenario
+    // lines -- lc-two-regs and lc-off-sibling (a sibling off needs a second registration).
+    M('T-cov-LIFECYCLE', 'tree', LC_COV_ENV, ['--smoke'], {
         exit: 3, kind: 'nobreach',
         lines: ['soak: INCONCLUSIVE -- scenario lane=LIFECYCLE missing=lc-two-regs', 'soak: INCONCLUSIVE -- scenario lane=LIFECYCLE missing=lc-off-sibling'],
         specs: ['INCONCLUSIVE scenario lane=LIFECYCLE missing=lc-two-regs'],
@@ -660,37 +704,62 @@ export const CONTROLS = deepFreeze([
     M('T-hook-mirror', 'headpatched', { SOAK_LANES: 'HOOK' }, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O8 lane=HOOK sig=mirror-links known=none'],
     }, { patches: [[A_HOOK_OP4, '        /* MUSTFAIL T-hook-mirror: mutationHook(4, ...) removed */\n']] }),
-    // T-LC-* (b112 B5, PLAN-R2-lifecycle CONTROLS): one-line mutants of the live tree's lifecycle fire / off paths, each
-    // at P-LC-TRIGGERLESS's shape (cov-off:lc-two-regs, so no DIV-D3 head can fire: every BREACH is the mutant's,
-    // known=none). Replacements = the b110 pre-built mutants (.handoff/b110-evidence/r2/anchors/, sha256/8 listed).
-    // MEASURED b112 B5 (--smoke, .handoff/b112-evidence/B5/): every row exit 1; a row whose mutant also trips a second
-    // O7 sig spells that head out too (kind 'explained' cannot hold it: a known=none BREACH is never explained).
-    // dupconn (7610f51d): onConnect fires twice -> one head, spurious-connect.
+    // T-LC-* (b112 B5, PLAN-R2-lifecycle CONTROLS; re-anchored b117 B3a on the A5a registration list + merge / iter):
+    // one-line mutants of the live tree's lifecycle fire / register / off paths, each at P-LC-tree's shape (the full
+    // LIFECYCLE lane: the tree is clean, so every BREACH is the mutant's, known=none). MEASURED b117 B3a (--smoke,
+    // .handoff/b117-evidence/b3a/): every row exit 1; a row whose mutant also trips a second O7 sig spells that head out
+    // too (kind 'explained' cannot hold it: a known=none BREACH is never explained). RE-MEASURED b118 B2 after the
+    // lifecycle 'lself' arm moved the RNG stream (MUSTFAIL_HEADS=1 + full BREACH lists, .handoff/b118-evidence/b2/):
+    // every row exit 1, the same sig set except dupconn / dupdisc (+ dead-registration-fire, below).
+    // dupconn: each registration's onConnect fires twice -> spurious-connect (replay LIFECYCLE:0:0xba99e6ce); b118: then
+    // dead-registration-fire (0x6d88817d, `onConnect fired for registration r3 on #40: registration off`) -- an 'lself'
+    // SELF rA offs itself in its first onConnect call, so the duplicate call fires a dead registration (the before lane
+    // be19cb57 heads spurious-connect alone).
     M('T-LC-dupconn', 'tree', LC_ENV, ['--smoke'], {
-        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=spurious-connect known=none'],
-    }, { patches: [[A_LC_CONN, '        try { e.onConnect(); e.onConnect(); ok = true; } finally {   /* MUSTFAIL T-LC-dupconn: onConnect fired twice */\n']] }),
-    // dupdisc (3822a1a8): onDisconnect fires twice -> one head, spurious-disconnect.
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=spurious-connect known=none', 'oracle=O7 lane=LIFECYCLE sig=dead-registration-fire known=none'],
+    }, { patches: [[A_LC_CONN, '            const f0 = r.onConnect, f = f0 === undefined ? undefined : () => { f0(); f0(); };   /* MUSTFAIL T-LC-dupconn: onConnect fired twice */\n']] }),
+    // dupdisc: each registration's onDisconnect fires twice -> spurious-disconnect (LIFECYCLE:0:0xba99e6ce); b118: then
+    // dead-registration-fire (0xd86394e5, `onDisconnect fired for registration r3 on #70`), the dupconn mechanism on
+    // the disconnect side (the before lane heads spurious-disconnect alone).
     M('T-LC-dupdisc', 'tree', LC_ENV, ['--smoke'], {
-        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=spurious-disconnect known=none'],
-    }, { patches: [[A_LC_DISC, '        try { e.onDisconnect(); e.onDisconnect(); } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }   /* MUSTFAIL T-LC-dupdisc: onDisconnect fired twice */\n']] }),
-    // dropconn (7f2aedeb): onConnect removed, `ok = true` kept (the finally still announces op 3) -> missed-connect, and
-    // the later disconnect of that never-connected pair reads spurious-disconnect (replay LIFECYCLE:0:0xf89476f8).
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=spurious-disconnect known=none', 'oracle=O7 lane=LIFECYCLE sig=dead-registration-fire known=none'],
+    }, { patches: [[A_LC_DISC, '            const f0 = r.onDisconnect, f = f0 === undefined ? undefined : () => { f0(); f0(); };   /* MUSTFAIL T-LC-dupdisc: onDisconnect fired twice */\n']] }),
+    // dropconn: onConnect never called, the phase still moves to 1 -> missed-connect (LIFECYCLE:0:0xba99e6ce), then
+    // spurious-disconnect (0x72611240) and stale-off (0xddabec5f) on the never-connected registrations.
     M('T-LC-dropconn', 'tree', LC_ENV, ['--smoke'], {
-        exit: 1, kind: 'match', lines: [],
-        specs: ['oracle=O7 lane=LIFECYCLE sig=missed-connect known=none', 'oracle=O7 lane=LIFECYCLE sig=spurious-disconnect known=none'],
-    }, { patches: [[A_LC_CONN, '        try { /* MUSTFAIL T-LC-dropconn: e.onConnect() removed */ ok = true; } finally {\n']] }),
-    // dropdisc (f7cec030): onDisconnect removed -> missed-disconnect (replay LIFECYCLE:0:0xfbf44357); the still-connected
-    // pair also reads stale-off (the FIRST head, LIFECYCLE:0:0xba99e6ce) and spurious-connect on reconnect (cycle 1).
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=missed-connect known=none', 'oracle=O7 lane=LIFECYCLE sig=spurious-disconnect known=none', 'oracle=O7 lane=LIFECYCLE sig=stale-off known=none'],
+    }, { patches: [[A_LC_CONN, '            const f = undefined;   /* MUSTFAIL T-LC-dropconn: onConnect never called */\n']] }),
+    // dropdisc: onDisconnect never called, the phase still moves to 0 -> missed-disconnect (LIFECYCLE:0:0xba99e6ce),
+    // then stale-off (0x22a5e86e) and spurious-connect on reconnect (0x1386da9a).
     M('T-LC-dropdisc', 'tree', LC_ENV, ['--smoke'], {
-        exit: 1, kind: 'match', lines: [],
-        specs: ['oracle=O7 lane=LIFECYCLE sig=missed-disconnect known=none', 'oracle=O7 lane=LIFECYCLE sig=stale-off known=none',
-            'oracle=O7 lane=LIFECYCLE sig=spurious-connect known=none'],
-    }, { patches: [[A_LC_DISC, '        try { /* MUSTFAIL T-LC-dropdisc: e.onDisconnect() removed */ } finally { currentObserver = (po !== null && po.gen === pg) ? po : null; }\n']] }),
-    // offgen (2ca90fa2): off() without the #40 gen-stamp test drops the slot's next resident's registration -> one
-    // head, stale-off (dead target).
-    M('T-LC-offgen', 'tree', LC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=missed-disconnect known=none', 'oracle=O7 lane=LIFECYCLE sig=stale-off known=none', 'oracle=O7 lane=LIFECYCLE sig=spurious-connect known=none'],
+    }, { patches: [[A_LC_DISC, '            const f = undefined;   /* MUSTFAIL T-LC-dropdisc: onDisconnect never called */\n']] }),
+    // offlive (b117 B3a r2, D-b117-1; was T-LC-offgen, whose gen-stamp mutant is EQUIVALENT on 2f7974f3: exit 0,
+    // 0 BREACH): off() without its `!reg.live` first guard. A repeated off() of a registration on a live target
+    // unlinks it again; once the target's entry is gone `le` is undefined -> one head, O6 escape-TypeError (replay
+    // LIFECYCLE:0:0xba99e6ce, detail `close(): TypeError: Cannot set properties of undefined (setting 'head')`).
+    M('T-LC-offlive', 'tree', LC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O6 lane=LIFECYCLE sig=escape-TypeError known=none'],
+    }, { patches: [[A_LC_OFFLIVE, '            /* MUSTFAIL T-LC-offlive: the !reg.live first guard removed */\n']] }),
+    // merge: a later registration on a held target reuses e.head (its callbacks overwrite the first registration's;
+    // the new reg is never linked) -- the pre-A5a single-entry overwrite, rebuilt on the list.
+    // MEASURED b117 B3a: missed-connect co-registered (LIFECYCLE:0:0xfbf44357, `r0 on #12 ... (co-registered r2)`), stale-off
+    // (the FIRST head, 0xba99e6ce), dead-registration-fire (O7a, family O7; 0xb4077c78), missed-disconnect co-registered
+    // (0x570255ea). RE-MEASURED b118 B2 (the stream moved, the same four sigs): missed-connect co-registered is the FIRST
+    // head (0xba99e6ce, `r5 on #51 ... (co-registered r6)`), then stale-off (0xf7fe40f7), missed-disconnect co-registered
+    // (0x1f30b1c5), dead-registration-fire (0xd4fbd5d4).
+    M('T-LC-merge', 'tree', LC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=missed-connect known=none', 'oracle=O7 lane=LIFECYCLE sig=stale-off known=none', 'oracle=O7 lane=LIFECYCLE sig=dead-registration-fire known=none', 'oracle=O7 lane=LIFECYCLE sig=missed-disconnect known=none'],
+    }, { patches: [[A_LC_APPEND, '        if (e.tail !== null) { e.head.onConnect = onConnect; e.head.onDisconnect = onDisconnect; reg.live = false; } else e.head = reg;   /* MUSTFAIL T-LC-merge: register reuses e.head */\n']] }),
+    // iter (b118 B2, D-b117-2): off() clears reg.next (LC_ITER_PATCH above), reached by the lifecycle 'lself' SELF arm.
+    // MEASURED b118 B2 (MUSTFAIL_HEADS=1, .handoff/b118-evidence/b2/): exit 1, one BREACH, stale-off (replay
+    // LIFECYCLE:0:0xba99e6ce, `r6 on #51: disconnected at rest, sinks 1 after off of r5 on #51 (sibling)`): the walk
+    // stops at the self-offed r5, so its successor r6 misses the connect. The planned missed-* head was wrong: offLc
+    // stamps the sibling's off before the walk reaches it, so the O7 rest rule reads stale-off first.
+    // With the before lane (be19cb57, no 'lself') the row MISSes: exit 0, 0 BREACH (teeth-on-old, b118 B2).
+    M('T-LC-iter', 'tree', LC_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=stale-off known=none'],
-    }, { patches: [[A_LC_OFFGEN, '            if (/* MUSTFAIL T-LC-offgen: #40 gen-stamp test removed */ lifecycleMap.delete(node)) lifecycleCount = (lifecycleCount - 1) | 0;\n']] }),
+    }, { patches: [LC_ITER_PATCH] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375
@@ -734,6 +803,8 @@ export function validSpec(c) {
     if (typeof c.name !== 'string' || !/^[A-Za-z][A-Za-z0-9-]*$/.test(c.name)) p.push('name');
     if (c.run !== 'main' && c.run !== 'cfg' && c.run !== 'wrap') p.push('run must be main | cfg | wrap');
     if (!own(BASES, c.base)) p.push('base must be one of ' + Object.keys(BASES).join('|'));
+    // prefixr (25784e5) is post-F-b33-1 and pre-FIX-R: kept for W2's tooth only (L-WRAP-W2-PREFIXR), a wrap-only base
+    else if (c.base === 'prefixr' && c.run !== 'wrap') p.push('base prefixr is wrap-only');
     if (c.env === null || typeof c.env !== 'object') p.push('env');
     else for (const k of Object.keys(c.env)) if (k.indexOf('SOAK_') !== 0 || typeof c.env[k] !== 'string' || k === 'SOAK_KERNEL' || k === 'SOAK_OUT') p.push('env.' + k);
     if (!isStrArr(c.argv) && !(Array.isArray(c.argv) && c.argv.length === 0)) p.push('argv');
@@ -779,7 +850,38 @@ export function validSpec(c) {
     if (e.extra !== undefined) {
         const x = e.extra;
         if (x === null || typeof x !== 'object') p.push('expect.extra');
-        else for (const k of Object.keys(x)) if (['boundaries', 'reason', 'verdict'].indexOf(k) === -1) p.push('expect.extra.' + k);
+        else {
+            for (const k of Object.keys(x)) if (['boundaries', 'reason', 'verdict', 'pass'].indexOf(k) === -1) p.push('expect.extra.' + k);
+            if (own(x, 'pass')) for (const q of passProblems(c, x.pass)) p.push(q);
+        }
+    }
+    return p;
+}
+
+/**
+ * expect.extra.pass (b119 B5, A6 follow-up): the wrap checks the run must PASS (wrapJudge). Run wrap only; a
+ * non-empty array of distinct W1..W5, each selected by the control's env.SOAK_WRAP and none named by a check=<W>
+ * token of the control's own BREACH specs (a check cannot both breach and pass).
+ */
+function passProblems(c, pass) {
+    const p = [];
+    if (c.run !== 'wrap') return ['expect.extra.pass belongs to run wrap'];
+    if (!Array.isArray(pass) || pass.length === 0) return p.concat(['expect.extra.pass must be a non-empty array of W1..W5']);
+    const sel = c.env !== null && typeof c.env === 'object' && typeof c.env.SOAK_WRAP === 'string' ? c.env.SOAK_WRAP.split(',').map((w) => w.trim()) : [];
+    const breachW = [];
+    for (const s of (Array.isArray(c.expect.specs) ? c.expect.specs : [])) {
+        if (typeof s !== 'string') continue;
+        const toks = s.split(' ').filter((t) => t.length > 0);
+        if (toks[0] === 'INCONCLUSIVE' || toks[0] === 'NOTE') continue;
+        for (const t of toks) if (t.indexOf('check=') === 0) for (const w of t.slice(6).split(',')) breachW.push(w);
+    }
+    const seen = [];
+    for (const w of pass) {
+        if (typeof w !== 'string' || !/^W[1-5]$/.test(w)) { p.push('expect.extra.pass: ' + JSON.stringify(w) + ' is not one of W1..W5'); continue; }
+        if (seen.indexOf(w) !== -1) { p.push('expect.extra.pass lists ' + w + ' twice'); continue; }
+        seen.push(w);
+        if (sel.indexOf(w) === -1) p.push('expect.extra.pass: ' + w + ' is not in env.SOAK_WRAP');
+        if (breachW.indexOf(w) !== -1) p.push('expect.extra.pass: ' + w + ' is also named by a BREACH spec (check=' + w + ')');
     }
     return p;
 }
@@ -1043,7 +1145,10 @@ export function judgeMain(c, r, err, so, out, problems, matched) {
  *     unwitnessed crossing, an unmeasured W5 side) renders through gates.mjs inconclusiveLine and must have been
  *     printed (stderr or summary.inconclusive); and every INCONCLUSIVE line, printed or re-derived, must be one
  *     the control expects (an INCONCLUSIVE spec matches it, or it is in expect.lines). The oracle is the stream's
- *     records, never only what the child chose to print: an unexpected cause never rides along under a FAIL.
+ *     records, never only what the child chose to print: an unexpected cause never rides along under a FAIL;
+ *   - every check W in expect.extra.pass (b119 B5) has >= 1 wrap record and every one reads status PASS (the
+ *     record's own verdict), and no stderr BREACH line names check=W: `wrap <W> must PASS: <why>`. judgeMain's
+ *     kind 'match' only requires the specs' lines, so this is where a W2 BREACH on L-WRAP-TREE is a MISS.
  */
 export function wrapJudge(c, recs, endVerdict, err) {
     const p = [];
@@ -1085,6 +1190,17 @@ export function wrapJudge(c, recs, endVerdict, err) {
         }
     }
     for (const l of inc) if (!expected(l)) p.push('unexpected INCONCLUSIVE: ' + String(l).slice(0, 140));
+    const pass = x !== null && typeof x === 'object' && own(x, 'pass') ? x.pass : [];
+    if (!Array.isArray(pass)) p.push('expect.extra.pass is not an array');
+    else for (const w of pass) {
+        const mine = wraps.filter((r) => r.check === w);
+        if (mine.length === 0) p.push('wrap ' + w + ' must PASS: no wrap record');
+        for (const r of mine) if (r.status !== VERDICT.PASS) p.push('wrap ' + w + ' must PASS: ' + w + '/' + String(r.counter) + ' status ' + String(r.status));
+        for (const l of (Array.isArray(err) ? err : [])) {
+            const h = parseHead(l);
+            if (h !== null && h.kind === 'BREACH' && (h.pairs.get('check') || []).indexOf(w) !== -1) p.push('wrap ' + w + ' must PASS: BREACH line ' + l.slice(0, 140));
+        }
+    }
     return p;
 }
 

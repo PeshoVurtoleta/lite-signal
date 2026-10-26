@@ -1,7 +1,7 @@
 /**
  * LIFECYCLE lane (S3 rung R2, .handoff/PLAN-R2-lifecycle.md TASK 2): lifecycle REGISTRATIONS (world.lifecycle(h,
  * { onConnect, onDisconnect }), the registry's observeObservers) over a GRAPH-vocabulary world (no batch, so prefixr
- * runs it like the tree). LANE_INDEX 5 (S3-D6). Not rostered until R2 B3: imported by path.
+ * runs it like the tree). LANE_INDEX 5 (S3-D6). Rostered since R2 B3 (b111): lanes/index.mjs ROSTER, after HOOK.
  *
  * Ops (lane-owned, exec.mjs laneOp): lreg { r, i, a? } registers r on node i with BOTH callbacks (a per-callback merge
  * then degenerates to a whole overwrite: no D3 spurious-* shape); loff { r } retires r. a = an ARMED action, one-shot,
@@ -18,14 +18,20 @@
  *   { k: 'loff', r }      off sibling registration r on the same target (lc-callback-off-sibling). Armed as a MIRROR
  *                         pair on t', A registered first: A offs B, B offs A. An ADD kernel fires A first and A offs
  *                         the not-yet-visited B (L8c, the B0-2 crash on headpatched); an overwrite kernel fires only
- *                         B, which offs the earlier A (the stale-off sibling shape)
+ *                         B, which offs the earlier A (the stale-off sibling shape). The generator's 'lself' arm
+ *                         (b118, D-b117-2 / T-LC-iter) emits the same { k: 'loff', r } in two more shapes on t':
+ *                         SELF (1 - NEXT_OFF_P): rA armed to off ITSELF, then rB unarmed -- rA fires first (FIFO) and
+ *                         offs the registration the walk stands on, whose successor rB must still fire; NEXT
+ *                         (NEXT_OFF_P): rA armed to off rB, then rB and rC unarmed -- rA offs its not-yet-visited
+ *                         successor (rB never fires, rC does). Under single-reg 'lself' falls back to 'disp'
  *   { k: 'set', x, v }    write signal x := decodeValue(v)
  * Every armed seq makes the fire certain on every kernel: a FRESH target t', one registration (the mirror pair for
- * 'loff': one of the two fires on every kernel), then an effect reading [t', x', y] (connect) and, for on 0, its stop
- * in the same op (the disconnect walk). The L7c seq is { seq [ { seq build }, arm ] }: build = fresh t, a, b, c, one
+ * 'loff': one of the two fires on every kernel; for 'lself' rA fires first), then an effect reading [t', x', y]
+ * (connect) and, for on 0, its stop in the same op (the disconnect walk). The L7c seq is { seq [ { seq build }, arm ] }: build = fresh t, a, b, c, one
  * registration on each of a (armed), b and c, then E; the arm re-runs E in the same op, so the action is still armed. The
  * generator's shadow model applies every armed action at generation time (G0; for the mirror pair both offs, so the
- * shadow never relies on the kernel-dependent survivor; for L7c E's early mode, t's new value and b's death).
+ * shadow never relies on the kernel-dependent survivor; for 'lself' the one off: rA (SELF) or rB (NEXT); for L7c E's
+ * early mode, t's new value and b's death).
  * Q3 (A1): a lifecycle callback NEVER throws in R2 -- an action escape is caught in the callback and reported through
  * exec.engineError (O6, fail closed, never swallowed).
  *
@@ -42,12 +48,14 @@
  * (Map target -> sink Set at the previous rest), step, cbDepth (lane callbacks on the stack), actions (r -> armed
  * action, dropped at rest), deadAt (target -> model node count when its death was first seen: a node with an index
  * >= it was created after the death). Fail closed (exec.unmodelled): an lreg whose r is not a fresh integer id, a
- * malformed action, an loff whose r is not an integer >= 0. An lreg on a dead / absent node and an loff of a
+ * malformed action, an loff whose r is not an integer >= 0, a fire (O7a passed) for a registration LcState never
+ * recorded (a harness bug, never an O6 engine escape; b117). An lreg on a dead / absent node and an loff of a
  * registration that is not live are no-ops (a shrunk script).
  *
  * Scenarios (scenarios.mjs onLc*, TRUE conditions): lc-two-regs, lc-off-sibling, lc-late-off-recycle,
- * lc-callback-dispose, lc-callback-register (required); lc-callback-off-sibling (optional). covOff lc-two-regs ->
- * rule single-reg: no handle ever holds two live registrations (every D3 trigger is gone; P-LC-TRIGGERLESS).
+ * lc-callback-dispose, lc-callback-register (required); lc-callback-off-sibling (optional; an 'lself' off counts it
+ * too: a registration after rA is live on t' when rA's action runs). covOff lc-two-regs ->
+ * rule single-reg: no handle ever holds two live registrations (every D3 trigger is gone; T-cov-LIFECYCLE).
  * COLD module: harness code, never an engine hot path.
  */
 
@@ -56,11 +64,12 @@ import { specRefs, decodeValue, EQ_BOMB_CODE } from '../kinds.mjs';
 import { checkFire, checkLcFire } from '../oracles.mjs';
 
 const MIX = Object.freeze({ graph: 66, lreg: 8, loff: 6, wire: 8, cbarm: 7, recycle: 5 });
-const ACTIONS = Object.freeze({ disp: 3, lreg: 2, set: 2, loff: 1 });
+const ACTIONS = Object.freeze({ disp: 3, lreg: 2, set: 2, loff: 1, lself: 1 });   // 'lself' is emitted as k 'loff'
 const ACTION_KINDS = Object.freeze(['disp', 'lreg', 'loff', 'set']);
 const CO_P = 0.35;      // an lreg picks an already-held target (lc-two-regs), default rule only
 const NEXT_P = 0.75;    // an on-0 'disp' disposes the walk's NEXT link x' (L7a), else the non-adjacent y (L7b)
 const TRIM_P = 0.4;     // an on-0 'disp' arm is the L7c retrack trim (trimOps) instead of a stop walk
+const NEXT_OFF_P = 0.3; // an 'lself' arm is the NEXT shape (rA offs rB; rC after it), else SELF (rA offs rA; rB after it)
 const QUEUE_P = 0.6;    // a step advances the late-off-recycle sequence in flight
 const FIRE_CAP = 0x3FFFFFFF;   // per-world counter stays Smi
 
@@ -155,11 +164,14 @@ function wireOp(g) {
  * An armed callback action on a fresh target (the fire is certain on every kernel). E reads [tp, xs, ys] in that
  * order, so its stop walk unlinks tp, then xs: an on-0 'disp' of xs frees the walk's next link (L7a). 'loff' arms the
  * mirror pair rA (offs rB) then rB (offs rA) on tp (L8c on an ADD kernel; the old armed-second shape on overwrite).
+ * 'lself' (emitted as k 'loff') arms rA alone: SELF rA offs rA, rB unarmed after it (T-LC-iter: off() must not cut
+ * the walk standing on rA); NEXT rA offs rB, rB and rC unarmed after it (equivalent under that patch: the
+ * predecessor is relinked past rB).
  */
 function cbarmOps(g) {
     const on = g.chance(0.5) ? 1 : 0;
     let k = g.weighted(ACTIONS);
-    if (k === 'loff' && single(g)) k = 'disp';
+    if ((k === 'loff' || k === 'lself') && single(g)) k = 'disp';
     if (k === 'disp' && on === 0 && g.chance(TRIM_P)) return trimOps(g);
     const ops = [];
     const tp = g.sig({ role: 'lct', v: g.int(100) });
@@ -168,11 +180,23 @@ function cbarmOps(g) {
     ops.push(tp, xs, ys);
     let a;
     let b = null;   // the mirror partner's action ('loff' only)
+    let offd = -1;  // 'lself': the registration rA's action offs (G0)
     if (k === 'loff') {
         a = { on, k, r: g.nextReg + 1 };   // rB, registered right after rA
         const rA = lreg(g, tp.i, a);
         b = { on, k, r: rA.r };
         ops.push(rA, lreg(g, tp.i, b));
+    } else if (k === 'lself') {
+        const rA = g.nextReg;
+        if (g.chance(NEXT_OFF_P)) {
+            offd = rA + 1;   // NEXT: rA offs rB, registered right after it; rC after rB
+            a = { on, k: 'loff', r: offd };
+            ops.push(lreg(g, tp.i, a), lreg(g, tp.i, null), lreg(g, tp.i, null));
+        } else {
+            offd = rA;       // SELF: rA offs itself; rB after it
+            a = { on, k: 'loff', r: offd };
+            ops.push(lreg(g, tp.i, a), lreg(g, tp.i, null));
+        }
     } else if (k === 'lreg') {
         a = { on, k, r: -1, x: xs.i };
     } else if (k === 'set') {
@@ -182,7 +206,7 @@ function cbarmOps(g) {
     } else {
         a = { on, k, x: on === 0 && g.chance(NEXT_P) ? xs.i : ys.i };
     }
-    if (b === null) ops.push(lreg(g, tp.i, a));
+    if (b === null && offd < 0) ops.push(lreg(g, tp.i, a));
     const E = lcEff(g, [tp.i, xs.i, ys.i]);
     ops.push(E);
     if (on === 0) ops.push(g.stop(E.i));
@@ -190,6 +214,7 @@ function cbarmOps(g) {
     if (k === 'disp') g.M.kill(a.x);
     else if (k === 'lreg') { a.r = g.nextReg++; g.M.addReg(a.r, xs.i); }
     else if (k === 'loff') { g.M.offReg(a.r); g.M.offReg(b.r); }
+    else if (k === 'lself') g.M.offReg(offd);
     else g.M.setValue(a.x, decodeValue(a.v));
     return ops;
 }
@@ -323,7 +348,10 @@ function validAction(a) {
     return true;
 }
 
-/** One fire of registration r: O7a, then (only if it passes) O7; a legal fire clears the attribution; the armed action. */
+/**
+ * One fire of registration r: O7a, then (only if it passes) O7; a legal fire clears the attribution; the armed action.
+ * checks.O7 counts once per registration checkLcFire checks: after O7a passed AND LcState holds r (else unmodelled).
+ */
 function cbOf(x, lc, r, kind) {
     return () => {
         x.cbDepth++;
@@ -334,6 +362,7 @@ function cbOf(x, lc, r, kind) {
             const f = checkFire(x.M, r, kind);
             if (f !== null) x.failF(f);
             else {
+                if (lc.regs[r] === undefined) unmodelled(x, 'fire ' + kind + ' for registration r' + r + ' that LcState never recorded');
                 x.did('O7');
                 const f7 = checkLcFire(lc, r, kind);
                 if (f7 !== null) x.failF(f7);

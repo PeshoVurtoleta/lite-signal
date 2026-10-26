@@ -15,9 +15,36 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
 published `files[]` changes except `README.md`, `llms.txt` and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
 
+### Fixed -- onGraphMutation unsubscribe in any order (F9 / A5b)
+
+The `onGraphMutation` registrations now form a live-entry stack. An unsubscribe in any order unlinks only its own entry, the
+newest still-live entry stays the active listener, and a removed listener is never revived (before, `offA` then `offB` re-activated
+A: the old unsubscribe restored whatever it had saved, so only LIFO order was correct). A held unsubscriber no longer retains its
+listener: the off closure holds only its entry, and the entry's listener and links are nulled once it has run. `onGraphMutation(null)`
+stays a clearing entry on top. Fire points and the D-B2 wrapper are byte-identical (`if (mutationHook !== null)`); the register
+and unsubscribe paths are cold. Disassembled function sizes before -> after (bytecode, untimed, node v26.8.2): `onGraphMutation`
+72 -> 56 B, its off closure 27 -> 119 B, new `hookPush` 73 B (`.handoff/b116-evidence/b1/G1-diff.txt`). Tests: `test/85-f9-hook-non-lifo.test.mjs`
+(non-LIFO off, a null entry, double and stale offs, register and off mid-fire, a throwing listener, exhaustive and seeded
+reference-model sweeps, and `--expose-gc` retention and 0 B/op fire rows). Docs: README, `llms.txt` and `Signal.d.ts` (JSDoc only) no
+longer say "restores the previous one" / "LIFO stacking". LEDGER: rung line under section J.
+
+### Fixed -- observeObservers registrations are independent (D3 / A5a)
+
+Each `observeObservers(handle, hooks)` call is now its own registration (before, the registrations on one node were merged into one entry;
+DIV-D3). Per registration: callbacks fire in registration order (FIFO) on every 0->1 / 1->0 step; a registration
+added during a fire is skipped by that fire (it starts in the node's current phase); the returned `unobserve` takes effect
+immediately, even mid-fire; callbacks are called with `this === undefined`; disposing the observed node drops every registration and its callbacks (b114 F-a), and a kept `unobserve` retains nothing.
+Every callback runs in its own try/catch: one error is rethrown as-is, two or more become an `AggregateError` with the errors in
+registration order and the message `observeObservers: onConnect callbacks threw` / `observeObservers: onDisconnect callbacks threw`.
+The LEDGER #45 / #46 op-3 rules are unchanged (a throwing `onConnect` still announces its live edge once). `fireDisconnect` restores
+`currentObserver` on every path. Tests: `test/84-lifecycle-independent.test.mjs`; `test/65-hot-body-pins.test.mjs` now pins 14 hot
+bodies (+ `allocateLink`, `freeLink`, values unchanged); `test/torture.mjs` gains the `mreg` lane (steady-state, whole-run window
+gate and retention half in the pinned child). Not fixed here: user code still runs with `this` = the internal node in computed /
+effect bodies and schedulers (LEDGER #48, its own rung after this one).
+
 ### Tests / Docs -- soak: LIFECYCLE lane + O7 (R2, b110-b112)
 
-Dev-only (`bench/soak/`, not shipped). `Signal.js` is unchanged (sha256/8 0f75866f); no engine claim is made here.
+Dev-only (`bench/soak/`, not shipped). At b110-b112 `Signal.js` was unchanged (sha256/8 0f75866f) and no engine claim was made; the A5a / A5b entries above change it (sha256/8 2f7974f3).
 - New LIFECYCLE lane, the 7th rostered lane (appended last in `lanes/index.mjs` ROSTER; `LANE_INDEX.LIFECYCLE` = 5, HOOK = 6).
   It drives `observeObservers` `onConnect` / `onDisconnect` registrations (ops `lreg` / `loff`, several registrations per
   handle, callbacks that dispose, register, unregister and write) over a GRAPH-vocabulary world with no batch.
@@ -28,15 +55,39 @@ Dev-only (`bench/soak/`, not shipped). `Signal.js` is unchanged (sha256/8 0f7586
   trim's next link; the one shape whose effect body is not a GRAPH kind: a try-mode `outer` body switched to early exit) and
   L8c (a mirror pair of registrations that off each other).
   No lifecycle callback throws in this rung (a follow-up, R2b, owns throwing callbacks).
-- Calibrated on the tree kernel only; LIFECYCLE is exempt in test/41 while DIV-D3 stays open.
+- Calibrated on the tree kernel only; LIFECYCLE was exempt in test/41 while DIV-D3 stayed open (the exemption ended with A5a, see the b117-b118 bullet below).
 - Divergences: DIV-D3-independent-registrations is now matched on LIFECYCLE; by maintainer ruling (b112) DIV-F7's `fixedIn`
   is set to 0v-#40 (73d6a90) and DIV-F8's to A1.4 (fc1f826): the soak registry's record of the rung after which the tree no
   longer shows the shape; the A1 repair's own entry still waits for its campaign (intro above).
-- Seven must-fail controls: L-LC-preb33, P-LC-TRIGGERLESS, T-LC-dupconn, T-LC-dupdisc, T-LC-dropconn, T-LC-dropdisc,
-  T-LC-offgen.
-- `soak:parity` now pins 47 files (+ `lanes/lifecycle.mjs`, `adapters/contract.mjs`). The timed calibration recut (b111; one
+- Must-fail controls (as of b119; the b111 set was L-LC-preb33, P-LC-TRIGGERLESS, T-LC-dupconn, T-LC-dupdisc, T-LC-dropconn,
+  T-LC-dropdisc, T-LC-offgen): L-LC-preb33, the pass control P-LC-tree, T-cov-LIFECYCLE, and the seven T-LC-* tree mutants listed below.
+- `soak:parity` pinned 47 files at b111 (+ `lanes/lifecycle.mjs`, `adapters/contract.mjs`) and pins 49 now (+ `controls/prea5/Signal.js`, `Watch.js`; counted from parity.json `files`). The timed calibration recut (b111; one
   run, 2026-10-25, Node v26.8.2, Apple M4 Pro, quiet-lock) took 998 s wall (`seconds` 997 in soak-calibration.json); launched
   QUIET (load1 3.06, baseline 2.21), load1 6.67 at the end. REPORTED tier: it gates nothing and makes no speed claim.
+- b117-b118 (A5 follow-ups; dev-only): the LIFECYCLE exemption in test/41 B6 (f) ended with DIV-D3 (exemption set is now
+  `{ERROR: [DIV-F22]}`): LIFECYCLE needs full-length tree evidence. divergences.json DIV-D3 `fixedIn` A5a and DIV-F9 `fixedIn` A5b: on the
+  tree both now classify null (a regression); the named control kernels still explain them. Frozen control kernel
+  `controls/prea5` (767f808, Signal.js 0f75866f) is the fifth control in controls.json. `lifecycle.mjs` `cbOf` fails closed
+  (`exec: unmodelled lifecycle op: fire ...`) for a fire of a registration LcState never recorded. New generator arm `lself` (a callback
+  that offs itself, or its next sibling), which makes the one-line T-LC-iter mutant (off() clears `reg.next`) reachable. exec.mjs: the
+  at-rest O7 counts once per checked registration (was once per op), and a fail raised inside `close()` at teardown is kept as a
+  `teardown` failure (before, the reset after close() wiped it).
+- b117-b118 must-fail rows: P-LC-TRIGGERLESS is renamed T-cov-LIFECYCLE; new pass control P-LC-tree (the full tree lane, exit 0);
+  the T-LC-* rows run P-LC-tree's shape (no `cov-off:lc-two-regs`). T-LC-* now has seven tree mutants: T-LC-dupconn, T-LC-dupdisc,
+  T-LC-dropconn, T-LC-dropdisc, T-LC-offlive (off() without its `!reg.live` guard; replaced T-LC-offgen, whose #40 gen-stamp mutant is
+  equivalent and is now teeth.mjs UNREACHABLE `lc-off-gen-stamp`), T-LC-merge and T-LC-iter (D-b117-2: first a planned gap, a control
+  since b118). Also new: T-A5b (prea5, HOOK smoke, explained DIV-F9) and P-HOOK-TREE (tree, HOOK, PASS); test/75 "A3 HOOK on tree" is
+  a pass row since A5b. teeth GAPS: 23 at b116 -> 22 net (+T-LC-iter then -T-LC-iter, -T-A5b); CHECKS ids stay 47; _mustfail controls 58
+  (40 short, 18 long); test/45 35 tests (31 at b118, +4 with b119 B5). Counts recomputed from teeth.mjs / _mustfail.mjs as of this entry.
+- Soak teeth (b119 B5, A6 follow-ups): L-WRAP-TREE now asserts W2 PASS on the tree (`expect.extra.pass` `['W2']`);
+  `wrapJudge` needs >= 1 W2 wrap record, each status PASS, and no BREACH line naming check=W2, else a MISS. `validSpec` allows
+  `extra.pass` only on wrap controls and refuses base prefixr outside run wrap. teeth.mjs `audit()` refuses an orphan control
+  (`orphan control: <name>`): every _mustfail control is under a CHECKS id or in the new NOT_TEETH allowlist (7 pass / report-only
+  controls). P-HOOK-TREE-COVOFF joins CHECKS cause:scenario.
+- Measured (REPORTED tier; gates nothing). `npm test`, 2026-10-26 08:01, node v26.8.2, load1 3.17 at launch, untimed: 2295 tests,
+  2283 pass, 0 fail, 11 skip, 1 todo (`.handoff/b119-evidence/start/npmtest.log`). Timed calibration recut (one run, node v26.8.2, 12 cores, quiet-lock), 2026-10-26 07:17-07:34, engine
+  2f7974f3, exit 0, 1003 s (cut 551 s), launched QUIET (load1 2.45, baseline 2.21); one earlier attempt was refused NOISY (exit 76) and is
+  not counted (`.handoff/b118-evidence/recut/recut.log`).
 Plan and evidence: `.handoff/PLAN-R2-lifecycle.md` (addenda A1-A4, AD5-AD9); `audit/2026-10-07/verification/SPEC-B.md`
 addendum 13.
 

@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { kernelPath, laneOnlyProblems, porcelainLines, importThroughput, importCountsSame } from '../bench/soak/calibration/calibrate.mjs';
+import { kernelPath, laneOnlyProblems, porcelainLines, importThroughput, importCountsSame, busyNodeFrom, BUSY_NODE_PCT } from '../bench/soak/calibration/calibrate.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const CAL = fileURLToPath(new URL('../bench/soak/calibration/calibrate.mjs', import.meta.url));
@@ -312,4 +312,38 @@ test('I8 chained: throughputRun.perKernel must cover exactly old.kernels.*.throu
         mut(d);
         throwsIT(d, /cover exactly/);
     }
+});
+
+// ---- b118 FILLER 2a: busyNodeFrom (provenance.busyNodeBefore) -------------------------------------------------
+// c3956e10 excluded only process.pid: the recut runs as `quiet-lock.mjs run -- node calibrate.mjs` (or under npm), so
+// its own node launcher was reported as a busy OTHER node. Synthetic `ps -Ao pid=,ppid=,pcpu=,comm=` tables; self = 400.
+const PS_ROW = (pid, ppid, pcpu, comm) => '  ' + pid + ' ' + ppid + '  ' + pcpu + ' ' + comm;
+const PS_BASE = [
+    PS_ROW(1, 0, '0.0', '/sbin/launchd'),
+    PS_ROW(100, 1, '0.0', '/bin/zsh'),                    // the first non-node ancestor: the walk stops here
+    PS_ROW(200, 100, '50.0', '/opt/homebrew/bin/node'),  // node grandparent (quiet-lock wrapper)
+    PS_ROW(300, 200, '50.0', 'node'),                    // node parent (npm)
+    PS_ROW(400, 300, '99.0', 'node'),                    // self
+    PS_ROW(600, 1, '50.0', '/usr/local/bin/node'),       // unrelated busy node -> reported
+    PS_ROW(700, 1, '5.0', 'node'),                       // unrelated node under the threshold
+    PS_ROW(800, 1, '9,5', 'node'),                       // unparsable %CPU (comma locale) -> kept, fail closed
+    PS_ROW(900, 1, '80.0', '/usr/bin/python3'),          // busy, not node
+];
+
+test('BN1 busyNodeFrom: self and its node launcher chain excluded; unrelated busy + unparsable %CPU reported', () => {
+    // c3956e10 (self-only exclusion): also lists 200 and 300 -> red
+    assert.equal(BUSY_NODE_PCT, 10);
+    assert.deepEqual(busyNodeFrom(PS_BASE.join('\n') + '\n', 400, 300), ['600 50.0 /usr/local/bin/node', '800 9,5 node']);
+    assert.deepEqual(busyNodeFrom('', 400, 300), []);
+    for (const v of [undefined, null, 5]) assert.equal(busyNodeFrom(v, 400, 300), null, String(v));
+});
+
+test('BN2 busyNodeFrom: a busy node ABOVE the first non-node ancestor is still reported; a ppid cycle terminates', () => {
+    const above = [PS_ROW(50, 1, '50.0', 'node')].concat(PS_BASE.map((l) => l.replace(/^ {2}100 1 /, '  100 50 ')));
+    assert.equal(above.filter((l) => /^ {2}100 50 /.test(l)).length, 1, 'precondition: zsh 100 now sits under node 50');
+    assert.deepEqual(busyNodeFrom(above.join('\n'), 400, 300), ['50 50.0 node', '600 50.0 /usr/local/bin/node', '800 9,5 node']);
+    // the walk never loops: 300 <-> 200 parent cycle
+    const cyc = PS_BASE.map((l) => l.replace(/^ {2}200 100 /, '  200 300 '));
+    assert.equal(cyc.filter((l) => /^ {2}200 300 /.test(l)).length, 1, 'precondition: 200 and 300 are each other\'s parent');
+    assert.deepEqual(busyNodeFrom(cyc.join('\n'), 400, 300), ['600 50.0 /usr/local/bin/node', '800 9,5 node']);
 });

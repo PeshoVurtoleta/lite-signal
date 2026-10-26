@@ -396,7 +396,8 @@ test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x 
     // its WIE worlds (DIV-B33) and, since b103 (DIV-F6 fixed in A2-FIX-T), its F6 ERROR worlds (DIV-F6, DIV-F6+DIV-F22)
     // and, since b109 (DIV-F5 fixed in A3-FIX-R), its F5 BATCH/ERROR worlds
     // and, since b112 (DIV-F7 fixed in 0v-#40, DIV-F8 in A1.4), its F7 NEST / LIFECYCLE worlds
-    const FIXED_RE = /(^|\+)DIV-(B33|F5|F6|F7|F8)(\+|$)/;
+    // and, since b117 (DIV-F9 fixed in A5b, DIV-D3-independent-registrations in A5a), its F9 HOOK and D3 LIFECYCLE worlds
+    const FIXED_RE = /(^|\+)DIV-(B33|F5|F6|F7|F8|F9|D3-independent-registrations)(\+|$)/;
     const retag = (recs) => {
         for (const c of cyclesOf(recs)) for (const f of c.failures) if (FIXED_RE.test(String(f.known))) Object.assign(f, { known: null, tag: null, failKnown: f.fails.map(() => null) });
         // b103: a retagged F6+F22 world also moves its DIV-F22 line to known=null (the whole world is unknown on the tree),

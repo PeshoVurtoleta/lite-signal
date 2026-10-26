@@ -306,20 +306,20 @@ Release eligibility reads no verdict: a consistent release-size tree stream exit
 ### 10. The teeth registry (a gate that cannot fail is not a gate)
 
 bench/soak/teeth.mjs holds, by import and never by copy:
-- `universe()` (47 ids at 35bbf26, 48 since 2b87bfb: + gate:rss; 59 at 767f808 (R2)): lane:, gate:, oracle:, sig:<oracle>:<sig>, cause:
+- `universe()` (47 ids at 35bbf26, 48 since 2b87bfb: + gate:rss, 59 at 767f808 (R2)): lane:, gate:, oracle:, sig:<oracle>:<sig>, cause:
   ids plus `config` and `report`.
-  Excluded on purpose (teeth.mjs:24-31): REPORT_ONLY_GATES, REASONS, WRAP_CHECKS, MUSTFAIL_MODES.
+  Excluded on purpose (teeth.mjs:27-40): REPORT_ONLY_GATES, REASONS, WRAP_CHECKS, MUSTFAIL_MODES.
 - `CHECKS` (35 ids at 35bbf26, 36 since 2b87bfb: + gate:rss, 47 at 767f808 (R2)): id -> controls that turn it red. `T-cfg-*` must resolve
   every config control (>= 16);
   `report` maps to test/46's TEST_ANCHORS.
-- `GAPS` (24 at 35bbf26, 23 since 4f5f200: T-mark left it): controls the SPEC asks for that cannot exist yet, each with why (file:line), until, and `covers`
+- `GAPS` (24 at 35bbf26, 23 since 4f5f200: T-mark left it, 22 since b118; see section 15): controls the SPEC asks for that cannot exist yet, each with why (file:line), until, and `covers`
   (the universe ids it stands in for). GAPS may only shrink.
-- `UNREACHABLE` (4): cause:lane-status, replay-ops-guard, report-crash, report-registry-config, each with a proof and
+- `UNREACHABLE` (4; 5 since b117: + lc-off-gen-stamp): cause:lane-status, replay-ops-guard, report-crash, report-registry-config, each with a proof and
   an anchor that must occur EXACTLY once. The last two are "unreachable from argv or a stream; reachable only from a
   corrupted checkout (untested)".
 - `audit({controls, ceiling, max})` REQUIRES all three (never defaulted); returns the problem list.
-test/45 (22 tests at 35bbf26, 25 at c5cf442, 27 at 66b6a50, no child process) holds the shrink-only literals: the
-24-name GAPS ceiling and max 24 (23 and 23 since 4f5f200), the 11 GAP-covered universe ids (exact set equality),
+test/45 (22 tests at 35bbf26, 25 at c5cf442, 27 at 66b6a50, 31 at b118, 35 at b119; no child process) holds the shrink-only literals: the
+24-name GAPS ceiling and max 24 (23 and 23 since 4f5f200; 22 and 22 since b118), the 11 GAP-covered universe ids (exact set equality),
 CHECKS_MIN 35 (an exact floor; 36 since 2b87bfb, 47 at 767f808 (R2)), EVIDENCE_CAUSE {coverage: 'scenario'} (interim: the coverage cause
 is still built inside LaneGates), and a pairing check: EVERY mapped control must expect the text its id would print
 (oracle=/sig= via oracleFamily, lane=, gate=, the INCONCLUSIVE head, a CONFIG line, test anchors). It also checks the
@@ -329,7 +329,7 @@ L-T-leak and L-T-graveyard, and the graveyard kernel = base with exactly the fre
 late (no retention before the band window ends, retention >= 2 cycles before the late window), is ONE patch, and
 retains a per-registry buffer of >= 1.5 MB (1572864 B, the size b82 measured).
 `_mustfail.mjs` (34 controls at 35bbf26: 18 non-config + 16 T-cfg; 38 at c5cf442: 22 non-config + 16 T-cfg; 39 at
-c11abf0: 23 + 16, + L-NW-hp-zero; 40 at 4f5f200: 24 + 16, + T-mark; 41 at 66b6a50: 25 + 16, + T-flushdrop; all by
+c11abf0: 23 + 16, + L-NW-hp-zero; 40 at 4f5f200: 24 + 16, + T-mark; 41 at 66b6a50: 25 + 16, + T-flushdrop; 57 at the end of b117, 58 at b118: + T-LC-iter, 40 short + 18 long; all by
 MUSTFAIL_LIST=1) runs each through the REAL main.mjs on a scratch kernel directory: exactly-once anchors, exact exit,
 every spec on ONE BREACH/INCONCLUSIVE head, no CRASH, END sentinel last, and SoakReport re-derivation `(consistent)`.
 `npm run soak:teeth` = short (^(?!L-)); `npm run soak:teeth:long` = ^L-; MUSTFAIL_LIST=1 builds all and runs none;
@@ -433,7 +433,36 @@ gV rewrite"; its spec is not keyed on known= / sig=, so a DIV-F29 entry leaves i
   W1/W3/W4 only; the new must-fail L-WRAP-W2-PREFIXR (frozen kernel bench/soak/controls/prefixr, 25784e5, Signal.js
   0628127b) expects BREACH check=W2 counter=batchEpoch. The miss existed since b108 (long controls run only in
   soak:teeth:long and CI soak-nightly).
-- Controls (section 3 :49-51): controls.json pins FOUR controls (+ prefixr, 25784e5, byte-frozen in bench/soak/controls/prefixr/); parity.json pins 45 files (+ controls/prefixr/Signal.js, Watch.js; parity OK 45 files, b109 B3).
+- Controls (section 3 :49-51): controls.json pinned FOUR controls at b109 (+ prefixr, 25784e5, byte-frozen in bench/soak/controls/prefixr/; five since b117: + prea5, section 15); parity.json pinned 45 files then (49 now) (+ controls/prefixr/Signal.js, Watch.js; parity OK 45 files, b109 B3).
+
+### 15. Amendment 2026-10-26 (b119 docs): A5a / A5b landed, the LIFECYCLE rung closed
+
+Engine Signal.js sha256/8 2f7974f3 (HEAD 87c5715 has 0f75866f); no commit exists yet. Counts below are recomputed from teeth.mjs /
+_mustfail.mjs / parity.json / controls.json as the tree stands; those marked [B5] depend on the b119 B5 review.
+- DIV-D3 (observeObservers registrations independent, A5a) and DIV-F9 (onGraphMutation live-entry stack, A5b) are fixed:
+  `fixedIn` A5a / A5b; on the tree both heads classify null (a regression). The test/41 B6 (f) exemption set is
+  {ERROR: [DIV-F22]}: the LIFECYCLE exemption (b111 A1 Q1) ended with DIV-D3, so LIFECYCLE needs full-length tree evidence.
+- LIFECYCLE teeth: P-LC-TRIGGERLESS is renamed T-cov-LIFECYCLE (cause:scenario, exit 3, not in gate:coverage); new pass
+  control P-LC-tree (tree, LIFECYCLE, --smoke, exit 0); the seven T-LC-* tree mutants run P-LC-tree's shape (dupconn, dupdisc,
+  dropconn, dropdisc, offlive, merge, iter). T-LC-offgen (the #40 gen-stamp mutant) was equivalent behind the `!reg.live` guard
+  (dispose clears every registration, b114 F-a) and is gone: the stamp is teeth.mjs UNREACHABLE `lc-off-gen-stamp` (5 ids now);
+  T-LC-offlive replaces it. D-b117-2: T-LC-iter was a planned GAP (b117), became a CONTROL in b118 once the lane could reach it
+  (the `lself` arm: a callback offs itself, or its next sibling; head `oracle=O7 lane=LIFECYCLE sig=stale-off known=none`).
+  GAPS: 23 at b116, 24 mid-b117 (+T-LC-iter), 23 (-T-A5b, which became a control: prea5, HOOK smoke, explained DIV-F9), 22 since
+  b118 (-T-LC-iter); net 22 across the A5 work.
+- O7 is performed once per checked registration fire (inside the callback, after O7a) and, since b118, once per registration
+  checked at rest (was once per op at rest). The teardown O5 check sees every fail raised inside close(): a lifecycle callback or
+  hook delivery fired by the dispose walk is a `teardown` failure (the step's fail list is reset before close(), not after).
+  `cbOf` fails closed with exec.unmodelled for a fire of a registration LcState never recorded.
+- Control roster: controls.json pins five controls (rev152, headpatched, preb33, prefixr, prea5); prea5 = commit 767f808,
+  Signal.js 0f75866f, the last kernel before A5a / A5b, byte-frozen in controls/prea5/. T-A5b runs it on HOOK (smoke) and must
+  show O8 ghost-listener explained by DIV-F9. parity.json pins 49 files.
+- Counts now: universe 59, CHECKS ids 47 (both unchanged since 767f808), GAPS 22, NOT_TEETH 7 [B5], UNREACHABLE 5, _mustfail
+  controls 58 (40 short + 18 long), test/45 35 tests [B5: the count may move if review changes its rows].
+- [B5] An orphan rule: `audit()` reports `orphan control: <name>` for any _mustfail control that is under no CHECKS id and not in
+  the NOT_TEETH allowlist (pass or report-only controls: L-P-INTERIM, L-P-INTERIM-ERROR, P-INTERIM-ERROR-clean, P-HOOK-HP,
+  P-HOOK-TREE, P-LC-tree, T-mark). L-WRAP-TREE additionally asserts W2 PASS on the tree (`expect.extra.pass` `['W2']`; `wrapJudge`
+  needs >= 1 W2 record, each PASS, and no BREACH naming check=W2); `validSpec` allows `extra.pass` only on wrap controls.
 
 ## Consequences
 

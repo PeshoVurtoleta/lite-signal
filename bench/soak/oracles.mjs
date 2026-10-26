@@ -258,9 +258,11 @@ export function checkLcFire(lc, r, kind) {
  *   (c) (b) after an off  stale-off: g.sibOff (an off of another registration on the same target) first, else g.deadOff
  *                       (an off on a dead target that died before this target was created)
  * One failure per registration. Returns a list of { oracle: 'O7', sig, detail, r } (empty = consistent). ran: the
- * Set of node indices whose body ran this op. Mutates only the phase of a phase -1 registration.
+ * Set of node indices whose body ran this op. tally (optional, b118): { n } -- n += 1 per registration checked
+ * against rule (a) / (b) (live, live target, phase !== -1 after the adoption step); exec.mjs lcAtRest adds it to
+ * checks.O7. Mutates only the phase of a phase -1 registration (and tally.n).
  */
-export function checkLcRest(lc, model, memo, ran) {
+export function checkLcRest(lc, model, memo, ran, tally) {
     const out = [];
     const regs = lc.regs;
     for (let r = 0; r < regs.length; r++) {
@@ -275,6 +277,7 @@ export function checkLcRest(lc, model, memo, ran) {
             if (g.fires.length === 0) g.phase = k > 0 ? 1 : 0;
             continue;
         }
+        if (tally !== undefined) tally.n++;
         const head = 'r' + r + ' on #' + t + ': ';
         if (g.fires.length > 0 && lcQuiet(lc, model, t, sinks, ran)) {
             const f = g.fires[0];
