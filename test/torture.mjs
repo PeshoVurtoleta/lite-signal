@@ -40,7 +40,7 @@
 //     retainer's per-batch bytes (vector B1); (5) a spike on every measured even
 //     batch masks a retainer up to its size. A k that grows with batch duration
 //     reads as per-step growth (fails closed). Must-fail: test/64 lanes aset / aun
-//     (one retained object per 1000 calls in read.set / untrack -> alloc > 0, FAIL).
+//     (one retained object per 20 calls in read.set / untrack since b123, was 1 per 1000 -> alloc > 0, FAIL).
 //   * 1e4 create/dispose cycles           -> activeNodes/activeLinks back to baseline
 //   * effect self-disposes inside untrack -> gen-safe restore, no crash, baseline
 //   * NEST (SPEC-A A1.11): 1e5 nested recomputes effect -> computed -> computed
@@ -117,9 +117,14 @@
 //     is one connect or one disconnect fire walking all three -> in-process
 //     maxMajor 0 and minor 0 (gc() first) over 1e5 steps -- best effort only:
 //     minor 0 is blind once earlier phases have grown new space -- and, the
-//     real gate, the pinned NEST child gated on the WHOLE measured run: every
-//     window 1..8 <= 0.05 B/op net (max, not min, so a transient that dirties
-//     only some windows fails) and no scavenge in any window (null === 0);
+//     real gate, the pinned NEST child gated on the WHOLE measured run (b123,
+//     judgeWhole; the same gate covers the nest, watch and qs cells): the MEAN
+//     of windows 1..8 <= 0.05 B/op net of the baseline (a transient that stays
+//     young lands in the mean), no window unmeasured (null fails) and no GC
+//     entry (minor, major or unknown kind) inside the cell's or the baseline's
+//     span (a transient big enough to scavenge is counted), with all 12 forced
+//     young GCs observed (proof the observer sees); the max over windows
+//     (mregMax) is printed, advisory;
 //     every step must fire every registration (conn + disc ===
 //     steps per reg) or the lane is blind. Retention half: 1e4 cycles, each
 //     with fresh callbacks: A offs itself in its onConnect, B registers a new D
@@ -146,8 +151,10 @@ import { createLeakTracker } from '@zakkster/lite-leak';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getHeapSpaceStatistics } from 'node:v8';
-// Cold slope verdict (b78): a separate module because this file runs every phase on import.
-import { judgeSlope } from './torture-judge.mjs';
+import { PerformanceObserver } from 'node:perf_hooks';
+// Cold slope verdict (b78) + whole-run child verdict (b123): a separate module because this file
+// runs every phase on import.
+import { judgeSlope, judgeWhole, countSpan, WHOLE_FORCED } from './torture-judge.mjs';
 
 // >>> WIRE: the engine under test -- the working-tree source, NOT node_modules.
 import { createRegistry, signal as defaultSignal, watch } from '../Signal.js';
@@ -156,23 +163,61 @@ const R = createRegistry();
 const { signal, computed, effect, untrack, dispose, stats, observeObservers, getOwner } = R;
 
 // ---- NEST steady-state lane (child mode) ----------------------------------
-// B/op = V8 new-space used-size delta over K ops with no scavenge in the window,
-// minus an empty-step baseline; steady state = MIN over windows 1..n-1 (window 0
-// may run unoptimized code: printed, never floored on). Prints one JSON line.
+// B/op = V8 young-generation used-size delta (new_space + new_large_object_space; a
+// missing space reads -1 -> that window null, never 0) over K ops with no scavenge in
+// the window, minus an empty-step baseline; steady state = MIN over windows 1..n-1
+// (window 0 may run unoptimized code: printed, never floored on). Whole run (b123):
+// each lane starts after two forced young GCs (6 lanes x 2 = 12, counted by a gc
+// PerformanceObserver started before warm-up) and records its span (performance.now()
+// before window 1's probe .. after window 8's probe); the parent gates every cell with
+// judgeWhole (mean of windows 1..8 + GC counts in the span). Gc entries are recorded
+// into preallocated typed arrays only after the measured run (the observer is
+// delivered from the event loop, which the synchronous lanes never yield to), then
+// classified cold. Prints one JSON line.
 const NEST_K = 20000;
 const NEST_WINDOWS = 9;
+const NEST_LANES = 6;                                   // base, nest, watch, ctl, qs, mreg (call order)
+const LANE_SPAN = new Float64Array(NEST_LANES * 2);     // [t0, t1] per lane: before window 1's probe .. after window 8's
+const LANE_FORCED = new Float64Array(NEST_LANES * 2);   // [t0, t1] per lane around its two forced young GCs
+const GC_CAP = 1024;
+const GC_T = new Float64Array(GC_CAP);                  // gc entry startTime
+const GC_K = new Float64Array(GC_CAP);                  // gc entry detail.kind (NaN: not a number -> unknown)
+let gcN = 0;                                            // entries seen; > GC_CAP -> counts unmeasured
+function recordGc(entries) {
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (gcN < GC_CAP) {
+      const d = e.detail;
+      const k = d !== null && typeof d === 'object' ? d.kind : undefined;
+      GC_T[gcN] = e.startTime;
+      GC_K[gcN] = typeof k === 'number' ? k : NaN;
+    }
+    gcN++;
+  }
+}
 function newSpaceUsed() {
   const sp = getHeapSpaceStatistics();
-  for (let i = 0; i < sp.length; i++) if (sp[i].space_name === 'new_space') return sp[i].space_used_size;
-  return -1;
+  let ns = -1, lo = -1;
+  for (let i = 0; i < sp.length; i++) {
+    const nm = sp[i].space_name;
+    if (nm === 'new_space') ns = sp[i].space_used_size;
+    else if (nm === 'new_large_object_space') lo = sp[i].space_used_size;
+  }
+  return ns < 0 || lo < 0 ? -1 : ns + lo;
 }
-function laneBytesPerOp(step) {
-  const per = [];
+function laneBytesPerOp(step, lane) {
+  const per = new Array(NEST_WINDOWS).fill(null);
+  LANE_FORCED[2 * lane] = performance.now();
+  globalThis.gc({ type: 'minor' });
+  globalThis.gc({ type: 'minor' });
+  LANE_FORCED[2 * lane + 1] = performance.now();
   for (let w = 0; w < NEST_WINDOWS; w++) {
+    if (w === 1) LANE_SPAN[2 * lane] = performance.now();
     const before = newSpaceUsed();
     for (let i = 0; i < NEST_K; i++) step(i);
     const after = newSpaceUsed();
-    per.push(after >= before ? (after - before) / NEST_K : null);   // null: a scavenge hit the window
+    if (w === NEST_WINDOWS - 1) LANE_SPAN[2 * lane + 1] = performance.now();
+    per[w] = before >= 0 && after >= before ? (after - before) / NEST_K : null;   // null: a scavenge hit the window, or no probe
   }
   return per;
 }
@@ -205,6 +250,9 @@ function windowNulls(per, base) {
 if (process.argv.includes('--nest-lane')) {
   const pinned = process.execArgv.includes('--min-semi-space-size=4') &&
     process.execArgv.includes('--max-semi-space-size=4');
+  const minorMs = process.execArgv.includes('--minor-ms') ? 1 : 0;
+  const gcObs = new PerformanceObserver((list) => recordGc(list.getEntries()));
+  gcObs.observe({ entryTypes: ['gc'] });   // before warm-up: every gc entry of the run is recorded
   const sN = signal(0);
   const c1 = computed(() => sN() + 1);
   const c2 = computed(() => { sN(); return c1() * 2; });   // reads sN first: its pre-walk stops there
@@ -246,24 +294,43 @@ if (process.argv.includes('--nest-lane')) {
   const BOX = ['tagged'];   // PACKED_ELEMENTS: a double stored here is a fresh HeapNumber
   const boxStep = (i) => { BOX[0] = i + 0.5; };   // control: one 16 B HeapNumber per op
   for (let i = 0; i < 50000; i++) { nestStep(i); emptyStep(i); boxStep(i); watchStep(i); qsStep(i); mregStep(i); }   // warm up
-  const base = laneBytesPerOp(emptyStep);
-  const nest = laneBytesPerOp(nestStep);
-  const wat = laneBytesPerOp(watchStep);
-  const ctl = laneBytesPerOp(boxStep);
-  const qs = laneBytesPerOp(qsStep);
-  const mr = laneBytesPerOp(mregStep);
+  for (let i = 0; i < 5000; i++) newSpaceUsed();   // warm the probe: a cold probe inflates the baseline ~0.056 B/op
+  const base = laneBytesPerOp(emptyStep, 0);
+  const nest = laneBytesPerOp(nestStep, 1);
+  const wat = laneBytesPerOp(watchStep, 2);
+  const ctl = laneBytesPerOp(boxStep, 3);
+  const qs = laneBytesPerOp(qsStep, 4);
+  const mr = laneBytesPerOp(mregStep, 5);
   stopN();
   stopW();
   stopQ1();
   stopQ2();
   stopM();
   mOffA(); mOffB(); mOffC();
+  // Two event-loop turns deliver the queued gc entries; takeRecords() drains the rest.
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  recordGc(gcObs.takeRecords());
+  gcObs.disconnect();
+  const gcAll = gcN <= GC_CAP;   // an overflow leaves every count unmeasured (fail closed)
+  const spanCount = (l) => gcAll ? countSpan(GC_T, GC_K, gcN, LANE_SPAN[2 * l], LANE_SPAN[2 * l + 1]) : null;
+  let forcedSeen = gcAll ? 0 : null;
+  for (let l = 0; l < NEST_LANES && forcedSeen !== null; l++) {
+    const f = countSpan(GC_T, GC_K, gcN, LANE_FORCED[2 * l], LANE_FORCED[2 * l + 1]);
+    forcedSeen = f === null ? null : forcedSeen + f.minor;
+  }
+  const kinds = {};
+  for (let i = 0; i < gcN && i < GC_CAP; i++) { const k = String(GC_K[i]); kinds[k] = (kinds[k] || 0) + 1; }
+  if (!gcAll) kinds.overflow = gcN - GC_CAP;
   console.log(JSON.stringify({ pinned, nest: steadyMin(nest, base), watch: steadyMin(wat, base),
     control: steadyMin(ctl, base), window0: nest[0], watchWindow0: wat[0],
     watchFires: firesW, watchSteps: stepsW, sink: sinkN + sinkW,
     qs: steadyMin(qs, base), qsWindow0: qs[0], qsSteps: qN, qsRuns: qRuns, qsPlain: qPlain, qsSched: qSched,
     mreg: steadyMin(mr, base), mregMax: windowMax(mr, base), mregNull: windowNulls(mr, base), mregPer: mr,
-    mregBase: base, mregWindow0: mr[0], mregSteps: mSteps, mregCounts: Array.from(MC) }));
+    mregBase: base, mregWindow0: mr[0], mregSteps: mSteps, mregCounts: Array.from(MC),
+    per: { nest, watch: wat, qs, ctl }, spans: Array.from(LANE_SPAN),
+    counts: { base: spanCount(0), nest: spanCount(1), watch: spanCount(2), ctl: spanCount(3), qs: spanCount(4), mreg: spanCount(5) },
+    forcedSeen, kinds, minorMs }));
   process.exit(0);
 }
 
@@ -464,19 +531,36 @@ dispose(nS);
 
 // 4b: steady-state B/op in a pinned-semi-space child (fail closed on any gap).
 const NEST_BUDGET = 0.05;
-const lane = spawnSync(process.execPath,
-  ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4', fileURLToPath(import.meta.url), '--nest-lane'],
-  { encoding: 'utf8', timeout: 120000 });
+// --minor-ms is forwarded iff this process runs under it (the child's young GC kind is then 2).
+const laneArgs = ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4'];
+if (process.execArgv.includes('--minor-ms')) laneArgs.push('--minor-ms');
+laneArgs.push(fileURLToPath(import.meta.url), '--nest-lane');
+const lane = spawnSync(process.execPath, laneArgs, { encoding: 'utf8', timeout: 120000 });
 let nestLane = null;
 try { nestLane = JSON.parse(lane.stdout.trim().split('\n').pop()); } catch { nestLane = null; }
+// Whole-run verdict per child cell (b123, judgeWhole): mean of windows 1..8 net of the baseline
+// <= NEST_BUDGET, no GC entry in the cell's or the baseline's span, all forced young GCs seen.
+// Missing or malformed child fields read as unmeasured (fail closed).
+const laneObj = nestLane !== null && typeof nestLane === 'object' ? nestLane : null;
+const laneField = (o, k) => o !== null && typeof o === 'object' ? o[k] : undefined;
+const wholeOf = (cell) => {
+  const per = cell === 'mreg' ? laneField(laneObj, 'mregPer') : laneField(laneField(laneObj, 'per'), cell);
+  const counts = laneField(laneObj, 'counts');
+  return judgeWhole(per, laneField(laneObj, 'mregBase'),
+    { cell: laneField(counts, cell), base: laneField(counts, 'base'), forcedSeen: laneField(laneObj, 'forcedSeen') }, NEST_BUDGET);
+};
+const WHOLE_CELLS = ['nest', 'watch', 'qs', 'mreg'];
+const whole = { nest: wholeOf('nest'), watch: wholeOf('watch'), qs: wholeOf('qs'), mreg: wholeOf('mreg') };
+const wholeOk = (cell) => whole[cell].pass === true;
 const nestOk = nestLane !== null && nestLane.pinned === true &&
   nestLane.nest !== null && nestLane.nest <= NEST_BUDGET &&
-  nestLane.control !== null && nestLane.control >= 8;   // a blind lane is a FAIL, not a pass
+  nestLane.control !== null && nestLane.control >= 8 &&   // a blind lane is a FAIL, not a pass
+  wholeOk('nest');
 // WATCH rides the same child: the box control above proves that process can see.
 // Blind unless every measured + warm-up step fired the callback.
 const watchFired = nestLane !== null && nestLane.watchSteps > 0 && nestLane.watchFires === nestLane.watchSteps;
 const watchOk = nestOk && watchFired &&
-  typeof nestLane.watch === 'number' && nestLane.watch <= NEST_BUDGET;
+  typeof nestLane.watch === 'number' && nestLane.watch <= NEST_BUDGET && wholeOk('watch');
 const nestLabel = nestLane === null || nestLane.nest === null ? 'unmeasured' : nestLane.nest.toFixed(3);
 const watchLabel = nestLane === null || typeof nestLane.watch !== 'number' ? 'unmeasured' : nestLane.watch.toFixed(3);
 const ctlLabel = nestLane === null || nestLane.control === null ? 'unmeasured' : nestLane.control.toFixed(2);
@@ -484,7 +568,7 @@ const ctlLabel = nestLane === null || nestLane.control === null ? 'unmeasured' :
 // bodies (+1: each effect's creation run).
 const qsChildFired = nestLane !== null && nestLane.qsSteps > 0 && nestLane.qsRuns === nestLane.qsSteps + 1 &&
   nestLane.qsPlain === nestLane.qsSteps + 1 && nestLane.qsSched === nestLane.qsSteps + 1;
-const qsChildOk = nestOk && qsChildFired && typeof nestLane.qs === 'number' && nestLane.qs <= NEST_BUDGET;
+const qsChildOk = nestOk && qsChildFired && typeof nestLane.qs === 'number' && nestLane.qs <= NEST_BUDGET && wholeOk('qs');
 const qsChildLabel = nestLane === null || typeof nestLane.qs !== 'number' ? 'unmeasured' : nestLane.qs.toFixed(3);
 
 // 4c: retention -- 1e4 cycles of the P10 (child effect's nested first run disposes
@@ -903,11 +987,12 @@ const mregChildFired = nestLane !== null && nestLane.mregSteps > 0 && Array.isAr
     const c = nestLane.mregCounts[k], d = nestLane.mregCounts[k + 3];
     return c + d === nestLane.mregSteps && (c - d === 0 || c - d === 1);
   });
-// Whole-run gate (b116): the steady-state MIN alone cannot see a transient (allocation in only
-// some windows), so EVERY window 1..8 must be <= NEST_BUDGET net (mregMax) and none may have been
-// hit by a scavenge (mregNull === 0). Missing fields fail closed.
+// Whole-run gate (b116 -> b123): the steady-state MIN alone cannot see a transient (allocation in
+// only some windows), so the cell also passes wholeOk (mean of windows 1..8 + no GC in its span;
+// see judgeWhole) and no window may have been hit by a scavenge (mregNull === 0). mregMax (the
+// max net window) is printed only, advisory. Missing fields fail closed.
 const mregChildOk = nestOk && mregChildFired && typeof nestLane.mreg === 'number' && nestLane.mreg <= NEST_BUDGET &&
-  typeof nestLane.mregMax === 'number' && nestLane.mregMax <= NEST_BUDGET && nestLane.mregNull === 0;
+  nestLane.mregNull === 0 && wholeOk('mreg');
 const mregChildLabel = (nestLane === null || typeof nestLane.mreg !== 'number' ? 'unmeasured' : nestLane.mreg.toFixed(3)) +
   ' B/op max=' + (nestLane === null || typeof nestLane.mregMax !== 'number' ? 'unmeasured' : nestLane.mregMax.toFixed(3)) +
   ' B/op null=' + (nestLane === null || typeof nestLane.mregNull !== 'number' ? 'unmeasured' : nestLane.mregNull);
@@ -1023,8 +1108,28 @@ console.log(
   ' cb=' + mregAlive + '/' + mregRefs.length + ' size=' + mregLive + '/0 fail=' + mregFail + '/' + MREG_CYCLES +
   ' | ' + (ok ? 'ok' : 'FAIL')
 );
+// WHOLE line (b123): base span m/M/u, then per cell mean/minor/major/unknown/nulls.
+const wholeCounts = laneField(laneObj, 'counts');
+const wholeBase = laneField(wholeCounts, 'base');
+const wholeKinds = laneField(laneObj, 'kinds');
+const wholeMean = (v) => v.mean !== null ? v.mean.toFixed(4) : v.staleBase ? 'unmeasured(stale-base)' : 'unmeasured';
+const wholeCell = (v) => wholeMean(v) + '/' + v.minor + '/' + v.major + '/' + v.unknown + '/' + v.nulls;
+const wholeField = (k) => { const v = laneField(laneObj, k); return v === undefined || v === null ? 'unmeasured' : v; };
+console.log('WHOLE base=' + (wholeBase !== null && typeof wholeBase === 'object' ? wholeBase.minor + '/' + wholeBase.major + '/' + wholeBase.unknown : 'unmeasured') +
+  WHOLE_CELLS.map((c) => ' ' + c + '=' + wholeCell(whole[c])).join('') +
+  ' forced=' + wholeField('forcedSeen') + '/' + WHOLE_FORCED + ' minorMs=' + wholeField('minorMs') +
+  ' kinds=' + (wholeKinds !== null && typeof wholeKinds === 'object' ? Object.keys(wholeKinds).map((k) => k + ':' + wholeKinds[k]).join(',') : 'unmeasured'));
 
 if (!ok) {
+  for (const c of WHOLE_CELLS) {
+    const v = whole[c];
+    if (v.pass === true) continue;
+    console.error('  whole ' + c + ': mean=' + (v.mean !== null ? v.mean.toFixed(4) : v.staleBase ? 'unmeasured(stale-base)' : 'unmeasured(nulls)') +
+      ' B/op minor=' + v.minor +
+      ' major=' + v.major + ' unknown=' + v.unknown + ' nulls=' + v.nulls + ' forced=' + (v.forcedSeen === null ? 'unmeasured' : v.forcedSeen) + '/' + WHOLE_FORCED +
+      ' budget<=' + NEST_BUDGET + ' per=' + JSON.stringify(c === 'mreg' ? laneField(laneObj, 'mregPer') : laneField(laneField(laneObj, 'per'), c)) +
+      ' base=' + JSON.stringify(laneField(laneObj, 'mregBase')));
+  }
   if (!nodesBaseline) console.error('  activeNodes drift: ' + base.activeNodes + ' -> ' + afterCycles.activeNodes);
   if (!linksBaseline) console.error('  activeLinks drift: ' + base.activeLinks + ' -> ' + afterCycles.activeLinks);
   if (!selfOk) console.error('  self-dispose-in-untrack: ran=' + ran +
