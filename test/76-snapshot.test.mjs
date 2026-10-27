@@ -1873,7 +1873,9 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         H[ids.c](); H[ids.s].set(-1); H[ids.c]();
         assert.ok(liveThis.length >= 2 && recv.length >= 2, "live " + liveThis.length + " restored " + recv.length);
         assert.equal(liveThis[0], liveThis[1], "live: one receiver across runs");
-        assert.equal(typeof recv[0], typeof liveThis[0]); assert.notEqual(recv[0], undefined);
+        assert.equal(typeof recv[0], typeof liveThis[0]);
+        // b120 LEDGER #48: bodies run with this === undefined (was: the internal node), live and restored alike.
+        assert.equal(liveThis[0], undefined, "#48: live body this === undefined"); assert.equal(recv[0], undefined, "#48: restored body this === undefined");
         assert.equal(recv[0], recv[1], "restored: the first run gets the same receiver as later runs");
     });
     test("D-L gen check: a first run that destroy()s the registry and refills the slot leaves the new occupant untouched (every signal records clean:false)", () => {

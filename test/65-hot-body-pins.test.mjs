@@ -18,6 +18,8 @@
 // inside the 4-space `function signal(` / `function computed(` body and fails closed on 0 or >1 hits there.
 // b115 (A5a, PLAN-A5a-lifecycle TASK 2): allocateLink + freeLink are pinned too (14 bodies), values unchanged since
 // the A5a B0 freeze. dropLifecycleHooks is a cold path (dispose-time only), so it is NOT pinned here.
+// b120 (LEDGER #48, maintainer D-b120-2): executeEffect + refreshComputed call the body as `(0, node.computeFn)()`
+// (this === undefined, loaded after fireRecompute; register-neutral, unlike a local); the other 12 pins unchanged.
 // Kernel: LITE_SIGNAL_KERNEL (absolute path to a Signal.js), default ../Signal.js. Source is read, never imported.
 import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,16 +32,17 @@ const SRC = readFileSync(KPATH, 'utf8');
 
 // Pinned on Signal.js sha256/8 d07e0b17 (burst 63); pullComputed re-pinned + refreshComputed added on 4292ebea (b102);
 // the four readers added on e912e302 (b104, LEDGER #44); createNode + disposeNode re-pinned on 0f75866f (b108, A3 FIX-R);
-// allocateLink + freeLink pinned on aa51b2f5 (b115, A5a; byte-identical to the B0 values on 767f808 / 0f75866f).
+// allocateLink + freeLink pinned on aa51b2f5 (b115, A5a; byte-identical to the B0 values on 767f808 / 0f75866f);
+// executeEffect + refreshComputed re-pinned on ec6d7156 (b120, LEDGER #48, D-b120-2 `(0, fn)()` form).
 const PINS = {
     flushEffects: { sha16: 'b4b77b7b0a6a8e2f', bytes: 2270 },
-    executeEffect: { sha16: 'b054d7c092b84fa2', bytes: 3475 },
+    executeEffect: { sha16: '0f4d59d06984224c', bytes: 3480 },
     createNode: { sha16: '7a8c545056853c6a', bytes: 3780 },
     nodeMiss: { sha16: 'c6aa7fbe2f7077f0', bytes: 1535 },
     disposeNode: { sha16: 'a79e91b70041f7eb', bytes: 6599 },
     effectTail: { sha16: '1b80da7167ba5bbf', bytes: 93 },
     pullComputed: { sha16: '5420227134aa9791', bytes: 346 },
-    refreshComputed: { sha16: 'ed8d9d7ae754ef9b', bytes: 5005 },
+    refreshComputed: { sha16: '163b5f44d0a33c05', bytes: 5010 },
     boxGet: { sha16: '2938d89e667b9f07', bytes: 640 },
     boxComputedGet: { sha16: '5940c249c8717ecf', bytes: 618 },
     readSignal: { sha16: 'bb06aefbf682ef8f', bytes: 605 },

@@ -12,8 +12,30 @@ shapes, a gate-1 conformance runner, and the `bench/soak/` randomized soak harne
 changes `watch()`'s fire order and `stop()` ("### Fixed -- `watch()`" below) and `when()`'s cancel
 handle ("### Fixed -- `when()`" below; `Signal.d.ts` gains doc comments only); `Signal.js` changes the tracking-flag fold described below (no
 API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F21 flushEffects fix ("### Fixed -- engine: stale effect-queue entries skip a node that is no longer QUEUED" below), the sync-scheduler creation-throw fix ("### Fixed -- engine: a synchronous scheduler's creation-time throw disposes the effect" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
-4-1, commit fc1f826), whose entry lands here when its campaign is accepted; nothing else in the
+4-1, commit fc1f826), whose entry lands here when its campaign is accepted. The Signal.js rungs after that:
+`observeObservers` registrations are independent (A5a), `onGraphMutation` unsubscribe works in any order (A5b)
+and user callbacks run with `this === undefined` (#48); see their "### Fixed" entries below. Nothing else in the
 published `files[]` changes except `README.md`, `llms.txt` and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
+
+### Fixed -- user code no longer runs with `this` = the internal node (LEDGER #48, b120)
+
+Computed, `computedBox` and effect bodies (live, and restored through `restore`'s `fnsById`), the effect scheduler (at creation
+and on every later schedule) and every `onCleanup` function (single and array form) now run with `this === undefined`. Before
+(Signal.js sha256/8 2f7974f3) the body and the creation-time scheduler ran with `this` = the internal node, and, when two or more
+cleanups were registered in one run, every one of them (the first included) ran with `this` = the internal cleanup array
+(a lone cleanup and later scheduler calls already saw `undefined`). A sloppy-mode body sees `globalThis`, as for any plain call.
+Non-function arguments still fail where they failed before. A non-function body or scheduler throws `TypeError` at the same
+call, and a non-function inside a registered cleanup array throws `TypeError` when the cleanups run. A lone `onCleanup(5)`
+(a non-function without a `length`) throws on neither build (unchanged, LEDGER #50). Only the message texts changed: a `computed(123)` read, a
+`computedBox(123)` read and `effect(123)` now say `(0 , node.computeFn) is not a function` (was `node.computeFn is not a
+function`), a truthy non-function scheduler says `scheduler is not a function` (was `node.scheduler is not a function`), a
+non-function in the cleanup array says `fn is not a function` (was `cleanup[i] is not a function`). Hot-path cost, untimed
+bytecode / depth evidence only (b120, Node v26.8.2; no timing claim, the A/B is release-gate only): `executeEffect` 455 -> 454 B
+and `refreshComputed` 782 -> 781 B, registers unchanged (16 / 19); recursion depth unchanged on all 5 lanes. The body call is
+`(0, node.computeFn)()` rather than a local, because the local added a register and cost 2.6% of fresh nested-effect depth
+(1616 -> 1574). Tests: `test/86-callback-this.test.mjs` (22 tests under --expose-gc, 19 without); `test/76`'s D-L receiver row
+now asserts `this === undefined`. LEDGER #48 is FIXED on 1.6.0-dev (Signal.js sha256/8 ec6d7156; lands with its timed
+calibration recut, b121).
 
 ### Fixed -- onGraphMutation unsubscribe in any order (F9 / A5b)
 
@@ -39,8 +61,7 @@ registration order and the message `observeObservers: onConnect callbacks threw`
 The LEDGER #45 / #46 op-3 rules are unchanged (a throwing `onConnect` still announces its live edge once). `fireDisconnect` restores
 `currentObserver` on every path. Tests: `test/84-lifecycle-independent.test.mjs`; `test/65-hot-body-pins.test.mjs` now pins 14 hot
 bodies (+ `allocateLink`, `freeLink`, values unchanged); `test/torture.mjs` gains the `mreg` lane (steady-state, whole-run window
-gate and retention half in the pinned child). Not fixed here: user code still runs with `this` = the internal node in computed /
-effect bodies and schedulers (LEDGER #48, its own rung after this one).
+gate and retention half in the pinned child). (User code running with `this` = the internal node was fixed later, LEDGER #48: see the #48 entry above.)
 
 ### Tests / Docs -- soak: LIFECYCLE lane + O7 (R2, b110-b112)
 
