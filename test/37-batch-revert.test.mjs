@@ -193,83 +193,124 @@ describe('A3 GC: batch{set; read; revert}', () => {
 });
 
 // ---- Retention (assertion 5) ---------------------------------------------
+// retentionCensus (b122 F7-B TASK 1): a REACHABILITY census, not a finalizer count. tracker.size() counts live
+// FinalizationRegistry registrations and only drops when V8's cleanup task has run, so a per-cycle size() read races the
+// event loop. Each cycle runs in a non-async cycle(i) (the async frame never holds obj_i) and returns a WeakRef; after one
+// event-loop turn (ends the job, so KeepDuringJob releases the WeakRef targets) a synchronous gc() clears every dead
+// target and a compacting deref() sweep counts the live obj_i exactly, independent of task order. Every obj_i the step
+// drops is transient garbage the census must not count (the real rows passing are the transient negative control); the
+// MUST-FAIL row retains (keep-all). After dispose: endLive from one more sweep, then tracker.size() must converge to it
+// within a hard cap of 50 event-loop turns (bounded: a stuck registration ends with rounds === 50, never a hang).
+// Returns { firstBad (first cycle with n > limit, else -1), firstBadN, worst, endLive, trackerEnd, rounds }.
+async function retentionCensus(C, keep, step, limit, dispose) {
+    const tracker = createLeakTracker({ name: 't37c', onLeak() {}, onWarning() {} });
+    const refs = [];
+    const turn = () => new Promise((res) => setImmediate(res));
+    const sweep = () => {
+        let w = 0;
+        for (let k = 0; k < refs.length; k++) if (refs[k].deref() !== undefined) refs[w++] = refs[k];
+        refs.length = w;
+        return w;
+    };
+    const cycle = (i) => {
+        const obj = { i };
+        tracker.track(obj, null, i);
+        if (keep) keep.push(obj);
+        step(obj, i);
+        return new WeakRef(obj);
+    };
+    let firstBad = -1, firstBadN = 0, worst = 0;
+    for (let i = 0; i < C; i++) {
+        refs.push(cycle(i));
+        await turn();
+        globalThis.gc();
+        const n = sweep();
+        if (n > worst) worst = n;
+        if (firstBad === -1 && n > limit) { firstBad = i; firstBadN = n; }
+    }
+    dispose();
+    await turn();
+    globalThis.gc();
+    const endLive = sweep();
+    let rounds = 0;
+    for (; rounds < 50 && tracker.size() !== endLive; rounds++) { await turn(); globalThis.gc(); }
+    return { firstBad, firstBadN, worst, endLive, trackerEnd: tracker.size(), rounds };
+}
+
+// Fixture: s = signal(base), c = computed(s()); dispose drops both (c.value may hold the last intermediate until then).
+// The batch bodies are hoisted and read obj_i from a slot cleared after the batch. Measured b122 (node v26.8.2): with a
+// per-cycle closure capturing obj_i (the old row shape) the census saw a stray live obj_i near cycles 410/510 in all
+// three rows, holder outside the engine path (the tracker removed: same); hoisted, 0 strays in 3/3 full-file runs.
+// Suspected holder (not proven): a tier-up compile job specialized on that closure context.
+function retentionFixture() {
+    const r = createRegistry();
+    const base = { base: true };
+    const s = r.signal(base);
+    const c = r.computed(() => s());
+    const slot = [null];
+    const bodyRead = () => { s.set(slot[0]); c(); s.set(base); };
+    const bodyNoRead = () => { s.set(slot[0]); s.set(base); };
+    return {
+        r, base, s, c,
+        batchRead: (obj) => { slot[0] = obj; r.batch(bodyRead); slot[0] = null; },
+        batchNoRead: (obj) => { slot[0] = obj; r.batch(bodyNoRead); slot[0] = null; },
+        dispose: () => { r.dispose(s); r.dispose(c); },
+    };
+}
+
 describe('A3 retention: batch{s.set(obj_i); c(); s.set(base)} x 1000', () => {
-    it('tracker.size() <= 1 each cycle; === 0 after dispose + gc', { skip: HAVE_GC ? false : 'needs --expose-gc' }, async () => {
-        const r = createRegistry();
-        const base = { base: true };
-        const s = r.signal(base);
-        const c = r.computed(() => s());
-        const tracker = createLeakTracker({ name: 't37', onLeak() {}, onWarning() {} });
-        let worst = 0;
-        const cycle = (i) => {
-            const obj = { i };
-            tracker.track(obj, null, i);
-            r.batch(() => { s.set(obj); c(); s.set(base); });
-        };
-        const settle = async () => { globalThis.gc(); await new Promise((res) => setTimeout(res, 0)); globalThis.gc(); };
-        for (let i = 0; i < 1000; i++) {
-            cycle(i);       // obj lives only inside cycle(): the async frame must not pin it
-            // obj is now unreachable from the caller; only the engine may still hold it
-            // (the latest recaptured intermediate).
-            await settle();
-            const n = tracker.size();
-            if (n > worst) worst = n;
-            assert.ok(n <= 1, 'cycle ' + i + ': tracker.size() = ' + n + ' > 1');
-        }
-        r.dispose(s);
-        r.dispose(c);   // c.value may legitimately hold the last intermediate until read/disposed
-        await settle();
-        await settle();
-        assert.equal(tracker.size(), 0, 'after dispose + gc nothing is retained');
-        assert.ok(worst <= 1);
+    it('live obj_i <= 1 each cycle (WeakRef census after gc, exact); 0 after dispose; tracker.size() converges within 50 rounds', { skip: HAVE_GC ? false : 'needs --expose-gc' }, async (t) => {
+        const f = retentionFixture();
+        // the engine may still hold the latest recaptured intermediate: limit 1
+        const step = f.batchRead;
+        const res = await retentionCensus(1000, null, step, 1, f.dispose);
+        t.diagnostic('census ' + JSON.stringify(res));
+        assert.equal(res.firstBad, -1, 'cycle ' + res.firstBad + ': ' + res.firstBadN + ' live obj_i > 1');
+        assert.ok(res.worst <= 1, 'worst ' + res.worst);
+        assert.equal(res.endLive, 0, 'after dispose + gc no obj_i is reachable');
+        assert.equal(res.trackerEnd, 0, 'tracker.size() did not converge to 0 within 50 rounds: ' + JSON.stringify(res));
+    });
+
+    // MUST-FAIL control (retained): the census must SEE retention. keep-all holds every obj_i, so cycle 1 is the first
+    // with 2 live (> limit 1), all 8 survive dispose, and tracker.size() already equals endLive (0 rounds).
+    it('MUST-FAIL: keep-all (C=8) -> firstBad 1 n 2, worst 8, endLive 8, trackerEnd 8, rounds 0', { skip: HAVE_GC ? false : 'needs --expose-gc' }, async (t) => {
+        const f = retentionFixture();
+        const keep = [];
+        const step = f.batchRead;
+        const res = await retentionCensus(8, keep, step, 1, f.dispose);
+        t.diagnostic('census ' + JSON.stringify(res));
+        assert.deepEqual(res, { firstBad: 1, firstBadN: 2, worst: 8, endLive: 8, trackerEnd: 8, rounds: 0 });
+        assert.equal(keep.length, 8);
     });
 
     // Variant (spec shape; c() read inside the batch). Before FIX-R c() stayed obj via F5 (holder: c.value).
     // Variant: a top-level c() read after each batch re-evaluates c to base and drops obj_i,
     // so NOTHING may still hold obj_i (not c, not s's batch capture). Strict === 0 every cycle.
-    it('variant: after a top-level c() read, tracker.size() === 0 at the end of EVERY cycle', { skip: HAVE_GC ? false : 'needs --expose-gc' }, async () => {
-        const r = createRegistry();
-        const base = { base: true };
-        const s = r.signal(base);
-        const c = r.computed(() => s());
-        const tracker = createLeakTracker({ name: 't37v', onLeak() {}, onWarning() {} });
-        const cycle = (i) => {
-            const obj = { i };
-            tracker.track(obj, null, i);
-            r.batch(() => { s.set(obj); c(); s.set(base); });
-            if (c() !== base) throw new Error('c() must be base after the batch (cycle ' + i + ')');
+    it('variant: after a top-level c() read, live obj_i === 0 at the end of EVERY cycle (WeakRef census); tracker.size() converges to 0', { skip: HAVE_GC ? false : 'needs --expose-gc' }, async (t) => {
+        const f = retentionFixture();
+        const step = (obj, i) => {
+            f.batchRead(obj);
+            if (f.c() !== f.base) throw new Error('c() must be base after the batch (cycle ' + i + ')');
         };
-        for (let i = 0; i < 1000; i++) {
-            cycle(i);
-            globalThis.gc(); await new Promise((res) => setTimeout(res, 0)); globalThis.gc();
-            await new Promise((res) => setImmediate(res)); globalThis.gc();
-            assert.equal(tracker.size(), 0, 'cycle ' + i + ': obj_i is still retained');
-        }
-        r.dispose(s);
-        r.dispose(c);
+        const res = await retentionCensus(1000, null, step, 0, f.dispose);
+        t.diagnostic('census ' + JSON.stringify(res));
+        assert.equal(res.worst, 0, 'cycle ' + res.firstBad + ': obj_i is still retained (' + res.firstBadN + ' live)');
+        assert.equal(res.endLive, 0);
+        assert.equal(res.trackerEnd, 0, 'tracker.size() did not converge to 0 within 50 rounds: ' + JSON.stringify(res));
     });
 
     // Same without the in-batch c() read (no F5 trigger): isolates s's batch capture. Plain pin;
     // red on a mutant that captures the intermediate instead of the pre-batch value.
-    it('variant-nobody: after a top-level c() read, tracker.size() === 0 at the end of EVERY cycle', { skip: HAVE_GC ? false : 'needs --expose-gc' }, async () => {
-        const r = createRegistry();
-        const base = { base: true };
-        const s = r.signal(base);
-        const c = r.computed(() => s());
-        const tracker = createLeakTracker({ name: 't37v2', onLeak() {}, onWarning() {} });
-        const cycle = (i) => {
-            const obj = { i };
-            tracker.track(obj, null, i);
-            r.batch(() => { s.set(obj); s.set(base); });
-            if (c() !== base) throw new Error('c() must be base after the batch (cycle ' + i + ')');
+    it('variant-nobody: after a top-level c() read, live obj_i === 0 at the end of EVERY cycle (WeakRef census); tracker.size() converges to 0', { skip: HAVE_GC ? false : 'needs --expose-gc' }, async (t) => {
+        const f = retentionFixture();
+        const step = (obj, i) => {
+            f.batchNoRead(obj);
+            if (f.c() !== f.base) throw new Error('c() must be base after the batch (cycle ' + i + ')');
         };
-        for (let i = 0; i < 1000; i++) {
-            cycle(i);
-            globalThis.gc(); await new Promise((res) => setTimeout(res, 0)); globalThis.gc();
-            await new Promise((res) => setImmediate(res)); globalThis.gc();
-            assert.equal(tracker.size(), 0, 'cycle ' + i + ': obj_i is still retained');
-        }
-        r.dispose(s);
-        r.dispose(c);
+        const res = await retentionCensus(1000, null, step, 0, f.dispose);
+        t.diagnostic('census ' + JSON.stringify(res));
+        assert.equal(res.worst, 0, 'cycle ' + res.firstBad + ': obj_i is still retained (' + res.firstBadN + ' live)');
+        assert.equal(res.endLive, 0);
+        assert.equal(res.trackerEnd, 0, 'tracker.size() did not converge to 0 within 50 rounds: ' + JSON.stringify(res));
     });
 });
