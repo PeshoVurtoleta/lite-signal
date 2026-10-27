@@ -1210,9 +1210,9 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     const roster4 = B6_ROSTER.filter((l) => l !== 'WIE' && l !== 'HOOK' && l !== 'LIFECYCLE');
     const roster5 = B6_ROSTER.slice();
     assert.deepEqual(b6KernelsFor('WIE'), ['tree']);
-    // S3 R1 (b93): HOOK is cut on headpatched only (DIV-F9 ghost-listener reddened lite-1.5.2 and tree; b117: DIV-F9
-    // fixed in A5b, the tree passes HOOK, calibrate.mjs LANE_KERNELS unchanged until the recut decides)
-    assert.deepEqual(b6KernelsFor('HOOK'), ['headpatched']);
+    // S3 R1 (b93): HOOK was cut on headpatched only (DIV-F9 ghost-listener reddened lite-1.5.2 and tree); b117: DIV-F9
+    // fixed in A5b, the tree passes HOOK; D-b120-1 (b121 #48 recut): tree joins, headpatched first (covOff), 1.5.2 off
+    assert.deepEqual(b6KernelsFor('HOOK'), ['headpatched', 'tree']);
     // S3 R2 (b111 A1 Q1): LIFECYCLE is cut on tree only; b117: DIV-D3 fixed in A5a, no (f) exemption (full-length evidence)
     assert.deepEqual(b6KernelsFor('LIFECYCLE'), ['tree']);
     assert.deepEqual(b6LanesFor('headpatched', roster5), roster4.concat(['HOOK']));
@@ -1223,7 +1223,7 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.deepEqual(b6KernelsOf(['GRAPH', 'BATCH', 'ERROR']), Object.keys(B6_KERNELS));
     assert.deepEqual(b6KernelsOf(roster4), Object.keys(B6_KERNELS).concat(['tree']));
     assert.deepEqual(b6KernelsOf(roster5), Object.keys(B6_KERNELS).concat(['tree']));
-    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'LIFECYCLE']);
+    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE']);
     assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), roster4.slice());
     assert.equal(b6KernelPath('tree'), 'Signal.js');
     assert.throws(() => b6KernelPath('nope'), /unknown kernel nope/);
@@ -1260,6 +1260,12 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
         smoke: Object.assign(b6Copy(B6_DOC.kernels.tree.smoke),
             { WIE: cell(B6_C.SCEN_MIN_SMOKE, B6_C.CHECK_FLOOR_SMOKE, B6_DOC.cut.smokeCycles) }),
     };
+    // D-b120-1 (b121): tree cuts HOOK too; its HOOK cells and HOOK cov-off sweep rows stand in from headpatched's (b121
+    // U1 pre-check: the tree:HOOK smoke cell folds field for field to headpatched:HOOK), so the control needs no recut
+    for (const sz of ['full', 'smoke']) doc5.kernels.tree[sz].HOOK = b6Copy(B6_DOC.kernels.headpatched[sz].HOOK);
+    for (const key of Object.keys(B6_DOC.covOffSweep.cells)) {
+        if (key.startsWith('headpatched:HOOK:')) doc5.covOffSweep.cells['tree' + key.slice(11)] = b6Copy(B6_DOC.covOffSweep.cells[key]);
+    }
     const cp5 = (doc) => calibrationProblems(doc, B6_C, b6ShaOf, B6_PROBE, lanes5);
     assert.deepEqual(cp5(doc5), [], 'control: the synthetic WIE roster with tree at the floors is clean');
     // + WIE cells on lite-1.5.2 (pre-b33: DIV-B33 by design) -> exactly the full + smoke lines

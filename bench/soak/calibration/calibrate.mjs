@@ -52,9 +52,10 @@
  * b74 0b; DIV-F5 / F6 / F22), exempt from (f) only while DIV-F22 is open (maintainer ruling b74; b103 R13.3:
  * DIV-F6, closed in A2-FIX-T, left the exemption set; b109: DIV-F5, closed in A3-FIX-R, left it too). The ruled
  * exemption set itself is test/41's B6_F_EXEMPT_RULED constant, not a value of this tool or of soak-calibration.json.
- * HOOK -> headpatched only (S3 R1, burst 93; the WIE precedent): lite-1.5.2 (= the rev152 kernel) and tree both go
- * red on O8 ghost-listener by design (DIV-F9: an out-of-LIFO-order onGraphMutation unsubscribe resurrects a dead
- * listener), so neither is a HOOK evidence kernel while DIV-F9 is open; headpatched passes HOOK and stays first (covOff).
+ * HOOK -> headpatched, tree (S3 R1, burst 93; the WIE precedent): lite-1.5.2 (= the rev152 kernel) stays off HOOK, red
+ * on O8 ghost-listener by design (DIV-F9: an out-of-LIFO-order onGraphMutation unsubscribe resurrects a dead listener).
+ * DIV-F9 is fixed in the tree since A5b (b117), so tree joins HOOK in the #48 recut (D-b120-1, b121); headpatched
+ * passes HOOK and stays first (covOff).
  * lanes/hook.mjs joins the pinned list through LANE_PINS; mirror.mjs (the O8 link mirror hook.mjs imports) is in
  * PINNED, like kinds.mjs and the torture helpers.
  */
@@ -83,8 +84,9 @@ export const LANE_ONLY_KERNELS = Object.freeze({ tree: 'Signal.js' });
 export const LANE_KERNELS = Object.freeze({
     WIE: Object.freeze(['tree']),
     NEST: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
-    // HOOK (S3 R1, b93): red-by-design on lite-1.5.2 and tree (DIV-F9 ghost-listener, header); headpatched only
-    HOOK: Object.freeze(['headpatched']),
+    // HOOK (S3 R1, b93): red-by-design on lite-1.5.2 (DIV-F9 ghost-listener, header); tree joins (A5b fixed DIV-F9;
+    // D-b120-1, b121 #48 recut); headpatched stays first (covOff)
+    HOOK: Object.freeze(['headpatched', 'tree']),
     // LIFECYCLE (S3 R2, b111 A1 Q1): tree only while DIV-D3 is open; ends with the A5 rung / P-LC-tree
     LIFECYCLE: Object.freeze(['tree']),
 });

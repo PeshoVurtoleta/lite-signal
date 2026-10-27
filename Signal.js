@@ -907,9 +907,8 @@ export function createRegistry(config) {
     // --- Graph-mutation hook (1.2.1 keystone prototype) ---------------------
     // Live-entry stack, any-order off; the newest live entry is active and `mutationHook`
     // mirrors its wrapper (null = none, or a `null` "clear" entry on top). Every fire point
-    // is `if (mutationHook !== null)`
-    // -- branch-predicted free when absent, allocation-free when present
-    // (opcode + two int args). Enables push-based devtools (watchGraph) and the
+    // is `if (mutationHook !== null)` -- branch-predicted free when absent, allocation-free
+    // when present (opcode + two int args). Enables push-based devtools (watchGraph) and the
     // recompute profiler. Opcodes: 1 node-create, 2 node-dispose, 3 link-add,
     // 4 link-remove, 5 recompute.
     let mutationHook = null;
@@ -1476,7 +1475,7 @@ export function createRegistry(config) {
         currentOwner = null;
         try {
             if (typeof cleanup === "function") cleanup();
-            else for (let i = 0; i < cleanup.length; i++) cleanup[i]();
+            else for (let i = 0; i < cleanup.length; i++) { const fn = cleanup[i]; fn(); }
         } finally {
             currentObserver = (po !== null && po.gen === pg) ? po : null;
             currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
@@ -1823,7 +1822,7 @@ export function createRegistry(config) {
         activeObserverCurrentDep = node.headDep;
         try {
             fireRecompute(node);
-            node.computeFn();
+            (0, node.computeFn)();
         } finally {
             if (node.gen === savedGen) {
                 // S9: stamp BEFORE severTail. Its 1->0 callbacks may write a dep this run
@@ -1941,7 +1940,7 @@ export function createRegistry(config) {
             activeObserverCurrentDep = node.headDep;
             try {
                 fireRecompute(node);
-                const newValue = node.computeFn();
+                const newValue = (0, node.computeFn)();
                 // A1 r4: a body (or `equals`) that disposed `node` must not park its value on
                 // the pinned, then pooled, slot (retention until reuse). Cold: never inlined.
                 if (node.gen === savedGen) {
@@ -2381,7 +2380,7 @@ export function createRegistry(config) {
                 node.schedulerThunk = () => {
                     if (node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);
                 };
-                node.scheduler(node.schedulerThunk);
+                scheduler(node.schedulerThunk);
             } else {
                 executeEffect(node);
             }
@@ -2732,8 +2731,8 @@ export function createRegistry(config) {
         e.tail = reg;
         // LEDGER #40: gen-stamped -- an off() that outlives its node (disposed, slot re-seated)
         // is a no-op; disposeNode already dropped the entry, and the live one is a stranger's.
-        // `!reg.live` is the first guard (the stamp backs it): dropLifecycleHooks kills every reg (live = false) when the
-        // node is disposed. The stamp matters only when dispose SKIPPED dropLifecycleHooks
+        // `!reg.live` is the first guard (the stamp backs it): dropLifecycleHooks kills every reg
+        // (live = false) when the node is disposed. The stamp matters only when dispose SKIPPED dropLifecycleHooks
         // (lifecycleCount wrapped to 0 while an entry was live). off() captures `reg`, never the
         // entry, and drops the dead reg's callbacks, so a kept off handle does not retain the
         // user's closures (test/80 RETENTION).
