@@ -15,10 +15,27 @@
 // the gate only executes for real when BOTH --expose-gc AND --max-semi-space-size=4
 // are present, i.e. under `npm run test:gate`. Otherwise we emit ONE loud named
 // skip (never a silent pass, never an unguarded zgcSuite call).
+//
+// NEGATIVE CONTROL OVERRIDE (b125). lite-perf-gate 1.4.2's stock controlNegative
+// accumulates `a += (i * 3) ^ i` without bound, so `a` leaves the Smi range and
+// the interpreter / Sparkplug tiers box a HeapNumber per iteration; only Maglev /
+// TurboFan keep it unboxed. Gates job run 40599429786 (c864ddf) failed "negative
+// control forced 12 scavenges (need <=2)" (stock CONTROL- lo 0 hi 12; also on
+// f941aa6 and 3ef853a), consistent with tier-up lag; the local --no-opt
+// --no-maglev repro gives the same 12 (N=200000 k=8: stock lo 1 hi 12).
+// NEGATIVE_INT32 is an XOR accumulator that never leaves int32 (b125 r2
+// re-measure: lo 0 hi 0 at default tiers and under --no-opt --no-maglev). So
+// zgcSuite gets NEGATIVE_INT32, defined ONCE in fixtures/perf-gate-negctrl.mjs;
+// the two witness rows at the bottom re-prove it below Maglev (a --no-opt
+// --no-maglev child) on every plain `npm test`.
 
 import {it} from "node:test";
+import assert from "node:assert/strict";
+import {spawnSync} from "node:child_process";
+import {fileURLToPath} from "node:url";
 import {zgcSuite} from "@zakkster/lite-perf-gate";
 import {createRegistry} from "../Signal.js";
+import {NEGATIVE_INT32, WITNESS_FLAGS} from "./fixtures/perf-gate-negctrl.mjs";
 
 const hasGC = typeof globalThis.gc === "function";
 const hasSemi = process.execArgv.includes("--max-semi-space-size=4");
@@ -270,8 +287,73 @@ if (!gateReady) {
         counters: {totalAllocations: 0, totalDisposals: 0, poolGrowths: 0},
         // At least two permanent negative controls. Both MUST trip the gate.
         mustFail: [mustFailAlloc, mustFailChurn],
+        // Tier-independent detector control (see the header and the witness row).
+        negativeControl: NEGATIVE_INT32,
         // Thresholds: lite-perf-gate DEFAULTS, untouched (maxScavenges 2,
         // maxRetainedKB 64, maxOldGen 0, maxArrayBuffersKB 64). A claimed-zero
         // path that cannot meet defaults is a FINDING, not a config knob.
     });
 }
+
+// Witness for the override -- runs in EVERY mode (plain `npm test` too), never
+// gated on gateReady. A child with Maglev and TurboFan OFF (the CI tier-lag case
+// forced) measures the stock control and NEGATIVE_INT32 at N=200000 k=8:
+//   - stock minorHi > 2: the mechanism that reddened CI is real (teeth). If a
+//     future lite-perf-gate fixes its control this half fails -- then drop the
+//     negativeControl override and this row together.
+//   - NEGATIVE_INT32 minorLo === 0 and minorHi <= 2 (the gate's maxScavenges)
+//     under the same flags.
+// Fail closed: timeout kill, signal, non-zero exit, unparsable JSON or a missing
+// key is a failure. --max-old-space-size pinned (CI heap is smaller than dev).
+const WITNESS_CHILD = fileURLToPath(new URL("./fixtures/perf-gate-negctrl.mjs", import.meta.url));
+
+function witnessEnv() {
+    const env = {};
+    for (const k of Object.keys(process.env)) {
+        if (k !== "NODE_OPTIONS" && k !== "NODE_TEST_CONTEXT") env[k] = process.env[k];
+    }
+    return env;
+}
+
+function witnessCount(obj, lane, key, raw) {
+    const v = obj !== null && typeof obj === "object" && obj[lane] !== null && typeof obj[lane] === "object"
+        ? obj[lane][key] : undefined;
+    assert.ok(Number.isInteger(v) && v >= 0, "witness child: missing/invalid " + lane + "." + key + "\n  stdout: " + raw);
+    return v;
+}
+
+it("perf gate: negative-control override witness (stock boxes below Maglev, NEGATIVE_INT32 does not)", () => {
+    const res = spawnSync(process.execPath,
+        [...WITNESS_FLAGS, "--max-old-space-size=256", WITNESS_CHILD],
+        {encoding: "utf8", env: witnessEnv(), timeout: 120000, killSignal: "SIGKILL"});
+    const raw = String(res.stdout || "").trim();
+    const why = "\n  status=" + res.status + " signal=" + res.signal +
+        (res.error ? " error=" + res.error.message : "") +
+        "\n  stdout: " + raw + "\n  stderr: " + String(res.stderr || "").trim();
+    assert.ok(!res.error && res.signal === null && res.status === 0, "witness child did not exit 0" + why);
+    let out;
+    try { out = JSON.parse(raw); } catch { assert.fail("witness child printed unparsable JSON" + why); }
+    assert.ok(Array.isArray(out.flags), "witness child: missing flags" + why);
+    for (const f of ["--expose-gc", "--max-semi-space-size=4", "--no-opt", "--no-maglev"]) {
+        assert.ok(out.flags.includes(f), "witness child ran without " + f + why);
+    }
+    const stockHi = witnessCount(out, "stock", "minorHi", raw);
+    const intLo = witnessCount(out, "int32", "minorLo", raw);
+    const intHi = witnessCount(out, "int32", "minorHi", raw);
+    assert.ok(stockHi > 2,
+        "stock lite-perf-gate controlNegative no longer scavenges below Maglev (minorHi=" + stockHi +
+        " <= 2): the upstream control looks fixed -- drop the negativeControl override and this row" + why);
+    assert.equal(intLo, 0, "NEGATIVE_INT32 minorLo must be 0 under " + WITNESS_FLAGS.join(" ") + why);
+    assert.ok(intHi <= 2, "NEGATIVE_INT32 minorHi=" + intHi + " > 2 under " + WITNESS_FLAGS.join(" ") + why);
+});
+
+it("perf gate: override wiring witness (zgcSuite detector passes below Maglev)", () => {
+    const res = spawnSync(process.execPath,
+        [...WITNESS_FLAGS, "--max-old-space-size=256", "--test", "--test-reporter=tap",
+            "--test-name-pattern=^perf-gate: detector validation \\(", fileURLToPath(import.meta.url)],
+        {encoding: "utf8", env: witnessEnv(), timeout: 120000, killSignal: "SIGKILL"});
+    const out = String(res.stdout || "");
+    assert.ok(!res.error && res.signal === null && res.status === 0 &&
+        /^ok \d+ - perf-gate: detector validation \(/m.test(out) && /^# pass 1$/m.test(out) && /^# fail 0$/m.test(out),
+        "detector validation under " + WITNESS_FLAGS.join(" ") + " did not pass exactly 1 test\n" + out + String(res.stderr || ""));
+});
