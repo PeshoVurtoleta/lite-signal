@@ -224,37 +224,68 @@ test('latency: a throwing call passes through untouched and is NOT timed (return
 
 /* ---- ASSERTION 3: GC ------------------------------------------------------------------------------ */
 
-function child(src) {
-    const r = spawnSync(process.execPath, ['--expose-gc', '--max-semi-space-size=64', '--min-semi-space-size=64', '--input-type=module', '-e', src],
+function child(flags, src) {
+    const r = spawnSync(process.execPath, [...flags, '--input-type=module', '-e', src],
         { cwd: ROOT, encoding: 'utf8', timeout: 240000 });
     assert.equal(r.status, 0, r.stderr);
     return JSON.parse(r.stdout.trim().split('\n').pop());
 }
 
-const slopeOk = (s) => Math.abs(s) <= 0.01;
+const BIG_SEMI = ['--expose-gc', '--max-semi-space-size=64', '--min-semi-space-size=64'];
 
-test('latency GC: observe() slope (delta(N) - delta(N/10)) / 0.9N <= 0.01 B/op, N = 1e6 (a fixed offset is not per-op); a per-op allocating control must exceed it', () => {
-    const o = child(`
+/* b122 F7 (c): a GC-COUNT window replaces the heapUsed slope (b118 read -0.0172 B/op under load: JIT code / metadata of
+ * the tier-up landed in the short window, t71-attrib.txt). A 1 MB semi-space (S = 1,048,576 B) means any young
+ * allocation A forces >= floor(A / S) GCs, so N = 4e6 ops with 0 events bounds observe() below S / N = 0.262 B/op.
+ * --single-threaded makes the tier-up depend on the call budget only, not on host load. The window counts EVERY
+ * event kind (a major would also hide young allocation). minorsOf fails closed: any gcType not a known major /
+ * incremental / weak-callback pass counts as a minor ('MinorMarkSweep' is the --minor-ms kind on node v26.8.2).
+ * .handoff/b122-evidence/witness-t71.mjs loads this block (minorsOf .. GC_SRC) from this file's text: keep it
+ * self-contained. */
+function minorsOf(stats) {
+    let m = 0;
+    for (const e of stats) if (e.gcType !== 'MarkSweepCompact' && e.gcType !== 'IncrementalMarking' && e.gcType !== 'ProcessWeakCallbacks') m++;
+    return m;
+}
+const windowOk = (stats) => stats.length === 0;
+const GC_KINDS = ['Scavenge', 'MinorMarkSweep', 'MarkSweepCompact', 'IncrementalMarking', 'ProcessWeakCallbacks'];
+const GC_FLAGS = ['--expose-gc', '--single-threaded', '--min-semi-space-size=1', '--max-semi-space-size=1'];
+const GC_SRC = `
+import v8 from 'node:v8';
 import { LatencyLane } from './bench/soak/latency.mjs';
+${minorsOf.toString()}
+if (typeof v8.GCProfiler !== 'function' || typeof gc !== 'function') throw new Error('t71: v8.GCProfiler and gc() are required');
 const lane = new LatencyLane({ floorNs: 40 });
-const run = (fn, n) => { gc(); gc(); const b = process.memoryUsage().heapUsed; fn(n); return process.memoryUsage().heapUsed - b; };
+const BOX = ['tagged'];
+let sink = null;
 const real = (n) => { for (let i = 0; i < n; i++) lane.observe('set', 50 + (i & 1023)); };
+// controls: one 16 B HeapNumber per op (a double stored into a tagged array) / one 32 B object per op
+const box = (n) => { for (let i = 0; i < n; i++) { lane.observe('set', 50 + (i & 1023)); BOX[0] = i + 0.5; } };
+const obj = (n) => { for (let i = 0; i < n; i++) { lane.observe('set', 50 + (i & 1023)); sink = { i }; } };
+const win = (fn, n) => { gc(); const p = new v8.GCProfiler(); p.start(); fn(n); return p.stop().statistics; };
 for (let i = 0; i < 200000; i++) lane.observe('set', 50 + (i & 1023));
-const N = 1000000;
-const d1 = run(real, N / 10), d8 = run(real, N);
-// control: one TRANSIENT small object per op (both windows fit the pinned 64 MB semi-space, so no scavenge hides it)
-let sink;
-const bad = (n) => { for (let i = 0; i < n; i++) { lane.observe('set', 50 + (i & 1023)); sink = { i }; } };
-const c1 = run(bad, N / 10), c2 = run(bad, N);
-process.stdout.write(JSON.stringify({ slope: (d8 - d1) / (0.9 * N), ctl: (c2 - c1) / (0.9 * N) }));
-`);
-    console.log('latency GC slope B/op: ' + o.slope + ' (control ' + o.ctl + ')');
-    assert.ok(slopeOk(o.slope), 'slope B/op ' + o.slope);
-    assert.ok(o.ctl > 8, 'the allocating control must exceed the bound, got ' + o.ctl);
+real(200000); box(200000); obj(200000);
+const N = 4000000;
+const r = win(real, N), b = win(box, N), o = win(obj, N);
+const kinds = (s) => s.map((e) => e.gcType);
+process.stdout.write(JSON.stringify({ N, flags: process.execArgv.filter((a) => a.startsWith('--') && a !== '--input-type=module'), real: kinds(r), boxMinors: minorsOf(b), objMinors: minorsOf(o),
+    boxKinds: [...new Set(kinds(b))], objKinds: [...new Set(kinds(o))], used: sink !== null && BOX[0] !== 'tagged' }));
+`;
+
+test('latency GC: observe() allocates nothing -- 0 GC events (any kind, v8.GCProfiler) over N = 4e6 ops in a 1 MB semi-space, --single-threaded (resolution 0.262 B/op); a 16 B/op box control and a 32 B/op object control each count >= 32 minors', () => {
+    const o = child(GC_FLAGS, GC_SRC);
+    console.log('latency GC window: real events ' + JSON.stringify(o.real) + ' | box control minors ' + o.boxMinors + ' ' + JSON.stringify(o.boxKinds) +
+        ' | object control minors ' + o.objMinors + ' ' + JSON.stringify(o.objKinds));
+    assert.deepEqual(o.flags, GC_FLAGS, 'the child runs under the pinned flags');
+    assert.equal(o.N, 4000000);
+    assert.equal(o.used, true);
+    for (const k of [...o.real, ...o.boxKinds, ...o.objKinds]) assert.ok(GC_KINDS.includes(k), 'unknown gcType ' + k + ' (fail closed)');
+    assert.ok(o.boxMinors >= 32, 'the 16 B/op box control must count >= 32 minors, got ' + o.boxMinors);
+    assert.ok(o.objMinors >= 32, 'the 32 B/op object control must count >= 32 minors, got ' + o.objMinors);
+    assert.ok(windowOk(o.real), 'observe() window saw GC events ' + JSON.stringify(o.real));
 });
 
 test('latency GC: 32 armed worlds x 3 cycles under lite-leak -> tracker size 0 after forced GC each cycle', () => {
-    const o = child(`
+    const o = child(BIG_SEMI, `
 import { createLeakTracker } from '@zakkster/lite-leak';
 import { LatencyLane } from './bench/soak/latency.mjs';
 import { runWorld } from './bench/soak/exec.mjs';
@@ -304,12 +335,12 @@ test('latency: a missing lite-sketch -> exit 2, soak: CONFIG -- latency lane una
     } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('latency GC MUST-FAIL (b88, pure): slopeOk is two-sided -- -15.5 and 0.02 are rejected, -0.005 accepted (the old one-sided s <= 0.01 passes -15.5)', () => {
-    // The 208 B per-op child's measured slope -15.5 B/op lives in .handoff evidence b88 B0 d0d.txt; the child's
-    // negative band is V8-version dependent, so the gate is pure: it pins the predicate the GC slope row uses.
-    assert.equal(slopeOk(-15.5), false);
-    assert.equal(slopeOk(0.02), false);
-    assert.equal(slopeOk(-0.005), true);
+test('latency GC MUST-FAIL (b122, pure): minorsOf counts Scavenge, MinorMarkSweep (--minor-ms on node v26.8.2) and an Unknown kind as minors, never MarkSweepCompact / IncrementalMarking / ProcessWeakCallbacks; windowOk rejects any event, a weak-callback pass included', () => {
+    for (const k of ['Scavenge', 'MinorMarkSweep', 'Unknown']) assert.equal(minorsOf([{ gcType: k }]), 1, k);
+    for (const k of ['MarkSweepCompact', 'IncrementalMarking', 'ProcessWeakCallbacks']) assert.equal(minorsOf([{ gcType: k }]), 0, k);
+    assert.equal(windowOk([{ gcType: 'ProcessWeakCallbacks' }]), false);
+    assert.equal(windowOk([]), true);
+    assert.ok(GC_KINDS.includes('MinorMarkSweep') && !GC_KINDS.includes('Unknown'), 'the fail-closed kind list');
 });
 
 test('latency (b88 NIT): a listed method with a rest parameter (a, ...r) -> TypeError at the armed open (HEAD accepts: length 1)', () => {
