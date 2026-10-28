@@ -205,7 +205,7 @@ test('LaneGates oracle gate and failure totals; malformed records throw (fail cl
     L.push(rec('GRAPH', 0));
     assert.throws(() => L.push(rec('GRAPH', 1, { memory: {} })), G.GateInputError, 'a post-warm-up record needs residentMB');
     assert.equal(L.cycles, 1, 'nothing folded from the rejected record');
-    assert.throws(() => new G.LaneGates({ lane: 'GRAPH', oracles: ['O9'], required: [] }), TypeError);
+    assert.throws(() => new G.LaneGates({ lane: 'GRAPH', oracles: ['OX'], required: [] }), TypeError);
 });
 
 /* ---- ASSERTION: verdict --------------------------------------------------------------------------- */
@@ -305,7 +305,7 @@ test('oracleFamily: O1c/O1e -> O1, O7a -> O7, every S1 oracle maps, an unknown o
     for (const o of ORACLES) assert.match(G.oracleFamily(o), /^O(?:[0-9]|B|W)$/, o);
     assert.equal(G.oracleFamily('OB'), 'OB');
     for (const o of CHECK_NAMES) G.oracleFamily(o);
-    assert.throws(() => G.oracleFamily('O9'), TypeError);
+    assert.throws(() => G.oracleFamily('OX'), TypeError);
     assert.throws(() => G.oracleFamily(undefined), TypeError);
 });
 

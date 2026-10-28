@@ -56,7 +56,7 @@ function bad(msg) { throw new GateInputError(msg); }
 
 // O1c/O1e are one family (O1), O7a is the S1 slice of O7, OB (batch-early-run, F5) is its own family.
 // BREACH dedupe and failureCounts use the family.
-const FAMILY = Object.freeze({ O1c: 'O1', O1e: 'O1', O2: 'O2', O4: 'O4', O5: 'O5', O6: 'O6', O7a: 'O7', O7: 'O7', OB: 'OB', O8: 'O8', OW: 'OW' });
+const FAMILY = Object.freeze({ O1c: 'O1', O1e: 'O1', O2: 'O2', O4: 'O4', O5: 'O5', O6: 'O6', O7a: 'O7', O7: 'O7', OB: 'OB', O8: 'O8', OW: 'OW', O9: 'O9' });
 
 /** The reporting family of an oracle id. An unknown id throws (fail closed: never a silent bucket). */
 export function oracleFamily(oracle) {

@@ -30,9 +30,17 @@
  *   owners        (OWNER lane, exec.ow !== null; S3 R3) OW at every checkpoint (owCheck): runBody entry, at rest, the
  *                 world end and after the lane's odisp / opull; teardown is O5-only (run() sets ow.closing before
  *                 close(), which disposes without the model: the lane's cleanups neither log nor write the sentinel
- *                 there). An owner's re-run (computed or effect) kills its
+ *                 there). Every run of an owner (computed or effect, the first one included) kills its
  *                 children and fires its cleanups in the model (model.rerunOwner) on that lane; every other lane
  *                 keeps the p1 effect-only killChildren (it adopts no computed and registers no cleanup)
+ *   stale handles (RECYCLE lane, exec.rc !== null; S3 R4a) exec runs no O9 itself: lanes/recycle.mjs sets exec.rc (its
+ *                 RcState: the retained stale handles) on its first op and judges O9 inside its own op handlers, right
+ *                 after the stale op (oracles.mjs checkO9Read / checkO9Write / checkO9Dispose; one did('O9') per judged
+ *                 op, findings through failF), and reports each stale op to the detectors (scenarios.mjs onRcStale).
+ *                 The only exec-side hook: run() calls exec.rc.close() once, right after W.close() (whatever the world's
+ *                 failure or close() outcome; an unmodelled throw skips both); it must not throw and must null every
+ *                 retained handle. At-rest O1c / O5 after a stale op run as on every lane. Every other lane keeps
+ *                 exec.rc null and pays one null test per world
  *   wie writer    (WIE, gen.mjs I2 lifted) a computed whose spec carries w writes w := f(its output) through
  *                 write() after its body returns (spec.wu: under untrack), exactly like an effect writer. D4: a
  *                 target that is not an earlier signal (forward / self / non-integer / non-signal) or is in its
@@ -57,7 +65,7 @@ const NONE = Symbol('none');
 const END_CHECK_SALT = 0x5bd1e995;
 
 /** Oracles counted when PERFORMED (a skipped check is never counted as one). */
-export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW']);
+export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9']);
 /** Oracles that skip tainted nodes; each skip is counted per oracle (S1c gates a taint-skip ratio). */
 export const SKIP_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4']);
 const COUNTER_CAP = 0x3FFFFFFF;   // per-world counters stay Smi (S7: [2^30, 2^31) boxes on pointer-compressed V8)
@@ -144,7 +152,7 @@ class Exec {
         this.regActions = new Map();
         this.ran = new Set();
         this.D = new Detectors(this);
-        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0, OW: 0 };
+        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0, OW: 0, O9: 0 };
         this.skipTainted = { O1c: 0, O1e: 0, O2: 0, O4: 0 };
         this.gateHits = { batchTokenEscaped: 0 };   // guards whose escape carried the throw-in-batch token
         this.effReruns = 0;    // effect re-runs (runs > 0) in this world, capped at COUNTER_CAP (OB evidence)
@@ -159,6 +167,9 @@ class Exec {
         // exec-side shape: ow.fires = [{o, k}] (cleanup fires since the last checkpoint, in order), ow.calls =
         // [{name, self}] (lane callbacks and their `this`); owCheck() judges and empties both
         this.ow = null;
+        // RECYCLE lane state (lanes/recycle.mjs RcState), set by the lane's first op; null on every other lane. exec only
+        // calls rc.close() after W.close() (the header's stale-handles contract); O9 runs in the lane's own op handlers
+        this.rc = null;
     }
 
     /** Count one performed check / one taint skip (capped: never leaves Smi range). */
@@ -219,6 +230,7 @@ class Exec {
         // OWNER (S3 R3): teardown is O5-only -- close() disposes without the model, so the lane's cleanups go silent
         if (this.ow !== null) this.ow.closing = true;
         try { residue = this.W.close(); } catch (e) { closeErr = e; }
+        if (this.rc !== null) this.rc.close();   // RECYCLE: null the retained stale handles (no other lane pays)
         if (failure === null) {
             this.did('O5');   // the teardown residue check (counted like the at-rest O5: before close()'s outcome is read)
             if (closeErr !== NONE) this.engineError(closeErr, 'close()');

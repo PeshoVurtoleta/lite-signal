@@ -28,8 +28,8 @@ const parentOf = (id) => (id in PAR ? PAR[id] : -1);
 const f = (o, k) => ({ o, k });
 
 describe('OW registration', () => {
-    it('ORACLES ends with OW and SIGS.OW is [cleanup-order, callback-this]', () => {
-        assert.equal(ORACLES[ORACLES.length - 1], 'OW');
+    it('ORACLES holds OW and SIGS.OW is [cleanup-order, callback-this]', () => {
+        assert.ok(ORACLES.includes('OW'), JSON.stringify(ORACLES));
         assert.deepEqual(SIGS.OW, ['cleanup-order', 'callback-this']);
     });
 });
@@ -170,9 +170,36 @@ describe('LANE: OWNER lane rows (live; the lane is unrostered, imported directly
         assert.equal(cur.M.fired, 0);
     });
 
+    // b130 B3 r1 (GATE TEETH + DOMAIN CHECK): a malformed cleanup count fails closed (owner.mjs checkCl) on each of
+    // orwo.cl, oroot.cl and oroot.spec.cl separately; -0 is accepted and acts as 0. NaN runs first, so a coercing or
+    // disabled check goes red before the unbounded values (Infinity / 2**31) could run the addCl loop out of memory.
+    it('a malformed cleanup count (NaN, -1, 1.5, x, null, Infinity, 4, 2**31) on orwo.cl / oroot.cl / oroot.spec.cl throws; -0 acts as 0', () => {
+        const base = () => generateWorld(OWNER, 0xB126, { steps: 0 });
+        const fresh = (s) => 1 + Math.max(...[...JSON.stringify(s.ops).matchAll(/"c?i":(\d+)/g)].map((m) => Number(m[1])));
+        const spec = (cl) => ({ k: 'outer', t: 2, pre: [], ic: null, icU: false, post: [], role: 'owner', cl });
+        const SITES = {
+            'orwo.cl': (s, v) => ({ o: 'orwo', h: 0, ci: -1, k: 'e', spec: null, cl: v, g: 0 }),
+            'oroot.cl': (s, v) => ({ o: 'oroot', ci: -1, k: 'e', spec: null, cl: v }),
+            'oroot.spec.cl': (s, v) => ({ o: 'oroot', ci: fresh(s), k: 'e', spec: spec(v), cl: 0 }),
+        };
+        assert.equal(base().ops[0].i, 0, 'index 0 is the sentinel signal (orwo h)');
+        for (const v of [NaN, -1, 1.5, 'x', null, Infinity, 4, 2 ** 31]) {
+            for (const site of Object.keys(SITES)) {
+                const s = base();
+                s.ops.push(SITES[site](s, v));
+                assert.throws(() => runWorld(liteS3Adapter, s, { laneOps: OWNER.ops }), /is not a cleanup count/, site + ' = ' + String(v));
+            }
+        }
+        for (const site of ['orwo.cl', 'oroot.cl']) {
+            const s = base();
+            s.ops.push(SITES[site](s, -0));
+            assert.equal(runWorld(liteS3Adapter, s, { laneOps: OWNER.ops }).failure, null, site + ' = -0');
+        }
+    });
+
     // Row 2: ASSERTIONS 2. Fails if the mutant is not applied (0 failing worlds), if OW heads or appears in any world's
     // fails, if a head is not O1e / O4, or if the unmutated tree kernel fails a world (the control: not vacuously green).
-    it('a dropped cleanup heads O1e/O4 via the sentinel, not OW (cleanup mutant: no OW breach, sentinel S stays 0)', () => {
+    it('a dropped cleanup heads O1e/O4 via the sentinel, not OW (cleanup mutant: no OW breach)', () => {
         const ANCHOR = 'if (existing === undefined) currentOwner.cleanupFn = fn;';
         const src = readFileSync(new URL('../Signal.js', import.meta.url), 'utf8');
         assert.equal(src.split(ANCHOR).length - 1, 1, 'cleanup anchor must match exactly once');

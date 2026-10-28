@@ -105,6 +105,9 @@ export const CHECKS = deepFreeze({
     // b127 B5 (PLAN-R3-owner A5 (c)): the five T-owner-* tree mutants (the b125 R3 kernels, OW_ENV --smoke), each spec
     // known=none; heads: .handoff/b127-evidence/b5/heads-{1,2,3}.txt. P-OWNER-TREE is their pass control / revert.
     'lane:OWNER': ['T-owner-cascade', 'T-owner-cleanup', 'T-owner-fifo', 'T-owner-outin', 'T-owner-this'],
+    // b130 B5 (PLAN-R4 TASK 7): the three T-RC-* tree mutants (the b129 R4a kernels, RC_ENV --smoke), each spec
+    // known=none; heads: .handoff/b130-evidence/b5/heads-{1,2,3}.txt. P-RC-TREE is their pass control / revert.
+    'lane:RECYCLE': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen'],
     'gate:oracle': ['L-REV-152'],
     // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
     // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
@@ -138,6 +141,9 @@ export const CHECKS = deepFreeze({
     // b127 B5 (A2 / D-b124-2: oracle OW, sigs cleanup-order + callback-this): fifo (non-FIFO within an owner) and outin
     // (its ancestor fired first) head cleanup-order, this (a multi-cleanup with this = the array) heads callback-this
     'oracle:OW': ['T-owner-fifo', 'T-owner-outin', 'T-owner-this'],
+    // b130 B5 (PLAN-R4 TASK 7, O2: R4a lands stale-write / stale-read / stale-dispose; stale-thunk lands in R4c):
+    // setgen heads stale-write, readgen stale-read, dispgen stale-dispose
+    'oracle:O9': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
     'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
@@ -157,12 +163,17 @@ export const CHECKS = deepFreeze({
     'sig:O8:mirror-links': ['T-hook-mirror'],
     'sig:OW:cleanup-order': ['T-owner-fifo', 'T-owner-outin'],
     'sig:OW:callback-this': ['T-owner-this'],
+    'sig:O9:stale-write': ['T-RC-setgen'],
+    'sig:O9:stale-read': ['T-RC-readgen'],
+    'sig:O9:stale-dispose': ['T-RC-dispgen'],
     'cause:interrupted': ['L-I1', 'L-I2'],
     // b119 B5 (orphan rule): P-HOOK-TREE-COVOFF (b93) prints `INCONCLUSIVE -- scenario lane=HOOK missing=hook-non-lifo-off`,
     // P-NEST-TRIGGERLESS's shape, and was mapped nowhere
     // b127 B5: T-cov-OWNER (tree) and P-OWNER-HP (headpatched, a cov-off control per D-b124-1) print
     // `INCONCLUSIVE -- scenario lane=OWNER missing=cleanup-fifo` (cov-off:cleanup-fifo), P-HOOK-TREE-COVOFF's shape
-    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'T-cov-LIFECYCLE', 'P-HOOK-TREE-COVOFF', 'T-cov-OWNER', 'P-OWNER-HP']),
+    // b130 B5: T-cov-RECYCLE (tree) prints `INCONCLUSIVE -- scenario lane=RECYCLE missing=stale-dispose-recycled`
+    // (cov-off:stale-dispose-recycled), T-cov-OWNER's shape
+    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'T-cov-LIFECYCLE', 'P-HOOK-TREE-COVOFF', 'T-cov-OWNER', 'P-OWNER-HP', 'T-cov-RECYCLE']),
     'cause:check-floor': ['T-floor-BATCH'],
     // test/67 drives the same patch on live AND headpatched NEST and checks each line is inconclusiveLine('taint-skip')
     'cause:taint-skip': ['P-NEST-TAINT-HALF', TEST67],
@@ -275,6 +286,7 @@ export const NOT_TEETH = deepFreeze({
     'P-LC-tree': 'the LIFECYCLE pass control on the tree, the revert of every T-LC-* row (' + MF + ' P-LC-tree comment)',
     'T-mark': 'performance-only NOTE tooth: shape[GRAPH] markDedupe is report-only, no gate reads it (config.mjs MARK_DEDUPE_NOTE comment; gates.mjs REPORT_ONLY_GATES shape)',
     'P-OWNER-TREE': 'the OWNER pass control on the tree, the revert of every T-owner-* row (' + MF + ' P-OWNER-TREE comment)',
+    'P-RC-TREE': 'the RECYCLE pass control on the tree, the revert of every T-RC-* row (' + MF + ' P-RC-TREE comment)',
 });
 
 /** Does control `name` (or prefix pattern `X-*`) name something in `controls`? Returns the matches. */

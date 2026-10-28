@@ -63,6 +63,34 @@ The LEDGER #45 / #46 op-3 rules are unchanged (a throwing `onConnect` still anno
 bodies (+ `allocateLink`, `freeLink`, values unchanged); `test/torture.mjs` gains the `mreg` lane (steady-state, whole-run window
 gate and retention half in the pinned child). (User code running with `this` = the internal node was fixed later, LEDGER #48: see the #48 entry above.)
 
+### Tests / Docs -- soak: RECYCLE lane + O9 oracle (R4a, b130)
+
+Dev-only (`bench/soak/`, not shipped). No engine change in this rung: Signal.js is the tree kernel sha256/8
+  ec6d7156; no new engine claim.
+- New RECYCLE lane, the 9th rostered lane (`lanes/recycle.mjs`; `LANE_INDEX.RECYCLE` = 11, ROSTER length 9, laneSpan 12). It
+  drives stale-handle use after slot recycling with ops `rdisp` / `rsset` / `rsread` / `rsdisp` over a fixed per-world ring of 8
+  stale handles. SCENARIOS 52 -> 58 (stale-write-recycled, stale-peek-recycled, stale-read-recycled, stale-dispose-recycled,
+  stale-dead-unrecycled, multi-gen; covOff stale-dispose-recycled -> stale-dispose-dead).
+- New oracle O9, judged only inside RECYCLE's op handlers, sigs `stale-read` (a stale read / peek returns != undefined),
+  `stale-write` (any live signal peek != model, any effect ran, or, maintainer ruling D-b130-1, a live computed the model holds
+  CLEAN peeks != model) and `stale-dispose` (activeNodes / activeLinks moved, or a live signal handle reads undefined).
+- Census 200 worlds x tree ec6d7156 / headpatched fa2871f0 / rev152 f8dd50f8: 0 failing. Timed calibration recut (QUIET,
+  load1 2.58 / baseline 2.21, 1055 s, 2026-10-28T05:51Z); after the B3 r2 `checkCl` fix the committed soak-calibration.json
+  was re-cut non-timed with `--import-throughput` of that run (counts identical): RECYCLE 2717 full / 150 smoke worlds, 0
+  failing on all 3 kernels; LANE_KERNELS.RECYCLE = headpatched, lite-1.5.2, tree. parity.json FILES 50 -> 51 (+
+  lanes/recycle.mjs). REPORTED tier: gates nothing, no speed claim.
+- Must-fail controls (5 new): T-RC-setgen, T-RC-readgen, T-RC-dispgen (one-hunk tree mutants of the generation guards: read.set
+  Signal.js:2075, sharedSignalPeek :2019, registry dispose(api) :2425; each breaches O9 with its sig), T-cov-RECYCLE (exit 3,
+  missing=stale-dispose-recycled) and the pass control P-RC-TREE. _mustfail now lists 71 controls (53 short + 18 long).
+  teeth.mjs: universe 68, CHECKS ids 58, GAPS 22, NOT_TEETH 9, UNREACHABLE 5.
+- Found on the way: LEDGER #51 (a stale `update(fn)` passes the recycled resident's value to `fn`; OPEN, D-b129-1). Recorded in
+  LEDGER #51 (b129); not fixed here.
+- Tests: new `test/88` (117 rows); `test/45` 37 tests; `test/54` (b129) CLI hang diagnostic (SIGUSR2 node report with an
+  inspector `Debugger.pause` fallback, 120 s ceiling, self-test row with a planted spin and a planted stall). `npm test` 2504
+  tests / 2491 pass / 0 fail / 12 skip / 1 todo (node v26.8.2).
+- `owner.mjs` cleanup counts now fail closed (`checkCl`: an integer in 0..CL_MAX = 3) instead of `| 0` (FILLER 55);
+  `test/87` 48 -> 49 tests (malformed-cl row).
+
 ### Tests / Docs -- soak: OWNER lane + OW oracle (R3, b124-b127)
 
 Dev-only (`bench/soak/`, not shipped). No engine change in this rung: Signal.js is the tree kernel sha256/8 ec6d7156

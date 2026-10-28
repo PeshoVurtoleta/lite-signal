@@ -28,6 +28,12 @@
  *        checkOwThis     a lane callback (cleanup, createRoot fn, runWithOwner fn) ran with this !== undefined
  *                        (exec.mjs owCheck, at runBody entry, at rest, at the world end and after the lane's odisp / opull,
  *                        while exec.ow !== null)
+ *   O9   checkO9Read     (S3 R4a, the RECYCLE lane only) a read / peek through a STALE handle (its node disposed, the
+ *                        slot dead or recycled) returned a value: anything but undefined (null is a value)
+ *        checkO9Write    a set through a stale handle moved a live signal's value off the model or ran an effect body
+ *        checkO9Dispose  a dispose of a stale handle moved stats() activeNodes / activeLinks or left a live handle
+ *                        reading undefined (lanes/recycle.mjs calls all three right after its own stale op; no other
+ *                        lane and no exec path pays: exec only carries exec.rc, null off the lane)
  *
  * COLD module.
  */
@@ -35,7 +41,7 @@
 import { Model } from './model.mjs';
 import { SoakThrow, sameValue, showValue, specRefs } from './kinds.mjs';
 
-export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW']);
+export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9']);
 
 /** The sig vocabulary (SPEC-B section 6; escape-<origin> / escape-<Ctor> are open families). */
 export const SIGS = Object.freeze({
@@ -50,6 +56,7 @@ export const SIGS = Object.freeze({
     OB: ['batch-early-run'],
     O8: ['ghost-listener', 'mirror-links'],
     OW: ['cleanup-order', 'callback-this'],
+    O9: ['stale-write', 'stale-read', 'stale-dispose'],
 });
 
 const DETAIL_MAX = 240;
@@ -420,4 +427,49 @@ export function checkOwOrder(fires, parentOf) {
 export function checkOwThis(name, thisValue) {
     if (thisValue === undefined) return null;
     return { oracle: 'OW', sig: 'callback-this', detail: cut(name + ' this=' + (Array.isArray(thisValue) ? 'array(' + thisValue.length + ')' : typeof thisValue)) };
+}
+
+/* ---- O9 (S3 R4a, the RECYCLE lane only: lanes/recycle.mjs calls these after its stale op) ---------------------- */
+
+/** A bad input, named without coercing it (String() of a null-prototype object throws). */
+function o9Show(x) {
+    if (typeof x === 'number') return showValue(x);
+    if (typeof x === 'string') return JSON.stringify(x);
+    return x === null ? 'null' : typeof x;
+}
+
+/** Fails closed (TypeError) unless label is a string and every count is a safe integer >= 0 that is not -0. */
+function o9Check(fn, label, names, vals) {
+    if (typeof label !== 'string') throw new TypeError(fn + ': label must be a string, got ' + o9Show(label));
+    for (let j = 0; j < names.length; j++) {
+        const v = vals[j];
+        if (!Number.isSafeInteger(v) || v < 0 || Object.is(v, -0)) throw new TypeError(fn + ': ' + names[j] + ' must be an integer >= 0, got ' + o9Show(v));
+    }
+}
+
+/** O9 stale-read: a read / peek of a stale handle returned got; only undefined passes (null is a value). */
+export function checkO9Read(label, got) {
+    o9Check('checkO9Read', label, [], []);
+    if (got === undefined) return null;
+    return { oracle: 'O9', sig: 'stale-read', detail: cut(label + ' returned ' + o9Show(got) + ' (want undefined)') };
+}
+
+/**
+ * O9 stale-write: after a set through a stale handle, mism = live signals whose peek differs from the model and
+ * ran = effect bodies that ran during the op. Any non-zero count is the finding.
+ */
+export function checkO9Write(label, mism, ran) {
+    o9Check('checkO9Write', label, ['mism', 'ran'], [mism, ran]);
+    if (mism === 0 && ran === 0) return null;
+    return { oracle: 'O9', sig: 'stale-write', detail: cut(label + ': ' + mism + ' live signal(s) off the model, ' + ran + ' effect body run(s) during the stale op') };
+}
+
+/**
+ * O9 stale-dispose: stats() activeNodes / activeLinks before and after a dispose of a stale handle must be equal, and
+ * liveUndef (live model handles reading undefined after it) must be 0.
+ */
+export function checkO9Dispose(label, nodesBefore, nodesAfter, linksBefore, linksAfter, liveUndef) {
+    o9Check('checkO9Dispose', label, ['nodesBefore', 'nodesAfter', 'linksBefore', 'linksAfter', 'liveUndef'], [nodesBefore, nodesAfter, linksBefore, linksAfter, liveUndef]);
+    if (nodesAfter === nodesBefore && linksAfter === linksBefore && liveUndef === 0) return null;
+    return { oracle: 'O9', sig: 'stale-dispose', detail: cut(label + ': activeNodes ' + nodesBefore + ' -> ' + nodesAfter + ', activeLinks ' + linksBefore + ' -> ' + linksAfter + ', ' + liveUndef + ' live handle(s) read undefined') };
 }

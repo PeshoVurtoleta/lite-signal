@@ -107,7 +107,7 @@
       "id": "DIV-F11", "kind": "fix", "finding": "F11", "since": "1.5.2", "fixedIn": null, "fixBy": "A10/A7",
       "decision": "fix (FIX-G): Smi gen plus slot retirement",
       "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
-      "pending": "S2 W3 (wrap.mjs, test/wrap/w3-gen) and S3 O9 stale-handle ops",
+      "pending": "S2 W3 (wrap.mjs, test/wrap/w3-gen): the gen-wrap ABA; the S3 O9 stale-handle ops landed (R4a RECYCLE, b130)",
       "conformanceCases": [], "expectedThrow": null,
       "description": "gen wraps after 2^32 recycles of one slot; a stale handle's set() writes into an unrelated live signal."
     },

@@ -9,8 +9,9 @@
  * run is caused by a lane op and the one-shot exec action of that run is always installed. spec.cl = the PERSISTENT
  * cleanups the body registers on every run (B1 row 4: a registration set fires once, so a body re-registers).
  *
- * Ops (lane-owned, exec.mjs laneOp). Every op body runs inside ONE engine batch (inBatch: exec.guard + W.batch +
- * exec.batchDepth, so an effect re-run inside it still fails OB), then a second batch-wrapped sweep:
+ * Ops (lane-owned, exec.mjs laneOp). Every op that can stale a computed (oarm / orwo / oroot) runs inside ONE engine
+ * batch (inBatch: exec.guard + W.batch + exec.batchDepth, so an effect re-run inside it still fails OB), then a second
+ * batch-wrapped sweep; osent / odisp / opull stale none (odisp / opull run one batch, osent none):
  *   osent { i }             mark signal i the sentinel (model.setSentinel); the first lane op of every world
  *   oarm  { i, t, v, a }    one-shot action for owner i's next run, then t := decodeValue(v) (a change, so the run is
  *                           certain). a = { c: [{ k: 'e'|'c'|'s', ci, spec }], cl: 0..3, root: { k, ci, spec } | null,
@@ -31,7 +32,8 @@
  *   (1) every owner re-eval is batch-wrapped, the at-rest O1c and the world-end pull included, WITHOUT an exec change:
  *       a computed owner re-evaluates only in a lane sweep (sweep(): every live computed, index order, so a child --
  *       always a higher index -- is pulled after its parent) inside the op's batches, and effect owners re-run in a
- *       batch close-flush. Every lane op ends with a batch-wrapped sweep, so no computed is stale at rest: the exec
+ *       batch close-flush. Every op that can stale a computed (oarm / orwo / oroot) ends with a batch-wrapped sweep
+ *       (osent / odisp / opull stale none), so no computed is stale at rest: the exec
  *       O1c / end pulls read clean computeds and never fire a cleanup. A cleanup write is then deferred to the batch
  *       close (B1 row 6), never run mid-cascade, and one owCheck window holds a whole cascade (FIFO / ancestor order).
  *   (2) teardown is O5-only: close() disposes every handle without the model, so its fires are unjudgeable and a
@@ -59,6 +61,7 @@ import { specRefs, decodeValue } from '../kinds.mjs';
 const MIX = Object.freeze({ oarm: 46, orwo: 16, oroot: 12, odisp: 12, opull: 6 });
 const CHILD = Object.freeze({ e: 45, c: 40, s: 15 });   // what an effect owner's run creates (a computed: 'c' only)
 const CL = Object.freeze({ 0: 3, 1: 3, 2: 2, 3: 1 });   // cleanups per draw (spec.cl, a.cl, orwo cl)
+const CL_MAX = Math.max(...Object.keys(CL).map(Number));   // 3: the largest count CL draws (checkCl's bound)
 const TOP_RANK = 1000;  // the sentinel's rank: above every lane signal (rank 0)
 const MIN_OWNERS = 3;   // below it a step adds a rooted owner
 const MAX_OWNERS = 32;  // at or above it a run creates no node
@@ -308,6 +311,13 @@ function checkNode(x, c) {
     if ((c.k !== 'e' && c.k !== 'c') || c.spec === null || typeof c.spec !== 'object' || c.spec.k !== 'outer') {
         unmodelled(x, 'node #' + c.ci + ' has no owner spec');
     }
+    checkCl(x, c.spec.cl, 'node #' + c.ci + ' spec');
+}
+
+/** Fail closed on a malformed cleanup count: an integer in [0, CL_MAX] (never coerced: `cl | 0` would run 0 cleanups
+ *  for 'x' / 1.5 / NaN; an unbounded 2**31 would run the addCl loop out of memory). */
+function checkCl(x, cl, what) {
+    if (!Number.isInteger(cl) || cl < 0 || cl > CL_MAX) unmodelled(x, what + ' cl ' + String(cl) + ' is not a cleanup count');
 }
 
 /** Create node c under parent (the running owner, a runWithOwner owner, or -1 rooted); its first run gets the action. */
@@ -344,7 +354,7 @@ function root(x, ow, c, cl) {
 /** Owner i's body action (the exec one-shot): spec.cl + a.cl cleanups, then the created nodes, the root, the grab. */
 function bodyAction(x, i, a) {
     const ow = x.ow;
-    const n = (x.M.n[i].spec.cl | 0) + (a === null ? 0 : a.cl | 0);
+    const n = x.M.n[i].spec.cl + (a === null ? 0 : a.cl);   // checked at creation (checkNode) / arm (checkAction)
     for (let j = 0; j < n; j++) addCl(x, ow, i);
     if (a === null) return;
     if (a.grab === 1) ow.grab.set(i, x.W.getOwner());
@@ -359,6 +369,8 @@ function checkAction(x, a) {
     }
 }
 
+/** An osent shrunk away leaves ow.sent -1: bump() is silent, so that world loses its cleanup-count oracle (only
+ *  test/87 row 2's >= 1 failing world guards the count). */
 function opSent(x, op) {
     const ow = stateOf(x);
     const nd = x.M.n[op.i];
@@ -391,12 +403,13 @@ function opArm(x, op) {
 
 function opRwo(x, op) {
     const ow = stateOf(x);
+    checkCl(x, op.cl, 'orwo');
     const h = op.h;
     if (!Number.isInteger(h) || h < 0 || x.H[h] === undefined) return;   // shrunk away
     const lo = x.M.liveOwner(h);
     const handle = op.g === 1 && lo >= 0 && ow.grab.has(h) ? ow.grab.get(h) : x.H[h];
     const c = op.ci >= 0 ? { k: op.k, ci: op.ci, spec: op.spec } : null;
-    const cl = op.cl | 0;
+    const cl = op.cl;
     inBatch(x, () => {
         let did = 0;
         x.W.runWithOwner(handle, function () {
@@ -412,8 +425,9 @@ function opRwo(x, op) {
 
 function opRoot(x, op) {
     const ow = stateOf(x);
+    checkCl(x, op.cl, 'oroot');
     const c = op.ci >= 0 ? { k: op.k, ci: op.ci, spec: op.spec } : null;
-    inBatch(x, () => { root(x, ow, c, op.cl | 0); sweep(x); });
+    inBatch(x, () => { root(x, ow, c, op.cl); sweep(x); });
     inBatch(x, () => sweep(x));
 }
 

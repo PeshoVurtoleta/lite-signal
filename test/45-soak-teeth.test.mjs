@@ -58,9 +58,10 @@ const GAP_COVERED = [
 // cause:wrap-unmeasured; 35 at burst 68: lane:WIE; 36 at burst 81: gate:rss; 40 at burst 93: lane:HOOK, oracle:O8,
 // sig:O8:ghost-listener, sig:O8:mirror-links; 47 at burst 112: lane:LIFECYCLE, oracle:O7 and the five sig:O7:* ids;
 // 53 at burst 127 B5: lane:OWNER, oracle:OW, sig:OW:cleanup-order, sig:OW:callback-this, and (A6) sig:O5:node-count,
-// sig:O5:kind-count).
+// sig:O5:kind-count; 58 at burst 130 B5: lane:RECYCLE, oracle:O9, sig:O9:stale-write, sig:O9:stale-read,
+// sig:O9:stale-dispose).
 // A dropped id is a lost tooth; raise it when one lands.
-const CHECKS_MIN = 53;
+const CHECKS_MIN = 58;
 
 const copy = (x) => structuredClone(x);
 const live = (over) => audit(Object.assign({ controls: CONTROL_NAMES.slice(), ceiling: GAPS_CEILING.slice(), max: GAPS_MAX }, over || {}));
@@ -79,7 +80,7 @@ test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 22-n
     assert.deepEqual(live(), []);
 });
 
-test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 53 ids (a tooth never quietly becomes a gap)', () => {
+test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 58 ids (a tooth never quietly becomes a gap)', () => {
     assert.equal(GAP_COVERED.length, 9);
     assert.deepEqual(coveredBy(GAPS), GAP_COVERED.slice().sort());
     assert.ok(Object.keys(CHECKS).length >= CHECKS_MIN, 'CHECKS ids ' + Object.keys(CHECKS).length + ' < ' + CHECKS_MIN);
@@ -693,7 +694,7 @@ test('teeth j: B5 -- validSpec: extra.pass is wrap-only, a non-empty list of dis
 });
 
 test('teeth j: B5 -- audit(): every _mustfail control is under some CHECKS id or in NOT_TEETH (orphan control: <name>)', () => {
-    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE']);
+    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE']);
     assert.ok(CHECKS['cause:scenario'].includes('P-HOOK-TREE-COVOFF'), 'the b93 HOOK cov-off scenario control is a cause:scenario tooth');
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']) }), ['orphan control: X-orphan']);
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']), notTeeth: Object.assign({}, NOT_TEETH, { 'X-orphan': 'a reason' }) }), []);
@@ -1046,4 +1047,80 @@ test('teeth q: the OWNER ids have teeth -- P-OWNER-TREE, T-cov-OWNER, P-OWNER-HP
     const g3 = copy(GAPS);
     g3['T-O5-counts'].covers = g3['T-O5-counts'].covers.concat(['sig:O5:node-count']);
     hasProblem(live({ gaps: g3 }), 'stale GAP: T-O5-counts covers sig:O5:node-count, which has CHECKS');
+});
+
+/* ---- r. the RECYCLE teeth (b130 B5, PLAN-R4 TASK 7: three tree mutants, a pass control, a cov-off row) ------------- */
+
+const RC = (sig) => 'oracle=O9 lane=RECYCLE sig=' + sig + ' known=none';
+const RC_ROWS = [
+    // [name, the anchor (full line(s)) in the live Signal.js, the b129 mutant's replacement, the row's specs]
+    ['T-RC-setgen', '        read.set = (value) => {\n            if (node.gen !== birthGen) return;\n',
+        '        read.set = (value) => {\n            /* MUT */\n', [RC('stale-write')]],
+    ['T-RC-readgen', '        if (this[NODE_GEN] !== node.gen) return undefined;   // stale handle: slot recycled (ABA guard, matches read())\n',
+        '', [RC('stale-read')]],
+    ['T-RC-dispgen', '        if (api[NODE_GEN] !== node.gen) return;\n', '', [RC('stale-dispose')]],
+];
+const RC_ENV = { SOAK_LANES: 'RECYCLE' };
+const RC_COV_ENV = { SOAK_LANES: 'RECYCLE', SOAK_MUSTFAIL: 'cov-off:stale-dispose-recycled' };
+const RC_COV_LINE = 'soak: INCONCLUSIVE -- scenario lane=RECYCLE missing=stale-dispose-recycled';
+
+test('teeth r: the RECYCLE ids have teeth -- P-RC-TREE, T-cov-RECYCLE and three one-hunk T-RC-* tree mutants; each pairs', () => {
+    const NEW = ['lane:RECYCLE', 'oracle:O9', 'sig:O9:stale-write', 'sig:O9:stale-read', 'sig:O9:stale-dispose'];
+    const u = universe();
+    for (const id of NEW) {
+        assert.ok(u.includes(id), id + ' is a judged id');
+        assert.ok(Array.isArray(CHECKS[id]) && CHECKS[id].length >= 1, id + ' has a CHECKS control');
+    }
+    const names = RC_ROWS.map((r) => r[0]);
+    assert.deepEqual(CHECKS['lane:RECYCLE'], names);
+    assert.deepEqual(CHECKS['oracle:O9'], names);
+    assert.deepEqual(CHECKS['sig:O9:stale-write'], ['T-RC-setgen']);
+    assert.deepEqual(CHECKS['sig:O9:stale-read'], ['T-RC-readgen']);
+    assert.deepEqual(CHECKS['sig:O9:stale-dispose'], ['T-RC-dispgen']);
+    assert.ok(CHECKS['cause:scenario'].includes('T-cov-RECYCLE'), 'cause:scenario -> T-cov-RECYCLE');
+    assert.equal(typeof NOT_TEETH['P-RC-TREE'], 'string');
+    // the pass / revert control: tree unpatched, the FULL lane, exit 0
+    const p = CONTROLS.find((x) => x.name === 'P-RC-TREE');
+    assert.ok(p && SHORT_RE.test(p.name));
+    assert.deepEqual([p.run, p.base, p.env, p.argv, p.patches, p.arm, p.expect.exit, p.expect.kind, p.expect.lines, p.expect.specs, p.expect.extra],
+        ['main', 'tree', RC_ENV, ['--smoke'], [], null, 0, 'nobreach', [], [], { verdict: 'SMOKE' }]);
+    assert.deepEqual(validSpec(p), []);
+    // the coverage row: tree, rsdisp names dead slots only (cov-off:stale-dispose-recycled), exit 3, 0 BREACH
+    const t = CONTROLS.find((x) => x.name === 'T-cov-RECYCLE');
+    assert.ok(t && SHORT_RE.test(t.name));
+    assert.deepEqual([t.run, t.base, t.env, t.argv, t.patches, t.arm, t.expect.exit, t.expect.kind, t.expect.lines, t.expect.specs],
+        ['main', 'tree', RC_COV_ENV, ['--smoke'], [], null, 3, 'nobreach', [RC_COV_LINE], ['INCONCLUSIVE scenario lane=RECYCLE missing=stale-dispose-recycled']]);
+    assert.deepEqual(validSpec(t), []);
+    // each mutant: an exactly-once anchor in the live Signal.js, the b129 mutant's exact text, P-RC-TREE's shape
+    assert.deepEqual(CONTROLS.filter((x) => x.name.indexOf('T-RC-') === 0).map((x) => x.name), names, 'RC_ROWS names every T-RC-* row, in order');
+    const base = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
+    for (const [name, anchor, repl, specs] of RC_ROWS) {
+        const c = CONTROLS.find((x) => x.name === name);
+        assert.ok(c && SHORT_RE.test(name), name + ' exists in the short battery');
+        assert.deepEqual([c.run, c.base, c.env, c.argv, c.arm, c.expect.exit, c.expect.kind, c.expect.lines, c.expect.specs], ['main', 'tree', RC_ENV, ['--smoke'], null, 1, 'match', [], specs], name);
+        assert.deepEqual(validSpec(c), [], name);
+        assert.deepEqual(c.patches, [[anchor, repl]], name);
+        assert.equal(base.split(anchor).length - 1, 1, name + ': the anchor occurs exactly once in Signal.js');
+        const k = buildKernel(c).src;
+        assert.equal(k, base.replace(anchor, () => repl), name + ': the kernel = Signal.js with exactly that hunk replaced');
+        // setgen replaces its guard line, readgen / dispgen drop theirs
+        const a = base.split('\n'), b = k.split('\n');
+        assert.equal(a.length - b.length, repl === '' ? 1 : 0, name + ': line count');
+    }
+    assert.deepEqual(pairing(CHECKS, CONTROLS), []);
+    // must-fail: setgen's spec moved to stale-read no longer backs sig:O9:stale-write; a lane=OWNER spec not lane:RECYCLE
+    const ctl = copy(CONTROLS);
+    const sg = ctl.find((x) => x.name === 'T-RC-setgen');
+    sg.expect.specs = [RC('stale-read')];
+    assert.deepEqual(pairing(CHECKS, ctl), ['sig:O9:stale-write: T-RC-setgen -- no BREACH spec naming oracle=O9 with sig in stale-write']);
+    sg.expect.specs = ['oracle=O9 lane=OWNER sig=stale-write known=none'];
+    assert.deepEqual(pairing(CHECKS, ctl), ['lane:RECYCLE: T-RC-setgen -- no BREACH spec naming lane=RECYCLE']);
+    // must-fail: a T-RC row dropped from CHECKS is an orphan; the registry without the RECYCLE CHECKS leaves all five ids uncovered
+    const c1 = copy(CHECKS);
+    for (const id of Object.keys(c1)) c1[id] = c1[id].filter((n) => n !== 'T-RC-dispgen');
+    hasProblem(live({ checks: c1 }), 'orphan control: T-RC-dispgen');
+    const c2 = copy(CHECKS);
+    for (const id of NEW) delete c2[id];
+    const probs = live({ checks: c2 });
+    for (const id of NEW) hasProblem(probs, 'uncovered: ' + id + ' has no CHECKS control, no GAP and no UNREACHABLE proof');
 });

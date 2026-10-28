@@ -89,9 +89,13 @@ export const LANE_KERNELS = Object.freeze({
     HOOK: Object.freeze(['headpatched', 'tree']),
     // LIFECYCLE (S3 R2, b111 A1 Q1): tree only while DIV-D3 is open; ends with the A5 rung / P-LC-tree
     LIFECYCLE: Object.freeze(['tree']),
-    // OWNER (R3, b126 B3; D-b124-1 = PLAN-R3-owner A1): tree only while DIV-48 is open (headpatched / rev152 run a
-    // multi-cleanup with this = the cleanup array, OW callback-this by design); P-OWNER-TREE is the pass control
+    // OWNER (R3, b126 B3; D-b124-1 = PLAN-R3-owner A1): tree only: the frozen controls headpatched / rev152 carry
+    // DIV-48 (fixed b120-#48 on the tree) in every OWNER world (a multi-cleanup runs with this = the cleanup array,
+    // OW callback-this by design); P-OWNER-TREE is the pass control
     OWNER: Object.freeze(['tree']),
+    // RECYCLE (R4a, b130 B3): every kernel (B2b census 200 worlds x headpatched / lite-1.5.2 / tree, 0 BREACH); listed
+    // because an unlisted lane never runs on the lane-only tree; headpatched first (covOff)
+    RECYCLE: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
 });
 /** The kernel ids that cut `lane` (a fresh array). */
 export const kernelsFor = (lane) => (own(LANE_KERNELS, lane) ? LANE_KERNELS[lane].slice() : Object.keys(KERNELS));
@@ -162,7 +166,7 @@ export { PINNED };
 // the roster flip would turn (p) red with no cut to clear it.
 export const LANE_PINS = Object.freeze({
     WIE: 'bench/soak/lanes/wie.mjs', HOOK: 'bench/soak/lanes/hook.mjs', LIFECYCLE: 'bench/soak/lanes/lifecycle.mjs',
-    OWNER: 'bench/soak/lanes/owner.mjs',
+    OWNER: 'bench/soak/lanes/owner.mjs', RECYCLE: 'bench/soak/lanes/recycle.mjs',
 });
 /** PINNED + the pins of the rostered lanes (roster order). */
 export const pinnedFor = (roster) => PINNED.concat(roster.filter((l) => own(LANE_PINS, l)).map((l) => LANE_PINS[l]));

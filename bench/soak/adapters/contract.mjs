@@ -110,6 +110,7 @@ export const ORACLE_CAPS = Object.freeze({
     OB: ['batch'],
     O8: ['hook'],
     OW: ['owner'],
+    O9: ['recycle'],
 });
 
 /**
