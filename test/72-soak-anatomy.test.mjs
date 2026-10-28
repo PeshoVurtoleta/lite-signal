@@ -280,25 +280,64 @@ function child(src) {
     return JSON.parse(r.stdout.trim().split('\n').pop());
 }
 
-test('anatomy GC: foldCounts slope (delta(64 x 2^14 calls) - delta(2^14 calls)) / (63 x 2^14) |.| <= 0.01 B/op; a TRANSIENT allocating control >= 32 B/op', () => {
-    const o = child(`
+/* b125 (FILLER 41): a GC-COUNT window replaces the heapUsed slope (the test/71 b122 design; the old t71 slope row flaked
+ * on CI at -0.010044 B/op: ~10 KB of load / new-space noise over ~1M ops). A 1 MB semi-space (S = 1,048,576 B) means
+ * any young allocation A forces >= floor(A / S) minors, so N = 2^24 ops with 0 events bounds foldCounts below
+ * S / N = 0.0625 B/op. --single-threaded makes the tier-up depend on the call budget only, not on host load;
+ * --max-old-space-size is pinned (CI heap is smaller than the dev Mac). The window counts EVERY event kind (a major
+ * would also hide young allocation). minorsOf fails closed: any gcType not a known major / incremental / weak-callback
+ * pass counts as a minor. CONTROL FLOORS from measurement (b125, node v26.8.2 darwin, 8 runs, load1 4-5): the 16 B/op
+ * box control counted 256 minors and the 32 B/op object control 512 (= 16N / S and 32N / S exactly); at a 2 MB
+ * semi-space they counted 128 / 256. Floors 230 / 460 (~90%) fail a 2 MB semi-space, so they PROVE <= 16 N / 230 B
+ * per minor: resolution <= 16 / 230 = 0.070 B/op. Both controls are TRANSIENT (each value dies at the next op). */
+function minorsOf(stats) {
+    let m = 0;
+    for (const e of stats) if (e.gcType !== 'MarkSweepCompact' && e.gcType !== 'IncrementalMarking' && e.gcType !== 'ProcessWeakCallbacks') m++;
+    return m;
+}
+const GC_KINDS = ['Scavenge', 'MinorMarkSweep', 'MarkSweepCompact', 'IncrementalMarking', 'ProcessWeakCallbacks'];
+const GC_FLAGS = ['--expose-gc', '--single-threaded', '--max-old-space-size=256', '--min-semi-space-size=1', '--max-semi-space-size=1'];
+const BOX_FLOOR = 230, OBJ_FLOOR = 460;
+
+function gcChild(flags, src) {
+    const r = spawnSync(process.execPath, [...flags, '--input-type=module', '-e', src],
+        { cwd: ROOT, encoding: 'utf8', timeout: 240000 });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout.trim().split('\n').pop());
+}
+
+test('anatomy GC: foldCounts allocates nothing -- 0 GC events (any kind, v8.GCProfiler) over N = 2^24 calls in a 1 MB semi-space, --single-threaded (resolution 0.0625 B/op; floor-proven <= 0.070 B/op); TRANSIENT 16 B/op box and 32 B/op object controls count >= 230 / >= 460 minors', () => {
+    const o = gcChild(GC_FLAGS, `
+import v8 from 'node:v8';
 import { foldCounts } from './bench/soak/anatomy.mjs';
-const N = 1 << 14;
+${minorsOf.toString()}
+if (typeof v8.GCProfiler !== 'function' || typeof gc !== 'function') throw new Error('t72: v8.GCProfiler and gc() are required');
 const A = new Float64Array(16), VC = new Int32Array(16);
 for (let i = 0; i < 12; i++) VC[i] = i + 1;
-const run = (fn, n) => { gc(); gc(); const b = process.memoryUsage().heapUsed; fn(n); return process.memoryUsage().heapUsed - b; };
+const BOX = ['tagged'];
+let sink = null;
 const real = (n) => { for (let i = 0; i < n; i++) foldCounts(VC, A); };
+// controls: one 16 B HeapNumber per op (a double stored into a tagged array) / one 32 B object per op; each dies young
+const box = (n) => { for (let i = 0; i < n; i++) { foldCounts(VC, A); BOX[0] = i + 0.5; } };
+const obj = (n) => { for (let i = 0; i < n; i++) { foldCounts(VC, A); sink = { i }; } };
+const win = (fn, n) => { gc(); const p = new v8.GCProfiler(); p.start(); fn(n); return p.stop().statistics; };
 for (let i = 0; i < 200000; i++) foldCounts(VC, A);
-const d1 = run(real, N), d16 = run(real, 64 * N);
-// control: a fresh 4-field object per call, dropped at once (transient; typed arrays are under-counted by heapUsed); 16 x 2^14 x >= 32 B stays inside the 64 MB semi-space
-const sink = new Array(8).fill(null);   // escapes the allocation (no scalar replacement); only 8 survive, the rest is transient
-const bad = (n) => { for (let i = 0; i < n; i++) { sink[i & 7] = { a: i, b: 2, c: 3, d: 4 }; foldCounts(VC, A); } };
-const c1 = run(bad, N), c16 = run(bad, 16 * N);
-process.stdout.write(JSON.stringify({ slope: (d16 - d1) / (63 * N), ctl: (c16 - c1) / (15 * N) }));
+real(200000); box(200000); obj(200000);
+const N = 1 << 24;
+const r = win(real, N), b = win(box, N), o = win(obj, N);
+const kinds = (s) => s.map((e) => e.gcType);
+process.stdout.write(JSON.stringify({ N, flags: process.execArgv.filter((a) => a.startsWith('--') && a !== '--input-type=module'), real: kinds(r), boxMinors: minorsOf(b), objMinors: minorsOf(o),
+    boxKinds: [...new Set(kinds(b))], objKinds: [...new Set(kinds(o))], used: sink !== null && BOX[0] !== 'tagged' && A[11] > 0 }));
 `);
-    console.log('anatomy foldCounts GC slope B/op: ' + o.slope + ' (control ' + o.ctl + ')');
-    assert.ok(Math.abs(o.slope) <= 0.01, 'slope B/op ' + o.slope);
-    assert.ok(o.ctl >= 32, 'the transient control must show, got ' + o.ctl);
+    console.log('anatomy foldCounts GC window: real events ' + JSON.stringify(o.real) + ' | box control minors ' + o.boxMinors + ' ' + JSON.stringify(o.boxKinds) +
+        ' | object control minors ' + o.objMinors + ' ' + JSON.stringify(o.objKinds));
+    assert.deepEqual(o.flags, GC_FLAGS, 'the child runs under the pinned flags');
+    assert.equal(o.N, 1 << 24);
+    assert.equal(o.used, true);
+    for (const k of [...o.real, ...o.boxKinds, ...o.objKinds]) assert.ok(GC_KINDS.includes(k), 'unknown gcType ' + k + ' (fail closed)');
+    assert.ok(o.boxMinors >= BOX_FLOOR, 'the 16 B/op box control must count >= ' + BOX_FLOOR + ' minors, got ' + o.boxMinors);
+    assert.ok(o.objMinors >= OBJ_FLOOR, 'the 32 B/op object control must count >= ' + OBJ_FLOOR + ' minors, got ' + o.objMinors);
+    assert.deepEqual(o.real, [], 'foldCounts window saw GC events ' + JSON.stringify(o.real));
 });
 
 test('anatomy GC: 3 cycles x 16 shadow worlds under lite-leak, forced drain -> tracker.size() 0 and 0 live WeakRefs each cycle; a retaining control keeps >= 16', () => {
