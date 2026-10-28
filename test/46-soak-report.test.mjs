@@ -13,7 +13,7 @@
  * mustfail, scratch kernel) prove the opposite direction: an honest stream is never labelled INTEGRITY.
  *
  * Release policy (burst 12, maintainer decision c: the full roster, at default volume, on a clean committed tree):
- * a release-size tree stream (7 lanes, the roster, x DEFAULT_CYCLES x DEFAULT_OPS) is too slow to generate here, so the ACCEPTED
+ * a release-size tree stream (8 lanes, the roster, x DEFAULT_CYCLES x DEFAULT_OPS) is too slow to generate here, so the ACCEPTED
  * path is proven on the exported PURE releaseRefusal() with the REAL REV-152 header relabelled as a tree run and
  * edited field by field (RELEASE table); the CLI rows prove the small honest streams refuse with the first class.
  */
@@ -188,13 +188,13 @@ after(async () => {
 
 /* ---- honest streams: consistent, never INTEGRITY ----------------------------------------------------- */
 
-test('B5: the untampered REV-152 stream (1.5.2, 7 lanes, 11 cycles) -> exit 0, the control NOTE, `soak:report: verdict FAIL (consistent)` last', () => {
+test('B5: the untampered REV-152 stream (1.5.2, 8 lanes, 11 cycles) -> exit 0, the control NOTE, `soak:report: verdict FAIL (consistent)` last', () => {
     const s = S.rev;
     assert.equal(s.status, 1, 'main judged 1.5.2 FAIL: ' + s.stderr.slice(0, 400));
     assert.equal(s.recs[0].controls.name, 'rev152');
     const r = expectConsistent('rev');
     assert.equal(r.out[r.out.length - 1], 'soak:report: verdict FAIL (consistent)');
-    assert.match(r.out[0], /^soak:report: stream records=\d+ kernel=control:rev152 engine=lite lanes=GRAPH,BATCH,ERROR,NEST,WIE,HOOK,LIFECYCLE cycles=\d+ /);
+    assert.match(r.out[0], /^soak:report: stream records=\d+ kernel=control:rev152 engine=lite lanes=GRAPH,BATCH,ERROR,NEST,WIE,HOOK,LIFECYCLE,OWNER cycles=\d+ /);
     assert.equal(r.out[r.out.length - 2], 'soak:report: NOTE -- control kernel rev152, not release evidence');
     assert.equal(r.out.filter((l) => l.indexOf('soak:report: NOTE -- control kernel ') === 0).length, 1, JSON.stringify(r.out));
 });
@@ -388,7 +388,7 @@ function asTree(recs, sig, wat, parityOk) {
 test('a small GRAPH-only tree run at the parity.json pins, parity ok -> consistent, then NOT A RELEASE SOAK -- lane-subset (the first class), kernel=tree', () => {
     const r = expectRefusal(tamper('scratch', (recs) => asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true)), 'lane-subset');
     assert.match(r.out[0], / kernel=tree /);
-    assert.match(r.err[0], /ran GRAPH of the roster \["GRAPH","BATCH","ERROR","NEST","WIE","HOOK","LIFECYCLE"\]/);
+    assert.match(r.err[0], /ran GRAPH of the roster \["GRAPH","BATCH","ERROR","NEST","WIE","HOOK","LIFECYCLE","OWNER"\]/);
     assert.ok(!r.out.some((l) => l.indexOf('NOTE -- control kernel') !== -1), 'a tree run prints no control NOTE');
 });
 test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x OPS_MIN) -> NOT A RELEASE SOAK -- volume', () => {
@@ -397,7 +397,8 @@ test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x 
     // and, since b109 (DIV-F5 fixed in A3-FIX-R), its F5 BATCH/ERROR worlds
     // and, since b112 (DIV-F7 fixed in 0v-#40, DIV-F8 in A1.4), its F7 NEST / LIFECYCLE worlds
     // and, since b117 (DIV-F9 fixed in A5b, DIV-D3-independent-registrations in A5a), its F9 HOOK and D3 LIFECYCLE worlds
-    const FIXED_RE = /(^|\+)DIV-(B33|F5|F6|F7|F8|F9|D3-independent-registrations)(\+|$)/;
+    // and, since b126 (DIV-48 fixed in b120-#48), its OWNER multi-cleanup callback-this worlds
+    const FIXED_RE = /(^|\+)DIV-(B33|F5|F6|F7|F8|F9|48|D3-independent-registrations)(\+|$)/;
     const retag = (recs) => {
         for (const c of cyclesOf(recs)) for (const f of c.failures) if (FIXED_RE.test(String(f.known))) Object.assign(f, { known: null, tag: null, failKnown: f.fails.map(() => null) });
         // b103: a retagged F6+F22 world also moves its DIV-F22 line to known=null (the whole world is unknown on the tree),
@@ -414,7 +415,7 @@ test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x 
             s.breaches.filter((b) => !isGate(b) && !FIXED_RE.test(String(b.known)) && !have.has(key(b))));
     };
     const r = expectRefusal(tamper('rev', (recs) => { recs[0].controls.name = null; asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true); retag(recs); }), 'volume');
-    assert.match(r.out[0], / kernel=tree engine=lite lanes=GRAPH,BATCH,ERROR,NEST,WIE,HOOK,LIFECYCLE /);
+    assert.match(r.out[0], / kernel=tree engine=lite lanes=GRAPH,BATCH,ERROR,NEST,WIE,HOOK,LIFECYCLE,OWNER /);
     assert.match(r.err[0], new RegExp('SOAK_OPS ' + OPS_MIN + ' is not a count >= config DEFAULT_OPS ' + DEFAULT_OPS));
 });
 
@@ -446,7 +447,7 @@ const RELEASE = [
     ['a forever run (SOAK_CYCLES=0) that completed DEFAULT_CYCLES', (h) => { h.config.SOAK_CYCLES = { value: 0, source: 'env' }; }, null],
     ['a pinned control kernel (rev152), small and dirty: the tree policy does not apply', (h) => { h.controls.name = 'rev152'; h.config.SOAK_OPS.value = OPS_MIN; h.gitDirty = true; lanesTo(h, 1); }, null],
     ['SOAK_LANES GRAPH,BATCH,ERROR', (h) => lanesTo(h, 3), 'lane-subset', /^ran GRAPH,BATCH,ERROR of the roster/],
-    ['a roster lane with status skip', (h) => { h.lanes[3].status = 'skip'; }, 'lane-subset', /^ran GRAPH,BATCH,ERROR,WIE,HOOK,LIFECYCLE of the roster/],
+    ['a roster lane with status skip', (h) => { h.lanes[3].status = 'skip'; }, 'lane-subset', /^ran GRAPH,BATCH,ERROR,WIE,HOOK,LIFECYCLE,OWNER of the roster/],
     ['a laneRoster that is not lanes/index.mjs ROSTER (all of it ran)', (h) => { lanesTo(h, 3); h.laneRoster = ROSTER.slice(0, 3); }, 'lane-subset', /is not lanes\/index\.mjs ROSTER/],
     ['SOAK_OPS DEFAULT_OPS - 1', (h) => { h.config.SOAK_OPS.value = DEFAULT_OPS - 1; }, 'volume', new RegExp('^SOAK_OPS ' + (DEFAULT_OPS - 1) + ' is not a count >= config DEFAULT_OPS')],
     ['SOAK_OPS null (fail closed)', (h) => { h.config.SOAK_OPS.value = null; }, 'volume', /^SOAK_OPS null is not a count/],
@@ -482,7 +483,7 @@ for (const [name, edit, reason, detail] of RELEASE) {
         assert.match(got.detail, detail);
     });
 }
-test('releaseRefusal: the base really is the REV-152 header (7 lanes x DEFAULT_CYCLES completed, the roster by import)', () => {
+test('releaseRefusal: the base really is the REV-152 header (8 lanes x DEFAULT_CYCLES completed, the roster by import)', () => {
     const b = releaseBase();
     assert.deepEqual(b.h.laneRoster, ROSTER.slice());
     assert.deepEqual(b.h.lanes.map((L) => L.status), ROSTER.map(() => 'run'));

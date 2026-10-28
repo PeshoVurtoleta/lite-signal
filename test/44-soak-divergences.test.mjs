@@ -1029,3 +1029,92 @@ test('b112 B4 validate: dropping a new shape or the LIFECYCLE lane fails closed 
     assert.ok(mut(D3, (e) => { e.lanes = ['LIFECYCLES']; }).some((p) => /unknown lane LIFECYCLES/.test(p)));
     assert.ok(mut('DIV-F8', (e) => { e.pending = 'x'; }).some((p) => /pending set/.test(p)));
 });
+
+// ---- 9. b126 B4: the OWNER lane (S3 R3, oracle OW) -- DIV-48 (fixed b120-#48, maintainer D-b124-1) ---------------
+// Independent oracle: the b125 R3 kernel truth (.handoff/b125-evidence/r3/README.md row 3 + surprise 2: the controls
+// headpatched fa2871f0 / rev152 f8dd50f8 call a multi-cleanup with this = the FULL cleanup array, length = the number of
+// cleanups; a single cleanup runs with this === undefined) and the checkOwThis detail format (name + ' this=' +
+// array(N) | typeof). Verbatim census heads (.handoff/b126-evidence/b2b/census-headpatched.txt, identical on rev152):
+// 0x6831d5fd@13 'cleanup #15 k=0 this=array(2)', 0xad3a328c@14 'cleanup #15 k=0 this=array(3)'. Each known row has a
+// known=none twin that changes ONE thing (N, typeof, callback name, sig, lane, oracle, world scen, a co-fail).
+const D48 = 'DIV-48';
+const OW_D = {
+    A2: 'cleanup #15 k=0 this=array(2)',      // 0x6831d5fd@13 (headpatched, rev152)
+    A3: 'cleanup #15 k=0 this=array(3)',      // 0xad3a328c@14 (headpatched, rev152)
+    A2b: 'cleanup #5 k=0 this=array(2)',      // 0xdbd2dbf7@7 (headpatched, rev152)
+};
+const owRec = (fails, o) => Object.assign({ engine: 'lite', lane: 'OWNER', step: 13, op: 'seq', fails, scen: ['own-rerun', 'cleanup-fifo'],
+    worldScen: ['cleanup-fifo', 'own-rerun', 'run-with-owner', 'signal-not-adopted'] }, o);
+const owBoth = (fails, o) => [known(owRec(fails, o)), knownFx(owRec(fails, o))];
+const owThis = (d) => [lcf('OW', 'callback-this', d)];
+
+test('b126 B4: DIV-48 entry (every key, file order): fix #48, fixedIn b120-#48 (699b9ef), OWNER / OW / callback-this, worldScen cleanup-fifo', () => {
+    const r = fresh();
+    const e = r.entries.find((x) => x.id === D48);
+    assert.ok(e !== undefined, 'DIV-48 exists');
+    assert.equal(r.entries[r.entries.length - 1].id, D48, 'an engine rung APPENDS its entry at the end');
+    assert.deepEqual(e, {"id":"DIV-48","kind":"fix","finding":"#48","since":"1.5.2","fixedIn":"b120-#48","fixBy":"b120","decision":"fix (LEDGER #48, maintainer D-b124-1 / R3 Q1 = A): every onCleanup function runs with this === undefined. fixed: fixedIn b120-#48 (699b9ef, Signal.js 2f7974f3 -> ec6d7156, bursts 120-121 rung #48: runOwnCleanup calls through a local, const fn = cleanup[i]; fn();). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. headpatched or rev152); on the tree a callback-this shape is a regression (known=none)","engines":["lite"],"lanes":["OWNER"],"oracles":["OW"],"sigs":["callback-this"],"ops":[],"scen":[],"worldScen":["cleanup-fifo"],"priorScen":[],"shapes":[{"pair":"OW:callback-this","detail":"^cleanup #\\d+ k=\\d+ this=array\\((?:[2-9]|[1-9]\\d+)\\)$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"Before #48, an owner that registered 2+ cleanups in one run called each of them (the first included) as a method of the internal cleanup array: this = the FULL array, length = the number of cleanups, on dispose AND on re-run; a single cleanup ran with this === undefined (b125 R3 kernel truth, controls headpatched fa2871f0 and rev152 f8dd50f8). S3 OWNER lane (R3): OW callback-this on a cleanup callback with this=array(N), N >= 2, in a world that carries cleanup-fifo (b126 B4 census: every failing OWNER world on both controls). Still NOT matched: this=array(0) or array(1), a this that is an object, a number or any other typeof, a createRoot or runWithOwner callback, any OW cleanup-order fail, and the shape in a world without cleanup-fifo."});
+    assert.match(e.decision, /fixedIn b120-#48 \(699b9ef, Signal\.js 2f7974f3 -> ec6d7156,/);
+    assert.ok(ROSTER.indexOf('OWNER') !== -1, 'OWNER is rostered');
+});
+
+test('b126 B4: DIV-48 (fixed) explains the controls\' multi-cleanup this=array(N >= 2) only under includeFixed', () => {
+    for (const d of [OW_D.A2, OW_D.A3, OW_D.A2b, 'cleanup #7 k=3 this=array(4)', 'cleanup #0 k=1 this=array(5)', 'cleanup #2 k=9 this=array(10)', 'cleanup #31 k=0 this=array(123)']) {
+        assert.deepEqual(owBoth(owThis(d)), [null, D48], d);
+    }
+    // two callback-this fails in one step (both cleanups of one owner, same array): every fail explained
+    assert.deepEqual(owBoth([lcf('OW', 'callback-this', 'cleanup #15 k=0 this=array(2)'), lcf('OW', 'callback-this', 'cleanup #15 k=1 this=array(2)')]), [null, D48]);
+});
+
+test('b126 B4: DIV-48 near-misses classify null (N < 2, a non-array this, a non-cleanup callback, another sig / lane / oracle / world)', () => {
+    // the base every twin below changes ONE thing of: the control head is DIV-48 under includeFixed
+    assert.deepEqual(owBoth(owThis(OW_D.A2)), [null, D48], 'base');
+    // a single cleanup (array(1) cannot be the controls' multi path) and an empty array; leading zeros are not a count
+    for (const d of ['cleanup #15 k=0 this=array(1)', 'cleanup #15 k=0 this=array(0)', 'cleanup #15 k=0 this=array(02)', 'cleanup #15 k=0 this=array(-2)']) {
+        assert.deepEqual(owBoth(owThis(d)), [null, null], d);
+    }
+    // a this that is not an array: typeof object / number / function / string / boolean / symbol / bigint
+    for (const t of ['object', 'number', 'function', 'string', 'boolean', 'symbol', 'bigint']) {
+        assert.deepEqual(owBoth(owThis('cleanup #15 k=0 this=' + t)), [null, null], t);
+    }
+    // a createRoot / runWithOwner callback is never DIV-48 (the controls run them with this === undefined)
+    for (const d of ['createRoot this=array(2)', 'createRoot this=object', 'runWithOwner #12 this=array(2)', 'runWithOwner #12 this=object']) {
+        assert.deepEqual(owBoth(owThis(d)), [null, null], d);
+    }
+    // whole-detail anchoring: a prefix, a suffix, a truncated name
+    for (const d of ['x cleanup #15 k=0 this=array(2)', 'cleanup #15 k=0 this=array(2) ', 'cleanup #15 k=0 this=array(2)...', 'cleanup #15 this=array(2)']) {
+        assert.deepEqual(owBoth(owThis(d)), [null, null], JSON.stringify(d));
+    }
+    // the OW cleanup-order sig (also on a callback-this text), alone or as a co-fail of a DIV-48 line
+    const order = lcf('OW', 'cleanup-order', 'fire#2 owner#21 k=0 after fire#0 owner#17 k=0 (its ancestor fired first)');
+    assert.deepEqual(owBoth([order]), [null, null]);
+    assert.deepEqual(owBoth([lcf('OW', 'cleanup-order', OW_D.A2)]), [null, null]);
+    assert.deepEqual(owBoth([lcf('OW', 'callback-this', OW_D.A2), order]), [null, null]);
+    // another lane, another oracle on the same text
+    for (const lane of ['HOOK', 'LIFECYCLE', 'NEST', 'GRAPH']) assert.deepEqual(owBoth(owThis(OW_D.A2), { lane }), [null, null], lane);
+    assert.deepEqual(owBoth([lcf('O8', 'callback-this', OW_D.A2)]), [null, null]);
+    // a world without cleanup-fifo (the entry worldScen): even the exact control head is not DIV-48
+    assert.deepEqual(owBoth(owThis(OW_D.A2), { worldScen: ['own-rerun', 'run-with-owner', 'signal-not-adopted'] }), [null, null]);
+});
+
+test('b126 B4: end to end -- the verbatim headpatched OWNER record 0x6831d5fd@13 (FULL fail list) is KNOWN DIV-48 on a control, null on the tree', () => {
+    // .handoff/b126-evidence/b4/census-headpatched.txt "first" (runWorld + main.mjs failureRecord fields); identical on rev152
+    const rec = {"engine":"lite","lane":"OWNER","step":13,"op":"seq","fails":[{"oracle":"OW","sig":"callback-this","detail":"cleanup #15 k=0 this=array(2)"}],"scen":["own-rerun","cleanup-fifo","signal-not-adopted"],"worldScen":["run-with-owner","own-rerun","cleanup-fifo","signal-not-adopted"],"worldScenCounts":{"run-with-owner":1,"own-rerun":2,"cleanup-fifo":1,"signal-not-adopted":1}};
+    const c = classify(rec, FX());
+    assert.ok(c !== null);
+    assert.deepEqual([c.known, c.perFail], [D48, [[D48]]]);
+    assert.equal(classify(rec), null, 'on the tree a callback-this head is a regression');
+    // fixedIn back to null: the head explains on the tree too (the includeFixed rule is what makes it a regression)
+    const r = fresh();
+    for (const e of r.entries) if (e.id === D48) e.fixedIn = null;
+    assert.deepEqual(validate(r), []);
+    assert.equal(known(rec, { registry: r }), D48);
+});
+
+test('b126 B4 validate: DIV-48 dropping its shape, its lane, or a lane typo fails closed (no-slack rule)', () => {
+    const mut = (fn) => { const r = fresh(); fn(r.entries.find((e) => e.id === D48)); return validate(r); };
+    assert.ok(mut((e) => { e.shapes.pop(); }).some((p) => /needs at least one shape|pair OW:callback-this has no shape/.test(p)));
+    assert.ok(mut((e) => { e.lanes = []; }).length > 0);
+    assert.ok(mut((e) => { e.lanes = ['OWNERS']; }).some((p) => /unknown lane OWNERS/.test(p)));
+    assert.ok(mut((e) => { e.sigs = ['callback-this', 'cleanup-order']; }).some((p) => /pair OW:cleanup-order has no shape/.test(p)));
+});

@@ -27,6 +27,12 @@
  *   at rest       O1e + O4 every op, O5 every op, O1c when the op's chk bit is set and at world end; O8
  *                 (HOOK lane, exec.hk !== null) the hook mirror vs stats(); O7 (LIFECYCLE lane, exec.lc !== null)
  *                 every live registration's phase vs model.sinkCount, after O8
+ *   owners        (OWNER lane, exec.ow !== null; S3 R3) OW at every checkpoint (owCheck): runBody entry, at rest, the
+ *                 world end and after the lane's odisp / opull; teardown is O5-only (run() sets ow.closing before
+ *                 close(), which disposes without the model: the lane's cleanups neither log nor write the sentinel
+ *                 there). An owner's re-run (computed or effect) kills its
+ *                 children and fires its cleanups in the model (model.rerunOwner) on that lane; every other lane
+ *                 keeps the p1 effect-only killChildren (it adopts no computed and registers no cleanup)
  *   wie writer    (WIE, gen.mjs I2 lifted) a computed whose spec carries w writes w := f(its output) through
  *                 write() after its body returns (spec.wu: under untrack), exactly like an effect writer. D4: a
  *                 target that is not an earlier signal (forward / self / non-integer / non-signal) or is in its
@@ -51,7 +57,7 @@ const NONE = Symbol('none');
 const END_CHECK_SALT = 0x5bd1e995;
 
 /** Oracles counted when PERFORMED (a skipped check is never counted as one). */
-export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8']);
+export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW']);
 /** Oracles that skip tainted nodes; each skip is counted per oracle (S1c gates a taint-skip ratio). */
 export const SKIP_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4']);
 const COUNTER_CAP = 0x3FFFFFFF;   // per-world counters stay Smi (S7: [2^30, 2^31) boxes on pointer-compressed V8)
@@ -138,7 +144,7 @@ class Exec {
         this.regActions = new Map();
         this.ran = new Set();
         this.D = new Detectors(this);
-        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0 };
+        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0, OW: 0 };
         this.skipTainted = { O1c: 0, O1e: 0, O2: 0, O4: 0 };
         this.gateHits = { batchTokenEscaped: 0 };   // guards whose escape carried the throw-in-batch token
         this.effReruns = 0;    // effect re-runs (runs > 0) in this world, capped at COUNTER_CAP (OB evidence)
@@ -149,6 +155,10 @@ class Exec {
         this.trace = opts.trace === true ? [] : null;
         this.hk = null;   // HOOK lane state (lanes/hook.mjs HookState), set by its first hsub; null on every other lane
         this.lc = null;   // LIFECYCLE lane state (lanes/lifecycle.mjs LcState), set by its first lreg; null on every other lane
+        // OWNER lane state (lanes/owner.mjs OwState), set by the lane; null on every other lane (one test per body). Its
+        // exec-side shape: ow.fires = [{o, k}] (cleanup fires since the last checkpoint, in order), ow.calls =
+        // [{name, self}] (lane callbacks and their `this`); owCheck() judges and empties both
+        this.ow = null;
     }
 
     /** Count one performed check / one taint skip (capped: never leaves Smi range). */
@@ -195,6 +205,7 @@ class Exec {
             this.o1c((this.script.seed ^ END_CHECK_SALT) >>> 0);
             // O7 after the end pull (b111 B3, A3 NIT): a missed connect / disconnect that final pull caused is checked too
             if (this.lc !== null) this.lcAtRest();
+            if (this.ow !== null) this.owCheck();
             if (this.unmodelled !== null) throw this.unmodelled;
             if (this.stepFails.length > 0) failure = { step: ops.length, op: 'end', fails: this.stepFails, scen: Array.from(this.D.step) };
         }
@@ -205,6 +216,8 @@ class Exec {
         // reset BEFORE close() (b118): a fail raised inside close() (a lifecycle callback or hook delivery fired by its
         // dispose walk) is a teardown failure, never wiped
         if (failure === null) this.stepFails = [];
+        // OWNER (S3 R3): teardown is O5-only -- close() disposes without the model, so the lane's cleanups go silent
+        if (this.ow !== null) this.ow.closing = true;
         try { residue = this.W.close(); } catch (e) { closeErr = e; }
         if (failure === null) {
             this.did('O5');   // the teardown residue check (counted like the at-rest O5: before close()'s outcome is read)
@@ -576,6 +589,11 @@ class Exec {
             else if (this.topRead === -1) pre = 1;
             else if (this.topRead !== i) pre = 2;
         }
+        if (this.ow !== null) {
+            this.owCheck();   // OW checkpoint: the fires of this re-run's cascade are all in (they precede the body)
+            this.D.onOwnKill(i, nd.runs > 0);
+            M.rerunOwner(i);   // e / c: kill children -> own cleanups (the p1 killChildren below then finds none)
+        }
         if (nd.t === 'e' && nd.runs > 0) {
             M.killChildren(i);
             if (this.effReruns < COUNTER_CAP) this.effReruns++;
@@ -744,6 +762,31 @@ class Exec {
         if (op.chk === 1) this.o1c(op.cs >>> 0);
         if (this.hk !== null) this.hookAtRest();
         if (this.lc !== null) this.lcAtRest();
+        if (this.ow !== null) this.owCheck();
+    }
+
+    /**
+     * OW checkpoint (OWNER lane only, exec.ow !== null; lanes/owner.mjs also calls it after odisp / opull): every
+     * callback `this` logged since the last checkpoint (oracles.mjs checkOwThis), then the cleanup fire order
+     * (checkOwOrder over model.parentOf). One performed OW per non-empty window; both logs are emptied. A malformed
+     * log throws (checkOwOrder, or calls not an array): fail closed, never a silent pass.
+     */
+    owCheck() {
+        const ow = this.ow;
+        const fires = ow.fires, calls = ow.calls;
+        if (!Array.isArray(fires) || !Array.isArray(calls)) throw new TypeError('exec: ow.fires and ow.calls must be arrays');
+        if (fires.length === 0 && calls.length === 0) return;
+        this.did('OW');
+        for (let j = 0; j < calls.length; j++) {
+            const c = calls[j];
+            const f = O.checkOwThis(c.name, c.self);
+            if (f !== null) this.failF(f);
+        }
+        const M = this.M;
+        const f = O.checkOwOrder(fires, (id) => M.parentOf(id));
+        if (f !== null) this.failF(f);
+        fires.length = 0;
+        calls.length = 0;
     }
 
     /**

@@ -10,7 +10,7 @@
  * Model parameter: caps.childEffects only (equality is Object.is in exec's body code and kinds.sameValue).
  *
  *   pure     (written by script ops, read by the generator):  t, live, v, dis, rank, role, spec, mode,
- *                                                              parent, children; regs[] {target, live}
+ *                                                              parent, children, cl; regs[] {target, live}; fired
  *   observed (written by exec.mjs from engine body runs; the generator NEVER reads these, rule G0):
  *            runs, links (tracked live reads of the last completed run), seen ([{r, v}] every read of the
  *            last run, in order), taint, out, threw
@@ -24,6 +24,16 @@
  *   p8  disposing a source re-runs nothing: dependents keep a value the model cannot reproduce, so they are
  *       TAINTED until their body runs entirely after the disposal (taint, tainted()).
  *
+ * Owners (S3 R3, lanes/owner.mjs; b125 B1 owner probe): p1 generalized. An OWNER is a live computed or effect;
+ * a signal is never adopted (children null). kill(i) cascades owned effects AND computeds child-first, then fires
+ * the owner's own cleanups; every run of an owner (the engine runs runCleanup before a first evaluation too): kill children -> own cleanups FIFO ->
+ * body. cl = the cleanups registered in the owner's current registration set (addCleanup; ordinal = cl before the
+ * increment); every fire empties the set (one-shot: a body re-registers its own). fired = cleanups the model says
+ * are due, world total; the sentinel signal (setSentinel) holds fired as its value (a cleanup writes the ENGINE
+ * sentinel directly, never the model). liveOwner(h): h when it is a live computed / effect, else -1 (runWithOwner
+ * on a dead / stale / signal handle roots the call). Lanes other than OWNER never pass a computed parent and never
+ * register a cleanup, so for them every rule above is the p1 rule unchanged.
+ *
  * COLD module.
  */
 
@@ -35,6 +45,8 @@ export class Model {
         this.n = [];
         this.regs = [];
         this.childOwned = caps.childEffects === 'parent-run';
+        this.fired = 0;       // cleanups due so far (owners); the sentinel's model value
+        this.sentinel = -1;   // the sentinel signal index (setSentinel), -1 = none
     }
 
     node(i) { return this.n[i]; }
@@ -42,26 +54,89 @@ export class Model {
     addSignal(i, v, o) {
         this.n[i] = {
             i, t: 's', live: true, v, dis: o.dis === true, rank: o.rank | 0, role: o.role || 'leaf',
-            spec: null, mode: null, parent: -1, children: null, dying: false,
+            spec: null, mode: null, parent: -1, children: null, cl: 0, dying: false,
             runs: 0, links: null, seen: null, taint: false, out: undefined, threw: false,
         };
     }
 
-    addComputed(i, spec) {
+    /** parent (optional): the owner the computed is created under (OWNER lane); other lanes pass none. */
+    addComputed(i, spec, parent) {
         this.n[i] = {
             i, t: 'c', live: true, v: undefined, dis: false, rank: 0, role: spec.role || 'comp',
-            spec, mode: { early: false, flip: false }, parent: -1, children: null, dying: false,
+            spec, mode: { early: false, flip: false }, parent: this.parentIdx(parent), children: [], cl: 0, dying: false,
             runs: 0, links: null, seen: null, taint: false, out: undefined, threw: false,
         };
+        this.adopt(i, parent);
     }
 
     addEffect(i, spec, parent) {
         this.n[i] = {
             i, t: 'e', live: true, v: undefined, dis: false, rank: 0, role: spec.role || 'eff',
-            spec, mode: { early: false, flip: false }, parent: parent === undefined ? -1 : parent, children: [],
+            spec, mode: { early: false, flip: false }, parent: this.parentIdx(parent), children: [], cl: 0,
             dying: false, runs: 0, links: null, seen: null, taint: false, out: undefined, threw: false,
         };
-        if (this.childOwned && parent !== undefined && parent >= 0 && this.n[parent] !== undefined) this.n[parent].children.push(i);
+        this.adopt(i, parent);
+    }
+
+    /** The parent index a new e / c records: -1 for none, or for a node that cannot own (a signal, no node). */
+    parentIdx(parent) {
+        if (!this.childOwned || parent === undefined || parent < 0) return -1;
+        const p = this.n[parent];
+        return p === undefined || p.children === null ? -1 : parent;
+    }
+
+    /** p1: an owner (any e / c node, even one disposed mid-body, as NEST p1 always did) adopts child i. */
+    adopt(i, parent) {
+        if (!this.childOwned || parent === undefined || parent < 0) return;
+        const p = this.n[parent];
+        if (p !== undefined && p.children !== null) p.children.push(i);
+    }
+
+    /** runWithOwner(h): h when it is a live computed / effect (the call adopts), else -1 (rooted, tracking detached). */
+    liveOwner(h) {
+        const nd = Number.isInteger(h) && h >= 0 ? this.n[h] : undefined;
+        return nd !== undefined && nd.live && nd.t !== 's' ? h : -1;
+    }
+
+    /** The recorded owner of node i (-1: none or no node). The OW cleanup-order oracle walks it. */
+    parentOf(i) {
+        const nd = this.n[i];
+        return nd === undefined ? -1 : nd.parent;
+    }
+
+    /**
+     * onCleanup(fn) with owner i (lockstep with the engine call): the registration ordinal k within i's current set,
+     * or -1 when the call is a no-op (no owner, a signal, a disposed owner: never fires).
+     */
+    addCleanup(i) {
+        const nd = Number.isInteger(i) && i >= 0 ? this.n[i] : undefined;
+        if (nd === undefined || !nd.live || nd.t === 's') return -1;
+        return nd.cl++;
+    }
+
+    /** Mark signal i as the cleanup sentinel S: its model value is fired from now on. Fails closed. */
+    setSentinel(i) {
+        const nd = this.n[i];
+        if (nd === undefined || nd.t !== 's' || !nd.live) throw new TypeError('model: setSentinel(' + i + ') needs a live signal');
+        if (this.sentinel !== -1 && this.sentinel !== i) throw new TypeError('model: a second sentinel #' + i + ' (have #' + this.sentinel + ')');
+        this.sentinel = i;
+        nd.v = this.fired;
+    }
+
+    /** Fire owner nd's current registration set (FIFO; the order lives in the lane's fire log): fired += cl. */
+    fireCleanups(nd) {
+        if (nd.cl === 0) return;
+        this.fired += nd.cl;
+        nd.cl = 0;
+        if (this.sentinel !== -1) this.n[this.sentinel].v = this.fired;
+    }
+
+    /** Owner rule, re-run of owner i (runs > 0): kill its children (child-first), then fire its own cleanups. */
+    rerunOwner(i) {
+        const out = this.killChildren(i);
+        const nd = this.n[i];
+        if (nd !== undefined && nd.t !== 's') this.fireCleanups(nd);
+        return out;
     }
 
     setValue(i, v) {
@@ -73,8 +148,9 @@ export class Model {
     }
 
     /**
-     * Dispose node i (and, for an effect, its owned children recursively). Every live observer whose last
-     * run read a killed node becomes tainted (p8). Returns the killed indices.
+     * Dispose node i (and, for an owner, its owned effects and computeds recursively; each owner's own cleanups fire
+     * after its subtree's, child-first). Every live observer whose last run read a killed node becomes tainted (p8).
+     * Returns the killed indices (pre-order).
      */
     kill(i) {
         const out = [];
@@ -83,7 +159,8 @@ export class Model {
             if (nd === undefined || !nd.live) return;
             nd.live = false;
             out.push(j);
-            if (nd.t === 'e' && this.childOwned) for (let k = 0; k < nd.children.length; k++) go(nd.children[k]);
+            if (this.childOwned && nd.children !== null) for (let k = 0; k < nd.children.length; k++) go(nd.children[k]);
+            this.fireCleanups(nd);
         };
         go(i);
         if (out.length === 0) return out;
@@ -96,10 +173,10 @@ export class Model {
         return out;
     }
 
-    /** Owner rule (p1): an effect re-run disposes its children first. */
+    /** Owner rule (p1): an owner (effect or computed) re-run disposes its children first. */
     killChildren(i) {
         const nd = this.n[i];
-        if (!this.childOwned || nd === undefined || nd.t !== 'e' || nd.children.length === 0) return [];
+        if (!this.childOwned || nd === undefined || nd.children === null || nd.children.length === 0) return [];
         const out = [];
         const kids = nd.children;
         nd.children = [];

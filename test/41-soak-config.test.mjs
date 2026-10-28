@@ -32,8 +32,8 @@ const SOAK = join(ROOT, 'bench', 'soak');
 const MAIN = join(SOAK, 'main.mjs');
 const SOAK_URL = pathToFileURL(SOAK).href + '/';
 
-// SPEC-B v2 section 5.1 (S1 roster + S3 R1 HOOK + S3 R2 LIFECYCLE, scenario ids). Used only by the inline entry; main.mjs brings its own.
-const ROSTER = ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE'];
+// SPEC-B v2 section 5.1 (S1 roster + S3 R1 HOOK + S3 R2 LIFECYCLE + R3 OWNER, scenario ids). Used only by the inline entry; main.mjs brings its own.
+const ROSTER = ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER'];
 const SCENARIOS = [
     'diamond-write', 'dep-set-flip', 'deep-pull', 'second-invalidation', 'equality-cutoff', 'adversarial-equality', 'wide-mark',
     'revert-after-mid-read', 'revert-no-read', 'nested-close', 'throw-in-batch', 'effect-created-mid-batch', 'multi-write-same-signal',
@@ -43,13 +43,15 @@ const SCENARIOS = [
     'wie-stale-effect', 'wie-stale-computed', 'wie-prewalk', 'wie-untrack', 'wie-write-before-read',
     'hook-multi', 'hook-non-lifo-off', 'hook-mirror-dispose', 'hook-recompute',
     'lc-two-regs', 'lc-off-sibling', 'lc-late-off-recycle', 'lc-callback-dispose', 'lc-callback-register', 'lc-callback-off-sibling',
+    'own-cascade', 'own-rerun', 'own-computed', 'cleanup-fifo', 'run-with-owner', 'run-with-dead-owner', 'root-detached',
+    'signal-not-adopted',
 ];
 // unit 0s B2 (PLAN-0s-wie ADDENDUM 2 item 6): the two literals above are pinned to the code they stand in for
 import { SCENARIOS as LIT_SCENARIOS_CODE } from '../bench/soak/scenarios.mjs';
 import { ROSTER as LIT_ROSTER_CODE } from '../bench/soak/lanes/index.mjs';
-test('the ROSTER (7 lanes, LIFECYCLE 7th) and SCENARIOS (44 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
-    assert.equal(ROSTER.length, 7);
-    assert.equal(SCENARIOS.length, 44);
+test('the ROSTER (8 lanes, OWNER 8th) and SCENARIOS (52 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
+    assert.equal(ROSTER.length, 8);
+    assert.equal(SCENARIOS.length, 52);
     assert.deepEqual(ROSTER, LIT_ROSTER_CODE.slice());
     assert.deepEqual(SCENARIOS, LIT_SCENARIOS_CODE.slice());
 });
@@ -384,7 +386,7 @@ test('the SOAK_ prefix is case-insensitive: a non-upper-case known key is an err
     rejects({ soak_lanes: 'grpah' }, "env key 'soak_lanes' must be upper-case (did you mean SOAK_LANES?)");
     rejects({ Soak_Require_Provenance: '1' }, 'did you mean SOAK_REQUIRE_PROVENANCE?');
     rejects({ soak_nope: '1' }, "unknown env key 'soak_nope'");
-    assert.equal(P({ SOAKY: '1', MY_SOAK_LANES: 'x' }).lanes.length, 7, 'only the SOAK_ prefix is reserved');
+    assert.equal(P({ SOAKY: '1', MY_SOAK_LANES: 'x' }).lanes.length, 8, 'only the SOAK_ prefix is reserved');
 });
 
 test('did-you-mean is computed on the suffix: SOAK_X, SOAK_FOO and SOAK_TIME no longer "mean" SOAK_OPS', () => {
@@ -1207,7 +1209,7 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
 test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing or off-parity lane-only kernel -> red', () => {
     // the map (calibrate.mjs): an unlisted lane runs on every binding kernel; a lane's pin joins only when rostered
     // after the roster flip (b68 B2b): roster4 = the pre-flip roster (the 4 S1 lanes), roster5 = the live one
-    const roster4 = B6_ROSTER.filter((l) => l !== 'WIE' && l !== 'HOOK' && l !== 'LIFECYCLE');
+    const roster4 = B6_ROSTER.filter((l) => l !== 'WIE' && l !== 'HOOK' && l !== 'LIFECYCLE' && l !== 'OWNER');
     const roster5 = B6_ROSTER.slice();
     assert.deepEqual(b6KernelsFor('WIE'), ['tree']);
     // S3 R1 (b93): HOOK was cut on headpatched only (DIV-F9 ghost-listener reddened lite-1.5.2 and tree); b117: DIV-F9
@@ -1215,6 +1217,9 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.deepEqual(b6KernelsFor('HOOK'), ['headpatched', 'tree']);
     // S3 R2 (b111 A1 Q1): LIFECYCLE is cut on tree only; b117: DIV-D3 fixed in A5a, no (f) exemption (full-length evidence)
     assert.deepEqual(b6KernelsFor('LIFECYCLE'), ['tree']);
+    // R3 (b126 B3; D-b124-1 = PLAN-R3-owner A1): OWNER is cut on tree only while DIV-48 is open (the controls' multi-cleanup
+    // this = the cleanup array); P-OWNER-TREE is the pass control, P-OWNER-HP a cov-off control
+    assert.deepEqual(b6KernelsFor('OWNER'), ['tree']);
     assert.deepEqual(b6LanesFor('headpatched', roster5), roster4.concat(['HOOK']));
     assert.deepEqual(b6KernelsFor('GRAPH'), Object.keys(B6_KERNELS));
     // b74 D4: NEST is cut on headpatched (first: covOff), 1.5.2 and tree; ERROR stays on the binding kernels
@@ -1223,13 +1228,13 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.deepEqual(b6KernelsOf(['GRAPH', 'BATCH', 'ERROR']), Object.keys(B6_KERNELS));
     assert.deepEqual(b6KernelsOf(roster4), Object.keys(B6_KERNELS).concat(['tree']));
     assert.deepEqual(b6KernelsOf(roster5), Object.keys(B6_KERNELS).concat(['tree']));
-    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE']);
+    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER']);
     assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), roster4.slice());
     assert.equal(b6KernelPath('tree'), 'Signal.js');
     assert.throws(() => b6KernelPath('nope'), /unknown kernel nope/);
     assert.deepEqual(b6PinnedFor(roster4), B6_PINNED);
     assert.equal(b6PinnedFor(roster4).length, 17);   // S3 R0: + adapters/lite-s3.mjs; S3 R1 (b93): + mirror.mjs
-    assert.deepEqual(b6PinnedFor(roster5).slice(17), ['bench/soak/lanes/wie.mjs', 'bench/soak/lanes/hook.mjs', 'bench/soak/lanes/lifecycle.mjs']);
+    assert.deepEqual(b6PinnedFor(roster5).slice(17), ['bench/soak/lanes/wie.mjs', 'bench/soak/lanes/hook.mjs', 'bench/soak/lanes/lifecycle.mjs', 'bench/soak/lanes/owner.mjs']);
     // A2 (the real roster): a WIE cell on lite-1.5.2 is a cell no binding cuts -> exactly one new problem
     const base = calibrationProblems(B6_DOC, B6_C);
     const a2 = b6Copy(B6_DOC);

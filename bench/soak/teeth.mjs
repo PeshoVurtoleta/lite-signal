@@ -102,6 +102,9 @@ export const CHECKS = deepFreeze({
     // b118 B2 (D-b117-2 closed): T-LC-iter (off() clears reg.next, reached by the lifecycle 'lself' SELF arm) left
     // GAPS; it heads `oracle=O7 lane=LIFECYCLE sig=stale-off known=none` (MUSTFAIL_HEADS=1, .handoff/b118-evidence/b2/).
     'lane:LIFECYCLE': ['L-LC-preb33', 'T-LC-dupconn', 'T-LC-dupdisc', 'T-LC-dropconn', 'T-LC-dropdisc', 'T-LC-offlive', 'T-LC-merge', 'T-LC-iter'],
+    // b127 B5 (PLAN-R3-owner A5 (c)): the five T-owner-* tree mutants (the b125 R3 kernels, OW_ENV --smoke), each spec
+    // known=none; heads: .handoff/b127-evidence/b5/heads-{1,2,3}.txt. P-OWNER-TREE is their pass control / revert.
+    'lane:OWNER': ['T-owner-cascade', 'T-owner-cleanup', 'T-owner-fifo', 'T-owner-outin', 'T-owner-this'],
     'gate:oracle': ['L-REV-152'],
     // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
     // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
@@ -122,20 +125,27 @@ export const CHECKS = deepFreeze({
     'oracle:O2': ['L-REV-152'],
     // L-REV-152 ERROR heads `oracle=O4 lane=ERROR sig=effect-dead` (f21-census.json:23-24) and
     // `oracle=O6 lane=ERROR sig=expected-escape-missing` (f21-census.json:25, :28-29)
-    'oracle:O4': ['L-REV-152', 'T-flushdrop'],
-    // a future second O5 tooth: rev152 / headpatched NEST also emit O5 link-count (the planned L-REV-AUDIT spec,
+    'oracle:O4': ['L-REV-152', 'T-flushdrop', 'T-owner-cleanup'],
+    // a future third O5 tooth: rev152 / headpatched NEST also emit O5 link-count (the planned L-REV-AUDIT spec,
     // SPEC-B.md:454); not mapped until its 3/3 calibration lands
-    'oracle:O5': ['T-sever'],
+    // b127 B5: T-owner-cascade (disposeOwned never pops a child) reads O5 node-count / link-count / kind-count at rest,
+    // 50 / 50 each (b126 B2b census); all three are CHECKS ids now (GAP T-O5-counts shrinks to teardown-residue)
+    'oracle:O5': ['T-sever', 'T-owner-cascade'],
     'oracle:O6': ['L-REV-152', 'T-LC-offlive'],
     'oracle:O7a': ['L-REV-152'],
     'oracle:O8': ['L-REV-HOOK', 'T-hook-mirror', 'T-A5b'],
     'oracle:O7': ['L-LC-preb33', 'T-LC-dupconn', 'T-LC-dupdisc', 'T-LC-dropconn', 'T-LC-dropdisc', 'T-LC-merge', 'T-LC-iter'],
+    // b127 B5 (A2 / D-b124-2: oracle OW, sigs cleanup-order + callback-this): fifo (non-FIFO within an owner) and outin
+    // (its ancestor fired first) head cleanup-order, this (a multi-cleanup with this = the array) heads callback-this
+    'oracle:OW': ['T-owner-fifo', 'T-owner-outin', 'T-owner-this'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
     'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
-    'sig:O4:effect-dead': ['L-REV-152', 'T-flushdrop'],
+    'sig:O4:effect-dead': ['L-REV-152', 'T-flushdrop', 'T-owner-cleanup'],
     'sig:O6:expected-escape-missing': ['L-REV-152'],
-    'sig:O5:link-count': ['T-sever'],
+    'sig:O5:link-count': ['T-sever', 'T-owner-cascade'],
+    'sig:O5:node-count': ['T-owner-cascade'],
+    'sig:O5:kind-count': ['T-owner-cascade'],
     'sig:O6:escape-*': ['L-REV-152', 'T-LC-offlive'],   // `oracle=O6 lane=ERROR sig=escape-computed`; T-LC-offlive `sig=escape-TypeError`
     'sig:O7a:dead-registration-fire': ['L-REV-152', 'L-LC-preb33'],   // L-LC-preb33 prints family oracle=O7
     'sig:O7:spurious-connect': ['T-LC-dupconn'],
@@ -145,10 +155,14 @@ export const CHECKS = deepFreeze({
     'sig:O7:stale-off': ['L-LC-preb33', 'T-LC-merge', 'T-LC-iter'],   // T-LC-merge's measured stale-off head (b117 B3a); T-LC-iter's only head (b118 B2)
     'sig:O8:ghost-listener': ['L-REV-HOOK', 'T-A5b'],
     'sig:O8:mirror-links': ['T-hook-mirror'],
+    'sig:OW:cleanup-order': ['T-owner-fifo', 'T-owner-outin'],
+    'sig:OW:callback-this': ['T-owner-this'],
     'cause:interrupted': ['L-I1', 'L-I2'],
     // b119 B5 (orphan rule): P-HOOK-TREE-COVOFF (b93) prints `INCONCLUSIVE -- scenario lane=HOOK missing=hook-non-lifo-off`,
     // P-NEST-TRIGGERLESS's shape, and was mapped nowhere
-    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'T-cov-LIFECYCLE', 'P-HOOK-TREE-COVOFF']),
+    // b127 B5: T-cov-OWNER (tree) and P-OWNER-HP (headpatched, a cov-off control per D-b124-1) print
+    // `INCONCLUSIVE -- scenario lane=OWNER missing=cleanup-fifo` (cov-off:cleanup-fifo), P-HOOK-TREE-COVOFF's shape
+    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'T-cov-LIFECYCLE', 'P-HOOK-TREE-COVOFF', 'T-cov-OWNER', 'P-OWNER-HP']),
     'cause:check-floor': ['T-floor-BATCH'],
     // test/67 drives the same patch on live AND headpatched NEST and checks each line is inconclusiveLine('taint-skip')
     'cause:taint-skip': ['P-NEST-TAINT-HALF', TEST67],
@@ -210,8 +224,8 @@ export const GAPS = deepFreeze({
         until: 'a control kernel whose computed throws a different error', covers: ['sig:O1c:computed-err-mismatch'],
     },
     'T-O5-counts': {
-        why: 'only link-count is seen on a frozen kernel (' + F21 + ':98, NEST 1.5.2; T-sever); node-count, kind-count and teardown-residue (oracles.mjs:34) have no known red kernel',
-        until: 'a mutant kernel per count (node leak, kind flip, teardown residue)', covers: ['sig:O5:node-count', 'sig:O5:kind-count', 'sig:O5:teardown-residue'],
+        why: 'link-count (T-sever, T-owner-cascade), node-count and kind-count (T-owner-cascade, b127 B5) have red kernels; teardown-residue (oracles.mjs:34) has none',
+        until: 'a mutant kernel that leaves teardown residue', covers: ['sig:O5:teardown-residue'],
     },
     'T-O6-shape': {
         why: 'equals-mutated (exec.mjs:346) and escape-empty (exec.mjs:211) have no known red kernel; no census row names them',
@@ -260,6 +274,7 @@ export const NOT_TEETH = deepFreeze({
     'P-HOOK-TREE': 'the HOOK pass control on the tree (' + MF + ' P-HOOK-TREE comment)',
     'P-LC-tree': 'the LIFECYCLE pass control on the tree, the revert of every T-LC-* row (' + MF + ' P-LC-tree comment)',
     'T-mark': 'performance-only NOTE tooth: shape[GRAPH] markDedupe is report-only, no gate reads it (config.mjs MARK_DEDUPE_NOTE comment; gates.mjs REPORT_ONLY_GATES shape)',
+    'P-OWNER-TREE': 'the OWNER pass control on the tree, the revert of every T-owner-* row (' + MF + ' P-OWNER-TREE comment)',
 });
 
 /** Does control `name` (or prefix pattern `X-*`) name something in `controls`? Returns the matches. */

@@ -99,7 +99,8 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * while the live Signal.js is mid-edit, amendment 10). The wrap control L-WRAP-TREE (S2) uses tree, and one main-run
  * control, P-NEST-TAINT-HALF (b71, NEST lane only: the tree NEST smoke is clean) and, since b112 B5, the LIFECYCLE rows
  * (b117: P-LC-tree, T-cov-LIFECYCLE and the six T-LC-* mutants; the tree is clean of DIV-D3 since A5a), and the HOOK
- * rows P-HOOK-TREE-COVOFF (b93) and P-HOOK-TREE (b117 B3b; the tree is clean of DIV-F9 since A5b); no other main-run
+ * rows P-HOOK-TREE-COVOFF (b93) and P-HOOK-TREE (b117 B3b; the tree is clean of DIV-F9 since A5b), and the OWNER rows
+ * (b127 B5: P-OWNER-TREE, T-cov-OWNER and the five T-owner-* mutants; LANE_KERNELS.OWNER = tree, A1); no other main-run
  * control does until A1-A3
  * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
@@ -334,6 +335,23 @@ export const LC_ITER_PATCH = Object.freeze([A_LC_UNLINK,
 const LC_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE' });
 // T-cov-LIFECYCLE: no handle ever holds two live registrations (rule single-reg, lanes/lifecycle.mjs covOff).
 const LC_COV_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE', SOAK_MUSTFAIL: 'cov-off:lc-two-regs' });
+
+// T-owner-* anchors in the LIVE Signal.js (base tree ec6d7156; b127 B5, PLAN-R3-owner A5 (b)): each is the full line(s)
+// of the single hunk `diff Signal.js .handoff/b125-evidence/r3/mut/tree-<id>/Signal.js`, and each replacement is that
+// mutant's exact text, so every row's kernel IS the b125 mutant (sha256/8 cascade 158a58b3, cleanup ce6677c3, fifo
+// 195121be, outin 7ef2a2db, this b8135782; .handoff/b127-evidence/b5/). Each anchor occurs exactly once (patchAll).
+// :1450 disposeOwned's pop-from-the-front loop (8-space indent).
+const A_OW_CASCADE = '        while ((child = node.firstOwned) !== null) {\n';
+// :2577 onCleanup's first registration (12-space indent).
+const A_OW_CLEANUP = '            if (existing === undefined) currentOwner.cleanupFn = fn;\n';
+// :1478 runOwnCleanup's multi-cleanup FIFO loop (12-space indent; the fifo and this rows share it).
+const A_OW_LOOP = '            else for (let i = 0; i < cleanup.length; i++) { const fn = cleanup[i]; fn(); }\n';
+// :1440-:1441 runCleanup's two-test dispatcher: kill the owned children, then the node's own cleanups (8-space indent).
+const A_OW_OUTIN = '        if (node.firstOwned !== null) disposeOwned(node);\n        if (node.cleanupFn !== undefined) runOwnCleanup(node);\n';
+// The tree OWNER lane, every scenario on (A1: LANE_KERNELS.OWNER = ['tree']).
+const OW_ENV = Object.freeze({ SOAK_LANES: 'OWNER' });
+// T-cov-OWNER / P-OWNER-HP: no dying owner ever holds two cleanups (lanes/owner.mjs covOff cleanup-fifo -> single-cleanup).
+const OW_COV_ENV = Object.freeze({ SOAK_LANES: 'OWNER', SOAK_MUSTFAIL: 'cov-off:cleanup-fifo' });
 
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
@@ -760,6 +778,55 @@ export const CONTROLS = deepFreeze([
     M('T-LC-iter', 'tree', LC_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O7 lane=LIFECYCLE sig=stale-off known=none'],
     }, { patches: [LC_ITER_PATCH] }),
+    // P-OWNER-TREE (b127 B5, PLAN-R3-owner A1 + A5 (b)): the OWNER pass control on the tree (D-b124-1: LANE_KERNELS.OWNER
+    // = ['tree']), P-LC-tree's shape: the full lane, exit 0, zero BREACH lines, END verdict=SMOKE. Also the revert of
+    // every T-owner-* row (the same env and argv, patches []). MEASURED: .handoff/b127-evidence/b5/heads-{1,2,3}.txt.
+    M('P-OWNER-TREE', 'tree', OW_ENV, ['--smoke'], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { verdict: 'SMOKE' },
+    }),
+    // T-cov-OWNER (b127 B5, A5 (b)): the tree OWNER lane with every dying owner holding one cleanup at most
+    // (cov-off:cleanup-fifo -> rule single-cleanup) is clean but INCONCLUSIVE on its scenario, P-HOOK-TREE-COVOFF's shape.
+    M('T-cov-OWNER', 'tree', OW_COV_ENV, ['--smoke'], {
+        exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=OWNER missing=cleanup-fifo'],
+        specs: ['INCONCLUSIVE scenario lane=OWNER missing=cleanup-fifo'],
+    }),
+    // P-OWNER-HP (b127 B5, A1 / D-b124-1: a cov-off control, not a pass control): headpatched under the same cov-off.
+    // headpatched calls a multi-cleanup with this = the cleanup array (DIV-48), so its full lane reads OW callback-this;
+    // with every owner at one cleanup the run must stay clean (0 BREACH) and INCONCLUSIVE on the one scenario.
+    M('P-OWNER-HP', 'headpatched', OW_COV_ENV, ['--smoke'], {
+        exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=OWNER missing=cleanup-fifo'],
+        specs: ['INCONCLUSIVE scenario lane=OWNER missing=cleanup-fifo'],
+    }),
+    // T-owner-* (b127 B5, PLAN-R3-owner A5 (a) + (b)): the five b125 R3 one-hunk mutants of the tree's owner paths, each
+    // at P-OWNER-TREE's shape (the tree lane is clean, so every BREACH is the mutant's, known=none). A spec matches ANY
+    // stderr BREACH line (judgeMain presence, not the first head). b126 B2b census, 50 worlds per mutant
+    // (.handoff/b126-evidence/b2b/mut-tree-<id>.txt), ALL-fails counts quoted per row; the measured heads of THESE rows
+    // (MUSTFAIL_HEADS=1, 3 runs): .handoff/b127-evidence/b5/heads-{1,2,3}.txt.
+    // cascade: disposeOwned never pops a child (`false &&`), so owned nodes outlive their owner: O5 node-count /
+    // link-count / kind-count 50 / 50 each (atRest's checkCounts shares fails[] with a mid-op fail, A5 (a)); O2 glitch
+    // and O1e effect-stale 38 / 50, O4 effect-dead 4 / 50 are not specs.
+    M('T-owner-cascade', 'tree', OW_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O5 lane=OWNER sig=node-count known=none', 'oracle=O5 lane=OWNER sig=link-count known=none', 'oracle=O5 lane=OWNER sig=kind-count known=none'],
+    }, { patches: [[A_OW_CASCADE, '        while (false && (child = node.firstOwned) !== null) {\n']] }),
+    // cleanup: onCleanup drops the first registration, so no cleanup ever fires and the lane's sentinel write is lost:
+    // O4 effect-dead 50 / 50 (O1e 0 / 50).
+    M('T-owner-cleanup', 'tree', OW_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O4 lane=OWNER sig=effect-dead known=none'],
+    }, { patches: [[A_OW_CLEANUP, '            if (existing === undefined) { /* MUT cleanup: assignment dropped */ }\n']] }),
+    // fifo: an owner's cleanups run last-first: OW cleanup-order (non-FIFO within an owner) 50 / 50.
+    M('T-owner-fifo', 'tree', OW_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=OW lane=OWNER sig=cleanup-order known=none'],
+    }, { patches: [[A_OW_LOOP, '            else for (let i = cleanup.length - 1; i >= 0; i--) { const fn = cleanup[i]; fn(); }\n']] }),
+    // outin: runCleanup fires the node's own cleanups before it kills the children: OW cleanup-order (its ancestor
+    // fired first) 50 / 50.
+    M('T-owner-outin', 'tree', OW_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=OW lane=OWNER sig=cleanup-order known=none'],
+    }, { patches: [[A_OW_OUTIN, '        if (node.cleanupFn !== undefined) runOwnCleanup(node);\n        if (node.firstOwned !== null) disposeOwned(node);\n']] }),
+    // this: a multi-cleanup called as `cleanup[i]()` gets this = the cleanup array (the controls' DIV-48 shape, which
+    // never explains on the tree): OW callback-this 50 / 50.
+    M('T-owner-this', 'tree', OW_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=OW lane=OWNER sig=callback-this known=none'],
+    }, { patches: [[A_OW_LOOP, '            else for (let i = 0; i < cleanup.length; i++) cleanup[i]();\n']] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375

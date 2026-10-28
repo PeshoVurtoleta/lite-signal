@@ -63,6 +63,28 @@ The LEDGER #45 / #46 op-3 rules are unchanged (a throwing `onConnect` still anno
 bodies (+ `allocateLink`, `freeLink`, values unchanged); `test/torture.mjs` gains the `mreg` lane (steady-state, whole-run window
 gate and retention half in the pinned child). (User code running with `this` = the internal node was fixed later, LEDGER #48: see the #48 entry above.)
 
+### Tests / Docs -- soak: OWNER lane + OW oracle (R3, b124-b127)
+
+Dev-only (`bench/soak/`, not shipped). No engine change in this rung: Signal.js is the tree kernel sha256/8 ec6d7156
+(LEDGER #48, 699b9ef); no new engine claim.
+- New OWNER lane, the 8th rostered lane (`lanes/owner.mjs`; `LANE_INDEX.OWNER` = 7, ROSTER length 8). It drives `createRoot` /
+  `runWithOwner` / `getOwner` / `onCleanup` ownership with ops `osent` / `oarm` / `orwo` / `oroot` / `odisp` / `opull`.
+- New oracle family OW (registered last in ORACLES), sigs `cleanup-order` (FIFO within an owner; every descendant's cleanups
+  before its ancestor's; siblings unordered) and `callback-this` (lane callbacks run with `this === undefined`). The cleanup
+  COUNT is judged by the sentinel (O1e / O4 / O2); teardown is judged by O5 only.
+- Calibrated on the tree kernel only (maintainer ruling D-b124-1). New divergence DIV-48 (kind fix) records the frozen
+  controls (headpatched, rev152) running multi-cleanups with `this` = the cleanup array; the tree fixed it in LEDGER #48.
+- Timed calibration recut (b126): quiet-lock `run --strict` exit 0, QUIET at launch (load1 3.11, baseline 2.21; load1 7.71
+  at the end), 2026-10-28, 1043 s wall (`seconds` in soak-calibration.json), engine ec6d7156,
+  Node v26.8.2, Apple M4 Pro, one run. REPORTED tier: it gates nothing and makes no speed claim.
+- Must-fail controls (8 new): T-owner-cascade, T-owner-cleanup, T-owner-fifo, T-owner-outin, T-owner-this (tree mutants), the
+  pass control P-OWNER-TREE, T-cov-OWNER and P-OWNER-HP (cov-off, exit 3). _mustfail now lists 66 controls (48 short + 18 long).
+  teeth.mjs: universe 63, CHECKS ids 53, GAPS 22, NOT_TEETH 8, UNREACHABLE 5.
+- Tests: new test/87-soak-owner.test.mjs (48 tests); test/44 DIV-48 rows; test/45 36 tests (teeth q).
+- Evidence (REPORTED, no timing claim): OWNER 11 x 100000 on the tree kernel, exit 0, 2706 worlds, 0 failing, all 11 cycle
+  boundaries trackerSize 0 / weakAlive 0; host PRELIMINARY (load1 6.39).
+- Open FILLER F-OW-TEARDOWN: a `close()` that skips every cleanup is unseen today (teardown is O5-only, the sentinel is silent).
+
 ### Tests / Docs -- soak: LIFECYCLE lane + O7 (R2, b110-b112)
 
 Dev-only (`bench/soak/`, not shipped). At b110-b112 `Signal.js` was unchanged (sha256/8 0f75866f) and no engine claim was made; the A5a / A5b entries above change it (sha256/8 2f7974f3).
