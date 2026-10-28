@@ -100,7 +100,8 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * control, P-NEST-TAINT-HALF (b71, NEST lane only: the tree NEST smoke is clean) and, since b112 B5, the LIFECYCLE rows
  * (b117: P-LC-tree, T-cov-LIFECYCLE and the six T-LC-* mutants; the tree is clean of DIV-D3 since A5a), and the HOOK
  * rows P-HOOK-TREE-COVOFF (b93) and P-HOOK-TREE (b117 B3b; the tree is clean of DIV-F9 since A5b), and the OWNER rows
- * (b127 B5: P-OWNER-TREE, T-cov-OWNER and the five T-owner-* mutants; LANE_KERNELS.OWNER = tree, A1); no other main-run
+ * (b127 B5: P-OWNER-TREE, T-cov-OWNER and the five T-owner-* mutants; LANE_KERNELS.OWNER = tree, A1), and the RECYCLE
+ * rows (b130 B5: P-RC-TREE, T-cov-RECYCLE and the three T-RC-* mutants, PLAN-R4 TASK 7); no other main-run
  * control does until A1-A3
  * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
@@ -352,6 +353,22 @@ const A_OW_OUTIN = '        if (node.firstOwned !== null) disposeOwned(node);\n 
 const OW_ENV = Object.freeze({ SOAK_LANES: 'OWNER' });
 // T-cov-OWNER / P-OWNER-HP: no dying owner ever holds two cleanups (lanes/owner.mjs covOff cleanup-fifo -> single-cleanup).
 const OW_COV_ENV = Object.freeze({ SOAK_LANES: 'OWNER', SOAK_MUSTFAIL: 'cov-off:cleanup-fifo' });
+
+// T-RC-* anchors in the LIVE Signal.js (base tree ec6d7156; b130 B5, PLAN-R4 TASK 7 + O9 / O11): each is the full line(s)
+// of the single hunk `diff Signal.js .handoff/b129-evidence/r4a/mut/T-RC-<id>/Signal.js`, and each replacement is that
+// mutant's exact text, so every row's kernel IS the b129 mutant (sha256/8 setgen 57f16bfc, readgen 1fa4a0ca, dispgen
+// 8603ef56). Each anchor occurs exactly once (patchAll).
+// :2075-:2076 the callable read's read.set closure gen guard (O11: adapters/lite.mjs hands the lane the callable read).
+const A_RC_SETGEN = '        read.set = (value) => {\n            if (node.gen !== birthGen) return;\n';
+// :2019 sharedSignalPeek's stale-handle guard (O10: moves only a stale SIGNAL handle's peek).
+const A_RC_READGEN = '        if (this[NODE_GEN] !== node.gen) return undefined;   // stale handle: slot recycled (ABA guard, matches read())\n';
+// :2425 the registry dispose(api) gen guard inside `function dispose(api)` :2419 (O9; :2745 is not it).
+const A_RC_DISPGEN = '        if (api[NODE_GEN] !== node.gen) return;\n';
+// The tree RECYCLE lane, every scenario on.
+const RC_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE' });
+// T-cov-RECYCLE: rsdisp only names entries whose slot is dead (lanes/recycle.mjs covOff stale-dispose-recycled ->
+// rule stale-dispose-dead).
+const RC_COV_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE', SOAK_MUSTFAIL: 'cov-off:stale-dispose-recycled' });
 
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
@@ -827,6 +844,35 @@ export const CONTROLS = deepFreeze([
     M('T-owner-this', 'tree', OW_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=OW lane=OWNER sig=callback-this known=none'],
     }, { patches: [[A_OW_LOOP, '            else for (let i = 0; i < cleanup.length; i++) cleanup[i]();\n']] }),
+    // P-RC-TREE (b130 B5, PLAN-R4 TASK 7): the RECYCLE pass control on the tree, P-OWNER-TREE's shape: the full lane,
+    // exit 0, zero BREACH lines, END verdict=SMOKE. Also the revert of every T-RC-* row (the same env and argv,
+    // patches []). MEASURED: .handoff/b130-evidence/b5/heads-{1,2,3}.txt.
+    M('P-RC-TREE', 'tree', RC_ENV, ['--smoke'], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { verdict: 'SMOKE' },
+    }),
+    // T-cov-RECYCLE (b130 B5): the tree RECYCLE lane with rsdisp naming dead slots only (cov-off:stale-dispose-recycled
+    // -> rule stale-dispose-dead) is clean but INCONCLUSIVE on its scenario, T-cov-OWNER's shape.
+    M('T-cov-RECYCLE', 'tree', RC_COV_ENV, ['--smoke'], {
+        exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=RECYCLE missing=stale-dispose-recycled'],
+        specs: ['INCONCLUSIVE scenario lane=RECYCLE missing=stale-dispose-recycled'],
+    }),
+    // T-RC-* (b130 B5, PLAN-R4 MUTANTS + TASK 7): the three b129 R4a one-hunk mutants of the tree's generation guards,
+    // each at P-RC-TREE's shape (the tree lane is clean, so every BREACH is the mutant's, known=none). A spec matches ANY
+    // stderr BREACH line (judgeMain presence, not the first head). b130 B2b census, 200 worlds per mutant
+    // (.handoff/b130-evidence/census/fix1/mut-<id>.txt): O9 stale-write / stale-read / stale-dispose present 200 / 200 in
+    // its own row. Measured heads of THESE rows (MUSTFAIL_HEADS=1, 3 runs): .handoff/b130-evidence/b5/heads-{1,2,3}.txt.
+    // setgen: a stale signal handle's set lands on the recycled resident: O9 stale-write.
+    M('T-RC-setgen', 'tree', RC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=RECYCLE sig=stale-write known=none'],
+    }, { patches: [[A_RC_SETGEN, '        read.set = (value) => {\n            /* MUT */\n']] }),
+    // readgen: a stale signal handle's peek reads the recycled resident: O9 stale-read.
+    M('T-RC-readgen', 'tree', RC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=RECYCLE sig=stale-read known=none'],
+    }, { patches: [[A_RC_READGEN, '']] }),
+    // dispgen: r.dispose(h) on a stale handle disposes the recycled resident: O9 stale-dispose (O5 by presence, not a spec).
+    M('T-RC-dispgen', 'tree', RC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=RECYCLE sig=stale-dispose known=none'],
+    }, { patches: [[A_RC_DISPGEN, '']] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375

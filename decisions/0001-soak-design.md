@@ -456,13 +456,24 @@ _mustfail.mjs / parity.json / controls.json as the tree stands; those marked [B5
   `cbOf` fails closed with exec.unmodelled for a fire of a registration LcState never recorded.
 - Control roster: controls.json pins five controls (rev152, headpatched, preb33, prefixr, prea5); prea5 = commit 767f808,
   Signal.js 0f75866f, the last kernel before A5a / A5b, byte-frozen in controls/prea5/. T-A5b runs it on HOOK (smoke) and must
-  show O8 ghost-listener explained by DIV-F9. parity.json pins 50 files (+ lanes/owner.mjs, R3 b126).
-- Counts now (b127 B5): universe 63, CHECKS ids 53, GAPS 22, NOT_TEETH 8, UNREACHABLE 5, _mustfail controls 66 (48 short +
-  18 long), test/45 36 tests (the R3 OWNER rung added the lane, the OW family and 8 controls; see SPEC-B addendum 14).
+  show O8 ghost-listener explained by DIV-F9. parity.json pins 51 files (+ lanes/owner.mjs, R3 b126; + lanes/recycle.mjs, R4a b130).
+- Counts now (b130 R4a): universe 68, CHECKS ids 58, GAPS 22, NOT_TEETH 9, UNREACHABLE 5, _mustfail controls 71 (53 short +
+  18 long), test/45 37 tests (b127 R3 OWNER added the lane, the OW family and 8 controls, SPEC-B addendum 14; b130 R4a added
+  the RECYCLE lane and the O9 family, SPEC-B addendum 15).
+- R4a (b130; harness only, Signal.js ec6d7156 unchanged): lane RECYCLE (LANE_INDEX 11; lanes/recycle.mjs), the 9th ROSTER
+  lane (laneSpan 12), ops rdisp / rsset / rsread / rsdisp over a fixed per-world ring of 8 stale handles. Oracle O9 (judged
+  only inside RECYCLE's op handlers), sigs stale-write (a live signal peek != model, any effect ran, or, D-b130-1, a live
+  computed the model holds CLEAN peeks != model), stale-read (a stale read / peek returns != undefined) and stale-dispose
+  (activeNodes / activeLinks moved, or a live signal handle reads undefined). LANE_KERNELS.RECYCLE = headpatched, lite-1.5.2,
+  tree. SCENARIOS 52 -> 58 (stale-write-recycled, stale-peek-recycled, stale-read-recycled, stale-dispose-recycled,
+  stale-dead-unrecycled, multi-gen; covOff stale-dispose-recycled -> stale-dispose-dead). Must-fail: T-RC-setgen /
+  T-RC-readgen / T-RC-dispgen (one-hunk tree mutants of the gen guards, each breaches O9 with its sig), T-cov-RECYCLE
+  (exit 3, missing=stale-dispose-recycled), pass control P-RC-TREE. Census 200 worlds: 0 failing on all 3 kernels.
 - [B5] An orphan rule: `audit()` reports `orphan control: <name>` for any _mustfail control that is under no CHECKS id and not in
   the NOT_TEETH allowlist (pass or report-only controls: L-P-INTERIM, L-P-INTERIM-ERROR, P-INTERIM-ERROR-clean, P-HOOK-HP,
-  P-HOOK-TREE, P-LC-tree, T-mark, P-OWNER-TREE). L-WRAP-TREE additionally asserts W2 PASS on the tree (`expect.extra.pass` `['W2']`; `wrapJudge`
-  needs >= 1 W2 record, each PASS, and no BREACH naming check=W2); `validSpec` allows `extra.pass` only on wrap controls.
+  P-HOOK-TREE, P-LC-tree, T-mark, P-OWNER-TREE, P-RC-TREE). L-WRAP-TREE additionally asserts W2 PASS on the tree
+  (`expect.extra.pass` `['W2']`; `wrapJudge` needs >= 1 W2 record, each PASS, and no BREACH naming check=W2); `validSpec`
+  allows `extra.pass` only on wrap controls.
 
 ## Consequences
 

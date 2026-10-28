@@ -26,7 +26,8 @@
  *
  * Owners (S3 R3, lanes/owner.mjs; b125 B1 owner probe): p1 generalized. An OWNER is a live computed or effect;
  * a signal is never adopted (children null). kill(i) cascades owned effects AND computeds child-first, then fires
- * the owner's own cleanups; every run of an owner (the engine runs runCleanup before a first evaluation too): kill children -> own cleanups FIFO ->
+ * the owner's own cleanups; every run of an owner (the engine runs runCleanup before a first evaluation too):
+ * kill children -> own cleanups FIFO ->
  * body. cl = the cleanups registered in the owner's current registration set (addCleanup; ordinal = cl before the
  * increment); every fire empties the set (one-shot: a body re-registers its own). fired = cleanups the model says
  * are due, world total; the sentinel signal (setSentinel) holds fired as its value (a cleanup writes the ENGINE

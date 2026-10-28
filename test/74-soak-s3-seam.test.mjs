@@ -279,7 +279,7 @@ test('LANE_INDEX: the reserved literal (S3-D6), 14 distinct values < 16, roster 
     const v = Object.values(LANE_INDEX);
     assert.equal(new Set(v).size, 14);
     assert.ok(v.every((x) => Number.isInteger(x) && x >= 0 && x < 16));
-    assert.deepEqual(ROSTER, ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER'], 'R3 appends OWNER, last');
+    assert.deepEqual(ROSTER, ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE'], 'R4a appends RECYCLE, last');
     for (const d of LANES) assert.equal(d.index, LANE_INDEX[d.name], d.name);
     assert.equal(laneByName('WIE').index, 4);
 });
