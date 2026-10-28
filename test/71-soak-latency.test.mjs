@@ -271,7 +271,14 @@ process.stdout.write(JSON.stringify({ N, flags: process.execArgv.filter((a) => a
     boxKinds: [...new Set(kinds(b))], objKinds: [...new Set(kinds(o))], used: sink !== null && BOX[0] !== 'tagged' }));
 `;
 
-test('latency GC: observe() allocates nothing -- 0 GC events (any kind, v8.GCProfiler) over N = 4e6 ops in a 1 MB semi-space, --single-threaded (resolution 0.262 B/op); a 16 B/op box control and a 32 B/op object control each count >= 32 minors', () => {
+/* b125 (FILLER 38): CONTROL FLOORS from measurement (node v26.8.2 darwin, 3 runs this round, load1 7.1): the 16 B/op box
+ * control counted 61 minors and the 32 B/op object control 122 (= 16N / S and 32N / S); at a 2 MB semi-space they count
+ * 30 / 61 (b125 must-fail run). The old floors (32) proved only <= 2,000,000 B per minor (0.5 B/op);
+ * at 2 MB the old object floor passed (61 >= 32). Floors 55 / 110 (~90%) fail a 2 MB semi-space, so they
+ * PROVE <= 16 x 4e6 / 55 = 1,163,637 B per minor: resolution <= 16 / 55 = 0.291 B/op (nominal S / N = 0.262 B/op). */
+const BOX_FLOOR = 55, OBJ_FLOOR = 110;
+
+test('latency GC: observe() allocates nothing -- 0 GC events (any kind, v8.GCProfiler) over N = 4e6 ops in a 1 MB semi-space, --single-threaded (resolution 0.262 B/op; floor-proven <= 0.291 B/op); TRANSIENT 16 B/op box and 32 B/op object controls count >= 55 / >= 110 minors', () => {
     const o = child(GC_FLAGS, GC_SRC);
     console.log('latency GC window: real events ' + JSON.stringify(o.real) + ' | box control minors ' + o.boxMinors + ' ' + JSON.stringify(o.boxKinds) +
         ' | object control minors ' + o.objMinors + ' ' + JSON.stringify(o.objKinds));
@@ -279,8 +286,8 @@ test('latency GC: observe() allocates nothing -- 0 GC events (any kind, v8.GCPro
     assert.equal(o.N, 4000000);
     assert.equal(o.used, true);
     for (const k of [...o.real, ...o.boxKinds, ...o.objKinds]) assert.ok(GC_KINDS.includes(k), 'unknown gcType ' + k + ' (fail closed)');
-    assert.ok(o.boxMinors >= 32, 'the 16 B/op box control must count >= 32 minors, got ' + o.boxMinors);
-    assert.ok(o.objMinors >= 32, 'the 32 B/op object control must count >= 32 minors, got ' + o.objMinors);
+    assert.ok(o.boxMinors >= BOX_FLOOR, 'the 16 B/op box control must count >= ' + BOX_FLOOR + ' minors, got ' + o.boxMinors);
+    assert.ok(o.objMinors >= OBJ_FLOOR, 'the 32 B/op object control must count >= ' + OBJ_FLOOR + ' minors, got ' + o.objMinors);
     assert.ok(windowOk(o.real), 'observe() window saw GC events ' + JSON.stringify(o.real));
 });
 
