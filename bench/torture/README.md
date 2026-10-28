@@ -476,17 +476,17 @@ allocation against the JS heap?"
 
 ## Torture soaks (`bench/torture/`)
 
-`torture/` holds twenty-five scenarios (23 semantic + 2 soak) in two groups, a shared `helpers/` module and a
+`torture/` holds twenty-four scenarios (23 semantic + 1 opt-in soak) in two groups, a shared `helpers/` module and a
 runner. **None are benchmarks.**
 
 ```bash
 npm run torture              # everything
 npm run torture:semantic     # correctness only -- fast, deterministic, CI
-npm run torture:soak         # resource soaks -- nightly / pre-publish
+npm run torture:soak         # opt-in wraparound soak (0 run by default: 1 skipped)
 
 node bench/torture/run.mjs --list
 node bench/torture/run.mjs oracle glitch      # substring match
-node bench/torture/run.mjs -g soak -s 30 -b   # 30s soaks, bail on first failure
+node bench/torture/run.mjs -g soak -b         # soak group, bail on first failure
 ```
 
 The runner spawns each scenario as a child process rather than importing it.
@@ -495,34 +495,22 @@ the default registry, so running two in one process would let the first one's
 residue poison the second's baseline. Each file also stays directly executable
 for when you are iterating on one.
 
-### Resource soaks (`scheduler-bench`; `wraparound-torture` is opt-in)
+### Soak (only `wraparound-torture`, opt-in)
 
 `graph-fuzzer` and `torture-soak` were retired on 2026-10-20 (absorbed by the
-`bench/soak` GRAPH lane; see the RETIRED block in `MANIFEST.txt`).
+`bench/soak` GRAPH lane) and `scheduler-bench` on 2026-10-29 (absorbed by the
+`bench/soak` SCHEDULER lane, `bench/soak/lanes/scheduler.mjs`); see the RETIRED
+blocks in `MANIFEST.txt` and section 16 of `decisions/0001-soak-design.md`.
+The lane's queue is synchronous, so it does not witness real microtask timing;
+the only test that witnesses delivery through a real microtask is
+`test/05-scheduler.test.mjs`. The accepted loss is the ~10 s single-registry
+aging with 1,508 live real-microtask effects under `grow`.
 
-These are
-crash-detection soaks: they run for a configurable number of seconds and
-verify two invariants at the end:
-
-1. Zero thrown exceptions during the run.
-2. `activeNodes` / `activeLinks` return to the pre-soak baseline after a
-   final settle pass -- i.e. the dispose path is sound under churn.
-
-Exit code is `0` iff both invariants hold; `1` on any error or stability
-failure. The ops/sec number is reported for context only.
-
-| File | What it stresses |
-| :--- | :--- |
-| `scheduler-bench.mjs` | 1,500 effects all using a microtask scheduler. Concurrent writes during pending microtask drains. Targets the scheduler-thunk caching + ABA-guard path (1.1.4+). |
-
-The soak uses an **explicit registry with `onCapacityExceeded: "grow"`**
-because the default top-level surface uses a fixed-capacity default
-registry (1,024 nodes) and the soak shapes intentionally exceed that.
+`wraparound-torture` runs only with `TORTURE_WRAPAROUND=1` (~30 s); otherwise it
+exits 78 (skip), so `npm run torture:soak` runs nothing by default
+("0 passed, 1 skipped, 0 failed", exit 0).
 
 ```sh
-# Default 10 seconds
-node --expose-gc bench/torture/scheduler-bench.mjs
-
 # Semantic torture (fast, deterministic, CI-friendly)
 node --expose-gc bench/torture/oracle-fuzzer.mjs
 node --expose-gc bench/torture/glitch-hunter.mjs
@@ -531,12 +519,12 @@ node --expose-gc bench/torture/work-accounting.mjs
 # Everything, in one shot
 npm run torture
 
-# Override the per-soak duration
-TORTURE_SECONDS=30 node --expose-gc bench/torture/scheduler-bench.mjs
+# Opt-in wraparound soak
+TORTURE_WRAPAROUND=1 node --expose-gc bench/torture/wraparound-torture.mjs
 ```
 
-These exist because a benchmark can report perfect numbers while still
-crashing on the 1,000,001st write. The soaks pin the dispose/recycle/
+The soaks existed because a benchmark can report perfect numbers while still
+crashing on the 1,000,001st write. The soaks pinned the dispose/recycle/
 rewire path against that failure mode.
 
 ---
@@ -597,7 +585,7 @@ The harness is intentionally small (under 400 lines) and intentionally portable 
 
 ### Semantic torture (`oracle-fuzzer`, `glitch-hunter`, `work-accounting`)
 
-The soaks above share a single oracle: nothing threw, and the pool came back to
+The retired soaks shared a single oracle: nothing threw, and the pool came back to
 baseline. Both are liveness questions. Neither reads a value and asks whether it
 is *right* -- so an engine that returns stale values from every computed passed
 all three soaks of the time green.
@@ -606,8 +594,8 @@ That is not hypothetical. Flipping the clean short-circuit in `pullComputed`
 from `<= 0` to `<= 1` -- a one-character off-by-one of exactly the kind a perf
 tweak makes -- throws nothing, keeps the pool perfectly balanced, and is
 invisible to all three soaks of the time (`graph-fuzzer`, `scheduler-bench`,
-`torture-soak`; the first and last since retired). The unit suite catches it, but only on small
-hand-written graphs; the soaks are the only thing exploring large random
+`torture-soak`; all three since retired). The unit suite catches it, but only on small
+hand-written graphs; the soaks were the only thing exploring large random
 topologies, which is precisely where a versioned push-pull engine with
 short-circuits is most likely to be wrong.
 
