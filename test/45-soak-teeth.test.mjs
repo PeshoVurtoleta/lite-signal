@@ -51,14 +51,16 @@ const GAPS_MAX = 22;
 // GAP's covers (a tooth quietly turned into a gap) fails until this literal is edited.
 const GAP_COVERED = [
     'oracle:OB', 'sig:OB:batch-early-run', 'gate:totals', 'sig:O1c:computed-err-mismatch',
-    'sig:O5:node-count', 'sig:O5:kind-count', 'sig:O5:teardown-residue',
+    'sig:O5:teardown-residue',
     'sig:O6:equals-mutated', 'sig:O6:escape-empty', 'cause:no-lane', 'cause:post-cycles',
 ];
 // CHECKS holds at least this many ids (31 at burst 10; 34 at burst 27: gate:wrap, cause:wrap-crossing,
 // cause:wrap-unmeasured; 35 at burst 68: lane:WIE; 36 at burst 81: gate:rss; 40 at burst 93: lane:HOOK, oracle:O8,
-// sig:O8:ghost-listener, sig:O8:mirror-links; 47 at burst 112: lane:LIFECYCLE, oracle:O7 and the five sig:O7:* ids).
+// sig:O8:ghost-listener, sig:O8:mirror-links; 47 at burst 112: lane:LIFECYCLE, oracle:O7 and the five sig:O7:* ids;
+// 53 at burst 127 B5: lane:OWNER, oracle:OW, sig:OW:cleanup-order, sig:OW:callback-this, and (A6) sig:O5:node-count,
+// sig:O5:kind-count).
 // A dropped id is a lost tooth; raise it when one lands.
-const CHECKS_MIN = 47;
+const CHECKS_MIN = 53;
 
 const copy = (x) => structuredClone(x);
 const live = (over) => audit(Object.assign({ controls: CONTROL_NAMES.slice(), ceiling: GAPS_CEILING.slice(), max: GAPS_MAX }, over || {}));
@@ -77,8 +79,8 @@ test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 22-n
     assert.deepEqual(live(), []);
 });
 
-test('teeth a: GAPS cover exactly the literal 11 ids; CHECKS holds >= 47 ids (a tooth never quietly becomes a gap)', () => {
-    assert.equal(GAP_COVERED.length, 11);
+test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 53 ids (a tooth never quietly becomes a gap)', () => {
+    assert.equal(GAP_COVERED.length, 9);
     assert.deepEqual(coveredBy(GAPS), GAP_COVERED.slice().sort());
     assert.ok(Object.keys(CHECKS).length >= CHECKS_MIN, 'CHECKS ids ' + Object.keys(CHECKS).length + ' < ' + CHECKS_MIN);
     // T1: cause:interrupted deleted from CHECKS and appended to GAPS['T-post-cycles'].covers -- audit() stays []
@@ -691,7 +693,7 @@ test('teeth j: B5 -- validSpec: extra.pass is wrap-only, a non-empty list of dis
 });
 
 test('teeth j: B5 -- audit(): every _mustfail control is under some CHECKS id or in NOT_TEETH (orphan control: <name>)', () => {
-    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark']);
+    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE']);
     assert.ok(CHECKS['cause:scenario'].includes('P-HOOK-TREE-COVOFF'), 'the b93 HOOK cov-off scenario control is a cause:scenario tooth');
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']) }), ['orphan control: X-orphan']);
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']), notTeeth: Object.assign({}, NOT_TEETH, { 'X-orphan': 'a reason' }) }), []);
@@ -954,4 +956,94 @@ test('teeth p: the LIFECYCLE ids have teeth -- L-LC-preb33, P-LC-tree, T-cov-LIF
     for (const id of NEW) delete c2[id];
     const probs = live({ checks: c2 });
     for (const id of NEW) hasProblem(probs, 'uncovered: ' + id + ' has no CHECKS control, no GAP and no UNREACHABLE proof');
+});
+
+/* ---- q. the OWNER teeth (b127 B5, PLAN-R3-owner A1 / A2 / A5: five tree mutants, a pass control, two cov-off rows) -- */
+
+const OW = (o, sig) => 'oracle=' + o + ' lane=OWNER sig=' + sig + ' known=none';
+const OW_ROWS = [
+    // [name, the anchor (full line(s)) in the live Signal.js, the mutant's replacement, the row's specs]
+    ['T-owner-cascade', '        while ((child = node.firstOwned) !== null) {\n', '        while (false && (child = node.firstOwned) !== null) {\n',
+        [OW('O5', 'node-count'), OW('O5', 'link-count'), OW('O5', 'kind-count')]],
+    ['T-owner-cleanup', '            if (existing === undefined) currentOwner.cleanupFn = fn;\n',
+        '            if (existing === undefined) { /* MUT cleanup: assignment dropped */ }\n', [OW('O4', 'effect-dead')]],
+    ['T-owner-fifo', '            else for (let i = 0; i < cleanup.length; i++) { const fn = cleanup[i]; fn(); }\n',
+        '            else for (let i = cleanup.length - 1; i >= 0; i--) { const fn = cleanup[i]; fn(); }\n', [OW('OW', 'cleanup-order')]],
+    ['T-owner-outin', '        if (node.firstOwned !== null) disposeOwned(node);\n        if (node.cleanupFn !== undefined) runOwnCleanup(node);\n',
+        '        if (node.cleanupFn !== undefined) runOwnCleanup(node);\n        if (node.firstOwned !== null) disposeOwned(node);\n', [OW('OW', 'cleanup-order')]],
+    ['T-owner-this', '            else for (let i = 0; i < cleanup.length; i++) { const fn = cleanup[i]; fn(); }\n',
+        '            else for (let i = 0; i < cleanup.length; i++) cleanup[i]();\n', [OW('OW', 'callback-this')]],
+];
+const OW_ENV = { SOAK_LANES: 'OWNER' };
+const OW_COV_ENV = { SOAK_LANES: 'OWNER', SOAK_MUSTFAIL: 'cov-off:cleanup-fifo' };
+const OW_COV_LINE = 'soak: INCONCLUSIVE -- scenario lane=OWNER missing=cleanup-fifo';
+
+test('teeth q: the OWNER ids have teeth -- P-OWNER-TREE, T-cov-OWNER, P-OWNER-HP and five one-hunk T-owner-* tree mutants; each pairs', () => {
+    const NEW = ['lane:OWNER', 'oracle:OW', 'sig:OW:cleanup-order', 'sig:OW:callback-this'];
+    const u = universe();
+    for (const id of NEW) {
+        assert.ok(u.includes(id), id + ' is a judged id');
+        assert.ok(Array.isArray(CHECKS[id]) && CHECKS[id].length >= 1, id + ' has a CHECKS control');
+    }
+    const names = OW_ROWS.map((r) => r[0]);
+    assert.deepEqual(CHECKS['lane:OWNER'], names);
+    assert.deepEqual(CHECKS['oracle:OW'], ['T-owner-fifo', 'T-owner-outin', 'T-owner-this']);
+    assert.deepEqual(CHECKS['sig:OW:cleanup-order'], ['T-owner-fifo', 'T-owner-outin']);
+    assert.deepEqual(CHECKS['sig:OW:callback-this'], ['T-owner-this']);
+    for (const id of ['oracle:O5', 'sig:O5:link-count']) assert.ok(CHECKS[id].includes('T-owner-cascade'), id + ' -> T-owner-cascade');
+    for (const id of ['oracle:O4', 'sig:O4:effect-dead']) assert.ok(CHECKS[id].includes('T-owner-cleanup'), id + ' -> T-owner-cleanup');
+    // A6: T-owner-cascade is the measured red kernel of node-count / kind-count; GAP T-O5-counts covers teardown-residue only
+    for (const id of ['sig:O5:node-count', 'sig:O5:kind-count']) assert.deepEqual(CHECKS[id], ['T-owner-cascade'], id);
+    for (const n of ['T-cov-OWNER', 'P-OWNER-HP']) assert.ok(CHECKS['cause:scenario'].includes(n), 'cause:scenario -> ' + n);
+    assert.equal(typeof NOT_TEETH['P-OWNER-TREE'], 'string');
+    // the pass / revert control: tree unpatched, the FULL lane, exit 0 (A1: LANE_KERNELS.OWNER = ['tree'])
+    const p = CONTROLS.find((x) => x.name === 'P-OWNER-TREE');
+    assert.ok(p && SHORT_RE.test(p.name));
+    assert.deepEqual([p.run, p.base, p.env, p.argv, p.patches, p.arm, p.expect.exit, p.expect.kind, p.expect.lines, p.expect.specs, p.expect.extra],
+        ['main', 'tree', OW_ENV, ['--smoke'], [], null, 0, 'nobreach', [], [], { verdict: 'SMOKE' }]);
+    assert.deepEqual(validSpec(p), []);
+    // the coverage rows: tree (T-cov-OWNER) and headpatched (P-OWNER-HP, D-b124-1: a cov-off control, 0 BREACH), exit 3
+    for (const [n, b] of [['T-cov-OWNER', 'tree'], ['P-OWNER-HP', 'headpatched']]) {
+        const t = CONTROLS.find((x) => x.name === n);
+        assert.ok(t && SHORT_RE.test(n), n);
+        assert.deepEqual([t.run, t.base, t.env, t.argv, t.patches, t.arm, t.expect.exit, t.expect.kind, t.expect.lines, t.expect.specs],
+            ['main', b, OW_COV_ENV, ['--smoke'], [], null, 3, 'nobreach', [OW_COV_LINE], ['INCONCLUSIVE scenario lane=OWNER missing=cleanup-fifo']], n);
+        assert.deepEqual(validSpec(t), [], n);
+    }
+    // each mutant: an exactly-once anchor in the live Signal.js, the b125 mutant's exact text, P-OWNER-TREE's shape
+    assert.deepEqual(CONTROLS.filter((x) => x.name.indexOf('T-owner-') === 0).map((x) => x.name), names, 'OW_ROWS names every T-owner-* row, in order');
+    const base = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
+    for (const [name, anchor, repl, specs] of OW_ROWS) {
+        const c = CONTROLS.find((x) => x.name === name);
+        assert.ok(c && SHORT_RE.test(name), name + ' exists in the short battery');
+        assert.deepEqual([c.run, c.base, c.env, c.argv, c.arm, c.expect.exit, c.expect.kind, c.expect.lines, c.expect.specs], ['main', 'tree', OW_ENV, ['--smoke'], null, 1, 'match', [], specs], name);
+        assert.deepEqual(validSpec(c), [], name);
+        assert.deepEqual(c.patches, [[anchor, repl]], name);
+        assert.equal(base.split(anchor).length - 1, 1, name + ': the anchor occurs exactly once in Signal.js');
+        const k = buildKernel(c).src;
+        assert.equal(k, base.replace(anchor, () => repl), name + ': the kernel = Signal.js with exactly that hunk replaced');
+        const a = base.split('\n'), b = k.split('\n');
+        assert.equal(a.length, b.length, name + ': line count kept');
+        assert.equal(a.filter((x, i) => x !== b[i]).length, anchor.split('\n').length - 1, name + ': only the anchored line(s) differ');
+    }
+    assert.deepEqual(pairing(CHECKS, CONTROLS), []);
+    // must-fail: fifo's spec moved to callback-this no longer backs sig:OW:cleanup-order; a lane=HOOK spec not lane:OWNER
+    const ctl = copy(CONTROLS);
+    const ff = ctl.find((x) => x.name === 'T-owner-fifo');
+    ff.expect.specs = [OW('OW', 'callback-this')];
+    assert.deepEqual(pairing(CHECKS, ctl), ['sig:OW:cleanup-order: T-owner-fifo -- no BREACH spec naming oracle=OW with sig in cleanup-order']);
+    ff.expect.specs = ['oracle=OW lane=HOOK sig=cleanup-order known=none'];
+    assert.deepEqual(pairing(CHECKS, ctl), ['lane:OWNER: T-owner-fifo -- no BREACH spec naming lane=OWNER']);
+    // must-fail: a T-owner row dropped from CHECKS is an orphan; the registry without the OWNER CHECKS leaves all four ids uncovered
+    const c1 = copy(CHECKS);
+    for (const id of Object.keys(c1)) c1[id] = c1[id].filter((n) => n !== 'T-owner-this');
+    hasProblem(live({ checks: c1 }), 'orphan control: T-owner-this');
+    const c2 = copy(CHECKS);
+    for (const id of NEW) delete c2[id];
+    const probs = live({ checks: c2 });
+    for (const id of NEW) hasProblem(probs, 'uncovered: ' + id + ' has no CHECKS control, no GAP and no UNREACHABLE proof');
+    // must-fail: a GAP that still covers node-count beside its CHECKS tooth is stale
+    const g3 = copy(GAPS);
+    g3['T-O5-counts'].covers = g3['T-O5-counts'].covers.concat(['sig:O5:node-count']);
+    hasProblem(live({ gaps: g3 }), 'stale GAP: T-O5-counts covers sig:O5:node-count, which has CHECKS');
 });

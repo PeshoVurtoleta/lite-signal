@@ -42,7 +42,7 @@ const DIV_F9 = new RegExp(JSON.parse(readFileSync(ROOT + 'bench/soak/divergences
 
 test('A1 laneSpan is max LANE_INDEX + 1 of the roster, not its size; unknown or empty rosters throw', () => {
     assert.equal(laneSpan(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE']), 5, 'the S1 roster');
-    assert.equal(laneSpan(ROSTER), 7, 'ROSTER (S1 + HOOK R1b + LIFECYCLE R2): 7 lanes, 7 indices');
+    assert.equal(laneSpan(ROSTER), 8, 'ROSTER (S1 + HOOK R1b + LIFECYCLE R2 + OWNER R3): 8 lanes, 8 indices (OWNER = 7)');
     assert.equal(laneSpan(['GRAPH', 'SCHEDULER']), 9);
     assert.equal(laneSpan(['SNAPSHOT']), 14);
     assert.throws(() => laneSpan(['GRAPH', 'NOPE']), /no LANE_INDEX entry/);
@@ -77,8 +77,8 @@ test('A1 rosterRemapCollision returns the pair whose lane index is >= the roster
 });
 
 test('A1 exactness: a pair on an UNROSTERED index inside the span is null; rostering that index brings it back', () => {
-    const RH = ROSTER.filter((l) => l !== 'LIFECYCLE');   // S1 + HOOK (R1b), without LIFECYCLE
-    // the plan literal: ROSTER + HOOK spans 7, so pair (5, 13) is outside the span already -> null
+    const RH = ROSTER.filter((l) => l !== 'LIFECYCLE' && l !== 'OWNER');   // S1 + HOOK (R1b), without LIFECYCLE and OWNER
+    // the plan literal: S1 + HOOK spans 7, so pair (5, 13) is outside the span already -> null
     assert.equal(rosterRemapCollision(5, RH, 0), null);
     assert.equal(rosterRemapCollision(13, RH, 0), null);
     // with teeth: + SNAPSHOT (13) spans 14, so the span check alone REPORTS (5, 13); index 5 (LIFECYCLE) holds no lane
@@ -92,7 +92,7 @@ test('A1 exactness: a pair on an UNROSTERED index inside the span is null; roste
     const RHSL = RHS.concat(['LIFECYCLE']);
     assert.deepEqual(rosterRemapCollision(5, RHSL, 0), remapCollision(5, 14, 0));
     assert.deepEqual(rosterRemapCollision(13, RHSL, 0), remapCollision(13, 14, 0));
-    // ROSTER + HOOK can never hold a pair (every pair has a lane >= 8): exhaustive over the 16 lane residues
+    // S1 + HOOK can never hold a pair (every pair has a lane >= 8): exhaustive over the 16 lane residues
     for (let r = 0; r < 16; r++) assert.equal(rosterRemapCollision(r, RH, 0), null, 'residue ' + r);
     assert.throws(() => rosterRemapCollision(0, ['GRAPH'], CYCLE_LIMIT + 1), RangeError);
 });
@@ -107,7 +107,7 @@ test('A1 header: seedRemapCollision is the rostered-index pair (provenance.mjs),
     const h2 = buildHeader(stubCfg(3, ['NEST', 'RECYCLE'], cB + 1), EXTRAS);
     assert.deepEqual(h2.seedRemapCollision, { cycleA: 0, laneA: 3, cycleB: ((3 ^ REMAP_PREIMAGE) >>> 0) >>> 4, laneB: 11 });
     assert.equal(buildHeader(stubCfg(DEFAULT_SEED, ROSTER, 11), EXTRAS).seedRemapCollision, null);
-    assert.equal(buildHeader(stubCfg(5, ROSTER.filter((l) => l !== 'LIFECYCLE').concat(['SNAPSHOT']), 0), EXTRAS).seedRemapCollision, null, 'exactness through the header');
+    assert.equal(buildHeader(stubCfg(5, ROSTER.filter((l) => l !== 'LIFECYCLE' && l !== 'OWNER').concat(['SNAPSHOT']), 0), EXTRAS).seedRemapCollision, null, 'exactness through the header');
 });
 
 /* ---- A2: mirror + O8 ----------------------------------------------------------------------------- */
@@ -280,9 +280,11 @@ const flat = (ops, out) => { for (const op of ops) { if (op.o === 'seq') flat(op
 const controlAdapter = async (kn) => liteS3AdapterFor(await import(CONTROL[kn]));
 const fails = (r) => (r.failure === null ? [] : r.failure.fails);
 
-test('A3 HOOK is rostered just before LIFECYCLE at index 6, needs cap hook, hard oracle O8, the four required scenarios', () => {
+test('A3 HOOK is rostered just before LIFECYCLE (HOOK 6), OWNER (7) is last, needs cap hook, hard oracle O8, the four required scenarios', () => {
     assert.equal(ROSTER[ROSTER.indexOf('LIFECYCLE') - 1], 'HOOK');
-    assert.equal(ROSTER[ROSTER.length - 1], 'LIFECYCLE');
+    assert.equal(ROSTER[ROSTER.indexOf('LIFECYCLE') + 1], 'OWNER');
+    assert.equal(ROSTER[ROSTER.length - 1], 'OWNER');
+    assert.equal(ROSTER.length, 8);
     assert.equal(HOOK_DESC.index, 6);
     assert.deepEqual(HOOK_DESC.needsCaps, ['hook']);
     assert.ok(HOOK_DESC.hardOracles.includes('O8'));
@@ -291,6 +293,7 @@ test('A3 HOOK is rostered just before LIFECYCLE at index 6, needs cap hook, hard
     assert.deepEqual(SIGS.O8, ['ghost-listener', 'mirror-links']);
     assert.ok(ORACLES.includes('O8') && CHECK_NAMES.includes('O8'));
     assert.deepEqual(ORACLE_CAPS.O8, ['hook']);
+    assert.deepEqual(ORACLE_CAPS.OW, ['owner']);
     assert.equal(oracleFamily('O8'), 'O8');
     assert.deepEqual(Object.keys(HOOK_DESC.ops), ['hsub', 'hoff']);
 });

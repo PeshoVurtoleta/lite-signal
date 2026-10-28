@@ -33,6 +33,8 @@ export const SCENARIOS = Object.freeze([
     'hook-multi', 'hook-non-lifo-off', 'hook-mirror-dispose', 'hook-recompute',
     // LIFECYCLE (S3 R2; lanes/lifecycle.mjs, not rostered until R2 B3)
     'lc-two-regs', 'lc-off-sibling', 'lc-late-off-recycle', 'lc-callback-dispose', 'lc-callback-register', 'lc-callback-off-sibling',
+    // OWNER (S3 R3; lanes/owner.mjs, not rostered until R3 B3)
+    'own-cascade', 'own-rerun', 'own-computed', 'cleanup-fifo', 'run-with-owner', 'run-with-dead-owner', 'root-detached', 'signal-not-adopted',
 ]);
 
 const DEEP_PULL_MIN = 16;
@@ -362,6 +364,62 @@ export class Detectors {
     /** A lifecycle callback's armed action disposes a LIVE node (L7 shapes: mid connect / disconnect walk). */
     onLcCallbackDispose() {
         this.count('lc-callback-dispose');
+    }
+
+    /* ---- OWNER (exec.mjs runBody while exec.ow !== null, and lanes/owner.mjs only: no other lane pays) ---- */
+
+    /**
+     * Owner i is about to be killed (rerun false: odisp, BEFORE model.kill) or re-run (rerun true: runBody entry,
+     * BEFORE model.rerunOwner). Reads the model's LIVE ownership subtree that dies now (a re-run keeps i itself):
+     *   own-cascade   the dying subtree is >= 2 ownership levels deep below i (a grandchild dies too)
+     *   own-rerun     a re-run that kills >= 1 live child or fires >= 1 cleanup of i
+     *   own-computed  a dying computed owner holds a live computed child (computed owns computed)
+     *   cleanup-fifo  a dying owner (or the re-run owner) fires >= 2 cleanups (FIFO is judgeable)
+     */
+    onOwnKill(i, rerun) {
+        const M = this.x.M;
+        const nd = M.n[i];
+        if (nd === undefined || nd.t === 's' || !nd.live) return;
+        let depth = 0, fifo = nd.cl >= 2, comp = false, kids = 0;
+        const stack = [i, 0];
+        while (stack.length > 0) {
+            const d = stack.pop(), j = stack.pop();
+            const o = M.n[j];
+            if (o.children === null) continue;
+            for (let k = 0; k < o.children.length; k++) {
+                const c = M.n[o.children[k]];
+                if (c === undefined || !c.live) continue;
+                if (j === i) kids++;
+                if (d + 1 > depth) depth = d + 1;
+                if (c.cl >= 2) fifo = true;
+                if (o.t === 'c' && c.t === 'c') comp = true;
+                stack.push(c.i, d + 1);
+            }
+        }
+        if (depth >= 2) this.count('own-cascade');
+        if (rerun && (kids > 0 || nd.cl > 0)) this.count('own-rerun');
+        if (comp) this.count('own-computed');
+        if (fifo) this.count('cleanup-fifo');
+    }
+
+    /**
+     * A runWithOwner(h, fn) returned; did: cleanups registered + nodes created inside fn (0 = hollow, not counted).
+     *   run-with-owner       h is a live computed / effect (model.liveOwner): fn's work is adopted
+     *   run-with-dead-owner  h is a disposed / stale owner or a signal handle: fn runs rooted (never fires, never adopted)
+     */
+    onOwnRunWithOwner(h, did) {
+        if (!(did > 0)) return;
+        this.count(this.x.M.liveOwner(h) >= 0 ? 'run-with-owner' : 'run-with-dead-owner');
+    }
+
+    /** A createRoot(fn) returned; did as above. root-detached: it ran inside a live body (the root is not adopted). */
+    onOwnRoot(did) {
+        if (did > 0 && this.x.frames.length > 0) this.count('root-detached');
+    }
+
+    /** A node of kind t was created while owner `owner` runs. signal-not-adopted: a signal under a live owner (p1: never adopted). */
+    onOwnCreate(t, owner) {
+        if (t === 's' && this.x.M.liveOwner(owner) >= 0) this.count('signal-not-adopted');
     }
 
     /* ---- ERROR -------------------------------------------------------------------------------------- */

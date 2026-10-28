@@ -23,6 +23,11 @@
  *   O8   checkHookFire   a graph-mutation event reached the TOP LIVE listener, never an off'd or a lower one
  *        checkMirror     the mirror.mjs replay of the hook stream is consistent and matches stats() at rest
  *                        (S3 R1, the HOOK lane only: lanes/hook.mjs onFire calls checkHookFire, exec.mjs hookAtRest calls checkMirror while exec.hk !== null)
+ *   OW   checkOwOrder    (S3 R3, the OWNER lane only) the observed cleanup fires respect FIFO within an owner and
+ *                        every descendant before its ancestor (sibling order unjudged; a missing fire is the sentinel's)
+ *        checkOwThis     a lane callback (cleanup, createRoot fn, runWithOwner fn) ran with this !== undefined
+ *                        (exec.mjs owCheck, at runBody entry, at rest, at the world end and after the lane's odisp / opull,
+ *                        while exec.ow !== null)
  *
  * COLD module.
  */
@@ -30,7 +35,7 @@
 import { Model } from './model.mjs';
 import { SoakThrow, sameValue, showValue, specRefs } from './kinds.mjs';
 
-export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8']);
+export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW']);
 
 /** The sig vocabulary (SPEC-B section 6; escape-<origin> / escape-<Ctor> are open families). */
 export const SIGS = Object.freeze({
@@ -44,6 +49,7 @@ export const SIGS = Object.freeze({
     O7: ['spurious-connect', 'missed-disconnect', 'stale-off', 'spurious-disconnect', 'missed-connect'],   // S3-D5 order
     OB: ['batch-early-run'],
     O8: ['ghost-listener', 'mirror-links'],
+    OW: ['cleanup-order', 'callback-this'],
 });
 
 const DETAIL_MAX = 240;
@@ -351,4 +357,67 @@ export function checkMirror(mirror, stats) {
     if (mirror.edges !== stats.activeLinks) out.push({ oracle: 'O8', sig: 'mirror-links', detail: cut('mirror edges ' + mirror.edges + ' != activeLinks ' + stats.activeLinks) });
     if (mirror.nodes !== stats.activeNodes) out.push({ oracle: 'O8', sig: 'mirror-links', detail: cut('mirror nodes ' + mirror.nodes + ' != activeNodes ' + stats.activeNodes) });
     return out;
+}
+
+/** A non-negative integer that is not -0 (an owner id / registration ordinal). */
+function owInt(x) {
+    return Number.isInteger(x) && x >= 0 && !Object.is(x, -0);
+}
+
+/**
+ * OW cleanup-order for one checkpoint window. fires: [{o, k}] in observed fire order (o = owner id, k = the
+ * registration ordinal within that owner's current set, both integers >= 0); parentOf(id) -> the owner's parent id,
+ * or -1. A violation is (a) two fires of one owner with k decreasing (non-FIFO), or (b) a fire of owner X AFTER a
+ * fire of a strict ancestor of X (an ancestor's cleanups ran before a descendant's). Missing fires, owners the window
+ * does not hold and sibling order are never a violation. Returns null or the FIRST violation in fire order.
+ * Fails closed BEFORE judging (TypeError): fires not an array, an entry not {o, k} of such integers, parentOf not a
+ * function, parentOf returning anything but -1 or such an integer, or a parent cycle on any fired owner's chain.
+ */
+export function checkOwOrder(fires, parentOf) {
+    if (!Array.isArray(fires)) throw new TypeError('checkOwOrder: fires must be an array, got ' + (fires === null ? 'null' : typeof fires));
+    if (typeof parentOf !== 'function') throw new TypeError('checkOwOrder: parentOf must be a function, got ' + (parentOf === null ? 'null' : typeof parentOf));
+    const chains = new Map();   // owner -> its strict ancestors, nearest first
+    for (let j = 0; j < fires.length; j++) {
+        const e = fires[j];
+        if (e === null || typeof e !== 'object' || !owInt(e.o) || !owInt(e.k)) {
+            throw new TypeError('checkOwOrder: fires[' + j + '] must be { o, k } with integers >= 0');
+        }
+        if (chains.has(e.o)) continue;
+        const up = [];
+        const seen = new Set([e.o]);
+        let p = parentOf(e.o);
+        while (p !== -1) {
+            if (!owInt(p)) throw new TypeError('checkOwOrder: parentOf(' + (up.length === 0 ? e.o : up[up.length - 1]) + ') returned ' + String(p) + ' (want -1 or an integer >= 0)');
+            if (seen.has(p)) throw new TypeError('checkOwOrder: parent cycle through owner ' + p + ' on the chain of owner ' + e.o);
+            seen.add(p);
+            up.push(p);
+            p = parentOf(p);
+        }
+        chains.set(e.o, up);
+    }
+    const last = new Map();    // owner -> index of its latest fire so far
+    const first = new Map();   // owner -> index of its first fire so far
+    for (let j = 0; j < fires.length; j++) {
+        const e = fires[j];
+        const lj = last.get(e.o);
+        if (lj !== undefined && fires[lj].k > e.k) {
+            return { oracle: 'OW', sig: 'cleanup-order', detail: cut('fire#' + j + ' owner#' + e.o + ' k=' + e.k + ' after fire#' + lj + ' owner#' + e.o + ' k=' + fires[lj].k + ' (non-FIFO within an owner)') };
+        }
+        const up = chains.get(e.o);
+        for (let a = 0; a < up.length; a++) {
+            const fa = first.get(up[a]);
+            if (fa !== undefined) {
+                return { oracle: 'OW', sig: 'cleanup-order', detail: cut('fire#' + j + ' owner#' + e.o + ' k=' + e.k + ' after fire#' + fa + ' owner#' + up[a] + ' k=' + fires[fa].k + ' (its ancestor fired first)') };
+            }
+        }
+        last.set(e.o, j);
+        if (!first.has(e.o)) first.set(e.o, j);
+    }
+    return null;
+}
+
+/** OW callback-this: lane callback `name` ran with this = thisValue; only undefined passes. */
+export function checkOwThis(name, thisValue) {
+    if (thisValue === undefined) return null;
+    return { oracle: 'OW', sig: 'callback-this', detail: cut(name + ' this=' + (Array.isArray(thisValue) ? 'array(' + thisValue.length + ')' : typeof thisValue)) };
 }
