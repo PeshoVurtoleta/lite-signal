@@ -61,7 +61,8 @@
     "parity": "node bench/soak/parity.mjs",
     "parity:update": "node bench/soak/parity.mjs --update",
     "soak:parity": "node bench/soak/parity.mjs",
-    "soak:parity:update": "node bench/soak/parity.mjs --update"
+    "soak:parity:update": "node bench/soak/parity.mjs --update",
+    "inline-diff": "node bench/inline-diff.mjs"
   },
   "keywords": [
     "signal",
