@@ -32,8 +32,8 @@ const SOAK = join(ROOT, 'bench', 'soak');
 const MAIN = join(SOAK, 'main.mjs');
 const SOAK_URL = pathToFileURL(SOAK).href + '/';
 
-// SPEC-B v2 section 5.1 (S1 roster + S3 R1 HOOK + S3 R2 LIFECYCLE + R3 OWNER + R4a RECYCLE, scenario ids). Used only by the inline entry; main.mjs brings its own.
-const ROSTER = ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE'];
+// SPEC-B v2 section 5.1 (S1 roster + S3 R1 HOOK + S3 R2 LIFECYCLE + R3 OWNER + R4a RECYCLE + R4c SCHEDULER, scenario ids). Used only by the inline entry; main.mjs brings its own.
+const ROSTER = ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER'];
 const SCENARIOS = [
     'diamond-write', 'dep-set-flip', 'deep-pull', 'second-invalidation', 'equality-cutoff', 'adversarial-equality', 'wide-mark',
     'revert-after-mid-read', 'revert-no-read', 'nested-close', 'throw-in-batch', 'effect-created-mid-batch', 'multi-write-same-signal',
@@ -46,13 +46,14 @@ const SCENARIOS = [
     'own-cascade', 'own-rerun', 'own-computed', 'cleanup-fifo', 'run-with-owner', 'run-with-dead-owner', 'root-detached',
     'signal-not-adopted',
     'stale-write-recycled', 'stale-peek-recycled', 'stale-read-recycled', 'stale-dispose-recycled', 'stale-dead-unrecycled', 'multi-gen',
+    'thunk-after-dispose', 'thunk-recycled', 'pending-write', 'partial-drain', 'drain-all', 'hold-retry', 'fifo-delivery', 'lifo-delivery',
 ];
 // unit 0s B2 (PLAN-0s-wie ADDENDUM 2 item 6): the two literals above are pinned to the code they stand in for
 import { SCENARIOS as LIT_SCENARIOS_CODE } from '../bench/soak/scenarios.mjs';
 import { ROSTER as LIT_ROSTER_CODE } from '../bench/soak/lanes/index.mjs';
-test('the ROSTER (9 lanes, RECYCLE 9th) and SCENARIOS (58 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
-    assert.equal(ROSTER.length, 9);
-    assert.equal(SCENARIOS.length, 58);
+test('the ROSTER (10 lanes, SCHEDULER 10th) and SCENARIOS (66 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
+    assert.equal(ROSTER.length, 10);
+    assert.equal(SCENARIOS.length, 66);
     assert.deepEqual(ROSTER, LIT_ROSTER_CODE.slice());
     assert.deepEqual(SCENARIOS, LIT_SCENARIOS_CODE.slice());
 });
@@ -387,7 +388,7 @@ test('the SOAK_ prefix is case-insensitive: a non-upper-case known key is an err
     rejects({ soak_lanes: 'grpah' }, "env key 'soak_lanes' must be upper-case (did you mean SOAK_LANES?)");
     rejects({ Soak_Require_Provenance: '1' }, 'did you mean SOAK_REQUIRE_PROVENANCE?');
     rejects({ soak_nope: '1' }, "unknown env key 'soak_nope'");
-    assert.equal(P({ SOAKY: '1', MY_SOAK_LANES: 'x' }).lanes.length, 9, 'only the SOAK_ prefix is reserved');
+    assert.equal(P({ SOAKY: '1', MY_SOAK_LANES: 'x' }).lanes.length, 10, 'only the SOAK_ prefix is reserved');
 });
 
 test('did-you-mean is computed on the suffix: SOAK_X, SOAK_FOO and SOAK_TIME no longer "mean" SOAK_OPS', () => {
@@ -1210,7 +1211,7 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
 test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing or off-parity lane-only kernel -> red', () => {
     // the map (calibrate.mjs): an unlisted lane runs on every binding kernel; a lane's pin joins only when rostered
     // after the roster flip (b68 B2b): roster4 = the pre-flip roster (the 4 S1 lanes), roster5 = the live one
-    const roster4 = B6_ROSTER.filter((l) => l !== 'WIE' && l !== 'HOOK' && l !== 'LIFECYCLE' && l !== 'OWNER' && l !== 'RECYCLE');
+    const roster4 = B6_ROSTER.filter((l) => l !== 'WIE' && l !== 'HOOK' && l !== 'LIFECYCLE' && l !== 'OWNER' && l !== 'RECYCLE' && l !== 'SCHEDULER');
     const roster5 = B6_ROSTER.slice();
     assert.deepEqual(b6KernelsFor('WIE'), ['tree']);
     // S3 R1 (b93): HOOK was cut on headpatched only (DIV-F9 ghost-listener reddened lite-1.5.2 and tree); b117: DIV-F9
@@ -1223,7 +1224,9 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.deepEqual(b6KernelsFor('OWNER'), ['tree']);
     // R4a (b130 B3): RECYCLE is cut on every kernel, headpatched first (covOff); listed, as an unlisted lane skips tree
     assert.deepEqual(b6KernelsFor('RECYCLE'), Object.keys(B6_KERNELS).concat(['tree']));
-    assert.deepEqual(b6LanesFor('headpatched', roster5), roster4.concat(['HOOK', 'RECYCLE']));
+    // R4c (b134 B3; D-b128-3): SCHEDULER is cut on every kernel too, headpatched first (covOff)
+    assert.deepEqual(b6KernelsFor('SCHEDULER'), ['headpatched', 'lite-1.5.2', 'tree']);
+    assert.deepEqual(b6LanesFor('headpatched', roster5), roster4.concat(['HOOK', 'RECYCLE', 'SCHEDULER']));
     assert.deepEqual(b6KernelsFor('GRAPH'), Object.keys(B6_KERNELS));
     // b74 D4: NEST is cut on headpatched (first: covOff), 1.5.2 and tree; ERROR stays on the binding kernels
     assert.deepEqual(b6KernelsFor('NEST'), Object.keys(B6_KERNELS).concat(['tree']));
@@ -1231,13 +1234,13 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.deepEqual(b6KernelsOf(['GRAPH', 'BATCH', 'ERROR']), Object.keys(B6_KERNELS));
     assert.deepEqual(b6KernelsOf(roster4), Object.keys(B6_KERNELS).concat(['tree']));
     assert.deepEqual(b6KernelsOf(roster5), Object.keys(B6_KERNELS).concat(['tree']));
-    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE']);
-    assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), roster4.concat(['RECYCLE']));
+    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER']);
+    assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), roster4.concat(['RECYCLE', 'SCHEDULER']));
     assert.equal(b6KernelPath('tree'), 'Signal.js');
     assert.throws(() => b6KernelPath('nope'), /unknown kernel nope/);
     assert.deepEqual(b6PinnedFor(roster4), B6_PINNED);
     assert.equal(b6PinnedFor(roster4).length, 17);   // S3 R0: + adapters/lite-s3.mjs; S3 R1 (b93): + mirror.mjs
-    assert.deepEqual(b6PinnedFor(roster5).slice(17), ['bench/soak/lanes/wie.mjs', 'bench/soak/lanes/hook.mjs', 'bench/soak/lanes/lifecycle.mjs', 'bench/soak/lanes/owner.mjs', 'bench/soak/lanes/recycle.mjs']);
+    assert.deepEqual(b6PinnedFor(roster5).slice(17), ['bench/soak/lanes/wie.mjs', 'bench/soak/lanes/hook.mjs', 'bench/soak/lanes/lifecycle.mjs', 'bench/soak/lanes/owner.mjs', 'bench/soak/lanes/recycle.mjs', 'bench/soak/lanes/scheduler.mjs']);
     // A2 (the real roster): a WIE cell on lite-1.5.2 is a cell no binding cuts -> exactly one new problem
     const base = calibrationProblems(B6_DOC, B6_C);
     const a2 = b6Copy(B6_DOC);

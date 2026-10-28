@@ -63,10 +63,51 @@ The LEDGER #45 / #46 op-3 rules are unchanged (a throwing `onConnect` still anno
 bodies (+ `allocateLink`, `freeLink`, values unchanged); `test/torture.mjs` gains the `mreg` lane (steady-state, whole-run window
 gate and retention half in the pinned child). (User code running with `this` = the internal node was fixed later, LEDGER #48: see the #48 entry above.)
 
+### Tests / Docs -- soak: SCHEDULER lane + O9 stale-thunk (R4c, b131-b134)
+
+Dev-only (`bench/soak/`, not shipped). No engine change in this rung: Signal.js is the tree kernel sha256/8
+ec6d7156; no new engine claim.
+- New SCHEDULER lane, the 10th rostered lane (`lanes/scheduler.mjs`; `LANE_INDEX.SCHEDULER` = 8, ROSTER length 10,
+  laneSpan stays 12). It drives scheduled effects (`scheduler` option) through a per-world ring of queued thunks with
+  a FIFO / LIFO / HOLD delivery policy chosen per seed, ops `screate` / `sdrain` / `swrite` / `sdisp` / `srec`, under
+  the G-SC1 effect-spec restriction. The exec ScState hook suspends O1e / O4 for a node with a pending thunk and
+  excludes O5 while the effect never ran.
+- Oracle O9 gains the sig `stale-thunk` (O9 sigs 3 -> 4; no 5th sig, D-b128-2): a delivery's first outermost effect body
+  belongs to another node than the delivered thunk's, or a delivery of a disposed node runs a body (checkStaleThunk),
+  or, maintainer ruling D-b132-1, a depth-1 scheduled body runs outside any delivery (checkScheduledBody). exec
+  `scClosed()` fails closed after `close()`; a malformed index, -0 or wrong node kind is unmodelled.
+- SCENARIOS 58 -> 66. SCHEDULER required 8: thunk-after-dispose, thunk-recycled, pending-write, partial-drain,
+  drain-all, hold-retry, fifo-delivery, lifo-delivery (the last two by the observed delivery order, D-b132-1); covOff
+  thunk-recycled. Policy collapse has no must-fail row (maintainer D-b133-1): the census lane mutants and the
+  `test/89` observed-order rows are its evidence.
+- Census (b133) 200 worlds x tree ec6d7156 / headpatched fa2871f0 / rev152: 0 failing. Mutants: dropcall 9cc16933 and
+  wedge dbb57692 breach O4 effect-dead 50/50; thunkgen 304984f9 breaches O9 stale-thunk 56/56 FIFO + HOLD worlds (LIFO
+  is blind by design); syncrun 542fcf14 breaches O9 stale-thunk 50/50.
+- Timed calibration recut (quiet-lock --strict, QUIET: load1 1.94 / baseline 2.21, no busy node, 1088 s, 2026-10-28
+  21:48 UTC, Node v26.8.2): SCHEDULER 2684 full / 147 smoke worlds, 0 failing, 0 crash on all 3 kernels; lowest
+  required scenario thunk-recycled 80766 full / 4546 smoke. The 9 pre-existing lanes moved no count.
+  LANE_KERNELS.SCHEDULER = headpatched, lite-1.5.2, tree. parity.json FILES 51 -> 52 (+ lanes/scheduler.mjs).
+  scripts-1000 gains the SCHEDULER digest (9 others byte-identical). REPORTED tier: gates nothing, no speed claim.
+- Must-fail controls (7 new): T-SC-dropcall, T-SC-wedge (O4 effect-dead), T-SC-thunkgen, T-SC-syncrun (O9
+  stale-thunk), T-cov-SCHEDULER (exit 3, missing=thunk-recycled) and the pass controls P-SC-TREE, P-SC-HP. _mustfail
+  now lists 78 controls (60 short + 18 long). teeth.mjs: universe 70, CHECKS ids 60, GAPS 22, NOT_TEETH 11,
+  UNREACHABLE 5.
+- Tests: new `test/89` (150 rows); `npm test` 2669 tests / 2656 pass / 0 fail / 12 skip / 1 todo (node v26.8.2);
+  torture 0 B/op, gc major 0.
+
+### Tests / Docs -- bench: inline-diff (b131)
+
+Dev-only (`bench/inline-diff.mjs`, `npm run inline-diff`; not shipped, never in `npm test` / `verify`). Compares a
+FROZEN before build against an after build for one named hot function by the Maglev + TurboFan inlining decisions
+(`--trace-turbo-inlining` + `--trace-maglev-inlining`), as a multiset, with a before-vs-before null control; exit 0
+SAME / 1 DIFF / 2 NO-VERDICT. Tests: `test/90` (14 rows, canned traces, no V8 spawn). The whole-trace default scope
+DIFFs on ANY inlining change in the driver, including node's own ESM loader (isPosixPathSeparator, get pathname): use
+`--only-fn` for the callee-side-only view.
+
 ### Tests / Docs -- soak: RECYCLE lane + O9 oracle (R4a, b130)
 
 Dev-only (`bench/soak/`, not shipped). No engine change in this rung: Signal.js is the tree kernel sha256/8
-  ec6d7156; no new engine claim.
+ec6d7156; no new engine claim.
 - New RECYCLE lane, the 9th rostered lane (`lanes/recycle.mjs`; `LANE_INDEX.RECYCLE` = 11, ROSTER length 9, laneSpan 12). It
   drives stale-handle use after slot recycling with ops `rdisp` / `rsset` / `rsread` / `rsdisp` over a fixed per-world ring of 8
   stale handles. SCENARIOS 52 -> 58 (stale-write-recycled, stale-peek-recycled, stale-read-recycled, stale-dispose-recycled,
@@ -77,8 +118,8 @@ Dev-only (`bench/soak/`, not shipped). No engine change in this rung: Signal.js 
 - Census 200 worlds x tree ec6d7156 / headpatched fa2871f0 / rev152 f8dd50f8: 0 failing. Timed calibration recut (QUIET,
   load1 2.58 / baseline 2.21, 1055 s, 2026-10-28T05:51Z); after the B3 r2 `checkCl` fix the committed soak-calibration.json
   was re-cut non-timed with `--import-throughput` of that run (counts identical): RECYCLE 2717 full / 150 smoke worlds, 0
-  failing on all 3 kernels; LANE_KERNELS.RECYCLE = headpatched, lite-1.5.2, tree. parity.json FILES 50 -> 51 (+
-  lanes/recycle.mjs). REPORTED tier: gates nothing, no speed claim.
+  failing on all 3 kernels; LANE_KERNELS.RECYCLE = headpatched, lite-1.5.2, tree. parity.json FILES 50 -> 51
+  (+ lanes/recycle.mjs). REPORTED tier: gates nothing, no speed claim.
 - Must-fail controls (5 new): T-RC-setgen, T-RC-readgen, T-RC-dispgen (one-hunk tree mutants of the generation guards: read.set
   Signal.js:2075, sharedSignalPeek :2019, registry dispose(api) :2425; each breaches O9 with its sig), T-cov-RECYCLE (exit 3,
   missing=stale-dispose-recycled) and the pass control P-RC-TREE. _mustfail now lists 71 controls (53 short + 18 long).

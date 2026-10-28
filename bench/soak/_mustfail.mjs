@@ -101,7 +101,8 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * (b117: P-LC-tree, T-cov-LIFECYCLE and the six T-LC-* mutants; the tree is clean of DIV-D3 since A5a), and the HOOK
  * rows P-HOOK-TREE-COVOFF (b93) and P-HOOK-TREE (b117 B3b; the tree is clean of DIV-F9 since A5b), and the OWNER rows
  * (b127 B5: P-OWNER-TREE, T-cov-OWNER and the five T-owner-* mutants; LANE_KERNELS.OWNER = tree, A1), and the RECYCLE
- * rows (b130 B5: P-RC-TREE, T-cov-RECYCLE and the three T-RC-* mutants, PLAN-R4 TASK 7); no other main-run
+ * rows (b130 B5: P-RC-TREE, T-cov-RECYCLE and the three T-RC-* mutants, PLAN-R4 TASK 7), and the SCHEDULER rows (b134
+ * B5: P-SC-TREE, P-SC-HP, T-cov-SCHEDULER and the four T-SC-* mutants, PLAN-R4 R4c TASKS 6 + 7); no other main-run
  * control does until A1-A3
  * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
@@ -369,6 +370,23 @@ const RC_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE' });
 // T-cov-RECYCLE: rsdisp only names entries whose slot is dead (lanes/recycle.mjs covOff stale-dispose-recycled ->
 // rule stale-dispose-dead).
 const RC_COV_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE', SOAK_MUSTFAIL: 'cov-off:stale-dispose-recycled' });
+
+// T-SC-* anchors in the LIVE Signal.js (base tree ec6d7156; b134 B5, PLAN-R4 R4c TASKS 6 + 7): each is the full line of
+// the single hunk .handoff/b131-evidence/r4c/mut/tree-<id>.diff (dropcall, wedge, thunkgen) or
+// .handoff/b133-evidence/census/mut/syncrun.diff, and each replacement is that mutant's exact text, so every row's
+// kernel IS that mutant (sha256/8 dropcall 9cc16933, wedge dbb57692, thunkgen 304984f9, syncrun 542fcf14; proof:
+// .handoff/b134-evidence/b5/kernels.txt). Each anchor occurs exactly once (patchAll).
+// :1699 the flush loop's queued-effect delivery through the cached thunk (32-space indent; dropcall drops it).
+const A_SC_DROPCALL = '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n';
+// :2381 the first-run thunk's gen + FLAG_EFFECT guard (20-space indent; wedge never runs, thunkgen drops the gen test).
+const A_SC_THUNK = '                    if (node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n';
+// :2383 the first run handed to the scheduler (16-space indent; :1699 carries a comment, so this line is unique).
+const A_SC_SYNCRUN = '                scheduler(node.schedulerThunk);\n';
+// The tree SCHEDULER lane, every scenario on.
+const SC_ENV = Object.freeze({ SOAK_LANES: 'SCHEDULER' });
+// T-cov-SCHEDULER: no srec ever lets a pending thunk's slot be recycled (lanes/scheduler.mjs covOff thunk-recycled ->
+// rule no-recycle).
+const SC_COV_ENV = Object.freeze({ SOAK_LANES: 'SCHEDULER', SOAK_MUSTFAIL: 'cov-off:thunk-recycled' });
 
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
@@ -873,6 +891,43 @@ export const CONTROLS = deepFreeze([
     M('T-RC-dispgen', 'tree', RC_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=RECYCLE sig=stale-dispose known=none'],
     }, { patches: [[A_RC_DISPGEN, '']] }),
+    // P-SC-TREE (b134 B5, PLAN-R4 R4c TASK 7): the SCHEDULER pass control on the tree, P-RC-TREE's shape: the full lane,
+    // exit 0, zero BREACH lines, END verdict=SMOKE. Also the revert of every T-SC-* row incl. syncrun (the same env and
+    // argv, patches []). MEASURED: .handoff/b134-evidence/b5/heads-{1,2,3}.txt.
+    M('P-SC-TREE', 'tree', SC_ENV, ['--smoke'], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { verdict: 'SMOKE' },
+    }),
+    // P-SC-HP (b134 B5): the same full lane on headpatched (LANE_KERNELS.SCHEDULER holds it) is clean too: exit 0.
+    M('P-SC-HP', 'headpatched', SC_ENV, ['--smoke'], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { verdict: 'SMOKE' },
+    }),
+    // T-cov-SCHEDULER (b134 B5): the tree SCHEDULER lane with no pending thunk's slot ever recycled
+    // (cov-off:thunk-recycled -> rule no-recycle) is clean but INCONCLUSIVE on its scenario, T-cov-RECYCLE's shape.
+    M('T-cov-SCHEDULER', 'tree', SC_COV_ENV, ['--smoke'], {
+        exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=SCHEDULER missing=thunk-recycled'],
+        specs: ['INCONCLUSIVE scenario lane=SCHEDULER missing=thunk-recycled'],
+    }),
+    // T-SC-* (b134 B5, PLAN-R4 R4c TASKS 6 + 7): the b131 R4c / b133 D6 one-hunk mutants of the tree's scheduler path,
+    // each at P-SC-TREE's shape (the tree lane is clean, so every BREACH is the mutant's, known=none). A spec matches ANY
+    // stderr BREACH line (judgeMain presence, not the first head). b133 census: .handoff/b133-evidence/census/mut-<id>.txt.
+    // Measured heads of THESE rows (MUSTFAIL_HEADS=1, 3 runs): .handoff/b134-evidence/b5/heads-{1,2,3}.txt.
+    // dropcall: a queued scheduled effect is never handed to its scheduler: O4 effect-dead.
+    M('T-SC-dropcall', 'tree', SC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O4 lane=SCHEDULER sig=effect-dead known=none'],
+    }, { patches: [[A_SC_DROPCALL, '                                /* MUT dropcall */\n']] }),
+    // wedge: the first-run thunk never runs its effect: O4 effect-dead.
+    M('T-SC-wedge', 'tree', SC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O4 lane=SCHEDULER sig=effect-dead known=none'],
+    }, { patches: [[A_SC_THUNK, '                    if (false && node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n']] }),
+    // thunkgen: a stale first-run thunk (no gen test) runs the slot's recycled resident: O9 stale-thunk (FIFO / HOLD
+    // worlds only; LIFO delivers the successor's thunk first, O17).
+    M('T-SC-thunkgen', 'tree', SC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=SCHEDULER sig=stale-thunk known=none'],
+    }, { patches: [[A_SC_THUNK, '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n']] }),
+    // syncrun: the first run executes synchronously instead of through the scheduler: O9 stale-thunk.
+    M('T-SC-syncrun', 'tree', SC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=SCHEDULER sig=stale-thunk known=none'],
+    }, { patches: [[A_SC_SYNCRUN, '                /* MUT syncrun */ executeEffect(node);\n']] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375

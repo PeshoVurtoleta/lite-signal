@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "task": "SPEC-B-S1cd TASK 11 (burst 8 B6): soak calibration -- DEFAULT_OPS, SCEN_MIN(_SMOKE), CHECK_FLOOR(_SMOKE), TAINT_SKIP_MAX",
- "tool": "node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --import-throughput <the earlier timed run>",
+ "tool": "node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --timed",
  "guard": "test/41-soak-config.test.mjs (B6 drift guard): config values == cut, every binding cell clears its constant, live smoke re-measure == kernels.<k>.smoke, live main.mjs probe fold == probe.fold",
  "cut": {
   "seed": 12648430,
@@ -236,44 +236,48 @@
     "O6",
     "O9"
    ]
+  },
+  "SCHEDULER": {
+   "index": 8,
+   "required": [
+    "thunk-after-dispose",
+    "thunk-recycled",
+    "pending-write",
+    "partial-drain",
+    "drain-all",
+    "hold-retry",
+    "fifo-delivery",
+    "lifo-delivery"
+   ],
+   "optional": [],
+   "oracles": [
+    "O1e",
+    "O4",
+    "O9"
+   ]
   }
  },
  "provenance": {
-  "date": "2026-10-28T06:27:01.522Z",
-  "gitHead": "cd64e1cae2748a459fa83fabe03e7b6c6a3636c0",
+  "date": "2026-10-28T21:48:16.484Z",
+  "gitHead": "e121d8f54c52bc4ad83c7363201f8deafa0ef459",
   "gitDirty": [
-   " M CHANGELOG.md",
-   " M LEDGER.md",
-   " M bench/soak/_mustfail.mjs",
-   " M bench/soak/adapters/contract.mjs",
    " M bench/soak/calibration/calibrate.mjs",
-   " M bench/soak/calibration/golden/scripts-1000.json",
-   " M bench/soak/calibration/soak-calibration.json",
-   " M bench/soak/divergences.json",
    " M bench/soak/exec.mjs",
-   " M bench/soak/gates.mjs",
    " M bench/soak/lanes/index.mjs",
-   " M bench/soak/lanes/owner.mjs",
    " M bench/soak/model.mjs",
    " M bench/soak/oracles.mjs",
-   " M bench/soak/parity.json",
    " M bench/soak/parity.mjs",
    " M bench/soak/scenarios.mjs",
-   " M bench/soak/teeth.mjs",
-   " M decisions/0001-soak-design.md",
    " M test/41-soak-config.test.mjs",
-   " M test/42-soak-gates.test.mjs",
    " M test/43-soak-model.test.mjs",
-   " M test/45-soak-teeth.test.mjs",
    " M test/46-soak-report.test.mjs",
-   " M test/54-visit-anatomy.test.mjs",
    " M test/74-soak-s3-seam.test.mjs",
    " M test/75-soak-hook.test.mjs",
-   " M test/87-soak-owner.test.mjs",
+   " M test/88-soak-recycle.test.mjs",
    "?? BRIEF.md",
    "?? bench/bench-runs/",
-   "?? bench/soak/lanes/recycle.mjs",
-   "?? test/88-soak-recycle.test.mjs"
+   "?? bench/soak/lanes/scheduler.mjs",
+   "?? test/89-soak-scheduler.test.mjs"
   ],
   "engineSha256": "ec6d715642d83f93e1d5eec76350a8472683f28e9037bd7614c5e42d291918fd",
   "engineNote": "sha256 of <root>/Signal.js (the tree kernel), equal at launch, at the end and in kernels.tree.files (--write dies otherwise): the engine actually cut, also on a dirty tree",
@@ -282,31 +286,34 @@
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   1.21,
-   3.34,
-   4.22
+   1.94,
+   2.19,
+   2.44
   ],
-  "loadavgAfterTimed": null,
-  "loadavgAfterTimedNote": "null: untimed run, no timed phase (the imported timed run is throughputRun)",
+  "loadavgAfterTimed": [
+   1.2,
+   1.43,
+   1.87
+  ],
   "loadavgAfter": [
-   11.45,
-   6.77,
-   4.97
+   6.97,
+   5,
+   3.51
   ],
   "busyNodeBefore": [],
   "busyNodeRule": "other node processes (not this process or its node launcher chain, e.g. the quiet-lock wrapper) >= 10% CPU at launch, as pid pcpu command; [] = none, null = ps failed",
-  "seconds": 1099,
-  "cutSeconds": 602,
+  "seconds": 1088,
+  "cutSeconds": 603,
   "secondsClock": "wall clock (Date.now), whole seconds: seconds = --write entry to the evidence write (every step; the origin of the \"(N s)\" log stamps); cutSeconds = step 1, the cut (the only timed phase under --timed)",
-  "timing": "PENDING (untimed run; throughput decides no gate)",
+  "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
-   "bench/soak/exec.mjs": "fa0f52029c95fa389e9156b3ef3639e116d2555d47458c555d41351f69f772af",
-   "bench/soak/oracles.mjs": "5ae11816969ca666d7d2c31189e37d467046e6cc9ad547f57353f3c2b5a32aad",
-   "bench/soak/model.mjs": "5d470b5a13dc9327721c3fff3b50981ebf41cf16cdadd2945d704d7e5404a4da",
-   "bench/soak/scenarios.mjs": "0df3febdef8c73e8d7d4ade2a8901cf2734384a9b532a6fc3a5ec4e1cb738e7a",
+   "bench/soak/exec.mjs": "a23975d372f8f95294056fcf8d957b977b9e040f96dac9dd0a21afcdeccd3650",
+   "bench/soak/oracles.mjs": "b260f5334c0279ab453e44def431cd10921d32487b59e57f3c30478340a3a807",
+   "bench/soak/model.mjs": "d37ca646cdca63f563579d23beaa698d818cc5d6e3bb95179d292374bc386e12",
+   "bench/soak/scenarios.mjs": "2d2355997af0b749292cc21b9837941caec9c2a26e36dceed898c28ef3a28769",
    "bench/soak/seeds.mjs": "b68b535f7dcc83c2e12582c488fea1299704d41b492420854279e768010e9ff5",
-   "bench/soak/lanes/index.mjs": "52acf2d6e57a73d1691dbcde83346f2168c5a2e18ae3c44977280add3ad8c2fe",
+   "bench/soak/lanes/index.mjs": "81b625ae75f182c2feac60090123377161886f5350a2473bee6401cac9f69720",
    "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
    "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
@@ -321,7 +328,8 @@
    "bench/soak/lanes/hook.mjs": "9108a30a1a5a17fdecec2ad221d886a6c2540f29dc6fdf476c7ec9fcdc8cb5f3",
    "bench/soak/lanes/lifecycle.mjs": "1be1721a7f04caa993ed6e16ea18490602322c2452befbb9f80efc8544c43a4c",
    "bench/soak/lanes/owner.mjs": "df748eee4e3a646e6af40a7aff36397e7a34dda8c15459d3fe43f51a320e3a7f",
-   "bench/soak/lanes/recycle.mjs": "5e7e182bbdb796a93b29d4dcf18f4af1ee88c7658542012815f5dec9f5f6e6d7"
+   "bench/soak/lanes/recycle.mjs": "5e7e182bbdb796a93b29d4dcf18f4af1ee88c7658542012815f5dec9f5f6e6d7",
+   "bench/soak/lanes/scheduler.mjs": "890aa9dba1f257e0294848bdf046c881f022f5d80f7554ef3248b83f2ba24c70"
   }
  },
  "worst": {
@@ -410,6 +418,20 @@
       "oracle": "O1c",
       "ratio": 0
      }
+    },
+    "SCHEDULER": {
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 80766
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 1089099
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
     }
    },
    "smoke": {
@@ -496,6 +518,20 @@
       "oracle": "O1c",
       "ratio": 0
      }
+    },
+    "SCHEDULER": {
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4546
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 60087
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
     }
    }
   },
@@ -570,6 +606,20 @@
       "oracle": "O1c",
       "ratio": 0
      }
+    },
+    "SCHEDULER": {
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 80766
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 1089099
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
     }
    },
    "smoke": {
@@ -640,6 +690,20 @@
      },
      "maxTaint": {
       "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "SCHEDULER": {
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4546
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 60087
+     },
+     "maxTaint": {
+      "oracle": "O1e",
       "ratio": 0
      }
     }
@@ -730,6 +794,20 @@
       "oracle": "O1c",
       "ratio": 0
      }
+    },
+    "SCHEDULER": {
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 80766
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 1089099
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
     }
    },
    "smoke": {
@@ -814,6 +892,20 @@
      },
      "maxTaint": {
       "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "SCHEDULER": {
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4546
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 60087
+     },
+     "maxTaint": {
+      "oracle": "O1e",
       "ratio": 0
      }
     }
@@ -1134,6 +1226,59 @@
       "stale-dead-unrecycled": 26709,
       "multi-gen": 50950
      }
+    },
+    "SCHEDULER": {
+     "cycles": 11,
+     "worlds": 2684,
+     "ops": 1103124,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "thunk-after-dispose": 189685,
+      "thunk-recycled": 80766,
+      "pending-write": 209022,
+      "partial-drain": 194525,
+      "drain-all": 172840,
+      "hold-retry": 429223,
+      "fifo-delivery": 323838,
+      "lifo-delivery": 317347
+     },
+     "performed": {
+      "O1c": 934182,
+      "O1e": 4231890,
+      "O2": 5370359,
+      "O4": 2411429,
+      "O5": 1105808,
+      "O6": 2627824,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 1089099
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "thunk-after-dispose": 16958,
+      "thunk-recycled": 6660,
+      "pending-write": 18653,
+      "partial-drain": 17245,
+      "drain-all": 15431,
+      "hold-retry": 34132,
+      "fifo-delivery": 24173,
+      "lifo-delivery": 24061
+     }
     }
    },
    "smoke": {
@@ -1436,15 +1581,188 @@
       "stale-dead-unrecycled": 5394,
       "multi-gen": 10255
      }
+    },
+    "SCHEDULER": {
+     "cycles": 3,
+     "worlds": 147,
+     "ops": 60417,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "thunk-after-dispose": 10477,
+      "thunk-recycled": 4546,
+      "pending-write": 11573,
+      "partial-drain": 10670,
+      "drain-all": 9553,
+      "hold-retry": 23769,
+      "fifo-delivery": 19502,
+      "lifo-delivery": 15943
+     },
+     "performed": {
+      "O1c": 50930,
+      "O1e": 230424,
+      "O2": 293286,
+      "O4": 131346,
+      "O5": 60564,
+      "O6": 144510,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 60087
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "thunk-after-dispose": 3466,
+      "thunk-recycled": 1461,
+      "pending-write": 3772,
+      "partial-drain": 3492,
+      "drain-all": 3050,
+      "hold-retry": 6063,
+      "fifo-delivery": 5844,
+      "lifo-delivery": 5035
+     }
     }
    },
    "throughput": {
-    "GRAPH": "PENDING",
-    "BATCH": "PENDING",
-    "ERROR": "PENDING",
-    "NEST": "PENDING",
-    "HOOK": "PENDING",
-    "RECYCLE": "PENDING"
+    "GRAPH": {
+     "opsPerSecPerCycle": [
+      14365,
+      14210,
+      14396,
+      14589,
+      13692,
+      13948,
+      14292,
+      14153,
+      14019,
+      13766,
+      13787
+     ],
+     "min": 13692,
+     "median": 14153,
+     "max": 14589
+    },
+    "BATCH": {
+     "opsPerSecPerCycle": [
+      48070,
+      48687,
+      49249,
+      48151,
+      48126,
+      48207,
+      48744,
+      48901,
+      48456,
+      48202,
+      49431
+     ],
+     "min": 48070,
+     "median": 48456,
+     "max": 49431
+    },
+    "ERROR": {
+     "opsPerSecPerCycle": [
+      47032,
+      47774,
+      47207,
+      48896,
+      50413,
+      49565,
+      49364,
+      51120,
+      48925,
+      49982,
+      49333
+     ],
+     "min": 47032,
+     "median": 49333,
+     "max": 51120
+    },
+    "NEST": {
+     "opsPerSecPerCycle": [
+      34192,
+      37305,
+      37446,
+      37481,
+      37072,
+      37563,
+      36934,
+      37284,
+      37122,
+      37058,
+      37145
+     ],
+     "min": 34192,
+     "median": 37145,
+     "max": 37563
+    },
+    "HOOK": {
+     "opsPerSecPerCycle": [
+      38298,
+      38514,
+      37742,
+      38097,
+      38972,
+      38545,
+      39366,
+      37591,
+      39272,
+      38049,
+      37635
+     ],
+     "min": 37591,
+     "median": 38298,
+     "max": 39366
+    },
+    "RECYCLE": {
+     "opsPerSecPerCycle": [
+      356758,
+      378347,
+      372293,
+      383864,
+      374523,
+      385343,
+      378920,
+      386086,
+      374242,
+      380361,
+      380072
+     ],
+     "min": 356758,
+     "median": 378920,
+     "max": 386086
+    },
+    "SCHEDULER": {
+     "opsPerSecPerCycle": [
+      193823,
+      226887,
+      225560,
+      232731,
+      230009,
+      229746,
+      230591,
+      229535,
+      229063,
+      231442,
+      228907
+     ],
+     "min": 193823,
+     "median": 229535,
+     "max": 232731
+    }
    }
   },
   "lite-1.5.2": {
@@ -1715,6 +2033,59 @@
       "stale-dead-unrecycled": 26709,
       "multi-gen": 50950
      }
+    },
+    "SCHEDULER": {
+     "cycles": 11,
+     "worlds": 2684,
+     "ops": 1103124,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "thunk-after-dispose": 189685,
+      "thunk-recycled": 80766,
+      "pending-write": 209022,
+      "partial-drain": 194525,
+      "drain-all": 172840,
+      "hold-retry": 429223,
+      "fifo-delivery": 323838,
+      "lifo-delivery": 317347
+     },
+     "performed": {
+      "O1c": 934182,
+      "O1e": 4231890,
+      "O2": 5370359,
+      "O4": 2411429,
+      "O5": 1105808,
+      "O6": 2627824,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 1089099
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "thunk-after-dispose": 16958,
+      "thunk-recycled": 6660,
+      "pending-write": 18653,
+      "partial-drain": 17245,
+      "drain-all": 15431,
+      "hold-retry": 34132,
+      "fifo-delivery": 24173,
+      "lifo-delivery": 24061
+     }
     }
    },
    "smoke": {
@@ -1972,14 +2343,170 @@
       "stale-dead-unrecycled": 5394,
       "multi-gen": 10255
      }
+    },
+    "SCHEDULER": {
+     "cycles": 3,
+     "worlds": 147,
+     "ops": 60417,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "thunk-after-dispose": 10477,
+      "thunk-recycled": 4546,
+      "pending-write": 11573,
+      "partial-drain": 10670,
+      "drain-all": 9553,
+      "hold-retry": 23769,
+      "fifo-delivery": 19502,
+      "lifo-delivery": 15943
+     },
+     "performed": {
+      "O1c": 50930,
+      "O1e": 230424,
+      "O2": 293286,
+      "O4": 131346,
+      "O5": 60564,
+      "O6": 144510,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 60087
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "thunk-after-dispose": 3466,
+      "thunk-recycled": 1461,
+      "pending-write": 3772,
+      "partial-drain": 3492,
+      "drain-all": 3050,
+      "hold-retry": 6063,
+      "fifo-delivery": 5844,
+      "lifo-delivery": 5035
+     }
     }
    },
    "throughput": {
-    "GRAPH": "PENDING",
-    "BATCH": "PENDING",
-    "ERROR": "PENDING",
-    "NEST": "PENDING",
-    "RECYCLE": "PENDING"
+    "GRAPH": {
+     "opsPerSecPerCycle": [
+      13737,
+      13964,
+      13942,
+      14188,
+      13476,
+      13687,
+      13982,
+      13863,
+      13886,
+      13586,
+      13758
+     ],
+     "min": 13476,
+     "median": 13863,
+     "max": 14188
+    },
+    "BATCH": {
+     "opsPerSecPerCycle": [
+      16308,
+      20548,
+      20806,
+      20616,
+      20533,
+      20679,
+      20654,
+      20820,
+      20565,
+      20667,
+      20746
+     ],
+     "min": 16308,
+     "median": 20654,
+     "max": 20820
+    },
+    "ERROR": {
+     "opsPerSecPerCycle": [
+      48859,
+      48430,
+      48641,
+      48793,
+      47751,
+      64445,
+      67047,
+      66824,
+      67116,
+      67230,
+      67356
+     ],
+     "min": 47751,
+     "median": 64445,
+     "max": 67356
+    },
+    "NEST": {
+     "opsPerSecPerCycle": [
+      31996,
+      34994,
+      35036,
+      35207,
+      35108,
+      35254,
+      34991,
+      35276,
+      35134,
+      35194,
+      35149
+     ],
+     "min": 31996,
+     "median": 35134,
+     "max": 35276
+    },
+    "RECYCLE": {
+     "opsPerSecPerCycle": [
+      364161,
+      370226,
+      379639,
+      372016,
+      382836,
+      375789,
+      382836,
+      372848,
+      379639,
+      371187,
+      375366
+     ],
+     "min": 364161,
+     "median": 375366,
+     "max": 382836
+    },
+    "SCHEDULER": {
+     "opsPerSecPerCycle": [
+      194764,
+      227815,
+      228385,
+      231496,
+      232354,
+      232894,
+      232246,
+      229851,
+      229798,
+      230856,
+      229904
+     ],
+     "min": 194764,
+     "median": 229904,
+     "max": 232894
+    }
    }
   },
   "tree": {
@@ -2295,6 +2822,59 @@
       "stale-dead-unrecycled": 26709,
       "multi-gen": 50950
      }
+    },
+    "SCHEDULER": {
+     "cycles": 11,
+     "worlds": 2684,
+     "ops": 1103124,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "thunk-after-dispose": 189685,
+      "thunk-recycled": 80766,
+      "pending-write": 209022,
+      "partial-drain": 194525,
+      "drain-all": 172840,
+      "hold-retry": 429223,
+      "fifo-delivery": 323838,
+      "lifo-delivery": 317347
+     },
+     "performed": {
+      "O1c": 934182,
+      "O1e": 4231890,
+      "O2": 5370359,
+      "O4": 2411429,
+      "O5": 1105808,
+      "O6": 2627824,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 1089099
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "thunk-after-dispose": 16958,
+      "thunk-recycled": 6660,
+      "pending-write": 18653,
+      "partial-drain": 17245,
+      "drain-all": 15431,
+      "hold-retry": 34132,
+      "fifo-delivery": 24173,
+      "lifo-delivery": 24061
+     }
     }
    },
    "smoke": {
@@ -2597,15 +3177,188 @@
       "stale-dead-unrecycled": 5394,
       "multi-gen": 10255
      }
+    },
+    "SCHEDULER": {
+     "cycles": 3,
+     "worlds": 147,
+     "ops": 60417,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "thunk-after-dispose": 10477,
+      "thunk-recycled": 4546,
+      "pending-write": 11573,
+      "partial-drain": 10670,
+      "drain-all": 9553,
+      "hold-retry": 23769,
+      "fifo-delivery": 19502,
+      "lifo-delivery": 15943
+     },
+     "performed": {
+      "O1c": 50930,
+      "O1e": 230424,
+      "O2": 293286,
+      "O4": 131346,
+      "O5": 60564,
+      "O6": 144510,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 60087
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "thunk-after-dispose": 3466,
+      "thunk-recycled": 1461,
+      "pending-write": 3772,
+      "partial-drain": 3492,
+      "drain-all": 3050,
+      "hold-retry": 6063,
+      "fifo-delivery": 5844,
+      "lifo-delivery": 5035
+     }
     }
    },
    "throughput": {
-    "NEST": "PENDING",
-    "WIE": "PENDING",
-    "HOOK": "PENDING",
-    "LIFECYCLE": "PENDING",
-    "OWNER": "PENDING",
-    "RECYCLE": "PENDING"
+    "NEST": {
+     "opsPerSecPerCycle": [
+      48293,
+      49475,
+      50266,
+      49263,
+      49193,
+      49145,
+      49928,
+      49044,
+      49258,
+      50022,
+      49602
+     ],
+     "min": 48293,
+     "median": 49263,
+     "max": 50266
+    },
+    "WIE": {
+     "opsPerSecPerCycle": [
+      10637,
+      10292,
+      10185,
+      10364,
+      10687,
+      10129,
+      10316,
+      10210,
+      10654,
+      10408,
+      10438
+     ],
+     "min": 10129,
+     "median": 10364,
+     "max": 10687
+    },
+    "HOOK": {
+     "opsPerSecPerCycle": [
+      38041,
+      38005,
+      37595,
+      37589,
+      38428,
+      38034,
+      38818,
+      37133,
+      38893,
+      37500,
+      37233
+     ],
+     "min": 37133,
+     "median": 38005,
+     "max": 38893
+    },
+    "LIFECYCLE": {
+     "opsPerSecPerCycle": [
+      28941,
+      29756,
+      29508,
+      30039,
+      29999,
+      30231,
+      29632,
+      28766,
+      29303,
+      29011,
+      29559
+     ],
+     "min": 28766,
+     "median": 29559,
+     "max": 30231
+    },
+    "OWNER": {
+     "opsPerSecPerCycle": [
+      69394,
+      71608,
+      70993,
+      71104,
+      71216,
+      71099,
+      70998,
+      71084,
+      71135,
+      70903,
+      71231
+     ],
+     "min": 69394,
+     "median": 71099,
+     "max": 71608
+    },
+    "RECYCLE": {
+     "opsPerSecPerCycle": [
+      275883,
+      283466,
+      287044,
+      291647,
+      288618,
+      290799,
+      291053,
+      287127,
+      289537,
+      287622,
+      290630
+     ],
+     "min": 275883,
+     "median": 288618,
+     "max": 291647
+    },
+    "SCHEDULER": {
+     "opsPerSecPerCycle": [
+      185677,
+      192632,
+      193114,
+      196751,
+      195867,
+      193860,
+      192743,
+      194311,
+      193786,
+      194274,
+      194123
+     ],
+     "min": 185677,
+     "median": 193860,
+     "max": 196751
+    }
    }
   }
  },
@@ -2620,7 +3373,8 @@
      "ERROR",
      "NEST",
      "HOOK",
-     "RECYCLE"
+     "RECYCLE",
+     "SCHEDULER"
     ]
    },
    "lite-1.5.2": {
@@ -2630,7 +3384,8 @@
      "BATCH",
      "ERROR",
      "NEST",
-     "RECYCLE"
+     "RECYCLE",
+     "SCHEDULER"
     ]
    },
    "tree": {
@@ -2641,7 +3396,8 @@
      "HOOK",
      "LIFECYCLE",
      "OWNER",
-     "RECYCLE"
+     "RECYCLE",
+     "SCHEDULER"
     ]
    }
   },
@@ -2654,7 +3410,8 @@
      "ERROR",
      "NEST",
      "HOOK",
-     "RECYCLE"
+     "RECYCLE",
+     "SCHEDULER"
     ]
    },
    "lite-1.5.2": {
@@ -2664,7 +3421,8 @@
      "BATCH",
      "ERROR",
      "NEST",
-     "RECYCLE"
+     "RECYCLE",
+     "SCHEDULER"
     ]
    },
    "tree": {
@@ -2675,7 +3433,8 @@
      "HOOK",
      "LIFECYCLE",
      "OWNER",
-     "RECYCLE"
+     "RECYCLE",
+     "SCHEDULER"
     ]
    }
   }
@@ -2955,6 +3714,40 @@
       "ratio": 0
      }
     }
+   },
+   "SCHEDULER": {
+    "cycles": 11,
+    "ops": 13563,
+    "worlds": 33,
+    "failingWorlds": 0,
+    "performed": {
+     "O1c": 11430,
+     "O1e": 52365,
+     "O2": 66673,
+     "O4": 29637,
+     "O5": 13596,
+     "O6": 32038,
+     "O7a": 0,
+     "O7": 0,
+     "OB": 0,
+     "O8": 0,
+     "OW": 0,
+     "O9": 13215
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 912
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 13215
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    }
    }
   },
   "lite-1.5.2": {
@@ -3124,6 +3917,40 @@
      },
      "maxTaint": {
       "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   },
+   "SCHEDULER": {
+    "cycles": 11,
+    "ops": 13563,
+    "worlds": 33,
+    "failingWorlds": 0,
+    "performed": {
+     "O1c": 11430,
+     "O1e": 52365,
+     "O2": 66673,
+     "O4": 29637,
+     "O5": 13596,
+     "O6": 32038,
+     "O7a": 0,
+     "O7": 0,
+     "OB": 0,
+     "O8": 0,
+     "OW": 0,
+     "O9": 13215
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 912
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 13215
+     },
+     "maxTaint": {
+      "oracle": "O1e",
       "ratio": 0
      }
     }
@@ -3330,6 +4157,40 @@
      },
      "maxTaint": {
       "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   },
+   "SCHEDULER": {
+    "cycles": 11,
+    "ops": 13563,
+    "worlds": 33,
+    "failingWorlds": 0,
+    "performed": {
+     "O1c": 11430,
+     "O1e": 52365,
+     "O2": 66673,
+     "O4": 29637,
+     "O5": 13596,
+     "O6": 32038,
+     "O7a": 0,
+     "O7": 0,
+     "OB": 0,
+     "O8": 0,
+     "OW": 0,
+     "O9": 13215
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 912
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 13215
+     },
+     "maxTaint": {
+      "oracle": "O1e",
       "ratio": 0
      }
     }
@@ -3765,6 +4626,54 @@
     },
     "maxTaint": {
      "oracle": "O1c",
+     "ratio": 0
+    }
+   }
+  },
+  "SCHEDULER:thunk-recycled": {
+   "lane": "SCHEDULER",
+   "scenario": "thunk-recycled",
+   "kernel": "headpatched",
+   "hits": 0,
+   "ops": 60417,
+   "worlds": 147,
+   "performed": {
+    "O1c": 50714,
+    "O1e": 198692,
+    "O2": 235863,
+    "O4": 121515,
+    "O5": 60564,
+    "O6": 106129,
+    "O7a": 0,
+    "O7": 0,
+    "OB": 0,
+    "O8": 0,
+    "OW": 0,
+    "O9": 49863
+   },
+   "skipTainted": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "taintRatio": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "worst": {
+    "rarestRequired": {
+     "scenario": "thunk-recycled",
+     "hits": 0
+    },
+    "leastPerformed": {
+     "oracle": "O9",
+     "performed": 49863
+    },
+    "maxTaint": {
+     "oracle": "O1e",
      "ratio": 0
     }
    }
@@ -4515,6 +5424,128 @@
      }
     }
    ],
+   "headpatched:SCHEDULER": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4875
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59855
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4432
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59637
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4644
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 60514
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4367
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 61114
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4645
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59215
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4511
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59286
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 3653
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 61649
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4610
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59277
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    }
+   ],
    "lite-1.5.2:GRAPH": [
     {
      "seed": 2654435769,
@@ -5121,6 +6152,128 @@
      },
      "maxTaint": {
       "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "lite-1.5.2:SCHEDULER": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4875
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59855
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4432
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59637
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4644
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 60514
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4367
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 61114
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4645
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59215
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4511
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59286
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 3653
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 61649
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4610
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59277
+     },
+     "maxTaint": {
+      "oracle": "O1e",
       "ratio": 0
      }
     }
@@ -5853,6 +7006,128 @@
      },
      "maxTaint": {
       "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "tree:SCHEDULER": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4875
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59855
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4432
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59637
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4644
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 60514
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4367
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 61114
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4645
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59215
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4511
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59286
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 3653
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 61649
+     },
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "thunk-recycled",
+      "hits": 4610
+     },
+     "leastPerformed": {
+      "oracle": "O9",
+      "performed": 59277
+     },
+     "maxTaint": {
+      "oracle": "O1e",
       "ratio": 0
      }
     }
@@ -6848,6 +8123,144 @@
      }
     }
    ],
+   "headpatched:SCHEDULER:thunk-recycled": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    }
+   ],
    "lite-1.5.2:GRAPH:dep-set-flip": [
     {
      "seed": 12648430,
@@ -7676,6 +9089,144 @@
      }
     }
    ],
+   "lite-1.5.2:SCHEDULER:thunk-recycled": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    }
+   ],
    "tree:NEST:saved-cursor-hazard": [
     {
      "seed": 12648430,
@@ -8365,342 +9916,145 @@
       "ratio": 0
      }
     }
+   ],
+   "tree:SCHEDULER:thunk-recycled": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1e",
+      "ratio": 0
+     }
+    }
    ]
-  }
- },
- "throughputRun": {
-  "note": "REPORTED tier, decides no gate: an earlier timed run of the same child loop (same seed / cycles / ops), held under quiet-lock; its counts were identical to kernels.*",
-  "date": "2026-10-28T05:51:59.445Z",
-  "gitHead": "cd64e1cae2748a459fa83fabe03e7b6c6a3636c0",
-  "engineSha256": "ec6d715642d83f93e1d5eec76350a8472683f28e9037bd7614c5e42d291918fd",
-  "node": "v26.8.2",
-  "cpu": "Apple M4 Pro",
-  "loadavgBefore": [
-   2.58,
-   5.28,
-   4.38
-  ],
-  "loadavgAfter": [
-   5.55,
-   4.46,
-   3.78
-  ],
-  "busyNodeBefore": [],
-  "seconds": 1055,
-  "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
-  "perKernel": {
-   "headpatched": {
-    "GRAPH": {
-     "opsPerSecPerCycle": [
-      14176,
-      14352,
-      14278,
-      14630,
-      13808,
-      13898,
-      14272,
-      14117,
-      14045,
-      13665,
-      13862
-     ],
-     "min": 13665,
-     "median": 14117,
-     "max": 14630
-    },
-    "BATCH": {
-     "opsPerSecPerCycle": [
-      47503,
-      48647,
-      49001,
-      47698,
-      47990,
-      47857,
-      48498,
-      48279,
-      47997,
-      48163,
-      47709
-     ],
-     "min": 47503,
-     "median": 47997,
-     "max": 49001
-    },
-    "ERROR": {
-     "opsPerSecPerCycle": [
-      46399,
-      47066,
-      46961,
-      48975,
-      50364,
-      49607,
-      49479,
-      50796,
-      49214,
-      49979,
-      48978
-     ],
-     "min": 46399,
-     "median": 49214,
-     "max": 50796
-    },
-    "NEST": {
-     "opsPerSecPerCycle": [
-      33619,
-      36514,
-      36797,
-      36810,
-      36739,
-      36846,
-      36465,
-      36790,
-      36674,
-      36650,
-      36858
-     ],
-     "min": 33619,
-     "median": 36739,
-     "max": 36858
-    },
-    "HOOK": {
-     "opsPerSecPerCycle": [
-      37616,
-      38314,
-      37681,
-      38089,
-      38846,
-      38639,
-      39338,
-      37487,
-      39409,
-      37999,
-      37732
-     ],
-     "min": 37487,
-     "median": 38089,
-     "max": 39409
-    },
-    "RECYCLE": {
-     "opsPerSecPerCycle": [
-      356123,
-      375930,
-      367236,
-      378634,
-      367641,
-      378204,
-      371463,
-      377491,
-      367911,
-      372154,
-      377064
-     ],
-     "min": 356123,
-     "median": 372154,
-     "max": 378634
-    }
-   },
-   "lite-1.5.2": {
-    "GRAPH": {
-     "opsPerSecPerCycle": [
-      13611,
-      13825,
-      13823,
-      14144,
-      13402,
-      13558,
-      13881,
-      13794,
-      13816,
-      13483,
-      13642
-     ],
-     "min": 13402,
-     "median": 13794,
-     "max": 14144
-    },
-    "BATCH": {
-     "opsPerSecPerCycle": [
-      19331,
-      20637,
-      20834,
-      20725,
-      20477,
-      20627,
-      20462,
-      20773,
-      20600,
-      20851,
-      20514
-     ],
-     "min": 19331,
-     "median": 20627,
-     "max": 20851
-    },
-    "ERROR": {
-     "opsPerSecPerCycle": [
-      48352,
-      65916,
-      65928,
-      66755,
-      66618,
-      66510,
-      66384,
-      66482,
-      66087,
-      66506,
-      66817
-     ],
-     "min": 48352,
-     "median": 66482,
-     "max": 66817
-    },
-    "NEST": {
-     "opsPerSecPerCycle": [
-      31840,
-      34695,
-      34766,
-      34770,
-      34770,
-      35115,
-      34766,
-      34893,
-      34751,
-      34992,
-      34878
-     ],
-     "min": 31840,
-     "median": 34770,
-     "max": 35115
-    },
-    "RECYCLE": {
-     "opsPerSecPerCycle": [
-      358420,
-      369542,
-      377206,
-      374102,
-      378061,
-      370089,
-      369678,
-      379928,
-      369952,
-      375507,
-      381959
-     ],
-     "min": 358420,
-     "median": 374102,
-     "max": 381959
-    }
-   },
-   "tree": {
-    "NEST": {
-     "opsPerSecPerCycle": [
-      48117,
-      49375,
-      50516,
-      49821,
-      49841,
-      49878,
-      49334,
-      49191,
-      49482,
-      50087,
-      49541
-     ],
-     "min": 48117,
-     "median": 49541,
-     "max": 50516
-    },
-    "WIE": {
-     "opsPerSecPerCycle": [
-      10593,
-      10269,
-      10158,
-      10332,
-      10696,
-      10137,
-      10336,
-      10230,
-      10692,
-      10409,
-      10484
-     ],
-     "min": 10137,
-     "median": 10336,
-     "max": 10696
-    },
-    "HOOK": {
-     "opsPerSecPerCycle": [
-      38074,
-      38326,
-      37455,
-      37823,
-      38536,
-      38320,
-      39009,
-      37208,
-      38955,
-      37612,
-      37539
-     ],
-     "min": 37208,
-     "median": 38074,
-     "max": 39009
-    },
-    "LIFECYCLE": {
-     "opsPerSecPerCycle": [
-      29189,
-      29904,
-      29760,
-      30168,
-      30165,
-      30340,
-      29895,
-      28979,
-      29490,
-      29227,
-      29640
-     ],
-     "min": 28979,
-     "median": 29760,
-     "max": 30340
-    },
-    "OWNER": {
-     "opsPerSecPerCycle": [
-      70429,
-      72202,
-      72030,
-      71798,
-      72098,
-      71546,
-      71511,
-      71572,
-      72087,
-      71312,
-      71777
-     ],
-     "min": 70429,
-     "median": 71777,
-     "max": 72202
-    },
-    "RECYCLE": {
-     "opsPerSecPerCycle": [
-      279349,
-      287457,
-      290799,
-      292414,
-      294480,
-      293444,
-      290125,
-      290715,
-      291477,
-      290293,
-      291223
-     ],
-     "min": 279349,
-     "median": 290799,
-     "max": 294480
-    }
-   }
   }
  }
 }

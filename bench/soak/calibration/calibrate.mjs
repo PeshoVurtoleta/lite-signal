@@ -96,6 +96,9 @@ export const LANE_KERNELS = Object.freeze({
     // RECYCLE (R4a, b130 B3): every kernel (B2b census 200 worlds x headpatched / lite-1.5.2 / tree, 0 BREACH); listed
     // because an unlisted lane never runs on the lane-only tree; headpatched first (covOff)
     RECYCLE: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
+    // SCHEDULER (R4c, b134 B3; D-b128-3 = PLAN-R4 M3): every kernel (the lane does not judge scheduler `this`; B2b
+    // census x headpatched / lite-1.5.2 / tree, 0 BREACH); listed so tree cuts it; headpatched first (covOff)
+    SCHEDULER: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
 });
 /** The kernel ids that cut `lane` (a fresh array). */
 export const kernelsFor = (lane) => (own(LANE_KERNELS, lane) ? LANE_KERNELS[lane].slice() : Object.keys(KERNELS));
@@ -166,7 +169,7 @@ export { PINNED };
 // the roster flip would turn (p) red with no cut to clear it.
 export const LANE_PINS = Object.freeze({
     WIE: 'bench/soak/lanes/wie.mjs', HOOK: 'bench/soak/lanes/hook.mjs', LIFECYCLE: 'bench/soak/lanes/lifecycle.mjs',
-    OWNER: 'bench/soak/lanes/owner.mjs', RECYCLE: 'bench/soak/lanes/recycle.mjs',
+    OWNER: 'bench/soak/lanes/owner.mjs', RECYCLE: 'bench/soak/lanes/recycle.mjs', SCHEDULER: 'bench/soak/lanes/scheduler.mjs',
 });
 /** PINNED + the pins of the rostered lanes (roster order). */
 export const pinnedFor = (roster) => PINNED.concat(roster.filter((l) => own(LANE_PINS, l)).map((l) => LANE_PINS[l]));

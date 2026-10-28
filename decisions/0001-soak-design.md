@@ -433,7 +433,7 @@ gV rewrite"; its spec is not keyed on known= / sig=, so a DIV-F29 entry leaves i
   W1/W3/W4 only; the new must-fail L-WRAP-W2-PREFIXR (frozen kernel bench/soak/controls/prefixr, 25784e5, Signal.js
   0628127b) expects BREACH check=W2 counter=batchEpoch. The miss existed since b108 (long controls run only in
   soak:teeth:long and CI soak-nightly).
-- Controls (section 3 :49-51): controls.json pinned FOUR controls at b109 (+ prefixr, 25784e5, byte-frozen in bench/soak/controls/prefixr/; five since b117: + prea5, section 15); parity.json pinned 45 files then (49 now) (+ controls/prefixr/Signal.js, Watch.js; parity OK 45 files, b109 B3).
+- Controls (section 3 :49-51): controls.json pinned FOUR controls at b109 (+ prefixr, 25784e5, byte-frozen in bench/soak/controls/prefixr/; five since b117: + prea5, section 15); parity.json pinned 45 files then (52 at b134) (+ controls/prefixr/Signal.js, Watch.js; parity OK 45 files, b109 B3).
 
 ### 15. Amendment 2026-10-26 (b119 docs): A5a / A5b landed, the LIFECYCLE rung closed
 
@@ -454,12 +454,14 @@ _mustfail.mjs / parity.json / controls.json as the tree stands; those marked [B5
   checked at rest (was once per op at rest). The teardown O5 check sees every fail raised inside close(): a lifecycle callback or
   hook delivery fired by the dispose walk is a `teardown` failure (the step's fail list is reset before close(), not after).
   `cbOf` fails closed with exec.unmodelled for a fire of a registration LcState never recorded.
-- Control roster: controls.json pins five controls (rev152, headpatched, preb33, prefixr, prea5); prea5 = commit 767f808,
-  Signal.js 0f75866f, the last kernel before A5a / A5b, byte-frozen in controls/prea5/. T-A5b runs it on HOOK (smoke) and must
-  show O8 ghost-listener explained by DIV-F9. parity.json pins 51 files (+ lanes/owner.mjs, R3 b126; + lanes/recycle.mjs, R4a b130).
-- Counts now (b130 R4a): universe 68, CHECKS ids 58, GAPS 22, NOT_TEETH 9, UNREACHABLE 5, _mustfail controls 71 (53 short +
-  18 long), test/45 37 tests (b127 R3 OWNER added the lane, the OW family and 8 controls, SPEC-B addendum 14; b130 R4a added
-  the RECYCLE lane and the O9 family, SPEC-B addendum 15).
+- Control roster: controls.json pins five controls (rev152, headpatched, preb33, prefixr, prea5); prea5 = commit
+  767f808, Signal.js 0f75866f, the last kernel before A5a / A5b, byte-frozen in controls/prea5/. T-A5b runs it on HOOK
+  (smoke) and must show O8 ghost-listener explained by DIV-F9. parity.json pins 52 files (+ lanes/owner.mjs, R3 b126;
+  + lanes/recycle.mjs, R4a b130; + lanes/scheduler.mjs, R4c b134).
+- Counts now (b134 R4c): universe 70, CHECKS ids 60, GAPS 22, NOT_TEETH 11, UNREACHABLE 5, _mustfail controls 78 (60
+  short + 18 long), test/45 38 tests (b127 R3 OWNER added the lane, the OW family and 8 controls, SPEC-B addendum 14;
+  b130 R4a added the RECYCLE lane and the O9 family, SPEC-B addendum 15; b134 R4c added the SCHEDULER lane and the O9
+  stale-thunk sig, SPEC-B addendum 16). Roster 10, SCENARIOS 66.
 - R4a (b130; harness only, Signal.js ec6d7156 unchanged): lane RECYCLE (LANE_INDEX 11; lanes/recycle.mjs), the 9th ROSTER
   lane (laneSpan 12), ops rdisp / rsset / rsread / rsdisp over a fixed per-world ring of 8 stale handles. Oracle O9 (judged
   only inside RECYCLE's op handlers), sigs stale-write (a live signal peek != model, any effect ran, or, D-b130-1, a live
@@ -469,11 +471,18 @@ _mustfail.mjs / parity.json / controls.json as the tree stands; those marked [B5
   stale-dead-unrecycled, multi-gen; covOff stale-dispose-recycled -> stale-dispose-dead). Must-fail: T-RC-setgen /
   T-RC-readgen / T-RC-dispgen (one-hunk tree mutants of the gen guards, each breaches O9 with its sig), T-cov-RECYCLE
   (exit 3, missing=stale-dispose-recycled), pass control P-RC-TREE. Census 200 worlds: 0 failing on all 3 kernels.
+- R4c (b134; harness only, Signal.js ec6d7156 unchanged): lane SCHEDULER (LANE_INDEX 8; lanes/scheduler.mjs), the 10th
+  ROSTER lane (laneSpan 12), ops screate / sdrain / swrite / sdisp / srec over a per-world ring with a FIFO / LIFO /
+  HOLD policy per seed. O9 gains sig stale-thunk (O9 sigs 3 -> 4, D-b128-2). SCENARIOS 58 -> 66, SCHEDULER required 8
+  (fifo-delivery and lifo-delivery by observed order, D-b132-1; covOff thunk-recycled). LANE_KERNELS.SCHEDULER =
+  headpatched, lite-1.5.2, tree. Must-fail: T-SC-dropcall / T-SC-wedge (O4 effect-dead), T-SC-thunkgen / T-SC-syncrun
+  (O9 stale-thunk), T-cov-SCHEDULER (exit 3, missing=thunk-recycled), pass controls P-SC-TREE / P-SC-HP. No
+  policy-collapse row (D-b133-1). Recut: 2684 full / 147 smoke worlds, 0 failing on all 3 kernels.
 - [B5] An orphan rule: `audit()` reports `orphan control: <name>` for any _mustfail control that is under no CHECKS id and not in
   the NOT_TEETH allowlist (pass or report-only controls: L-P-INTERIM, L-P-INTERIM-ERROR, P-INTERIM-ERROR-clean, P-HOOK-HP,
-  P-HOOK-TREE, P-LC-tree, T-mark, P-OWNER-TREE, P-RC-TREE). L-WRAP-TREE additionally asserts W2 PASS on the tree
-  (`expect.extra.pass` `['W2']`; `wrapJudge` needs >= 1 W2 record, each PASS, and no BREACH naming check=W2); `validSpec`
-  allows `extra.pass` only on wrap controls.
+  P-HOOK-TREE, P-LC-tree, T-mark, P-OWNER-TREE, P-RC-TREE, P-SC-TREE, P-SC-HP).
+  L-WRAP-TREE additionally asserts W2 PASS on the tree (`expect.extra.pass` `['W2']`; `wrapJudge` needs >= 1 W2 record,
+  each PASS, and no BREACH naming check=W2); `validSpec` allows `extra.pass` only on wrap controls.
 
 ## Consequences
 

@@ -14,6 +14,8 @@
  *   observed (written by exec.mjs from engine body runs; the generator NEVER reads these, rule G0):
  *            runs, links (tracked live reads of the last completed run), seen ([{r, v}] every read of the
  *            last run, in order), taint, out, threw
+ *   sch      (S3 R4c, lanes/scheduler.mjs) 1 = an effect created with a scheduler (its runs are deferred to the
+ *            lane's deliveries; its first run too: p2 relaxed), 0 = every other node (every other lane)
  *
  * Rules folded in from TASK 0d (calibration/task0.json d_probes):
  *   p1  childEffects 'parent-run': a parent re-run or stop disposes its child effects recursively (kill).
@@ -56,7 +58,7 @@ export class Model {
         this.n[i] = {
             i, t: 's', live: true, v, dis: o.dis === true, rank: o.rank | 0, role: o.role || 'leaf',
             spec: null, mode: null, parent: -1, children: null, cl: 0, dying: false,
-            runs: 0, links: null, seen: null, taint: false, out: undefined, threw: false,
+            runs: 0, links: null, seen: null, taint: false, out: undefined, threw: false, sch: 0,
         };
     }
 
@@ -65,16 +67,18 @@ export class Model {
         this.n[i] = {
             i, t: 'c', live: true, v: undefined, dis: false, rank: 0, role: spec.role || 'comp',
             spec, mode: { early: false, flip: false }, parent: this.parentIdx(parent), children: [], cl: 0, dying: false,
-            runs: 0, links: null, seen: null, taint: false, out: undefined, threw: false,
+            runs: 0, links: null, seen: null, taint: false, out: undefined, threw: false, sch: 0,
         };
         this.adopt(i, parent);
     }
 
-    addEffect(i, spec, parent) {
+    /** sch (optional, S3 R4c): 1 = a scheduled effect (lanes/scheduler.mjs); undefined / 0 = unscheduled. Else (-0 too) TypeError. */
+    addEffect(i, spec, parent, sch) {
+        if ((sch !== undefined && sch !== 0 && sch !== 1) || Object.is(sch, -0)) throw new TypeError('Model.addEffect: sch must be 0 or 1, got ' + (typeof sch === 'number' ? (Object.is(sch, -0) ? '-0' : String(sch)) : typeof sch));
         this.n[i] = {
             i, t: 'e', live: true, v: undefined, dis: false, rank: 0, role: spec.role || 'eff',
             spec, mode: { early: false, flip: false }, parent: this.parentIdx(parent), children: [], cl: 0,
-            dying: false, runs: 0, links: null, seen: null, taint: false, out: undefined, threw: false,
+            dying: false, runs: 0, links: null, seen: null, taint: false, out: undefined, threw: false, sch: sch === 1 ? 1 : 0,
         };
         this.adopt(i, parent);
     }

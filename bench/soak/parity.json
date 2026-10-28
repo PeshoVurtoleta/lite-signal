@@ -3,12 +3,12 @@
     "Signal.js": "ec6d715642d83f93e1d5eec76350a8472683f28e9037bd7614c5e42d291918fd",
     "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
-    "bench/soak/model.mjs": "5d470b5a13dc9327721c3fff3b50981ebf41cf16cdadd2945d704d7e5404a4da",
-    "bench/soak/oracles.mjs": "5ae11816969ca666d7d2c31189e37d467046e6cc9ad547f57353f3c2b5a32aad",
-    "bench/soak/exec.mjs": "fa0f52029c95fa389e9156b3ef3639e116d2555d47458c555d41351f69f772af",
+    "bench/soak/model.mjs": "d37ca646cdca63f563579d23beaa698d818cc5d6e3bb95179d292374bc386e12",
+    "bench/soak/oracles.mjs": "b260f5334c0279ab453e44def431cd10921d32487b59e57f3c30478340a3a807",
+    "bench/soak/exec.mjs": "a23975d372f8f95294056fcf8d957b977b9e040f96dac9dd0a21afcdeccd3650",
     "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
-    "bench/soak/scenarios.mjs": "0df3febdef8c73e8d7d4ade2a8901cf2734384a9b532a6fc3a5ec4e1cb738e7a",
-    "bench/soak/lanes/index.mjs": "52acf2d6e57a73d1691dbcde83346f2168c5a2e18ae3c44977280add3ad8c2fe",
+    "bench/soak/scenarios.mjs": "2d2355997af0b749292cc21b9837941caec9c2a26e36dceed898c28ef3a28769",
+    "bench/soak/lanes/index.mjs": "81b625ae75f182c2feac60090123377161886f5350a2473bee6401cac9f69720",
     "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
     "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
     "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
@@ -50,6 +50,7 @@
     "bench/soak/lanes/lifecycle.mjs": "1be1721a7f04caa993ed6e16ea18490602322c2452befbb9f80efc8544c43a4c",
     "bench/soak/adapters/contract.mjs": "d49c69e813bc7c632e181b7ad5d1591568dc03d2cd97ad0126e48de0118558db",
     "bench/soak/lanes/owner.mjs": "df748eee4e3a646e6af40a7aff36397e7a34dda8c15459d3fe43f51a320e3a7f",
-    "bench/soak/lanes/recycle.mjs": "5e7e182bbdb796a93b29d4dcf18f4af1ee88c7658542012815f5dec9f5f6e6d7"
+    "bench/soak/lanes/recycle.mjs": "5e7e182bbdb796a93b29d4dcf18f4af1ee88c7658542012815f5dec9f5f6e6d7",
+    "bench/soak/lanes/scheduler.mjs": "890aa9dba1f257e0294848bdf046c881f022f5d80f7554ef3248b83f2ba24c70"
   }
 }

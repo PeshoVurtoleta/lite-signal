@@ -108,6 +108,9 @@ export const CHECKS = deepFreeze({
     // b130 B5 (PLAN-R4 TASK 7): the three T-RC-* tree mutants (the b129 R4a kernels, RC_ENV --smoke), each spec
     // known=none; heads: .handoff/b130-evidence/b5/heads-{1,2,3}.txt. P-RC-TREE is their pass control / revert.
     'lane:RECYCLE': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen'],
+    // b134 B5 (PLAN-R4 R4c TASKS 6 + 7): the four T-SC-* tree mutants (the b131 R4c / b133 D6 kernels, SC_ENV --smoke),
+    // each spec known=none; heads: .handoff/b134-evidence/b5/heads-{1,2,3}.txt. P-SC-TREE is their pass control / revert.
+    'lane:SCHEDULER': ['T-SC-dropcall', 'T-SC-wedge', 'T-SC-thunkgen', 'T-SC-syncrun'],
     'gate:oracle': ['L-REV-152'],
     // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
     // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
@@ -128,7 +131,9 @@ export const CHECKS = deepFreeze({
     'oracle:O2': ['L-REV-152'],
     // L-REV-152 ERROR heads `oracle=O4 lane=ERROR sig=effect-dead` (f21-census.json:23-24) and
     // `oracle=O6 lane=ERROR sig=expected-escape-missing` (f21-census.json:25, :28-29)
-    'oracle:O4': ['L-REV-152', 'T-flushdrop', 'T-owner-cleanup'],
+    // b134 B5: T-SC-dropcall (a queued effect never reaches its scheduler) and T-SC-wedge (the first-run thunk never runs)
+    // head `oracle=O4 lane=SCHEDULER sig=effect-dead known=none` (.handoff/b134-evidence/b5/heads-1.txt)
+    'oracle:O4': ['L-REV-152', 'T-flushdrop', 'T-owner-cleanup', 'T-SC-dropcall', 'T-SC-wedge'],
     // a future third O5 tooth: rev152 / headpatched NEST also emit O5 link-count (the planned L-REV-AUDIT spec,
     // SPEC-B.md:454); not mapped until its 3/3 calibration lands
     // b127 B5: T-owner-cascade (disposeOwned never pops a child) reads O5 node-count / link-count / kind-count at rest,
@@ -143,11 +148,13 @@ export const CHECKS = deepFreeze({
     'oracle:OW': ['T-owner-fifo', 'T-owner-outin', 'T-owner-this'],
     // b130 B5 (PLAN-R4 TASK 7, O2: R4a lands stale-write / stale-read / stale-dispose; stale-thunk lands in R4c):
     // setgen heads stale-write, readgen stale-read, dispgen stale-dispose
-    'oracle:O9': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen'],
+    // b134 B5 (R4c): thunkgen (a stale first-run thunk runs the recycled resident; HOLD world 0 of the smoke set) and
+    // syncrun (the first run bypasses the scheduler) head stale-thunk
+    'oracle:O9': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen', 'T-SC-thunkgen', 'T-SC-syncrun'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
     'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
-    'sig:O4:effect-dead': ['L-REV-152', 'T-flushdrop', 'T-owner-cleanup'],
+    'sig:O4:effect-dead': ['L-REV-152', 'T-flushdrop', 'T-owner-cleanup', 'T-SC-dropcall', 'T-SC-wedge'],
     'sig:O6:expected-escape-missing': ['L-REV-152'],
     'sig:O5:link-count': ['T-sever', 'T-owner-cascade'],
     'sig:O5:node-count': ['T-owner-cascade'],
@@ -166,6 +173,7 @@ export const CHECKS = deepFreeze({
     'sig:O9:stale-write': ['T-RC-setgen'],
     'sig:O9:stale-read': ['T-RC-readgen'],
     'sig:O9:stale-dispose': ['T-RC-dispgen'],
+    'sig:O9:stale-thunk': ['T-SC-thunkgen', 'T-SC-syncrun'],
     'cause:interrupted': ['L-I1', 'L-I2'],
     // b119 B5 (orphan rule): P-HOOK-TREE-COVOFF (b93) prints `INCONCLUSIVE -- scenario lane=HOOK missing=hook-non-lifo-off`,
     // P-NEST-TRIGGERLESS's shape, and was mapped nowhere
@@ -173,7 +181,9 @@ export const CHECKS = deepFreeze({
     // `INCONCLUSIVE -- scenario lane=OWNER missing=cleanup-fifo` (cov-off:cleanup-fifo), P-HOOK-TREE-COVOFF's shape
     // b130 B5: T-cov-RECYCLE (tree) prints `INCONCLUSIVE -- scenario lane=RECYCLE missing=stale-dispose-recycled`
     // (cov-off:stale-dispose-recycled), T-cov-OWNER's shape
-    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'T-cov-LIFECYCLE', 'P-HOOK-TREE-COVOFF', 'T-cov-OWNER', 'P-OWNER-HP', 'T-cov-RECYCLE']),
+    // b134 B5: T-cov-SCHEDULER (tree) prints `INCONCLUSIVE -- scenario lane=SCHEDULER missing=thunk-recycled`
+    // (cov-off:thunk-recycled), T-cov-RECYCLE's shape
+    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'T-cov-LIFECYCLE', 'P-HOOK-TREE-COVOFF', 'T-cov-OWNER', 'P-OWNER-HP', 'T-cov-RECYCLE', 'T-cov-SCHEDULER']),
     'cause:check-floor': ['T-floor-BATCH'],
     // test/67 drives the same patch on live AND headpatched NEST and checks each line is inconclusiveLine('taint-skip')
     'cause:taint-skip': ['P-NEST-TAINT-HALF', TEST67],
@@ -287,6 +297,9 @@ export const NOT_TEETH = deepFreeze({
     'T-mark': 'performance-only NOTE tooth: shape[GRAPH] markDedupe is report-only, no gate reads it (config.mjs MARK_DEDUPE_NOTE comment; gates.mjs REPORT_ONLY_GATES shape)',
     'P-OWNER-TREE': 'the OWNER pass control on the tree, the revert of every T-owner-* row (' + MF + ' P-OWNER-TREE comment)',
     'P-RC-TREE': 'the RECYCLE pass control on the tree, the revert of every T-RC-* row (' + MF + ' P-RC-TREE comment)',
+    // b134 B5 (PLAN-R4 R4c TASK 7; .handoff/b134-evidence/b5/heads-{1,2,3}.txt): the SCHEDULER pass controls
+    'P-SC-TREE': 'the SCHEDULER pass control on the tree, the revert of every T-SC-* row incl. syncrun (' + MF + ' P-SC-TREE comment)',
+    'P-SC-HP': 'the SCHEDULER pass control on headpatched (' + MF + ' P-SC-HP comment)',
 });
 
 /** Does control `name` (or prefix pattern `X-*`) name something in `controls`? Returns the matches. */
