@@ -81,7 +81,7 @@ const SCENARIOS = [
     { name: "introspect-torture", group: "semantic", file: "introspect-torture.mjs", floor: "1.4.0", about: "describe/forEach*/hasObservers/ownerOf + ABA gen-stamp guard" },
     { name: "lifecycle-torture", group: "semantic", file: "lifecycle-torture.mjs", floor: "1.4.0", about: "createRoot detachment + destroy registry reset" },
     // graph-fuzzer + torture-soak RETIRED 2026-10-20 (absorbed by bench/soak GRAPH): see the RETIRED block in MANIFEST.txt.
-    { name: "scheduler-bench", group: "soak", file: "scheduler-bench.mjs", floor: "1.4.0", about: "microtask scheduler saturation" },
+    // scheduler-bench RETIRED 2026-10-29 (absorbed by bench/soak SCHEDULER): see the RETIRED block in MANIFEST.txt.
     { name: "wraparound-torture", group: "soak", file: "wraparound-torture.mjs", floor: "1.4.0", about: "2^31 dormancy band at full distance (opt-in: TORTURE_WRAPAROUND=1, ~30s)" },
 ];
 

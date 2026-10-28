@@ -130,14 +130,10 @@ A timing regression is far more actionable with its structural cause attached. T
 
 ## Torture soaks (`bench/torture/`)
 
-Not benchmarks — crash-detection soaks. Each runs for a configurable duration and asserts (1) zero thrown exceptions and (2) `activeNodes`/`activeLinks` return to baseline after a settle pass. Exit `0` iff both hold.
-
-| File | Stresses |
-| :--- | :--- |
-| `scheduler-bench.mjs` | 1,500 microtask-scheduled effects; concurrent writes during drains. |
+Not benchmarks. The last duration-bound crash-detection soak, `scheduler-bench.mjs`, was retired 2026-10-29 (absorbed by the `bench/soak` SCHEDULER lane; see the RETIRED block in `bench/torture/MANIFEST.txt`). The one soak left in `bench/torture/` is the opt-in `wraparound-torture` (`TORTURE_WRAPAROUND=1`, ~30 s).
 
 ```sh
-TORTURE_SECONDS=30 node --expose-gc bench/torture/scheduler-bench.mjs
+TORTURE_WRAPAROUND=1 node --expose-gc bench/torture/wraparound-torture.mjs
 ```
 
 ---

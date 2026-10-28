@@ -8,7 +8,8 @@
  * Disabling the eval memo in `pullComputed` (a one-line edit) leaves every
  * value correct, every wakeup count correct and the pool perfectly balanced --
  * it just recomputes bodies that did not need recomputing. graph-fuzzer,
- * scheduler-bench, torture-soak, oracle-fuzzer and glitch-hunter are all blind
+ * scheduler-bench, torture-soak (those three since retired into bench/soak),
+ * oracle-fuzzer and glitch-hunter are all blind
  * to it. On a wide graph that is the difference between O(changed) and
  * O(everything), which is the entire value proposition of a pull engine with
  * versioned short-circuits.

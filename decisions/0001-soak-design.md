@@ -209,6 +209,9 @@ Amendment 2026-10-20 (bursts 84-89; commits c11abf0, 3ef853a, 85d02e8, 4f5f200, 
   and O1 effect-stale. graph-fuzzer and torture-soak are retired (absorbed by the bench/soak GRAPH lane; accepted loss =
   single-registry aging; bench/torture/MANIFEST.txt RETIRED block).
 
+Amendment 2026-10-29 (b135; harness only): scheduler-bench retired (absorbed by the bench/soak SCHEDULER lane), see
+section 16.
+
 ### 6. Oracle OB (F5, QA finding 5): batch-early-run -- adopted
 
 An effect that ALREADY ran must not re-run while a batch is open (exec.mjs:533-536). First runs are exempt (an effect
@@ -483,6 +486,44 @@ _mustfail.mjs / parity.json / controls.json as the tree stands; those marked [B5
   P-HOOK-TREE, P-LC-tree, T-mark, P-OWNER-TREE, P-RC-TREE, P-SC-TREE, P-SC-HP).
   L-WRAP-TREE additionally asserts W2 PASS on the tree (`expect.extra.pass` `['W2']`; `wrapJudge` needs >= 1 W2 record,
   each PASS, and no BREACH naming check=W2); `validSpec` allows `extra.pass` only on wrap controls.
+
+### 16. Amendment 2026-10-29 (b135): scheduler-bench retired
+
+Harness only; Signal.js sha256/8 ec6d7156 unchanged. Authority: ruling S3-D4 (.handoff/PLAN-R4-recycle-sched.md R4b, addenda
+O1 / O5 / O14, ruling M2 = D-b128-2). bench/torture/scheduler-bench.mjs leaves the run.mjs roster (24 scenarios, 1 soak:
+wraparound-torture, opt-in, so `npm run torture:soak` runs 0 scenarios and exits 0 by default, O5) and the bench/package.json
+scripts; the file moved to archived/ (gitignored). Its witnesses are absorbed by the bench/soak SCHEDULER lane (R4c, b134,
+section 15) as below; bench/torture/MANIFEST.txt carries the matching RETIRED block. bench/torture/MANIFEST-1.5.0.txt is a
+dated snapshot and stays byte-identical (O5).
+
+| scheduler-bench witness | proven on it? | successor | tier | claims / does NOT claim |
+|---|---|---|---|---|
+| delivery-by-next-tick sentinel :227 -> :323 | yes (B0a) | SCHEDULER delivery-by-drain + T-SC-dropcall / T-SC-wedge | DETERMINISTIC | every held thunk delivers at drain; NOT event-loop turn timing (the lane queue is synchronous) |
+| final value :258-260 -> :329 | yes (B0a) | O1e effect-stale at rest | DETERMINISTIC | |
+| exact run count :261 -> :334 | yes (B0a) | D-b128-2: double delivery (sentCountDrift) maps to the test/58 keep-QUEUED row + test/86 | DETERMINISTIC | NOT exact counts in the LEDGER #35 R1 / R2 recycle shapes (tolerated by construction, D-b128-1); scheduler-bench never recycled |
+| gen-guard over-fire / stale thunk | wedge / none | delivery-by-drain / O9 stale-thunk + T-SC-thunkgen | DETERMINISTIC | |
+| peek shadow :150-166 | no | O1 signal values | DETERMINISTIC | |
+| errors, teardown 0/0 :288-304 | no | exec error capture, O5 teardown | DETERMINISTIC | |
+| mid-run high-water :309 | NEVER (MANIFEST.txt RETIRED block) | O5 link-count + T-sever (GRAPH) | DETERMINISTIC | NOT scheduler-bench's topology ceiling |
+| post-GC resident :318 | NEVER | heap gate + L-T-leak / L-T-graveyard | fail kind, soak only (section 4; section 12 D-B2) | per-world heap only |
+| ops/sec :271 | n/a | none | REPORTED | accepted loss |
+| JIT sink :305 | n/a | none (dropped) | - | |
+
+Line numbers are scheduler-bench.mjs at f2c2d45 (blob below).
+
+- Accepted loss: ~10 s single-registry aging with 1,508 live real-microtask effects under "grow" (the graph-fuzzer loss
+  class, section 5 amendment 2026-10-20). Real microtask delivery is not a soak claim: test/05-scheduler.test.mjs:55-56 (a
+  Promise.then scheduler) is the remaining witness; bench/torture scheduler-storm / contract-torture drive manual /
+  synchronous schedulers only.
+- B0a (b129, frozen cd64e1c): null 3/3 exit 0, 0 FAIL; dropcall 9cc16933 3/3 exit 1; wedge dbb57692 3/3 exit 1; each mutant
+  printed :323-324 + :329-331 + :334-336 + the JIT-sink FAIL :305-306; all 9 runs NOISY (PRELIMINARY; verdicts are exit
+  codes). .handoff/b129-evidence/r4b/T0a-FACTS.md
+- B0b (b135, tree f2c2d45, Signal.js ec6d7156): _mustfail P-SC-TREE exit 0 / 0 BREACH; T-SC-dropcall + T-SC-wedge exit 1 with
+  head `oracle=O4 lane=SCHEDULER sig=effect-dead known=none`, 3/3 runs; R4c patch strings vs B0a's: 0 diffs, patched kernels
+  byte-identical (9cc16933 / dbb57692); full SCHEDULER lane 3 runs x 11 cycles (2684 worlds each), exit 0 PASS, trackerSize 0
+  / weakAlive 0 at all 33 cycle boundaries; host QUIET (load1 2.36-2.93, baseline 2.21). .handoff/b135-evidence/b0b/FACTS.md
+- Archive pointer (last tree that carried it): `git show f2c2d45:bench/torture/scheduler-bench.mjs   blob
+  9320608d31e8400c33040df7eda33c781dc2b267`.
 
 ## Consequences
 

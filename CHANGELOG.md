@@ -63,6 +63,18 @@ The LEDGER #45 / #46 op-3 rules are unchanged (a throwing `onConnect` still anno
 bodies (+ `allocateLink`, `freeLink`, values unchanged); `test/torture.mjs` gains the `mreg` lane (steady-state, whole-run window
 gate and retention half in the pinned child). (User code running with `this` = the internal node was fixed later, LEDGER #48: see the #48 entry above.)
 
+### Tests / Docs -- torture: scheduler-bench retired (R4b, b135)
+
+Dev-only (`bench/`, not shipped). No engine change: Signal.js sha256/8 ec6d7156 unchanged.
+- `bench/torture/scheduler-bench.mjs` retired 2026-10-29 (authority ruling S3-D4): delisted from `run.mjs`, its npm
+  script removed from `bench/package.json`, the file moved to the gitignored `archived/` (source: `git show
+  f2c2d45:bench/torture/scheduler-bench.mjs`). Absorbed by the soak SCHEDULER lane; coverage table and accepted loss in
+  `decisions/0001-soak-design.md` section 16, RETIRED block in `bench/torture/MANIFEST.txt`.
+- The torture suite is now 24 scenarios (23 semantic + 1 opt-in soak, `wraparound-torture`). `npm run torture:soak` runs
+  0 scenarios by default ("0 passed, 1 skipped, 0 failed", exit 0).
+- The lane's queue is synchronous: real microtask timing is witnessed only by `test/05-scheduler.test.mjs`. Accepted
+  loss: the ~10 s single-registry aging with 1,508 live real-microtask effects under `grow`.
+
 ### Tests / Docs -- soak: SCHEDULER lane + O9 stale-thunk (R4c, b131-b134)
 
 Dev-only (`bench/soak/`, not shipped). No engine change in this rung: Signal.js is the tree kernel sha256/8

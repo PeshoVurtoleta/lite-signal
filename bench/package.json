@@ -11,7 +11,6 @@
     "vs-andrii": "node vs-andrii.mjs",
     "selftest": "node --expose-gc lib/_selftest.mjs",
     "dispose-recycle": "node --expose-gc dispose-recycle.mjs",
-    "scheduler-bench": "node --expose-gc torture/scheduler-bench.mjs",
     "bench-reactive-legacy": "node --expose-gc benchmarkReactive.mjs"
   },
   "dependencies": {

@@ -1,7 +1,7 @@
-lite-signal torture suite -- complete set (25 scenarios)
+lite-signal torture suite -- complete set (24 scenarios)
 ========================================================
 
-23 semantic (deterministic, fast, CI) + 2 soak (one opt-in). Full superset through 1.10
+23 semantic (deterministic, fast, CI) + 1 soak (opt-in). Full superset through 1.10
 (candidate-line numbering after the 2026-10-10 re-pin: see FEATURE GATES).
 Every scenario feature-detects and skips cleanly below its feature; runs green
 from 1.4.x forward. Skips use exit 77 and the runner enforces version floors:
@@ -77,7 +77,7 @@ SEMANTIC (listed in run.mjs registration order)
                            gen-stamp guard
   lifecycle-torture        createRoot detachment + destroy registry reset (1.5.0+)
 
-SOAK: scheduler-bench, wraparound-torture
+SOAK: wraparound-torture
   wraparound-torture (2026-08 Phase 4, OPT-IN via TORTURE_WRAPAROUND=1, ~30s;
   exits 78 otherwise): pins the 2^31 dormancy band at FULL DISTANCE (~2.1B
   real version spins per crossing). Pinned truth on 1.5.0: below the band
@@ -90,28 +90,60 @@ SOAK: scheduler-bench, wraparound-torture
   These pins document ACTUAL behavior; an engine that closes the band flips
   them deliberately. NOTE: the "indefinite uptime" doc claim is crash-true
   but needs the dormancy caveat.
-  2026-08 Phase 2 -- scheduler-bench carries three witnesses the post-teardown
-  checks are structurally blind to:
-  - MID-RUN HIGH-WATER: activeNodes/activeLinks sampled per tick, gated against
-    the topology's theoretical maxima (mutant-verified 2026-08 on the retired
-    torture-soak only: a deferred-sever engine fired on tick 1, 836k links vs
-    its 35k ceiling; not mutant-proven on scheduler-bench).
+
+RETIRED (2026-10-29, burst 135): scheduler-bench
+  Authority: ruling S3-D4 (.handoff/PLAN-R4-recycle-sched.md R4b; ADR 0001
+  section 16). Evidence:
+  - B0a (b129, frozen cd64e1c): null 3/3 exit 0, 0 FAIL; dropcall 9cc16933
+    3/3 exit 1; wedge dbb57692 3/3 exit 1; each mutant printed the wedge,
+    final-value, count and JIT-sink FAIL lines; all 9 runs NOISY
+    (PRELIMINARY; verdicts are exit codes). .handoff/b129-evidence/r4b/
+    T0a-FACTS.md
+  - B0b (b135, tree f2c2d45, Signal.js ec6d7156): _mustfail P-SC-TREE exit 0,
+    0 BREACH; T-SC-dropcall / T-SC-wedge exit 1, head `oracle=O4
+    lane=SCHEDULER sig=effect-dead known=none`, 3/3 runs; patch strings
+    strip-equal to B0a's (kernels byte-identical); SCHEDULER lane 3 runs x 11
+    cycles (2684 worlds each) exit 0 PASS, trackerSize 0 / weakAlive 0 at all 33
+    cycle boundaries; host QUIET. .handoff/b135-evidence/b0b/FACTS.md
+  Absorbed by bench/soak SCHEDULER (bench/soak/_mustfail.mjs + teeth.mjs
+  controls), witness -> successor:
+  - delivery-by-next-tick sentinel -> SCHEDULER delivery-by-drain +
+    T-SC-dropcall / T-SC-wedge
+  - final value       -> O1e effect-stale at rest
+  - exact counts      -> D-b128-2: double delivery (sentCountDrift) maps to
+    the test/58 keep-QUEUED row + test/86
+  - stale thunk       -> O9 stale-thunk + T-SC-thunkgen
+  - peek shadow       -> O1 signal values
+  - errors, teardown  -> exec error capture + O5 teardown
+  - mid-run high-water -> O5 link-count + T-sever (GRAPH); NOT
+    scheduler-bench's topology ceiling, never mutant-proven there
+  - post-GC resident  -> the heap gate + L-T-leak / L-T-graveyard
+  - ops/sec           -> none (REPORTED only; accepted loss)
+  History (2026-08 Phase 2): scheduler-bench carried three witnesses the
+  post-teardown checks were structurally blind to:
+  - MID-RUN HIGH-WATER: activeNodes/activeLinks sampled per tick, gated
+    against the topology's theoretical maxima (mutant-verified 2026-08 on the
+    retired torture-soak only: a deferred-sever engine fired on tick 1, 836k
+    links vs its 35k ceiling; never mutant-proven on scheduler-bench).
   - POST-GC resident (heapUsed + arrayBuffers, 2026-09): forced-GC high-water
-    within a fixed slack of the
-    post-build baseline -- retention the pool counters cannot see
-    (mutant-verified 2026-08 vs a full link graveyard: +151 MB in 2s, on a
-    soak the record does not name; not re-run on scheduler-bench).
-  - SENTINEL DELIVERY: dedicated effects record the values they OBSERVE (the
-    shadow oracles peek() storage only, so a flush/scheduler path that stopped
-    DELIVERING passed forever). scheduler-bench pins DELIVERY-BY-NEXT-TICK for
-    its microtask sentinels (a dropped thunk or wedged drain fails; a
-    delivery merely moved to a later-but-still-prior event-loop turn passes
-    by design) plus exact counts at teardown.
-    Mutant-verified vs a flush-loop drop (on the retired torture-soak; its
-    bench/soak successor is T-flushdrop, see RETIRED). Random SUB-sentinel
-    drops are caught probabilistically (the drop must land on a sentinel node);
-    systematic wedges deterministically. scheduler-bench's OWN delivery
-    sentinel is also mutant-verified both ways (scheduler-bench.mjs:19).
+    within a fixed slack of the post-build baseline (mutant-verified 2026-08
+    vs a full link graveyard: +151 MB in 2s, on a soak the record does not
+    name; never re-run on scheduler-bench).
+  - SENTINEL DELIVERY: dedicated effects recorded the values they OBSERVED.
+    It pinned DELIVERY-BY-NEXT-TICK for its microtask sentinels (a dropped
+    thunk or wedged drain failed; a delivery merely moved to a
+    later-but-still-prior event-loop turn passed by design) plus exact counts
+    at teardown. Random sub-sentinel drops were caught probabilistically,
+    systematic wedges deterministically; its own delivery sentinel was
+    mutant-verified both ways (scheduler-bench.mjs:19; re-proven by B0a).
+  Accepted loss: ~10 s single-registry aging with 1,508 live real-microtask
+  effects under "grow" (the graph-fuzzer loss class). The lane queue is
+  synchronous, so event-loop turn timing is not claimed by SCHEDULER; real
+  microtask delivery stays with test/05-scheduler.test.mjs:55-56 (a
+  Promise.then scheduler). scheduler-storm and contract-torture (run.mjs
+  semantic) drive manual / synchronous schedulers only.
+  Source (last tree that carried it):
+    git show f2c2d45:bench/torture/scheduler-bench.mjs   blob 9320608d31e8400c33040df7eda33c781dc2b267
 
 RETIRED (2026-10-20, burst 89): graph-fuzzer, torture-soak
   Authority: SPEC-S2-groupB task 11 / D-B5 (maintainer 2026-10-13). Precondition
