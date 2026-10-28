@@ -41,12 +41,38 @@
  *                 failure or close() outcome; an unmodelled throw skips both); it must not throw and must null every
  *                 retained handle. At-rest O1c / O5 after a stale op run as on every lane. Every other lane keeps
  *                 exec.rc null and pays one null test per world
+ *   scheduler     (SCHEDULER lane, exec.sc !== null; S3 R4c) lanes/scheduler.mjs sets exec.sc (its ScState) on its first
+ *                 op; exec reads exactly seven members of it (onBody, pend, st.susp, close, size, ringT, x), and
+ *                 nothing else:
+ *                   sc.onBody(i, depth)  called at the ENTRY of every runBody (computed and effect, before the frame is
+ *                                        pushed, before the body runs), i = the body's node index, depth = the frames on
+ *                                        the stack counting this one (1 = outermost; a computed an effect pre-walk pulls
+ *                                        also enters at depth 1). The lane judges O9 stale-thunk there (oracles.mjs
+ *                                        checkStaleThunk; its own did('O9') / failF). It must not throw and must not
+ *                                        touch the engine or the model
+ *                   sc.pend              Int32Array, script node index -> thunks queued for that effect and not yet
+ *                                        delivered. atRest hoists it once per pass; a live effect with pend[k] > 0 is
+ *                                        SUSPENDED: O1e / O4 are skipped for it (neither performed nor taint-skipped;
+ *                                        counted in sc.st.susp, capped Smi) and, while its body never ran, it joins the
+ *                                        O5 exclusion set (its deferred first run has linked nothing yet; p2 relaxed --
+ *                                        a scheduled effect that already ran keeps its engine links and stays in O5).
+ *                                        A suspension must END: at the world end (no failure, before W.close() and
+ *                                        sc.close()) scEnd() requires pend to be an Int32Array covering every node and
+ *                                        all zero, else the world is unmodelled (fail closed: never left unjudged)
+ *                   sc.close()           run() calls it once, right after W.close() (as rc.close(); an unmodelled throw
+ *                                        skips both). It must not throw and must null every queued thunk
+ *                   sc.size, sc.ringT,   read by scClosed() right after sc.close() (never throws): close() must leave
+ *                   sc.x                 size 0, x null and every ringT slot null, else exec.unmodelled = 'exec:
+ *                                        SCHEDULER close(): <what>' and run() throws it after the teardown block, even
+ *                                        on a world that already failed (fail closed: a dirty ring is never a verdict)
+ *                 Every other lane keeps exec.sc null and pays one null test per runBody and one per at-rest pass
+ *                 (+ one per live effect on the hoisted local)
  *   wie writer    (WIE, gen.mjs I2 lifted) a computed whose spec carries w writes w := f(its output) through
  *                 write() after its body returns (spec.wu: under untrack), exactly like an effect writer. D4: a
  *                 target that is not an earlier signal (forward / self / non-integer / non-signal) or is in its
  *                 own transitive read set fails closed at creation (unmodelled)
  *   batch         OB inline: an effect that ALREADY ran must not re-run while a batch is open (batchDepth > 0;
- *                 a first run inside a batch is allowed, p2). OB is PERFORMED once per outermost batch whose
+ *                 a first run inside a batch is allowed, p2; a deferred first run (SCHEDULER) is a first run too). OB is PERFORMED once per outermost batch whose
  *                 close-flush re-ran >= 1 effect (a witnessed deferral); a batch with nothing to defer is
  *                 not evidence
  *
@@ -170,6 +196,10 @@ class Exec {
         // RECYCLE lane state (lanes/recycle.mjs RcState), set by the lane's first op; null on every other lane. exec only
         // calls rc.close() after W.close() (the header's stale-handles contract); O9 runs in the lane's own op handlers
         this.rc = null;
+        // SCHEDULER lane state (lanes/scheduler.mjs ScState), set by the lane's first op; null on every other lane. exec
+        // reads exactly 7 members (the header's contract): calls sc.onBody(i, depth) per runBody, reads sc.pend /
+        // sc.st.susp at rest, calls sc.close() after W.close(), then scClosed() reads sc.size / sc.ringT / sc.x
+        this.sc = null;
     }
 
     /** Count one performed check / one taint skip (capped: never leaves Smi range). */
@@ -217,6 +247,7 @@ class Exec {
             // O7 after the end pull (b111 B3, A3 NIT): a missed connect / disconnect that final pull caused is checked too
             if (this.lc !== null) this.lcAtRest();
             if (this.ow !== null) this.owCheck();
+            if (this.sc !== null) this.scEnd();   // SCHEDULER: every suspension ended (before W.close() / sc.close())
             if (this.unmodelled !== null) throw this.unmodelled;
             if (this.stepFails.length > 0) failure = { step: ops.length, op: 'end', fails: this.stepFails, scen: Array.from(this.D.step) };
         }
@@ -231,12 +262,14 @@ class Exec {
         if (this.ow !== null) this.ow.closing = true;
         try { residue = this.W.close(); } catch (e) { closeErr = e; }
         if (this.rc !== null) this.rc.close();   // RECYCLE: null the retained stale handles (no other lane pays)
+        if (this.sc !== null) { this.sc.close(); this.scClosed(); }   // SCHEDULER: null every queued thunk (no other lane pays)
         if (failure === null) {
             this.did('O5');   // the teardown residue check (counted like the at-rest O5: before close()'s outcome is read)
             if (closeErr !== NONE) this.engineError(closeErr, 'close()');
             else { const f = O.checkTeardown(residue); if (f !== null) this.failF(f); }
             if (this.stepFails.length > 0) failure = { step: ops.length, op: 'teardown', fails: this.stepFails, scen: [] };
         }
+        if (this.unmodelled !== null) throw this.unmodelled;   // SCHEDULER scClosed(): even on an already-failed world
         return {
             failure, scen: this.D.counts, checks: this.checks, skipTainted: this.skipTainted, gateHits: this.gateHits,
             ops: this.opsRun, opsByClass: this.opsByClass,
@@ -592,6 +625,7 @@ class Exec {
         const M = this.M;
         const nd = M.n[i];
         const frames = this.frames;
+        if (this.sc !== null) this.sc.onBody(i, frames.length + 1);   // SCHEDULER: O9 stale-thunk (the header's contract)
         const parent = frames.length > 0 ? frames[frames.length - 1] : null;
         if (parent !== null && parent.inRead !== -1) parent.nested = true;
         let pre = 0;   // 1: pulled by an effect pre-walk (flush, no body frame); 2: pulled by a computed pre-walk
@@ -753,9 +787,18 @@ class Exec {
         const memo = new Map();   // one at-rest pass = one check call; no model mutation happens inside it
         const tm = new Map();
         const neverRan = new Set();   // reported by O4 this pass; O5 does not count the same root cause twice
+        const sc = this.sc;
+        const pend = sc === null ? null : sc.pend;   // SCHEDULER: hoisted once per pass (null on every other lane)
         for (let k = 0; k < M.n.length; k++) {
             const nd = M.n[k];
             if (nd === undefined || !nd.live || nd.t !== 'e') continue;
+            if (pend !== null && pend[k] > 0) {
+                // suspended (p2 relaxed): a thunk is pending, the body has not had its turn; O1e / O4 wait for the drain
+                const st = sc.st;
+                if (st.susp < COUNTER_CAP) st.susp++;
+                if (nd.seen === null) neverRan.add(k);   // deferred first run: linked nothing yet (O5 exclusion)
+                continue;
+            }
             const r = O.checkEffect(M, k, this.ran.has(k), memo, tm);
             for (const o of ['o1e', 'o4']) {
                 const name = o === 'o1e' ? 'O1e' : 'O4';
@@ -775,6 +818,50 @@ class Exec {
         if (this.hk !== null) this.hookAtRest();
         if (this.lc !== null) this.lcAtRest();
         if (this.ow !== null) this.owCheck();
+    }
+
+    /**
+     * SCHEDULER world end (exec.sc !== null, a world with no failure): a pended effect is never judged by O1e / O4, so
+     * every pend must be 0 after the lane's final drain-all. Runs before W.close() and sc.close() (pend still readable).
+     * Sets exec.unmodelled (run() rethrows it): a pend that is no Int32Array covering every node, or any non-zero entry.
+     */
+    scEnd() {
+        const p = this.sc.pend;
+        const n = this.M.n.length;
+        if (!(p instanceof Int32Array) || p.length < n) {
+            this.unmodelled = new TypeError('exec: sc.pend must be an Int32Array covering every node');
+            return;
+        }
+        for (let k = 0; k < n; k++) {
+            if (p[k] !== 0) {
+                this.unmodelled = new Error('exec: SCHEDULER world end: pend[' + k + '] = ' + p[k] + ' (suspended past the final drain-all; O1e / O4 never judged it)');
+                return;
+            }
+        }
+    }
+
+    /**
+     * SCHEDULER teardown check (exec.sc !== null), right after sc.close(); never throws. Sets exec.unmodelled (run()
+     * throws it after the teardown block, failed world or not) when close() left sc.size !== 0, sc.x !== null or any
+     * sc.ringT[j] !== null (or ringT is no array).
+     */
+    scClosed() {
+        let what = null;
+        try {
+            const sc = this.sc;
+            const t = sc.ringT;
+            if (sc.size !== 0) what = 'size ' + String(sc.size) + ' (want 0)';
+            else if (sc.x !== null) what = 'x not null';
+            else if (!Array.isArray(t)) what = 'ringT is not an array';
+            else {
+                for (let j = 0; j < t.length; j++) {
+                    if (t[j] !== null) { what = 'ringT[' + j + '] not null'; break; }
+                }
+            }
+        } catch (e) {
+            what = 'threw ' + String(e && e.message);
+        }
+        if (what !== null) this.unmodelled = new Error('exec: SCHEDULER close(): ' + what);
     }
 
     /**

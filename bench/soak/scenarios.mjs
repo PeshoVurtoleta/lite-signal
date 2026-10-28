@@ -37,6 +37,9 @@ export const SCENARIOS = Object.freeze([
     'own-cascade', 'own-rerun', 'own-computed', 'cleanup-fifo', 'run-with-owner', 'run-with-dead-owner', 'root-detached', 'signal-not-adopted',
     // RECYCLE (S3 R4a; lanes/recycle.mjs, not rostered until R4a B3)
     'stale-write-recycled', 'stale-peek-recycled', 'stale-read-recycled', 'stale-dispose-recycled', 'stale-dead-unrecycled', 'multi-gen',
+    // SCHEDULER (S3 R4c; lanes/scheduler.mjs, not rostered until R4c B3)
+    'thunk-after-dispose', 'thunk-recycled', 'pending-write', 'partial-drain', 'drain-all', 'hold-retry',
+    'fifo-delivery', 'lifo-delivery',
 ]);
 
 const DEEP_PULL_MIN = 16;
@@ -456,6 +459,86 @@ export class Detectors {
         else if (op === 'read') this.count('stale-read-recycled');
         else if (op === 'disp') this.count('stale-dispose-recycled');
         if (held >= 2) this.count('multi-gen');
+    }
+
+    /* ---- SCHEDULER (called by lanes/scheduler.mjs only, while exec.sc !== null: no other lane pays) -------------- */
+
+    /** The world's ScState (exec.sc); a SCHEDULER detector called off the lane fails closed. */
+    scState(fn) {
+        const sc = this.x.sc;
+        if (sc === null) throw new TypeError(fn + ': exec.sc is null (SCHEDULER lane only)');
+        return sc;
+    }
+
+    /** A scheduled effect node of the model, or TypeError (fn names the caller). */
+    scNode(fn, i) {
+        if (!Number.isSafeInteger(i) || i < 0) throw new TypeError(fn + ': i must be an integer >= 0, got ' + String(i));
+        const nd = this.x.M.n[i];
+        if (nd === undefined || nd.t !== 'e' || nd.sch !== 1) throw new TypeError(fn + ': #' + i + ' is not a scheduled effect');
+        return nd;
+    }
+
+    /**
+     * One thunk delivery, BEFORE the thunk runs. i: the scheduled effect the thunk was queued for; recycled: the lane's
+     * slot view (i is disposed and its slot hosts a live scheduled successor with pend > 0; true only when i is dead);
+     * retried: a HOLD entry delivered on its second pop (the first re-queued it at the tail). older / younger: the
+     * entries still queued after the pop that were pushed before / after the delivered one (they sum to sc.size).
+     *   thunk-after-dispose  the delivered effect is disposed (a dead thunk must run no body)
+     *   thunk-recycled       ... and its slot hosts a live scheduled successor with a pending thunk (the gen-guard
+     *                        window; cov-off rule no-recycle: lanes/scheduler.mjs then emits no srec)
+     *   hold-retry           a HOLD re-queued entry delivered on its second pop
+     *   fifo-delivery        a first-pop delivery of the OLDEST queued entry with >= 1 younger one still queued
+     *   lifo-delivery        a first-pop delivery of the YOUNGEST queued entry with >= 1 older one still queued
+     */
+    onScDeliver(i, recycled, retried, older, younger) {
+        const sc = this.scState('onScDeliver');
+        const nd = this.scNode('onScDeliver', i);
+        if (typeof recycled !== 'boolean' || typeof retried !== 'boolean') throw new TypeError('onScDeliver: recycled / retried must be booleans');
+        if (!Number.isSafeInteger(older) || older < 0 || Object.is(older, -0) || !Number.isSafeInteger(younger) || younger < 0 || Object.is(younger, -0)) throw new TypeError('onScDeliver: older / younger must be integers >= 0');
+        if (older + younger !== sc.size) throw new TypeError('onScDeliver: older + younger must equal the queued count');
+        if (recycled && nd.live) throw new TypeError('onScDeliver: #' + i + ' is live, so its slot cannot host a successor');
+        if (!nd.live) this.count('thunk-after-dispose');
+        if (recycled) this.count('thunk-recycled');
+        if (retried) this.count('hold-retry');
+        if (!retried && older === 0 && younger >= 1) this.count('fifo-delivery');
+        if (!retried && younger === 0 && older >= 1) this.count('lifo-delivery');
+    }
+
+    /**
+     * An swrite of signal s, BEFORE the set reaches the engine. changed: the value differs under the engine's equality.
+     *   pending-write  a value-changing write into the observed cone of a live scheduled effect whose thunk is already
+     *                  pending (pend > 0: the engine keeps it QUEUED and must not lose the new value)
+     */
+    onScWrite(s, changed) {
+        const sc = this.scState('onScWrite');
+        if (typeof changed !== 'boolean') throw new TypeError('onScWrite: changed must be a boolean');
+        const M = this.x.M;
+        if (!Number.isSafeInteger(s) || s < 0 || M.n[s] === undefined || M.n[s].t !== 's') throw new TypeError('onScWrite: #' + String(s) + ' is not a signal');
+        if (!changed) return;
+        const memo = new Map();
+        for (let k = 0; k < M.n.length; k++) {
+            const nd = M.n[k];
+            if (nd === undefined || !nd.live || nd.t !== 'e' || nd.sch !== 1 || !(sc.pend[k] > 0)) continue;
+            if (this.obsCone(k, memo).has(s)) { this.count('pending-write'); return; }
+        }
+    }
+
+    /**
+     * One sdrain finished. n: the requested count (1..4, 0 = all); delivered: thunks it delivered.
+     *   partial-drain  a bounded drain delivered >= 1 thunk and left a live effect pended (the next rest suspends it)
+     *   drain-all      a drain-all delivered >= 2 thunks
+     */
+    onScDrain(n, delivered) {
+        const sc = this.scState('onScDrain');
+        if (!Number.isSafeInteger(n) || n < 0 || n > 4) throw new TypeError('onScDrain: n must be 0..4, got ' + String(n));
+        if (!Number.isSafeInteger(delivered) || delivered < 0) throw new TypeError('onScDrain: delivered must be an integer >= 0, got ' + String(delivered));
+        if (n === 0) { if (delivered >= 2) this.count('drain-all'); return; }
+        if (delivered < 1) return;
+        const M = this.x.M;
+        for (let k = 0; k < M.n.length; k++) {
+            const nd = M.n[k];
+            if (nd !== undefined && nd.live && nd.t === 'e' && sc.pend[k] > 0) { this.count('partial-drain'); return; }
+        }
     }
 
     /* ---- ERROR -------------------------------------------------------------------------------------- */

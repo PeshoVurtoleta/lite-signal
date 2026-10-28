@@ -16,7 +16,8 @@
     "HOOK": "27bc01e118626f7de807e79be72b2c7ebbd9788da0d68d524483f6b79ddebf1c",
     "LIFECYCLE": "37ff9e06f355949176a5adef9506dd80c40bf1e433b4ac5a28efbd4bb72d531d",
     "OWNER": "1c089d909991f541affa8818d04e1fa5329d140d4cb0be46fad672f1d49c475c",
-    "RECYCLE": "2fedc16c221462713f2b7bd82fb620938c195b3366a4d1270b03c455e4a70589"
+    "RECYCLE": "2fedc16c221462713f2b7bd82fb620938c195b3366a4d1270b03c455e4a70589",
+    "SCHEDULER": "e7c34b8e1d4efdf0fd7ac80624ae2adcd537c53a888375457d5d183c7a9848d8"
   },
   "lifecycleRecut": "2026-10-26, burst 118 B1: LIFECYCLE (lane index 5) re-cut after the deliberate generator change (lself cbarm arm, self-off / off-next, lanes/lifecycle.mjs be19cb57 -> 1be1721a; was f4571f7a...); computed with test/42 own digest() over the live generator; the six other digests byte-identical.",
   "hookCut": "2026-10-21, burst 93 (S3 R1d): HOOK (lane index 6) appended, computed with test/42's own digest() over the live generator; the five S1 digests above are byte-identical to their cut.",

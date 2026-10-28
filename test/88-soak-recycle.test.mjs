@@ -28,7 +28,7 @@ const expectFind = (r, sig) => {
 describe('O9 registration', () => {
     it('ORACLES ends with O9 and SIGS.O9 is [stale-write, stale-read, stale-dispose], SIGS frozen', () => {
         assert.equal(ORACLES[ORACLES.length - 1], 'O9');
-        assert.deepEqual(SIGS.O9, ['stale-write', 'stale-read', 'stale-dispose']);
+        assert.deepEqual(SIGS.O9, ['stale-write', 'stale-read', 'stale-dispose', 'stale-thunk']);
         assert.ok(Object.isFrozen(SIGS));
     });
 });

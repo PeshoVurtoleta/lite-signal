@@ -34,6 +34,12 @@
  *        checkO9Dispose  a dispose of a stale handle moved stats() activeNodes / activeLinks or left a live handle
  *                        reading undefined (lanes/recycle.mjs calls all three right after its own stale op; no other
  *                        lane and no exec path pays: exec only carries exec.rc, null off the lane)
+ *        checkStaleThunk (S3 R4c, the SCHEDULER lane only) the first outermost effect body a scheduler delivery ran
+ *                        belongs to another node than the delivered thunk's, or the delivered node is disposed
+ *                        (lanes/scheduler.mjs calls it from exec.sc.onBody; exec carries exec.sc, null off the lane)
+ *        checkScheduledBody (S3 R4c M7, the SCHEDULER lane only) a scheduled effect ran its outermost body while no
+ *                        scheduler delivery was in progress (the engine ran it synchronously instead of through its
+ *                        thunk); same sig stale-thunk (O9 keeps its 4 sigs), called from exec.sc.onBody
  *
  * COLD module.
  */
@@ -56,7 +62,7 @@ export const SIGS = Object.freeze({
     OB: ['batch-early-run'],
     O8: ['ghost-listener', 'mirror-links'],
     OW: ['cleanup-order', 'callback-this'],
-    O9: ['stale-write', 'stale-read', 'stale-dispose'],
+    O9: ['stale-write', 'stale-read', 'stale-dispose', 'stale-thunk'],
 });
 
 const DETAIL_MAX = 240;
@@ -91,6 +97,9 @@ export function checkRead(model, ref, got, memo, reader) {
  *
  * A live effect whose body NEVER ran is a failure (O4 effect-dead, "never ran"): every engine runs an
  * effect's first body synchronously at creation (p2), and one whose first run threw is no longer live (p3).
+ * p2 relaxed (S3 R4c): a SCHEDULER effect's first run is deferred to its first delivery; exec.mjs atRest
+ * suspends an effect with a pended thunk (exec.sc.pend[i] > 0) and never calls this for it, so a scheduled
+ * effect reaches "never ran" only with no thunk pending (a lost or never-delivered first run).
  */
 export function checkEffect(model, i, ran, memo, tmemo) {
     const nd = model.n[i];
@@ -472,4 +481,30 @@ export function checkO9Dispose(label, nodesBefore, nodesAfter, linksBefore, link
     o9Check('checkO9Dispose', label, ['nodesBefore', 'nodesAfter', 'linksBefore', 'linksAfter', 'liveUndef'], [nodesBefore, nodesAfter, linksBefore, linksAfter, liveUndef]);
     if (nodesAfter === nodesBefore && linksAfter === linksBefore && liveUndef === 0) return null;
     return { oracle: 'O9', sig: 'stale-dispose', detail: cut(label + ': activeNodes ' + nodesBefore + ' -> ' + nodesAfter + ', activeLinks ' + linksBefore + ' -> ' + linksAfter + ', ' + liveUndef + ' live handle(s) read undefined') };
+}
+
+/**
+ * O9 stale-thunk (S3 R4c, the SCHEDULER lane only): a scheduler delivery of node cur's thunk ran ran's body as its
+ * first outermost effect body. Fails when the delivered node is disposed (curDead === true: a dead thunk must run no
+ * body) or ran !== cur (the thunk ran a stranger, e.g. the scheduled successor of a recycled slot). Fails closed
+ * (TypeError) on a non-string label, a cur / ran that is not a safe integer >= 0 (-0 rejected) or a non-boolean curDead.
+ */
+export function checkStaleThunk(label, cur, ran, curDead) {
+    o9Check('checkStaleThunk', label, ['cur', 'ran'], [cur, ran]);
+    if (typeof curDead !== 'boolean') throw new TypeError('checkStaleThunk: curDead must be a boolean, got ' + o9Show(curDead));
+    if (curDead === false && ran === cur) return null;
+    return { oracle: 'O9', sig: 'stale-thunk', detail: cut(label + ': delivery of #' + cur + (curDead ? ' (disposed)' : '') + ' ran body #' + ran) };
+}
+
+/**
+ * O9 stale-thunk, out-of-delivery form (S3 R4c M7, the SCHEDULER lane only): scheduled effect ran ran its outermost
+ * body; inDelivery tells whether a scheduler delivery was in progress. A scheduled body runs only inside its delivered
+ * thunk, so inDelivery === false is the finding. Fails closed (TypeError) on a non-string label, a ran that is not a
+ * safe integer >= 0 (-0 rejected) or a non-boolean inDelivery.
+ */
+export function checkScheduledBody(label, ran, inDelivery) {
+    o9Check('checkScheduledBody', label, ['ran'], [ran]);
+    if (typeof inDelivery !== 'boolean') throw new TypeError('checkScheduledBody: inDelivery must be a boolean, got ' + o9Show(inDelivery));
+    if (inDelivery === true) return null;
+    return { oracle: 'O9', sig: 'stale-thunk', detail: cut(label + ': scheduled effect #' + ran + ' ran its body outside any delivery') };
 }
