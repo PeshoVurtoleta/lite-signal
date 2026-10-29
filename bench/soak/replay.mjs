@@ -338,9 +338,15 @@ export function isEntryUrl(metaUrl) {
     }
 }
 
-/** The entry door shared by replay.mjs and shrink.mjs: config.mjs parses, run(cfg) runs, the code exits. */
+/**
+ * The entry door shared by replay.mjs and shrink.mjs: config.mjs parses, run(cfg) runs, the code exits.
+ * --emit-test is a shrink door only (needShrink); replay.mjs keeps the default ['--smoke'].
+ */
 export async function entry(name, needShrink, run) {
-    const cfg = readConfig(process.env, { roster: ROSTER, scenarios: ALL_SCENARIOS, covOffSupported: COV_OFF_SUPPORTED, argv: process.argv.slice(2) });
+    const cfg = readConfig(process.env, {
+        roster: ROSTER, scenarios: ALL_SCENARIOS, covOffSupported: COV_OFF_SUPPORTED, argv: process.argv.slice(2),
+        args: needShrink ? ['--smoke', '--emit-test'] : ['--smoke'],
+    });
     if (cfg.replay === null) configExit(name + ' needs SOAK_REPLAY=<LANE>:<cycle>:0x<seed> (a key from a burn-in REPLAY line)');
     if (needShrink && !cfg.shrink) configExit(name + ' needs SOAK_SHRINK=1 (npm run soak:shrink); for a plain replay use bench/soak/replay.mjs');
     if (!needShrink && cfg.shrink) configExit('SOAK_SHRINK=1 is bench/soak/shrink.mjs (npm run soak:shrink), not ' + name);

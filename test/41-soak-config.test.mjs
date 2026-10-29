@@ -511,6 +511,84 @@ test('T-cfg argv end to end: --bogus and --smoke with SOAK_SMOKE=0 exit 2; --smo
     assert.deepEqual(h.config.SOAK_OPS, { value: CFG.SMOKE_OPS, source: 'default' });
 });
 
+/* -- argv doors (R6, b143): opts.args; --emit-test is shrink.mjs's door, through replay.mjs entry ------------- */
+
+// HEAD e9f8e6a text, byte for byte (.handoff/r6-evidence/argv-table.txt): the default doors must not move it.
+const HEAD_UNKNOWN = (a) => "unknown argument '" + a + "' (the only argument is --smoke; " +
+    "everything else is a SOAK_* env key)";
+const SHRINK_ARGS = ['--smoke', '--emit-test'];
+const PA = (env, argv, args) => CFG.parseConfig(env,
+    { roster: ROSTER, scenarios: SCENARIOS, covOffSupported: COV_OFF_SUPPORTED, argv, args });
+const cfgMsg = (fn) => {
+    try { fn(); } catch (e) { assert.ok(e instanceof CFG.SoakConfigError, String(e)); return e.message; }
+    return assert.fail('no throw');
+};
+
+test('argv R6: opts.args -- --emit-test sets emitTest on the shrink doors; default doors keep HEAD text', () => {
+    assert.equal(PA({}, ['--emit-test'], SHRINK_ARGS).emitTest, true);
+    const both = PA({}, ['--emit-test', '--smoke'], SHRINK_ARGS);
+    assert.deepEqual([both.emitTest, both.smoke], [true, true]);
+    assert.deepEqual(both.record.SOAK_SMOKE, { value: true, source: 'argv' });
+    assert.equal(PA({}, ['--emit-test'], SHRINK_ARGS).smoke, false, '--emit-test is not --smoke');
+    assert.equal(PA({}, [], SHRINK_ARGS).emitTest, false);
+    assert.equal(P({}, []).emitTest, false, 'default doors: emitTest false');
+    assert.equal(P({}, ['--smoke']).emitTest, false);
+    // no new record key: the record of a --emit-test run equals the plain run's, key for key
+    assert.deepEqual(PA({}, ['--emit-test'], SHRINK_ARGS).record, P({}, []).record);
+    assert.deepEqual(Object.keys(PA({}, ['--emit-test'], SHRINK_ARGS).record), Object.keys(P({}, []).record));
+    // the shrink doors: unknown names both doors; a repeat of either is rejected
+    assert.equal(cfgMsg(() => PA({}, ['--emit-tst'], SHRINK_ARGS)),
+        "unknown argument '--emit-tst' (the arguments are --smoke, --emit-test; " +
+        "everything else is a SOAK_* env key)");
+    assert.equal(cfgMsg(() => PA({}, ['--emit-test', '--emit-test'], SHRINK_ARGS)), "duplicate argument '--emit-test'");
+    const dupSmoke = cfgMsg(() => PA({}, ['--smoke', '--emit-test', '--smoke'], SHRINK_ARGS));
+    assert.equal(dupSmoke, "duplicate argument '--smoke'");
+    // the default doors (absent args, or ['--smoke']): HEAD's exact message, also for --emit-test
+    for (const a of ['--emit-test', '--emit-tst', '--bogus', '']) {
+        assert.equal(cfgMsg(() => P({}, [a])), HEAD_UNKNOWN(a), a);
+        assert.equal(cfgMsg(() => PA({}, [a], ['--smoke'])), HEAD_UNKNOWN(a), a + ' (explicit default)');
+    }
+    assert.equal(cfgMsg(() => P({}, ['--smoke', '--smoke'])), "duplicate argument '--smoke'");
+    // a door set without --smoke refuses --smoke (opts.args is the whole whitelist)
+    assert.equal(cfgMsg(() => PA({}, ['--smoke'], ['--emit-test'])),
+        "unknown argument '--smoke' (the only argument is --emit-test; everything else is a SOAK_* env key)");
+    // opts.args itself: a non-empty array of KNOWN_ARGS, no repeats; anything else is a caller bug (TypeError)
+    const BAD = [['--bogus'], [], null, '--smoke', ['--smoke', '--smoke'], ['--smoke', undefined],
+        [, '--smoke'], ['--SMOKE']];
+    for (const bad of BAD) {
+        assert.throws(() => PA({}, [], bad), TypeError, JSON.stringify(bad));
+    }
+});
+
+test('T-cfg argv R6 e2e: shrink.mjs takes --emit-test; main / replay / wrap keep HEAD text; typo, repeat -> 2', () => {
+    const env = {};
+    for (const k of Object.keys(process.env)) {
+        if (k.toUpperCase().indexOf('SOAK_') === 0 || k === 'NODE_OPTIONS' || k === 'NODE_TEST_CONTEXT') continue;
+        env[k] = process.env[k];
+    }
+    // SOAK_LANES=NOPE fails AFTER the argv door: its message proves the argv was accepted, and no run starts
+    const go = (entry, argv, extra = {}) => {
+        const r = spawnSync(process.execPath, ['--expose-gc', join(SOAK, entry)].concat(argv),
+            { cwd: ROOT, env: Object.assign({}, env, { SOAK_LANES: 'NOPE' }, extra), encoding: 'utf8',
+                timeout: 60000 });
+        return { status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr };
+    };
+    const LANE = "SOAK_LANES: unknown lane 'NOPE'";
+    assertConfigExit(go('shrink.mjs', ['--emit-test']), [LANE]);
+    assertConfigExit(go('shrink.mjs', ['--smoke', '--emit-test']), [LANE]);
+    const TYPO = "unknown argument '--emit-tst' (the arguments are --smoke, --emit-test;";
+    assertConfigExit(go('shrink.mjs', ['--emit-tst']), [TYPO]);
+    assertConfigExit(go('shrink.mjs', ['--emit-test', '--emit-test']), ["duplicate argument '--emit-test'"]);
+    for (const entry of ['main.mjs', 'replay.mjs', 'wrap.mjs']) {
+        const line = assertConfigExit(go(entry, ['--emit-test']), []);
+        assert.equal(line, 'soak: CONFIG -- ' + HEAD_UNKNOWN('--emit-test'), entry);
+    }
+    // main.mjs dispatches SOAK_SHRINK=1 to shrink.mjs through ITS OWN door (default args): still refused there
+    const viaMain = go('main.mjs', ['--emit-test'], { SOAK_SHRINK: '1', SOAK_REPLAY: 'BATCH:0:0x4d1f455d' });
+    assert.equal(assertConfigExit(viaMain, []),
+        'soak: CONFIG -- ' + HEAD_UNKNOWN('--emit-test'), 'main.mjs SOAK_SHRINK=1');
+});
+
 /* -- gitDirty counts untracked, non-ignored files ---------------------------------------------------- */
 
 test('gitDirty: clean -> false; repo-ignored -> false; one untracked .mjs -> true, whatever user/env config says', () => {

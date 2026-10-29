@@ -171,6 +171,10 @@ export const KNOWN_KEYS = Object.freeze([
 ]);
 
 const KNOWN_SUFFIXES = Object.freeze(KNOWN_KEYS.map((k) => k.slice(5)));
+// The argv doors an entry may open (parseConfig opts.args). Module-private: test/41 pins gatesBlock() to every
+// EXPORTED upper-case constant, and argv is not a gate. --emit-test is shrink.mjs's (replay.mjs entry, R6).
+const KNOWN_ARGS = Object.freeze(['--smoke', '--emit-test']);
+const DEFAULT_ARGS = Object.freeze(['--smoke']);
 
 /** A config error. parseConfig throws it; readConfig turns it into exit 2. */
 export class SoakConfigError extends Error {
@@ -353,14 +357,28 @@ function checkCovOffSupported(cos, roster, scenarios) {
  *                   the SELECTED lanes: a known scenario no selected lane can switch off would run as a
  *                   plain soak while the header claims a teeth knob (exit 2)
  *   opts.argv       the entry's user arguments (main.mjs: process.argv.slice(2)); required. This module is
- *                   the ONLY argv parser: the one accepted argument is --smoke (equal to SOAK_SMOKE=1, for
- *                   the env-prefix-free npm script); anything else exits 2.
- * Returns a frozen config with `record` = {KEY: {value, source: 'env' | 'argv' | 'default'}} for every known key.
+ *                   the ONLY argv parser: an argument outside opts.args, or a repeat, exits 2.
+ *   opts.args       the arguments this entry accepts, a non-empty subset of KNOWN_ARGS without repeats
+ *                   (else TypeError); default ['--smoke'] (main.mjs, wrap.mjs, replay.mjs). --smoke equals
+ *                   SOAK_SMOKE=1 (for the env-prefix-free npm script); --emit-test (shrink.mjs only, through
+ *                   replay.mjs entry) sets `emitTest`. With the default the unknown-argument text is unchanged.
+ * Returns a frozen config with `record` = {KEY: {value, source: 'env' | 'argv' | 'default'}} for every known key,
+ * and `emitTest` (boolean: --emit-test was given; an argument, never an env key, so it has no record entry).
  */
 export function parseConfig(env, opts) {
     if (!opts || !Array.isArray(opts.roster) || opts.roster.length === 0) throw new TypeError('parseConfig: opts.roster must be a non-empty array');
     if (!Array.isArray(opts.scenarios)) throw new TypeError('parseConfig: opts.scenarios must be an array');
     if (!Array.isArray(opts.argv)) throw new TypeError('parseConfig: opts.argv must be an array (main.mjs: process.argv.slice(2))');
+    const args = opts.args === undefined ? DEFAULT_ARGS : opts.args;
+    if (!Array.isArray(args) || args.length === 0) {
+        throw new TypeError('parseConfig: opts.args must be absent or a non-empty array of ' + KNOWN_ARGS.join(', '));
+    }
+    for (let i = 0; i < args.length; i++) {
+        if (KNOWN_ARGS.indexOf(args[i]) === -1 || args.indexOf(args[i]) !== i) {
+            throw new TypeError('parseConfig: opts.args[' + i + '] ' + String(args[i]) +
+                ' is unknown or repeated (known: ' + KNOWN_ARGS.join(', ') + ')');
+        }
+    }
     const roster = opts.roster;
     if (roster.length > ROSTER_MAX) fail('roster has ' + roster.length + ' lanes; seeds.mjs packs at most ' + ROSTER_MAX);
     checkCovOffSupported(opts.covOffSupported, roster, opts.scenarios);
@@ -376,12 +394,16 @@ export function parseConfig(env, opts) {
         const h = nearest(up.slice(5), KNOWN_SUFFIXES);
         fail("unknown env key '" + key + "'" + (h === null ? '' : ' (did you mean SOAK_' + h + '?)'));
     }
-    // 2) argv: exactly one door, --smoke. Any other argument is an error, never an ignored flag.
-    let argvSmoke = false;
+    // 2) argv: only the entry's doors (opts.args). Any other argument is an error, never an ignored flag; a repeat too.
+    const argsText = args.length === 1 ? 'the only argument is ' + args[0] : 'the arguments are ' + args.join(', ');
+    let argvSmoke = false, argvEmit = false;
     for (const a of opts.argv) {
-        if (a !== '--smoke') fail("unknown argument '" + a + "' (the only argument is --smoke; everything else is a SOAK_* env key)");
-        if (argvSmoke) fail("duplicate argument '--smoke'");
-        argvSmoke = true;
+        if (args.indexOf(a) === -1) {
+            fail("unknown argument '" + a + "' (" + argsText + '; everything else is a SOAK_* env key)');
+        }
+        if (a === '--smoke' ? argvSmoke : argvEmit) fail("duplicate argument '" + a + "'");
+        if (a === '--smoke') argvSmoke = true;
+        else argvEmit = true;
     }
     const has = (k) => Object.prototype.hasOwnProperty.call(env, k) && env[k] !== undefined;
     const record = {};
@@ -483,6 +505,7 @@ export function parseConfig(env, opts) {
 
     return Object.freeze({
         cycles, forever: cycles === 0, ops, seed, lanes: Object.freeze(lanes), smoke, engine, kernel, out, replay, shrink,
+        emitTest: argvEmit,
         requireProvenance, repr, wrap: Object.freeze(wrap), mustFail, nearwrap, roster: Object.freeze(roster.slice()),
         record: Object.freeze(record),
     });

@@ -41,6 +41,8 @@ export const PARITY_FILES = Object.freeze([
     // S1c B4 (pinned after review, burst 7c): replay and shrink decide which world a key plays and what the
     // emitted shrink test proves
     'bench/soak/replay.mjs', 'bench/soak/shrink.mjs',
+    // b143 R6 (s3c C4): shrink.mjs imports the standalone emitter, which decides what a .standalone.test.mjs proves
+    'bench/soak/emit.mjs',
     // burst 12 (maintainer decision b): the constants decide the gate thresholds; SoakReport decides
     // consistency / release eligibility
     'bench/soak/config.mjs', 'bench/soak/SoakReport.mjs',
