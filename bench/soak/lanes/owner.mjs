@@ -1,7 +1,8 @@
 /**
  * OWNER lane (S3 rung R3, .handoff/PLAN-R3-owner.md TASK 2 + ADDENDA A1-A4): OWNERSHIP -- live computeds and effects
  * adopting the nodes their bodies create, onCleanup FIFO, runWithOwner on live / dead / signal handles, createRoot
- * (detached). LANE_INDEX 7 (S3-D6). NOT rostered yet (R3 B3 adds it to lanes/index.mjs ROSTER, ORACLE_CAPS, FAMILY).
+ * (detached). LANE_INDEX 7 (S3-D6). Rostered in R3 B3 (b126): lanes/index.mjs ROSTER;
+ * contract.mjs ORACLE_CAPS OW and gates.mjs FAMILY OW.
  *
  * World: a sentinel signal S (top rank) read by an init effect E_S (the cleanup COUNT stays on O1e / O4 / O2: a cleanup
  * writes the ENGINE S directly, +1; the model holds S = model.fired), then owners. Every owner body is a kinds.mjs
@@ -317,7 +318,7 @@ function checkNode(x, c) {
 /** Fail closed on a malformed cleanup count: an integer in [0, CL_MAX] (never coerced: `cl | 0` would run 0 cleanups
  *  for 'x' / 1.5 / NaN; an unbounded 2**31 would run the addCl loop out of memory). */
 function checkCl(x, cl, what) {
-    if (!Number.isInteger(cl) || cl < 0 || cl > CL_MAX) unmodelled(x, what + ' cl ' + String(cl) + ' is not a cleanup count');
+    if (!Number.isInteger(cl) || cl < 0 || !(cl <= CL_MAX)) unmodelled(x, what + ' cl ' + String(cl) + ' is not a cleanup count');
 }
 
 /** Create node c under parent (the running owner, a runWithOwner owner, or -1 rooted); its first run gets the action. */

@@ -640,7 +640,7 @@ import { SKIP_NAMES as B6_SKIP_NAMES } from '../bench/soak/exec.mjs';
 import { KERNELS as B6_KERNELS, PINNED as B6_PINNED, PROBE as B6_PROBE, COVOFF_SEEDS as B6_COVOFF_SEEDS, sha256File as b6Sha, foldMainRecords, runMainSmoke, runMainProbe } from '../bench/soak/calibration/calibrate.mjs';
 import {
     LANE_ONLY_KERNELS as B6_LANE_ONLY, kernelsFor as b6KernelsFor, kernelsOf as b6KernelsOf, lanesFor as b6LanesFor,
-    kernelPath as b6KernelPath, pinnedFor as b6PinnedFor,
+    kernelPath as b6KernelPath, pinnedFor as b6PinnedFor, LANE_PINS as B6_LANE_PINS,
 } from '../bench/soak/calibration/calibrate.mjs';
 import { WIE as B6_WIE } from '../bench/soak/lanes/wie.mjs';
 
@@ -1222,11 +1222,11 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     // R3 (b126 B3; D-b124-1 = PLAN-R3-owner A1): OWNER is cut on tree only: the frozen controls headpatched / rev152 carry
     // DIV-48 (fixed b120-#48 on the tree) in every OWNER world; P-OWNER-TREE is the pass control, P-OWNER-HP a cov-off control
     assert.deepEqual(b6KernelsFor('OWNER'), ['tree']);
-    // R4a (b130 B3): RECYCLE is cut on every kernel, headpatched first (covOff); listed, as an unlisted lane skips tree
-    assert.deepEqual(b6KernelsFor('RECYCLE'), Object.keys(B6_KERNELS).concat(['tree']));
+    // R4a (b130 B3); b137 D-b137-1: RECYCLE is cut on tree only: the frozen controls carry DIV-51 in every RECYCLE world
+    assert.deepEqual(b6KernelsFor('RECYCLE'), ['tree']);
     // R4c (b134 B3; D-b128-3): SCHEDULER is cut on every kernel too, headpatched first (covOff)
     assert.deepEqual(b6KernelsFor('SCHEDULER'), ['headpatched', 'lite-1.5.2', 'tree']);
-    assert.deepEqual(b6LanesFor('headpatched', roster5), roster4.concat(['HOOK', 'RECYCLE', 'SCHEDULER']));
+    assert.deepEqual(b6LanesFor('headpatched', roster5), roster4.concat(['HOOK', 'SCHEDULER']));
     assert.deepEqual(b6KernelsFor('GRAPH'), Object.keys(B6_KERNELS));
     // b74 D4: NEST is cut on headpatched (first: covOff), 1.5.2 and tree; ERROR stays on the binding kernels
     assert.deepEqual(b6KernelsFor('NEST'), Object.keys(B6_KERNELS).concat(['tree']));
@@ -1235,11 +1235,14 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.deepEqual(b6KernelsOf(roster4), Object.keys(B6_KERNELS).concat(['tree']));
     assert.deepEqual(b6KernelsOf(roster5), Object.keys(B6_KERNELS).concat(['tree']));
     assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER']);
-    assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), roster4.concat(['RECYCLE', 'SCHEDULER']));
+    assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), roster4.concat(['SCHEDULER']));
     assert.equal(b6KernelPath('tree'), 'Signal.js');
     assert.throws(() => b6KernelPath('nope'), /unknown kernel nope/);
     assert.deepEqual(b6PinnedFor(roster4), B6_PINNED);
     assert.equal(b6PinnedFor(roster4).length, 17);   // S3 R0: + adapters/lite-s3.mjs; S3 R1 (b93): + mirror.mjs
+    // b137 76b: every lane pin is parity-pinned too (an edited lane file must move parity.json, not only the cut);
+    // LANE_PINS only: PINNED's bench/torture/helpers/index.mjs is deliberately not a parity file (:437)
+    for (const f of Object.values(B6_LANE_PINS)) assert.ok(PARITY_FILES.includes(f), f);
     assert.deepEqual(b6PinnedFor(roster5).slice(17), ['bench/soak/lanes/wie.mjs', 'bench/soak/lanes/hook.mjs', 'bench/soak/lanes/lifecycle.mjs', 'bench/soak/lanes/owner.mjs', 'bench/soak/lanes/recycle.mjs', 'bench/soak/lanes/scheduler.mjs']);
     // A2 (the real roster): a WIE cell on lite-1.5.2 is a cell no binding cuts -> exactly one new problem
     const base = calibrationProblems(B6_DOC, B6_C);

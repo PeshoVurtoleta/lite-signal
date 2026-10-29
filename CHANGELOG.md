@@ -13,9 +13,27 @@ changes `watch()`'s fire order and `stop()` ("### Fixed -- `watch()`" below) and
 handle ("### Fixed -- `when()`" below; `Signal.d.ts` gains doc comments only); `Signal.js` changes the tracking-flag fold described below (no
 API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F21 flushEffects fix ("### Fixed -- engine: stale effect-queue entries skip a node that is no longer QUEUED" below), the sync-scheduler creation-throw fix ("### Fixed -- engine: a synchronous scheduler's creation-time throw disposes the effect" below) and also carries the in-progress A1 cursor-safety repair (F15 / F8 / F13, round
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted. The Signal.js rungs after that:
-`observeObservers` registrations are independent (A5a), `onGraphMutation` unsubscribe works in any order (A5b)
-and user callbacks run with `this === undefined` (#48); see their "### Fixed" entries below. Nothing else in the
+`observeObservers` registrations are independent (A5a), `onGraphMutation` unsubscribe works in any order (A5b),
+user callbacks run with `this === undefined` (#48) and a stale signal handle's `update(fn)` returns without calling `fn` (#51); see their "### Fixed" entries below. Nothing else in the
 published `files[]` changes except `README.md`, `llms.txt` and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
+
+### Fixed -- stale update(fn) no longer calls fn (LEDGER #51, b136)
+
+A STALE signal handle's `update(fn)` (the handle's slot was disposed, or the registry destroyed, whether or not the slot was
+re-seated) now returns `undefined` without calling `fn` and leaves the resident unchanged. Before (Signal.js sha256/8
+ec6d7156) `fn` was called once with the slot's CURRENT resident value (a recycled signal / computed resident's value,
+`undefined` for a dead slot, the effect node's value for an effect resident) and the write was then dropped by `set`'s gen
+guard. `sharedUpdate` now has the same `this[NODE_GEN] !== node.gen` guard that `sharedSignalPeek` and `boxUpdate` already
+have (maintainer D-b135-1). The module-level `signal` export gets the same fix; computed / computedBox have no `update`.
+Two visible changes: a stale `update(5)` (a non-function) used to throw `TypeError: fn is not a function` and now returns
+undefined silently (as a stale signalBox update already did); a DETACHED `const { update } = s; update(f)` still throws
+`TypeError`, but the message changed from `Cannot read properties of undefined (reading 'set')` to `Cannot read properties
+of undefined (reading 'Symbol(node_ptr)')`. Live `update(fn)` is unchanged (10,000-op seeded live-handle trace
+byte-identical before/after). Cost, untimed (b136, Node v26.8.2): `sharedUpdate` 29 -> 49 B bytecode, registers 4 -> 5;
+a cold path, none of test/65's 14 pinned hot bodies changes. Inlining diff: TurboFan SAME; Maglev differs in one line
+(`sharedUpdate` is no longer in the "small function" class, still inlined at the same sites). No timing claim. Tests:
+`test/91-l51-stale-update.test.mjs` (16 tests under --expose-gc; the A3 / A4 rows skip without it). LEDGER #51 is FIXED on
+1.6.0-dev (b136, Signal.js sha256/8 ea0b64d1; lands with b137's calibration recut). Published 1.5.2 still has the bug.
 
 ### Fixed -- user code no longer runs with `this` = the internal node (LEDGER #48, b120)
 
@@ -62,6 +80,38 @@ The LEDGER #45 / #46 op-3 rules are unchanged (a throwing `onConnect` still anno
 `currentObserver` on every path. Tests: `test/84-lifecycle-independent.test.mjs`; `test/65-hot-body-pins.test.mjs` now pins 14 hot
 bodies (+ `allocateLink`, `freeLink`, values unchanged); `test/torture.mjs` gains the `mreg` lane (steady-state, whole-run window
 gate and retention half in the pinned child). (User code running with `this` = the internal node was fixed later, LEDGER #48: see the #48 entry above.)
+
+### Tests / Docs -- soak: RECYCLE update op rsupd + T-RC-updgen (LEDGER #51 tooth, b137)
+
+Dev-only (`bench/soak/`, not shipped). No engine change in this unit: Signal.js stays sha256/8 ea0b64d1 (the b136 #51 fix).
+- RECYCLE gains the op `rsupd {s, v}`: a stale SIGNAL handle's `update(fn)` through the new S3 decorator world method
+  `update(h, fn)` (`adapters/lite-s3.mjs`; `contract.mjs` EXT_METHODS.recycle = ['update']; `adapters/lite.mjs` unchanged,
+  S3-D1; `config.mjs` LATENCY_UNTIMED gains `update`, 8 S3 extension methods). Generator weight STALE.rsupd 6
+  (`lanes/recycle.mjs`). `scenarios.mjs` onRcStale accepts 'upd' on kind s only. No new scenario (D-b136-2: SCENARIOS
+  stays 66).
+- Oracle: `checkO9Update(label, calls, got)` raises the existing O9 sig stale-write when `fn` was called or the return is
+  not undefined (D-b136-1: no new sig, O9 sigs stay 4). `checkO9Write` gains an optional `kind` naming the mismatched kind.
+- `divergences.json` DIV-51 (fixedIn b136-#51): the frozen controls headpatched / lite-1.5.2 (and the HEAD aa154b6 tree,
+  Signal.js ec6d7156) call `fn` on a stale update; that is explained under the named controls only, never on the tree.
+- Maintainer ruling D-b137-1 (2026-10-29): `LANE_KERNELS.RECYCLE` = tree only (was headpatched, lite-1.5.2, tree; OWNER / #48
+  precedent). With rsupd the controls fail-stop every RECYCLE world (B1 census 200 / 200 each, all DIV-51; about 6254
+  ops vs 81000). P-RC-TREE is the pass control.
+- Must-fail control T-RC-updgen: kernel = live Signal.js with the :1998 `sharedUpdate` line swapped back to HEAD's (kernel
+  sha256 equals HEAD aa154b6 Signal.js ec6d7156); head `oracle=O9 lane=RECYCLE sig=stale-write known=none`. _mustfail now
+  lists 79 controls (61 short + 18 long). teeth.mjs CHECKS lane:RECYCLE / oracle:O9 / sig:O9:stale-write gain it; teeth
+  universe 70, CHECKS ids 60, GAPS 22 unchanged. `test/45` (38 tests) now pins the T-RC / T-SC kernel sha8s to the
+  parity.json Signal.js pin, no silent skip (FILLER 84).
+- Tests: `test/88` gains the checkO9Update matrix (A1), `world.update` on stale signal handles recycled to s / c / e and dead
+  (0 calls, undefined, resident unchanged; A2, red on ec6d7156) and a 1e6 stale `world.update` GC row (minor 0, < 0.5 B/op,
+  [v]-sink must-fail control; --expose-gc only); its header now says #51 is PINNED.
+- FILLERS closed: 76a `lanes/scheduler.mjs` needsCaps + 'recycle' (+ `test/89` row); 76b `test/41` LANE_PINS subset of
+  PARITY_FILES; 77 `owner.mjs` / `recycle.mjs` headers; 69 `owner.mjs` `!(cl <= CL_MAX)` + `test/41` literal; 78
+  `parity.mjs` hint `npm run soak:parity:update`; 67 `recycle.mjs` b130 probe cite + kind; 73 `test/88` sig title; 84
+  `test/45` guard; 88 `llms.txt` stale-handle sentence. 76c needed no edit (the golden-cmp lives only in an evidence script).
+- Timed calibration recut (quiet-lock --strict, QUIET: load1 1.23 / baseline 2.21, no busy node, 1079 s, 2026-10-29,
+  node v26.8.2, one run; kernels headpatched / lite-1.5.2 / tree, RECYCLE on tree only): RECYCLE tree 2717 full / 150
+  smoke worlds, 0 failing, 0 crash; lowest required scenario stale-peek-recycled 67155 full / 3619 smoke (was 80812 /
+  4341); every other lane moved no count. Wall time is REPORTED tier: gates nothing, no speed claim.
 
 ### Tests / Docs -- torture: scheduler-bench retired (R4b, b135)
 
@@ -136,8 +186,9 @@ ec6d7156; no new engine claim.
   Signal.js:2075, sharedSignalPeek :2019, registry dispose(api) :2425; each breaches O9 with its sig), T-cov-RECYCLE (exit 3,
   missing=stale-dispose-recycled) and the pass control P-RC-TREE. _mustfail now lists 71 controls (53 short + 18 long).
   teeth.mjs: universe 68, CHECKS ids 58, GAPS 22, NOT_TEETH 9, UNREACHABLE 5.
-- Found on the way: LEDGER #51 (a stale `update(fn)` passes the recycled resident's value to `fn`; OPEN, D-b129-1). Recorded in
-  LEDGER #51 (b129); not fixed here.
+- Found on the way: LEDGER #51 (a stale `update(fn)` passes the recycled resident's value to `fn`; OPEN at b129, D-b129-1; FIXED b136, see "### Fixed -- stale update(fn) no longer calls fn" above). Recorded in
+  LEDGER #51 (b129); not fixed here. The RECYCLE update op `rsupd` and its control T-RC-updgen landed in b137 (see "soak:
+  RECYCLE update op rsupd" above); the lane kernels listed in this entry were narrowed to tree there (D-b137-1).
 - Tests: new `test/88` (117 rows); `test/45` 37 tests; `test/54` (b129) CLI hang diagnostic (SIGUSR2 node report with an
   inspector `Debugger.pause` fallback, 120 s ceiling, self-test row with a planted spin and a planted stall). `npm test` 2504
   tests / 2491 pass / 0 fail / 12 skip / 1 todo (node v26.8.2).

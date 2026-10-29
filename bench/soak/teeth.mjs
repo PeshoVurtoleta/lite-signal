@@ -107,7 +107,8 @@ export const CHECKS = deepFreeze({
     'lane:OWNER': ['T-owner-cascade', 'T-owner-cleanup', 'T-owner-fifo', 'T-owner-outin', 'T-owner-this'],
     // b130 B5 (PLAN-R4 TASK 7): the three T-RC-* tree mutants (the b129 R4a kernels, RC_ENV --smoke), each spec
     // known=none; heads: .handoff/b130-evidence/b5/heads-{1,2,3}.txt. P-RC-TREE is their pass control / revert.
-    'lane:RECYCLE': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen'],
+    // b137 B4 (PLAN-b137 TASK 7): T-RC-updgen (the HEAD sharedUpdate, no #51 gen guard; kernel == HEAD Signal.js).
+    'lane:RECYCLE': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen', 'T-RC-updgen'],
     // b134 B5 (PLAN-R4 R4c TASKS 6 + 7): the four T-SC-* tree mutants (the b131 R4c / b133 D6 kernels, SC_ENV --smoke),
     // each spec known=none; heads: .handoff/b134-evidence/b5/heads-{1,2,3}.txt. P-SC-TREE is their pass control / revert.
     'lane:SCHEDULER': ['T-SC-dropcall', 'T-SC-wedge', 'T-SC-thunkgen', 'T-SC-syncrun'],
@@ -150,7 +151,8 @@ export const CHECKS = deepFreeze({
     // setgen heads stale-write, readgen stale-read, dispgen stale-dispose
     // b134 B5 (R4c): thunkgen (a stale first-run thunk runs the recycled resident; HOLD world 0 of the smoke set) and
     // syncrun (the first run bypasses the scheduler) head stale-thunk
-    'oracle:O9': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen', 'T-SC-thunkgen', 'T-SC-syncrun'],
+    // b137 B4 (D-b136-1): updgen (a stale signal handle's update calls fn) breaches the EXISTING stale-write
+    'oracle:O9': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen', 'T-RC-updgen', 'T-SC-thunkgen', 'T-SC-syncrun'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
     'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
@@ -170,7 +172,7 @@ export const CHECKS = deepFreeze({
     'sig:O8:mirror-links': ['T-hook-mirror'],
     'sig:OW:cleanup-order': ['T-owner-fifo', 'T-owner-outin'],
     'sig:OW:callback-this': ['T-owner-this'],
-    'sig:O9:stale-write': ['T-RC-setgen'],
+    'sig:O9:stale-write': ['T-RC-setgen', 'T-RC-updgen'],
     'sig:O9:stale-read': ['T-RC-readgen'],
     'sig:O9:stale-dispose': ['T-RC-dispgen'],
     'sig:O9:stale-thunk': ['T-SC-thunkgen', 'T-SC-syncrun'],

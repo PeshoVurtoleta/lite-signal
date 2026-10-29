@@ -1054,18 +1054,35 @@ test('teeth q: the OWNER ids have teeth -- P-OWNER-TREE, T-cov-OWNER, P-OWNER-HP
 
 const RC = (sig) => 'oracle=O9 lane=RECYCLE sig=' + sig + ' known=none';
 const RC_ROWS = [
-    // [name, the anchor (full line(s)) in the live Signal.js, the b129 mutant's replacement, the row's specs]
+    // [name, the anchor (full line(s)) in the live Signal.js, the mutant's replacement, the row's specs, kernel sha256/8]
     ['T-RC-setgen', '        read.set = (value) => {\n            if (node.gen !== birthGen) return;\n',
-        '        read.set = (value) => {\n            /* MUT */\n', [RC('stale-write')]],
+        '        read.set = (value) => {\n            /* MUT */\n', [RC('stale-write')], 'fb1de503'],
     ['T-RC-readgen', '        if (this[NODE_GEN] !== node.gen) return undefined;   // stale handle: slot recycled (ABA guard, matches read())\n',
-        '', [RC('stale-read')]],
-    ['T-RC-dispgen', '        if (api[NODE_GEN] !== node.gen) return;\n', '', [RC('stale-dispose')]],
+        '', [RC('stale-read')], '5b4ef7e2'],
+    ['T-RC-dispgen', '        if (api[NODE_GEN] !== node.gen) return;\n', '', [RC('stale-dispose')], 'b9a480da'],
+    // b137 B4 (PLAN-b137 TASK 7 / A4): the b136 #51 sharedUpdate gen guard reverted to the HEAD aa154b6 line, so the kernel
+    // IS that commit's Signal.js (full sha256 RC_UPDGEN_SHA below)
+    ['T-RC-updgen', '    function sharedUpdate(fn) { const node = this[NODE_PTR]; if (this[NODE_GEN] !== node.gen) return undefined; return this.set(fn(node.value)); }\n',
+        '    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }\n', [RC('stale-write')], 'ec6d7156'],
 ];
+// sha256 of `git show aa154b6:Signal.js` (b137 B0 FACTS: k-ec6d7156/Signal.js), the kernel T-RC-updgen must rebuild exactly
+const RC_UPDGEN_SHA = 'ec6d715642d83f93e1d5eec76350a8472683f28e9037bd7614c5e42d291918fd';
+// The tree the RC_ROWS / SC_ROWS kernel shas were cut on (b136 LEDGER #51). It must equal the parity.json Signal.js pin
+// AND the live Signal.js: a parity re-pin without re-pinning these shas (and re-measuring the T-RC / T-SC heads) is red.
+const ROWS_BASE8 = 'ea0b64d1';
+function rowsBase() {
+    const base = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
+    const live8 = createHash('sha256').update(base).digest('hex').slice(0, 8);
+    const pin8 = String(JSON.parse(readFileSync(join(ROOT, 'bench', 'soak', 'parity.json'), 'utf8')).files['Signal.js']).slice(0, 8);
+    assert.equal(pin8, ROWS_BASE8, 'parity.json Signal.js pin == the tree the T-RC / T-SC kernel shas were cut on: re-pin RC_ROWS / SC_ROWS');
+    assert.equal(live8, pin8, 'live Signal.js == its parity.json pin (test/40): the kernel shas are cut on the pinned tree');
+    return base;
+}
 const RC_ENV = { SOAK_LANES: 'RECYCLE' };
 const RC_COV_ENV = { SOAK_LANES: 'RECYCLE', SOAK_MUSTFAIL: 'cov-off:stale-dispose-recycled' };
 const RC_COV_LINE = 'soak: INCONCLUSIVE -- scenario lane=RECYCLE missing=stale-dispose-recycled';
 
-test('teeth r: the RECYCLE ids have teeth -- P-RC-TREE, T-cov-RECYCLE and three one-hunk T-RC-* tree mutants; each pairs', () => {
+test('teeth r: the RECYCLE ids have teeth -- P-RC-TREE, T-cov-RECYCLE and four one-hunk T-RC-* tree mutants; each pairs', () => {
     const NEW = ['lane:RECYCLE', 'oracle:O9', 'sig:O9:stale-write', 'sig:O9:stale-read', 'sig:O9:stale-dispose'];
     const u = universe();
     for (const id of NEW) {
@@ -1075,7 +1092,7 @@ test('teeth r: the RECYCLE ids have teeth -- P-RC-TREE, T-cov-RECYCLE and three 
     const names = RC_ROWS.map((r) => r[0]);
     assert.deepEqual(CHECKS['lane:RECYCLE'], names);
     assert.deepEqual(CHECKS['oracle:O9'].filter((n) => n.indexOf('T-RC-') === 0), names);   // + the T-SC-* stale-thunk rows (teeth s)
-    assert.deepEqual(CHECKS['sig:O9:stale-write'], ['T-RC-setgen']);
+    assert.deepEqual(CHECKS['sig:O9:stale-write'], ['T-RC-setgen', 'T-RC-updgen']);   // D-b136-1: rsupd reuses stale-write
     assert.deepEqual(CHECKS['sig:O9:stale-read'], ['T-RC-readgen']);
     assert.deepEqual(CHECKS['sig:O9:stale-dispose'], ['T-RC-dispgen']);
     assert.ok(CHECKS['cause:scenario'].includes('T-cov-RECYCLE'), 'cause:scenario -> T-cov-RECYCLE');
@@ -1094,8 +1111,8 @@ test('teeth r: the RECYCLE ids have teeth -- P-RC-TREE, T-cov-RECYCLE and three 
     assert.deepEqual(validSpec(t), []);
     // each mutant: an exactly-once anchor in the live Signal.js, the b129 mutant's exact text, P-RC-TREE's shape
     assert.deepEqual(CONTROLS.filter((x) => x.name.indexOf('T-RC-') === 0).map((x) => x.name), names, 'RC_ROWS names every T-RC-* row, in order');
-    const base = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
-    for (const [name, anchor, repl, specs] of RC_ROWS) {
+    const base = rowsBase();
+    for (const [name, anchor, repl, specs, sha] of RC_ROWS) {
         const c = CONTROLS.find((x) => x.name === name);
         assert.ok(c && SHORT_RE.test(name), name + ' exists in the short battery');
         assert.deepEqual([c.run, c.base, c.env, c.argv, c.arm, c.expect.exit, c.expect.kind, c.expect.lines, c.expect.specs], ['main', 'tree', RC_ENV, ['--smoke'], null, 1, 'match', [], specs], name);
@@ -1104,10 +1121,13 @@ test('teeth r: the RECYCLE ids have teeth -- P-RC-TREE, T-cov-RECYCLE and three 
         assert.equal(base.split(anchor).length - 1, 1, name + ': the anchor occurs exactly once in Signal.js');
         const k = buildKernel(c).src;
         assert.equal(k, base.replace(anchor, () => repl), name + ': the kernel = Signal.js with exactly that hunk replaced');
-        // setgen replaces its guard line, readgen / dispgen drop theirs
+        // setgen / updgen replace their guard line, readgen / dispgen drop theirs
         const a = base.split('\n'), b = k.split('\n');
         assert.equal(a.length - b.length, repl === '' ? 1 : 0, name + ': line count');
+        assert.equal(createHash('sha256').update(k).digest('hex').slice(0, 8), sha, name + ': kernel sha256/8 (on ' + ROWS_BASE8 + ')');
     }
+    // A4: T-RC-updgen's kernel is byte-identical to the pre-#51 HEAD Signal.js
+    assert.equal(createHash('sha256').update(buildKernel(CONTROLS.find((x) => x.name === 'T-RC-updgen')).src).digest('hex'), RC_UPDGEN_SHA, 'T-RC-updgen kernel == HEAD aa154b6 Signal.js');
     assert.deepEqual(pairing(CHECKS, CONTROLS), []);
     // must-fail: setgen's spec moved to stale-read no longer backs sig:O9:stale-write; a lane=OWNER spec not lane:RECYCLE
     const ctl = copy(CONTROLS);
@@ -1133,13 +1153,13 @@ const A_SC_THUNK = '                    if (node.gen === gen && (node.flags & FL
 const SC_ROWS = [
     // [name, the anchor (full line) in the live Signal.js, the mutant's replacement, the row's specs, kernel sha256/8]
     ['T-SC-dropcall', '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n',
-        '                                /* MUT dropcall */\n', [SC('O4', 'effect-dead')], '9cc16933'],
+        '                                /* MUT dropcall */\n', [SC('O4', 'effect-dead')], '92b060e3'],
     ['T-SC-wedge', A_SC_THUNK,
-        '                    if (false && node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O4', 'effect-dead')], 'dbb57692'],
+        '                    if (false && node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O4', 'effect-dead')], '63e4de65'],
     ['T-SC-thunkgen', A_SC_THUNK,
-        '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O9', 'stale-thunk')], '304984f9'],
+        '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O9', 'stale-thunk')], 'f5b90744'],
     ['T-SC-syncrun', '                scheduler(node.schedulerThunk);\n',
-        '                /* MUT syncrun */ executeEffect(node);\n', [SC('O9', 'stale-thunk')], '542fcf14'],
+        '                /* MUT syncrun */ executeEffect(node);\n', [SC('O9', 'stale-thunk')], '01569c06'],
 ];
 const SC_ENV = { SOAK_LANES: 'SCHEDULER' };
 const SC_COV_ENV = { SOAK_LANES: 'SCHEDULER', SOAK_MUSTFAIL: 'cov-off:thunk-recycled' };
@@ -1154,7 +1174,7 @@ test('teeth s: the SCHEDULER ids have teeth -- P-SC-TREE, P-SC-HP, T-cov-SCHEDUL
     }
     const names = SC_ROWS.map((r) => r[0]);
     assert.deepEqual(CHECKS['lane:SCHEDULER'], names);
-    assert.deepEqual(CHECKS['oracle:O9'], ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen', 'T-SC-thunkgen', 'T-SC-syncrun']);
+    assert.deepEqual(CHECKS['oracle:O9'], ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen', 'T-RC-updgen', 'T-SC-thunkgen', 'T-SC-syncrun']);
     assert.deepEqual(CHECKS['sig:O9:stale-thunk'], ['T-SC-thunkgen', 'T-SC-syncrun']);
     assert.deepEqual(CHECKS['oracle:O4'], ['L-REV-152', 'T-flushdrop', 'T-owner-cleanup', 'T-SC-dropcall', 'T-SC-wedge']);
     assert.deepEqual(CHECKS['sig:O4:effect-dead'], ['L-REV-152', 'T-flushdrop', 'T-owner-cleanup', 'T-SC-dropcall', 'T-SC-wedge']);
@@ -1177,8 +1197,7 @@ test('teeth s: the SCHEDULER ids have teeth -- P-SC-TREE, P-SC-HP, T-cov-SCHEDUL
     assert.deepEqual(validSpec(t), []);
     // each mutant: an exactly-once anchor in the live Signal.js, the mutant's exact text (its kernel sha), P-SC-TREE's shape
     assert.deepEqual(CONTROLS.filter((x) => x.name.indexOf('T-SC-') === 0).map((x) => x.name), names, 'SC_ROWS names every T-SC-* row, in order');
-    const base = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
-    const live8 = createHash('sha256').update(base).digest('hex').slice(0, 8);
+    const base = rowsBase();
     for (const [name, anchor, repl, specs, sha] of SC_ROWS) {
         const c = CONTROLS.find((x) => x.name === name);
         assert.ok(c && SHORT_RE.test(name), name + ' exists in the short battery');
@@ -1189,9 +1208,9 @@ test('teeth s: the SCHEDULER ids have teeth -- P-SC-TREE, P-SC-HP, T-cov-SCHEDUL
         const k = buildKernel(c).src;
         assert.equal(k, base.replace(anchor, () => repl), name + ': the kernel = Signal.js with exactly that hunk replaced');
         assert.equal(k.split('\n').length, base.split('\n').length, name + ': one line replaced, none dropped');
-        // kernel sha256/8 pinned to ec6d7156; after a deliberate parity re-pin (test/40 is red until then) only the
-        // exact-hunk checks run: re-measure the T-SC heads and re-pin these shas
-        if (live8 === 'ec6d7156') assert.equal(createHash('sha256').update(k).digest('hex').slice(0, 8), sha, name + ': kernel sha256/8');
+        // kernel sha256/8 pinned to ROWS_BASE8 (b136 LEDGER #51 re-pin; T-SC heads re-measured b137 B4). b137 FILLER 84:
+        // rowsBase() asserts live == parity pin == ROWS_BASE8, so no engine change skips this check silently
+        assert.equal(createHash('sha256').update(k).digest('hex').slice(0, 8), sha, name + ': kernel sha256/8 (on ' + ROWS_BASE8 + ')');
     }
     assert.deepEqual(pairing(CHECKS, CONTROLS), []);
     // must-fail: thunkgen's spec moved to stale-write no longer backs sig:O9:stale-thunk; a lane=RECYCLE spec not lane:SCHEDULER

@@ -1,8 +1,8 @@
 /**
  * @zakkster/lite-signal soak -- the PARITY gate (port of lite-pick benchmark/soak/parity.mjs; lesson S6/L27).
  *
- *   node bench/soak/parity.mjs            check   (npm run parity)
- *   node bench/soak/parity.mjs --update   re-pin  (npm run parity:update)
+ *   node bench/soak/parity.mjs            check   (npm run soak:parity)
+ *   node bench/soak/parity.mjs --update   re-pin  (npm run soak:parity:update)
  *
  * PARITY_FILES are pinned by sha256 in bench/soak/parity.json. The check exits 1 when any file differs from
  * its pin, is missing, or when the pin file lists a file that is not a parity file. A missing or malformed
@@ -171,7 +171,7 @@ if (isEntry()) {
                 if (m.actual === 'not a parity file') process.stderr.write('parity: FAIL -- ' + m.file + ' is pinned but is not one of PARITY_FILES\n');
                 else process.stderr.write('parity: FAIL -- ' + m.file + ' sha256 ' + short(m.actual) + ' != pinned ' + short(m.pinned) + '\n');
             }
-            process.stderr.write('parity: the kernel changed. If deliberate, run `npm run parity:update` and commit parity.json with it.\n');
+            process.stderr.write('parity: the kernel changed. If deliberate, run `npm run soak:parity:update` and commit parity.json with it.\n');
             process.exitCode = 1;
         } else {
             process.stdout.write('parity: OK (' + PARITY_FILES.length + ' files match bench/soak/parity.json)\n');

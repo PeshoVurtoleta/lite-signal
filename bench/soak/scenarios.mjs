@@ -430,12 +430,12 @@ export class Detectors {
     /* ---- RECYCLE (called by lanes/recycle.mjs only, while exec.rc !== null: no other lane pays) ---------------- */
 
     /**
-     * One op through a STALE handle (its node disposed) reached the engine call. op: 'set' | 'peek' | 'read' | 'disp'
-     * (disp = registry dispose(h)); kind: the stale handle's kind 's' | 'c' | 'e'; res: the kind of the live node the
-     * slot hosts now ('s' | 'c' | 'e'), or null when the slot is dead / free (never recycled since); held: the stale
-     * handles the lane retains for this slot, this one included (an integer >= 1). A combination the engine surface
-     * does not offer (set on a non-signal, read / peek on an effect) fails closed. Each counter is the case a missing
-     * gen guard would make visible (b129 T0 S5):
+     * One op through a STALE handle (its node disposed) reached the engine call. op: 'set' | 'upd' | 'peek' | 'read' |
+     * 'disp' (upd = update(fn), b137 rsupd; disp = registry dispose(h)); kind: the stale handle's kind 's' | 'c' |
+     * 'e'; res: the kind of the live node the slot hosts now ('s' | 'c' | 'e'), or null when the slot is dead / free
+     * (never recycled since); held: the stale handles the lane retains for this slot, this one included (an integer
+     * >= 1). A combination the engine surface does not offer (set / upd on a non-signal, read / peek on an effect)
+     * fails closed. Each counter is the case a missing gen guard would make visible (b129 T0 S5):
      *   stale-write-recycled    a stale SIGNAL set while the slot hosts a live signal or computed (set guard)
      *   stale-peek-recycled     a stale SIGNAL peek while the slot hosts a live signal or computed (peek guard)
      *   stale-read-recycled     a stale signal / computed read while the slot hosts any live node
@@ -443,13 +443,14 @@ export class Detectors {
      *                           cov-off rule stale-dispose-dead: lanes/recycle.mjs then disposes dead slots only)
      *   stale-dead-unrecycled   any stale op on a dead slot (the not-recycled control)
      *   multi-gen               >= 2 stale handles held on a slot that hosts a live node (recycled >= 2x)
+     * An upd counts only stale-dead-unrecycled and multi-gen (no new scenario: D-b136-2).
      */
     onRcStale(op, kind, res, held) {
-        if (op !== 'set' && op !== 'peek' && op !== 'read' && op !== 'disp') throw new TypeError('onRcStale: unknown op ' + String(op));
+        if (op !== 'set' && op !== 'upd' && op !== 'peek' && op !== 'read' && op !== 'disp') throw new TypeError('onRcStale: unknown op ' + String(op));
         if (kind !== 's' && kind !== 'c' && kind !== 'e') throw new TypeError('onRcStale: kind must be s / c / e, got ' + String(kind));
         if (res !== null && res !== 's' && res !== 'c' && res !== 'e') throw new TypeError('onRcStale: res must be null or s / c / e, got ' + String(res));
         if (!Number.isSafeInteger(held) || held < 1) throw new TypeError('onRcStale: held must be an integer >= 1, got ' + String(held));
-        if ((op === 'set' && kind !== 's') || ((op === 'peek' || op === 'read') && kind === 'e')) {
+        if (((op === 'set' || op === 'upd') && kind !== 's') || ((op === 'peek' || op === 'read') && kind === 'e')) {
             throw new TypeError('onRcStale: no ' + op + ' on a stale ' + kind + ' handle');
         }
         if (res === null) { this.count('stale-dead-unrecycled'); return; }

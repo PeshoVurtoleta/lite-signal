@@ -93,9 +93,10 @@ export const LANE_KERNELS = Object.freeze({
     // DIV-48 (fixed b120-#48 on the tree) in every OWNER world (a multi-cleanup runs with this = the cleanup array,
     // OW callback-this by design); P-OWNER-TREE is the pass control
     OWNER: Object.freeze(['tree']),
-    // RECYCLE (R4a, b130 B3): every kernel (B2b census 200 worlds x headpatched / lite-1.5.2 / tree, 0 BREACH); listed
-    // because an unlisted lane never runs on the lane-only tree; headpatched first (covOff)
-    RECYCLE: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
+    // RECYCLE (R4a, b130 B3; b137 D-b137-1 = OWNER's #48 precedent): tree only: since the b137 rsupd op the frozen
+    // controls headpatched / rev152 carry DIV-51 (fixed b136-#51 on the tree) in every RECYCLE world (B1 census 200/200
+    // each, all explained); P-RC-TREE is the pass control
+    RECYCLE: Object.freeze(['tree']),
     // SCHEDULER (R4c, b134 B3; D-b128-3 = PLAN-R4 M3): every kernel (the lane does not judge scheduler `this`; B2b
     // census x headpatched / lite-1.5.2 / tree, 0 BREACH); listed so tree cuts it; headpatched first (covOff)
     SCHEDULER: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),

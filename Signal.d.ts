@@ -55,7 +55,8 @@ export interface Signal<T> {
     peek(): T;
     /** Overwrite the value. No-op if equal under the signal's equality predicate. */
     set(value: T): void;
-    /** Functional update: `set(fn(currentValue))`. Reads the current value without tracking. */
+    /** Functional update: `set(fn(currentValue))`. Reads the current value without tracking.
+     *  On a stale handle (disposed or recycled) returns without calling fn (1.6.0). */
     update(fn: (current: T) => T): void;
     /** Subscribe to value changes. Fires immediately with the current value. */
     subscribe(fn: (value: T) => void): Dispose;
@@ -84,7 +85,8 @@ export interface SignalBox<T> {
     set(value: T): void;
     /** Read the value WITHOUT tracking. */
     peek(): T;
-    /** Functional update: `set(fn(currentValue))`. Reads the current value without tracking. */
+    /** Functional update: `set(fn(currentValue))`. Reads the current value without tracking.
+     *  On a stale handle (disposed or recycled) returns without calling fn. */
     update(fn: (current: T) => T): void;
     /** Subscribe to value changes. Fires immediately with the current value; the callback runs untracked. */
     subscribe(fn: (value: T) => void): Dispose;

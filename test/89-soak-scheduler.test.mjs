@@ -129,8 +129,8 @@ const load = async (text, id) => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
 };
 
-describe('KERNEL: dead scheduled thunk on the frozen tree (ec6d7156)', () => {
-    it('frozen tree sha256/8 is ec6d7156', () => assert.equal(sha8(SRC), 'ec6d7156'));
+describe('KERNEL: dead scheduled thunk on the frozen tree (ea0b64d1)', () => {
+    it('frozen tree sha256/8 is ea0b64d1', () => assert.equal(sha8(SRC), 'ea0b64d1'));
     for (const phase of ['first-run', 'rerun']) {
         it('srec ' + phase + ': dead A delivers no body, successor B runs its own', async () => {
             const K = await load(SRC, 'ctl-' + phase);
@@ -158,9 +158,9 @@ const ANCHOR = '                    if (node.gen === gen && (node.flags & FLAG_E
 const REPL = '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n';
 
 describe('MUTANT: thunkgen (drop `node.gen === gen && `) is caught by the stale-thunk shape', () => {
-    it('anchor occurs exactly once; mutant sha256/8 is 304984f9', () => {
+    it('anchor occurs exactly once; mutant sha256/8 is f5b90744', () => {
         assert.equal(count(SRC, ANCHOR), 1);
-        assert.equal(sha8(SRC.replace(ANCHOR, () => REPL)), '304984f9');
+        assert.equal(sha8(SRC.replace(ANCHOR, () => REPL)), 'f5b90744');
     });
     for (const phase of ['first-run', 'rerun']) {
         it('srec ' + phase + ': dead A delivery runs successor B body (A->B+1, B->0)', async () => {
@@ -636,5 +636,16 @@ describe('R4c delta (ix): lane ops fail closed on a bad index / wrong kind / -0 
         const m = new Model({});
         assert.throws(() => m.addEffect(0, SPEC(0), -1, -0), (e) => e instanceof TypeError && e.message.includes('got -0'));
         for (const s of [0, 1, undefined]) assert.doesNotThrow(() => m.addEffect(1, SPEC(0), -1, s));
+    });
+});
+
+describe('b137 76a: SCHEDULER needsCaps recycle (O9 caps)', () => {
+    it('an adapter with scheduler but no recycle SKIPs SCHEDULER, never runs it with O9 dropped (FAILS OLD)', async () => {
+        const { applicability } = await import('../bench/soak/adapters/contract.mjs');
+        const caps = liteS3Adapter.caps;
+        const app = applicability(SCHEDULER, { ...caps, recycle: false });
+        assert.equal(app.status, 'skip');
+        assert.deepEqual(app.missingCaps, ['recycle']);
+        assert.ok(!applicability(SCHEDULER, caps).oraclesNA.includes('O9'));
     });
 });

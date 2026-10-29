@@ -1,7 +1,7 @@
 // test/88-soak-recycle.test.mjs -- burst 129, R4a batch H1 (PLAN-R4-recycle-sched.md TASK 3 + ASSERTIONS 2 + addenda O9-O11, M5).
 // Oracle: the interface contract of bench/soak/oracles.mjs (O9: checkO9Read / checkO9Write / checkO9Dispose) and the T0 kernel
 // facts (.handoff/b129-evidence/r4a/T0-FACTS.md, re-verified by .handoff/b129-evidence/r4a-h1/probe.mjs). No value is copied
-// from a run of the new code. LEDGER #51 (stale update leaks the resident value to fn; M5 / D-b129-1) is deliberately NOT pinned.
+// from a run of the new code. LEDGER #51 (stale update leaked the resident value to fn; M5 / D-b129-1) is PINNED since b137 (checkO9Update + adapter world.update rows at the end).
 // Groups: REG, ORACLE (fires / silent), MALFORMED (TypeError matrix), KERNEL (live Signal.js), MUTANT (kernels built at runtime).
 // Oracle rows are new (no prior O9 export): they fail on the old code by import. KERNEL rows are regression pins of engine facts.
 // MIT (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
@@ -13,6 +13,8 @@ import { mkdtempSync, writeFileSync, readFileSync, copyFileSync, rmSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { liteS3Adapter } from '../bench/soak/adapters/lite-s3.mjs';
+import { GcProfiler } from '@zakkster/lite-gc-profiler';
 
 const { checkO9Read, checkO9Write, checkO9Dispose, ORACLES, SIGS } = O;
 const SIG_URL = new URL('../Signal.js', import.meta.url);
@@ -26,7 +28,7 @@ const expectFind = (r, sig) => {
 };
 
 describe('O9 registration', () => {
-    it('ORACLES ends with O9 and SIGS.O9 is [stale-write, stale-read, stale-dispose], SIGS frozen', () => {
+    it('ORACLES ends with O9 and SIGS.O9 is [stale-write, stale-read, stale-dispose, stale-thunk], SIGS frozen', () => {
         assert.equal(ORACLES[ORACLES.length - 1], 'O9');
         assert.deepEqual(SIGS.O9, ['stale-write', 'stale-read', 'stale-dispose', 'stale-thunk']);
         assert.ok(Object.isFrozen(SIGS));
@@ -408,5 +410,94 @@ describe('RECYCLE lane: RcState teardown and the stateOf guard (b130 H3)', () =>
         assert.ok(x2.rc instanceof RcState);
         assert.notEqual(x2.rc, x1.rc);
         assert.equal(x2.rc.seen, 2);
+    });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// b137 B3 (PLAN-b137 A1 / A2 / A5; D-b135-1: a STALE signal handle's update(fn) returns undefined WITHOUT calling fn).
+// Expected values come from the plan assertions, never from a run. Rows fail on the old engine (fn called once).
+describe('ORACLE: checkO9Update (b137 A1)', () => {
+    const chk = (...a) => O.checkO9Update(...a);
+    it('("u", 0, undefined) -> null', () => assert.equal(chk('u', 0, undefined), null));
+    it('fn called once (1, undefined) -> stale-write', () => expectFind(chk('u', 1, undefined), 'stale-write'));
+    it('fn not called but returned 5 -> stale-write', () => expectFind(chk('u', 0, 5), 'stale-write'));
+    it('fn not called but returned null -> stale-write (null is a value)', () => expectFind(chk('u', 0, null), 'stale-write'));
+    const TU = /^TypeError: checkO9Update: /;
+    const nm = (v) => (Object.is(v, -0) ? '-0' : typeof v + ' ' + String(v));
+    for (const v of [-1, 1.5, NaN, '1', -0]) it('calls = ' + nm(v) + ' throws TypeError', () => assert.throws(() => chk('u', v, undefined), TU));
+    for (const l of [7, null, undefined, {}, [], -0]) it('bad label ' + nm(l) + ' throws TypeError', () => assert.throws(() => chk(l, 0, undefined), TU));
+});
+
+describe('ADAPTER: world.update on a stale signal handle (b137 A2)', () => {
+    const KINDS3 = ['signal', 'computed', 'effect', 'dead'];
+    for (const kind of KINDS3) {
+        it('stale signal handle, slot ' + (kind === 'dead' ? 'dead (unrecycled)' : 'recycled to ' + kind) + ': fn 0 calls, undefined, resident unchanged', () => {
+            const w = liteS3Adapter.open();
+            try {
+                const src = w.signal(3);
+                const stale = w.signal(1);
+                w.dispose(stale);
+                let runs = 0;
+                let res = null;
+                if (kind === 'signal') res = w.signal(5);
+                else if (kind === 'computed') { res = w.computed(() => w.read(src) + 2); w.read(res); }
+                else if (kind === 'effect') res = w.effect(() => { w.read(src); runs++; });
+                if (res !== null) assert.equal(ptrOf(res), ptrOf(stale), 'resident took the stale slot (LIFO)');
+                runs = 0;
+                let calls = 0;
+                const countingFn = (v) => { calls++; return 99; };
+                const got = w.update(stale, countingFn);
+                assert.equal(calls, 0, 'fn must not be called');
+                assert.equal(got, undefined);
+                assert.equal(checkO9UpdateOrFail('u', calls, got), null);
+                if (kind === 'signal' || kind === 'computed') assert.equal(w.peek(res), 5);
+                if (kind === 'effect') assert.equal(runs, 0, 'resident effect did not run');
+            } finally { w.close(); }
+        });
+    }
+});
+const checkO9UpdateOrFail = (l, c, g) => O.checkO9Update(l, c, g);
+
+describe('ADAPTER GC: 1e6 stale world.update (b137 A5)', { skip: typeof globalThis.gc === 'function' ? false : 'needs --expose-gc' }, () => {
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    // same window shape as test/91 A3: warm + gc first, then measure minor GC count and whole-window heap growth
+    async function window(step, iters) {
+        for (let i = 0; i < 300000; i++) step();
+        globalThis.gc(); await sleep(20);
+        for (let i = 0; i < 100000; i++) step();
+        globalThis.gc(); await sleep(50);
+        const gcp = new GcProfiler().start();
+        const h0 = process.memoryUsage().heapUsed;
+        for (let i = 0; i < iters; i++) step();
+        await sleep(50);
+        const sum = gcp.summary(); gcp.stop();
+        globalThis.gc();
+        return { minor: sum.gc.minor, grewBpo: (process.memoryUsage().heapUsed - h0) / iters };
+    }
+    const mk = (fn) => {
+        const w = liteS3Adapter.open();
+        const stale = w.signal(1);
+        w.dispose(stale);
+        w.signal(5);
+        let sink = 0;
+        return () => { const x = w.update(stale, fn); sink = (sink + (x === undefined ? 1 : 2)) | 0; return sink; };
+    };
+    const pure = (v) => v;
+    it('1e6 stale updates: minor 0, < 0.5 B/op whole-window', async () => {
+        const m = await window(mk(pure), 1000000);
+        assert.equal(m.minor, 0, 'scavenge: transient per-update alloc');
+        assert.ok(m.grewBpo < 0.5, 'B/op ' + m.grewBpo);
+    });
+    // CONTROL: fn would allocate transiently into a sink IF it were called; on a LIVE handle it must trip the profiler.
+    let lastBox = null;
+    it('CONTROL (transient sink, live handle): minor >= 1 and growth < 0.5 B/op', async () => {
+        const w = liteS3Adapter.open();
+        const live = w.signal(1);
+        // [v] (~16-32 B) x 1e6 calls > the 16 MB semi-space: a transient this size must scavenge
+        const fn = (v) => { lastBox = [v]; return (v + 1) & 1023; };
+        const step = () => { w.update(live, fn); };
+        const m = await window(step, 1000000);
+        assert.ok(m.minor >= 1, 'control must scavenge: minor ' + m.minor);
+        assert.ok(m.grewBpo < 0.5, 'control must be transient, not retained: ' + m.grewBpo);
     });
 });

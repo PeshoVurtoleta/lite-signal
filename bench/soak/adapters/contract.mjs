@@ -69,7 +69,8 @@ export function validateAdapter(a) {
 
 /**
  * Extension world methods (S3 R0), cap -> the TOP-LEVEL world keys a lane needing that cap calls. scheduler adds no
- * key: it is the effect(fn, {scheduler}) form of the base effect method.
+ * key: it is the effect(fn, {scheduler}) form of the base effect method. recycle (b137): update(h, fn), the handle's
+ * own update(fn) (lanes/recycle.mjs rsupd: a stale signal update, D-b135-1).
  */
 export const EXT_METHODS = Object.freeze({
     hook: Object.freeze(['hook']),
@@ -77,6 +78,7 @@ export const EXT_METHODS = Object.freeze({
     owner: Object.freeze(['createRoot', 'runWithOwner', 'getOwner', 'onCleanup']),
     capacity: Object.freeze(['capacity']),
     scheduler: Object.freeze([]),
+    recycle: Object.freeze(['update']),
 });
 
 /**

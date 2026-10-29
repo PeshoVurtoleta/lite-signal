@@ -9,6 +9,7 @@
  *   effect(fn, opts)       opts undefined -> the inner effect(fn), the identical S1 path; otherwise
  *                          registry.effect(fn, opts) (own key scheduler only), the handle remembered for close()
  *   capacity()             the open-time capacity echo { maxNodes, maxLinks, onCapacityExceeded }
+ *   update(h, fn)          h.update(fn), its return passed back (cap recycle; lanes/recycle.mjs rsupd, b137)
  *
  * open(opts): opts.capacity (own keys maxNodes / maxLinks / onCapacityExceeded, else TypeError) is merged OVER the
  * inner cfg by a shim kernel { createRegistry: cfg => kernel.createRegistry({...cfg, ...capacity}) }. Every world,
@@ -91,6 +92,7 @@ function openS3World(kernel, opts) {
         getOwner() { return r.getOwner(); },
         onCleanup(fn) { r.onCleanup(fn); },
         capacity() { return echo; },
+        update(h, fn) { return h.update(fn); },
         close() {
             for (let i = offs.length - 1; i >= 0; i--) offs[i]();
             offs.length = 0;
