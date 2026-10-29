@@ -599,6 +599,36 @@ rostered in lanes/index.mjs.
   .handoff/b141-evidence/b3/README.txt. Reviews: B1 r1 REJECTED (test-only), r2 literal, APPROVED; B2 r1 REJECTED
   (soakPatch symlink fail-open, DIV-F10 teeth), fix, r2 APPROVED.
 
+### 18. Amendment 2026-10-30 (b143): shrink --emit-test (R6)
+
+Harness only; Signal.js unchanged. `bench/soak/emit.mjs` is new and pinned in parity (55 files). Rulings are
+maintainer's (D-b143-1, "Split"). Where this text and the code differ, the code is the record.
+
+- Two artifacts. (a) The harness-bound `shrink-<LANE>-0x<seed>.test.mjs` now runs on `adapters/lite-s3.mjs`
+  (`liteS3Adapter`), so a CAPACITY shrink test no longer crashes with `unmodelled capacity op` (FILLER 106 closed;
+  K2 exits 1 on the mutant, 0 on the tree). (b) With `--emit-test` (a shrink argv door only), a kernel-only
+  `shrink-<LANE>-0x<seed>.standalone.test.mjs` is also written (the `.test.mjs` suffix becomes `.standalone.test.mjs`).
+- Standalone contract. A `node:test` file importing `node:*` and one dynamic `SOAK_KERNEL` module only (absolute
+  path, frozen Signal.js). Exit 1 reproduces, 0 clean, 2 config (an argument; `SOAK_KERNEL` unset, relative,
+  failing to load, no `createRegistry()`; reported before any `test()` is registered), 3 the kernel threw during
+  the replay. Teardown asserts `activeNodes` 0 and `activeLinks` 0. It mirrors `adapters/lite-s3.mjs` MINUS the
+  capacity-echo `stats()` call in `open()` (harmless: `stats()` is a pure read); the
+  `emitStandalone` doc comment in `emit.mjs` still says `lite.mjs` (a known NIT, not a behavior difference).
+- Refusal (D-b143-1b). `EMIT_LANES` = GRAPH / BATCH / NEST / WIE and targets O1c / O1e / O5 (by `fails[].oracle`).
+  The O6 lanes REGISTRY / CAPACITY / ERROR are refused always: exit 2, json `emitted: false`, line
+  `soak: CONFIG -- shrink --emit-test: no standalone test for <key>: <reason>`. Reason vocabulary: lane / target /
+  op / flag / key / kind / value / detail. Precedence: not-reproduced (exit 3) > unconfirmed (exit 3) > refused
+  (exit 2) > emitted (exit 1). A key that does not emit deletes any stale standalone. The json gains `emitted`,
+  `standalone`, `emitReason` and the SHRINK line ` standalone=`; without the flag json and stdout are
+  byte-identical.
+- argv door. `config.mjs` `parseConfig` takes `opts.args`, a per-entry whitelist (default `['--smoke']`; shrink
+  `['--smoke', '--emit-test']`); an empty list, or a repeated or unknown entry, is a `TypeError`; the default
+  message is byte-identical. The flag reaches the run as `cfg.emitTest` (an argument, never an env key).
+- Tests. `test/95-soak-emit.test.mjs` (28 rows: argv doors, K1-K4 byte goldens, 10,000-pair `specToSource`
+  differential plus a cond mutant, refusal matrix, `END_CHECK_SALT` drift gate) and 2 `test/41` rows. Measured (b143
+  qa, node v26.8.2, untimed): `npm test` 2811 / 2798 pass / 0 fail / 12 skip / 1 todo; torture 0 B/op. Review r1
+  REJECTED (2 test-only blockers), r2 APPROVED; qa PASS.
+
 ## Consequences
 
 - The BATCH cov-off switch is closed: lanes/batch.mjs:42 compares DECODED values with Object.is, as the detector does
