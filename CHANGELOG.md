@@ -89,8 +89,43 @@ null-control verdict (exit 0 SAME / 1 DIFF / 2 NO-VERDICT), plus each decision t
 made in, a TurboFan budget report (bytes charged per unit, candidates dropped for budget, a check of the model against
 V8's printed `Budget used`), bytecode lengths against the inlining limits, several `--fn` at once, and a git-ref mode
 (`--before-ref` / `--after-ref`). A git-tracked `--before` (or a symlink / hard link to one that the check can see; see the header) is refused; any unplanned failure exits
-2, never 1. Tests: `test/94` (the 31-check self-test on canned text, no V8 spawn, plus 12 must-fail mutants of the
+2, never 1. Tests: `test/94` (the 43-check self-test on canned text, no V8 spawn, plus 12 must-fail mutants of the
 script). A byte-identical copy lives at the suite level in `LiteUtils/`.
+
+The script was replaced by the maintainer's improved copy from `LiteUtils/` (this paragraph per maintainer decision
+D-b143-2, 2026-10-30). `--self-test` grows from 31 to 43 checks and the `test/94` `CHECKS` pin from 31 to 43; all 12
+mutants are still killed. A real run on an identical Signal.js (2221b93 vs e9f8e6a, node v26.8.2) gave VERDICT SAME
+on both tiers.
+
+### Tests / Docs -- soak: shrink --emit-test standalone repro (R6, b143)
+
+Dev-only (`bench/soak/`, not shipped). No engine change in this unit: Signal.js is untouched, no version bump.
+- `shrink --emit-test` (`emit.mjs`, new): besides the harness `shrink-<LANE>-0x<seed>.test.mjs`, a kernel-only
+  `shrink-<LANE>-0x<seed>.standalone.test.mjs` (the `.test.mjs` suffix becomes `.standalone.test.mjs`). It is a
+  `node:test` file that imports `node:*` and one dynamic `SOAK_KERNEL` module only (an absolute path to a frozen
+  Signal.js) and replays the minimal script. Exit 1 reproduces, 0 clean, 2 config (any argument; `SOAK_KERNEL` unset,
+  relative, failing to load, or without `createRegistry()`), 3 the kernel threw in the replay. Its teardown always
+  asserts `activeNodes` 0 and `activeLinks` 0. It mirrors `adapters/lite-s3.mjs` minus the capacity-echo `stats()` call
+  in `open()` (harmless: `stats()` is a pure read); the `emitStandalone` doc comment in `emit.mjs` still says `lite.mjs`
+  (a known NIT).
+- Which worlds emit (D-b143-1b, maintainer, "Split"): lanes GRAPH / BATCH / NEST / WIE (`EMIT_LANES`) and targets
+  O1c / O1e / O5 (by `fails[].oracle`). O6 lanes (REGISTRY / CAPACITY / ERROR) are always refused. A refused world
+  exits 2 with `soak: CONFIG -- shrink --emit-test: no standalone test for <key>: <reason>`, reason vocabulary
+  lane / target / op / flag / key / kind / value / detail, and `emitted: false`. Precedence: not-reproduced
+  (exit 3) > unconfirmed (exit 3) > refused (exit 2) > emitted (exit 1). A key that does not emit leaves no stale
+  standalone.
+- json gains `emitted`, `standalone` (absolute path or null) and `emitReason` (null or why not); the SHRINK line gains
+  ` standalone=<path|->`. Without `--emit-test` the json and stdout are byte-identical.
+- Harness `.test.mjs` (D-b143-1a): now runs on `adapters/lite-s3.mjs`, which closes FILLER 106: a CAPACITY shrink
+  test no longer crashes with `unmodelled capacity op` (K2: exit 1 on the mutant, 0 on the tree).
+- `config.mjs` `parseConfig` `opts.args`: a per-entry whitelist of argv doors (default `['--smoke']`; shrink
+  `['--smoke', '--emit-test']`); an empty list, or a repeated or unknown entry, is a `TypeError`; the default error
+  message is byte-identical. The parity pin set is 55 files (+ `bench/soak/emit.mjs`).
+- Tests: `test/95-soak-emit.test.mjs` (28 rows: argv doors, K1-K4 byte goldens, a 10,000-pair `specToSource`
+  differential plus a cond mutant, the refusal matrix, an `END_CHECK_SALT` drift gate) and 2 new `test/41` rows.
+  Measured (b143 qa, node v26.8.2, untimed): `npm test` 2811 tests / 2798 pass / 0 fail / 12 skip / 1 todo; torture 0
+  B/op. Review r1 REJECTED (2 test-only blockers), r2 APPROVED; qa PASS (a mid-batch O1c + O1e mutant world exits 1,
+  the tree 0; the fail-open hunt found none).
 
 ### Tests / Docs -- soak: REGISTRY + CAPACITY lanes (R5, b139-b141)
 
