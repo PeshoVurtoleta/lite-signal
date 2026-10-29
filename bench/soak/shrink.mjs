@@ -36,8 +36,10 @@
  *                                     maxRuns, budgetExhausted, passes, script, scriptDigest, genVersion,
  *                                     engine, kernel {url, files [{path, sha256}]}, node, createdAt}
  *   shrink-<LANE>-0x<seed>.test.mjs  a self-contained check: it runs the embedded minimal script through
- *                                     exec.mjs (the kernel comes from the SOAK_KERNEL env seam, kernel.mjs;
- *                                     it takes NO argv) and exits 1 when the target reproduces, 0 when the
+ *                                     exec.mjs and the lite-s3 adapter (adapters/lite-s3.mjs liteS3Adapter: the
+ *                                     S3 lanes' ops self-check, e.g. CAPACITY's capacity() echo; D-b143-1a; the
+ *                                     kernel comes from the SOAK_KERNEL env seam, kernel.mjs; it takes NO
+ *                                     argv) and exits 1 when the target reproduces, 0 when the
  *                                     script runs clean, 3 on a different failure, 2 on config or a harness
  *                                     throw: SOAK_KERNEL unset or not ABSOLUTE (amendment 11: never the live
  *                                     Signal.js), a soak module that fails to load (every import is dynamic,
@@ -49,20 +51,32 @@
  *   of the same key are overwritten. The emitted test imports the bench/soak modules by ABSOLUTE file URL
  *   and requires an ABSOLUTE SOAK_KERNEL, so it runs from wherever it is written and from any cwd.
  *
+ * --emit-test (shrink.mjs argv only; config.mjs parseConfig args): ALSO a kernel-only
+ *   shrink-<LANE>-0x<seed>.standalone.test.mjs beside the .test.mjs (emit.mjs: a node:test file importing node:*
+ *   and the SOAK_KERNEL module only, asserting the failing oracle's model values; its exit contract is in
+ *   emit.mjs). The json gains emitted, standalone (absolute path or null) and emitReason (null or why not),
+ *   right before createdAt; the SHRINK line gains ` standalone=<path|->`. Exit 1 emitted; exit 3 as above with
+ *   emitReason 'not-reproduced: ...' / 'unconfirmed: ...'; exit 2 refused (emit.mjs emittable, first match of
+ *   lane / target / op / flag / key / kind / value / detail; every O6 lane is refused, D-b143-1b) with one
+ *   `soak: CONFIG -- shrink --emit-test: no standalone test for <key>: <reason>` line and no END line. A key
+ *   that does not emit leaves no standalone on disk (a stale one is deleted); the json and .test.mjs are
+ *   written either way. Without the flag the json and stdout are byte-identical to a shrink without it.
+ *
  * stdout: `soak: SHRINK -- ...` (key, ops, runs, paths), then `soak: END verdict=<FAIL|INCONCLUSIVE>
  * exit=<1|3> records=0` (no JSONL records). stderr: the target's BREACH lines (main.mjs BreachLog format).
  * Exit: 1 shrunk (the failure reproduced), 2 config / unreachable, 3 not reproducible, crash 1.
  * runShrink ALWAYS returns an integer 0..3 (replay.mjs asExitCode).
  *
- * Kernel-free on import (ddmin, simplification and emitTest are pure). COLD module: no hot body.
+ * Kernel-free on import (ddmin, simplification, emitTest and emit.mjs are pure). COLD module: no hot body.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXIT_CODE, VERDICT, GEN_VERSION } from './config.mjs';
 import { familyKeys } from './main.mjs';
 import { runWorld } from './exec.mjs';
+import { emittable, emitStandalone } from './emit.mjs';
 import { protocol, stdoutLine, endLine } from './jsonl.mjs';
 import { locateAndPlay, replayTap, writeBreaches, scriptDigest, asExitCode, cfgProblem, configCode, isEntryUrl, entry } from './replay.mjs';
 
@@ -282,25 +296,34 @@ export function countSubOps(ops) {
 
 const sameSet = (a, b) => a.length === b.length && a.every((x) => b.indexOf(x) !== -1);
 
+/** One run of script on a FRESH world through the main.mjs tap: the runWorld() result, or null on a throw. */
+export function makeRunner(adapter) {
+    return (script) => {
+        try {
+            const { tap, ad } = replayTap(adapter);
+            tap.escape = null;
+            return runWorld(ad, script);
+        } catch (e) {
+            return null;
+        }
+    };
+}
+
+/** A runner result reproduces t (a familyKeys set): a failure with exactly that set; t [] = any failure. */
+function reproduces(r, t) {
+    if (r === null || typeof r !== 'object' || r.failure === null || r.failure === undefined) return false;
+    if (t.length === 0) return true;   // a world clean when shrunk: any failure is the "target"
+    return sameSet(familyKeys(r.failure.fails), t);
+}
+
 /**
  * The reproduction predicate for target (a familyKeys set): a FRESH world per run through the main.mjs tap.
  * A throw, a clean run or a different (family, sig) set is false; never a hit.
  */
 export function makePredicate(adapter, target) {
     const t = target.slice();
-    return (script) => {
-        let r;
-        try {
-            const { tap, ad } = replayTap(adapter);
-            tap.escape = null;
-            r = runWorld(ad, script);
-        } catch (e) {
-            return false;
-        }
-        if (r === null || typeof r !== 'object' || r.failure === null || r.failure === undefined) return false;
-        if (t.length === 0) return true;   // a world clean when shrunk: any failure is the "target"
-        return sameSet(familyKeys(r.failure.fails), t);
-    };
+    const run = makeRunner(adapter);
+    return (script) => reproduces(run(script), t);
 }
 
 /* ---- artifacts ------------------------------------------------------------------------------------ */
@@ -339,7 +362,7 @@ export function emitTest(info) {
         'try {',
         '    const ex = await import(' + u('exec.mjs') + ');',
         '    const mn = await import(' + u('main.mjs') + ');',
-        '    liteAdapter = (await import(' + u('adapters/lite.mjs') + ')).liteAdapter;',
+        '    liteAdapter = (await import(' + u('adapters/lite-s3.mjs') + ')).liteS3Adapter;',
         '    familyKeys = mn.familyKeys;',
         '    const tap = { escape: null, onOpen() {} };',
         '    r = ex.runWorld(mn.tapAdapter(liteAdapter, tap), SCRIPT);',
@@ -371,14 +394,17 @@ export async function runShrink(cfg) {
         const original = played.script;
         const target = rec === null ? [] : familyKeys(rec.fails);
         const budget = new Budget(SHRINK_MAX_RUNS);
-        let minimal = original, passes = 0, confirmed = false;
+        let minimal = original, passes = 0, confirmed = false, confirmRun = null;
         if (rec !== null) {
             writeBreaches(rec, res.lane, adapter.name);
-            const pred = makePredicate(adapter, target);
+            const run = makeRunner(adapter);
+            const t = target.slice();
+            const pred = (script) => reproduces(run(script), t);   // makePredicate(adapter, target)
             const out = shrinkScript(original, pred, budget, played.r.failure.step);
             minimal = out.script;
             passes = out.passes;
-            confirmed = pred(minimal) === true;   // the CONFIRM run (counted below, outside the budget)
+            confirmRun = run(minimal);   // the CONFIRM run (counted below, outside the budget); emittable() reads it
+            confirmed = reproduces(confirmRun, t);
         }
         const { KERNEL_URL, KERNEL_FILES } = await import('./kernel.mjs');
         const paths = artifactPaths(res.lane, res.worldSeed, cfg.out);
@@ -389,17 +415,42 @@ export async function runShrink(cfg) {
             predicateRuns: budget.runs + (rec !== null ? 1 : 0), maxRuns: SHRINK_MAX_RUNS, budgetExhausted: budget.exhausted, passes,
             script: minimal, scriptDigest: scriptDigest(minimal), genVersion: GEN_VERSION,
             engine: adapter.name, kernel: { url: KERNEL_URL, files: KERNEL_FILES.map((f) => ({ path: f.path, sha256: f.sha256 })) },
-            node: process.version, createdAt: new Date().toISOString(),
+            node: process.version,
         };
+        // --emit-test: the standalone verdict goes into the json right before createdAt (absent without the flag)
+        const stdPath = paths.test.slice(0, paths.test.length - '.test.mjs'.length) + '.standalone.test.mjs';
+        let stdSrc = null, refused = null;
+        if (cfg.emitTest === true) {
+            let reason = null;
+            if (rec === null) reason = 'not-reproduced: ' + res.key + ' runs clean on this kernel';
+            else if (!confirmed) reason = 'unconfirmed: the minimal script did not reproduce on the confirm run';
+            else {
+                const e = emittable(info, confirmRun);
+                if (e.ok) stdSrc = emitStandalone(info, e.expect);
+                else reason = refused = e.reason;
+            }
+            info.emitted = stdSrc !== null;
+            info.standalone = stdSrc !== null ? stdPath : null;
+            info.emitReason = reason;
+        }
+        info.createdAt = new Date().toISOString();
         mkdirSync(paths.dir, { recursive: true });
         writeFileSync(paths.json, JSON.stringify(info, null, 2) + '\n');
         writeFileSync(paths.test, emitTest(info));
+        if (cfg.emitTest === true) {
+            if (stdSrc !== null) writeFileSync(stdPath, stdSrc);
+            else rmSync(stdPath, { force: true });   // a key that does not emit leaves no stale standalone
+        }
         const ok = rec !== null && confirmed;
         if (rec === null) protocol('soak: INCONCLUSIVE -- shrink: ' + res.key + ' runs clean on this kernel; nothing to shrink');
         else if (!confirmed) protocol('soak: INCONCLUSIVE -- shrink: the minimal script of ' + res.key + ' did not reproduce on the confirm run (non-deterministic failure)');
         stdoutLine('soak: SHRINK -- key=' + res.key + ' target=' + (target.length ? target.join(',') : '-') + ' ops=' + info.ops + ' subOps=' + info.subOps +
             ' from=' + info.opsOriginal + ' runs=' + info.predicateRuns + '/' + SHRINK_MAX_RUNS + (budget.exhausted ? ' budget=exhausted' : '') +
-            ' json=' + paths.json + ' test=' + paths.test);
+            ' json=' + paths.json + ' test=' + paths.test +
+            (cfg.emitTest === true ? ' standalone=' + (stdSrc !== null ? stdPath : '-') : ''));
+        if (refused !== null) {
+            return configCode('shrink --emit-test: no standalone test for ' + res.key + ': ' + refused);
+        }
         const verdict = ok ? VERDICT.FAIL : VERDICT.INCONCLUSIVE;
         const code = ok ? EXIT_CODE.FAIL : EXIT_CODE.INCONCLUSIVE;
         endLine(verdict, code, 0);
