@@ -92,6 +92,66 @@ V8's printed `Budget used`), bytecode lengths against the inlining limits, sever
 2, never 1. Tests: `test/94` (the 31-check self-test on canned text, no V8 spawn, plus 12 must-fail mutants of the
 script). A byte-identical copy lives at the suite level in `LiteUtils/`.
 
+### Tests / Docs -- soak: REGISTRY + CAPACITY lanes (R5, b139-b141)
+
+Dev-only (`bench/soak/`, not shipped). No engine change in this unit: Signal.js stays sha256/8 ea0b64d1.
+- REGISTRY lane (`lanes/registry.mjs`, LANE_INDEX 10; tree only): registry `destroy()` at the top level and in flight
+  (inside `batch()`, an effect body, a computed body). Op `rdestroy {at: top | batch | body | computed}` plus `rbuilt`;
+  six new scenarios (destroy-top, destroy-in-flight, destroy-in-batch, destroy-in-body, destroy-in-computed,
+  reuse-after-destroy). The lane lands RED BY DESIGN (S3-D3): every in-flight destroy is judged against the O6 "(v)"
+  list, and the engine does not throw as contract D2 says it should, so every tree world fail-stops. Each failure
+  is explained as DIV-F10 (REGISTRY / O6 / rdestroy matcher; fixBy A6), none unexplained.
+- O6 "(v)" (`oracles.mjs` `expectFromThrow`, `lanes/registry.mjs` `REG_EXPECT`): the expect[] list of an in-flight
+  destroy is built from `DIV-D2-destroy-throws.expectedThrow` in `divergences.json`, read once at module load. While
+  that field is null (until A6) the list is `[EXPECT_NEVER_ENTRY]`, the frozen "never" entry, which absorbs nothing: a
+  destroy that returns is `expected-escape-missing`, a destroy that throws an engine error is `escape-<Ctor>` plus
+  `expected-escape-missing`. A non-null value must be a plain `{ctor, messagePrefix}` of non-empty strings, else
+  `expectFromThrow` throws (fail closed).
+- CAPACITY lane (`lanes/capacity.mjs`, LANE_INDEX 12; tree only): the registry capacity edge. Op `cedge {k: node |
+  link | ceil, reuse}` fills private nodes / links to the per-world cap, judges the CapacityError with O6 (no new
+  sig), then releases every private in the same op (O5 checks the residue at rest). Five new scenarios
+  (node-cap-throw, link-cap-throw, link-ceiling-grow, grow-past-initial, reuse-at-edge). Deviation from the plan (TASK
+  0): under 'grow' the 33rd node of a maxNodes-32 pool takes `nodePoolCapacity` to 512, not 64, so grow-past-initial
+  counts only when `stats().nodePoolCapacity` is >= 2 x the initial `maxNodes`, never a literal 64.
+- Generator rule G12 (`gen.mjs`): the CAPACITY lane seeds `Gen.capacity = {maxNodes: 32 | 64, maxLinks: 1x | 2x
+  maxNodes, onCapacityExceeded: 'throw' | 'grow'}` and the script carries it as the per-script key `capacity`, which
+  `exec.mjs` passes to `adapter.open()`; `lanes/capacity.mjs` checks it against the `W.capacity()` echo. The key is
+  absent on every other lane's scripts (`Gen.capacity` is null there), so the 10 old lanes' scripts are
+  byte-identical.
+- `_mustfail` `soakPatch` (maintainer ruling D-b140-1): an optional `[{file, find, replace}]` on a `run: 'main'`
+  control, for mutants of HARNESS files. The run copies bench/soak into a zero-commit scratch repository under
+  bench/soak/out, applies each edit there (each `find` exactly once against the original file) and drives that copy's
+  main.mjs. A stale (0 matches), multi-match (>= 2) or symlinked target is INVALID (the CLI prints INVALID and exits
+  1), never OK and never a MISS: the mutant is not built and nothing is spawned; so is a missing file. A malformed
+  field fails validSpec: the CLI refuses the whole selection (`control <name> is malformed`, exit 1) before any
+  control runs. T-REG-expectnone (the lane predicts EXPECT_NONE: unexplained O6 escape-TypeError, known=none) and
+  T-REG-destroyall (the model keeps the destroyed nodes: O5 node-count, known=none) land through it.
+- LEDGER #52 (D-b139-3, OPEN, fixBy A6): `destroy()` inside an effect or computed body with another effect queued in
+  the same flush makes the engine throw a `TypeError` (tree Signal.js flushEffects reads `.flags` of a queue slot that
+  destroy() cleared). An explained CO-SHAPE of DIV-F10 (O6 escape-TypeError WITH expected-escape-missing, body /
+  computed destroys only), not a separate defect; A6 must gate this exact case. No engine change here.
+- New `_mustfail` rows: P-REGISTRY-TRIGGERLESS (exit 3, INCONCLUSIVE on exactly four ids), L-REGISTRY-F10 (explained,
+  known DIV-F10), T-REG-expectnone, T-REG-destroyall, P-CAP-TREE, T-cov-CAPACITY, T-cap-node, T-cap-link, T-cap-ceiling,
+  T-cap-residue.
+- Counts moved (measured from the code at this commit): `_mustfail` lists 89 controls (70 short + 19 long; was 79 =
+  61 + 18); teeth universe 72 (was 70), CHECKS ids 62 (was 60), GAPS 22 unchanged; SCENARIOS 77 (was 66: +6 REGISTRY, +5
+  CAPACITY); divergences.json 28 entries (count unchanged; DIV-F10 rewritten from an empty row into the REGISTRY / O6
+  / rdestroy matcher, 3 shapes; DIV-D2-destroy-throws.pending reworded). `LANE_KERNELS` REGISTRY = ['tree'], CAPACITY
+  = ['tree'] (D-b139-2). `test/41` (f) exempts `{ERROR: [DIV-F22], REGISTRY: [DIV-F10]}` at both literals plus an
+  expiry row (red once DIV-F10 is fixed or absent and the exemption stays; D-b139-1). Tests: new `test/92` (REGISTRY,
+  30 tests) and `test/93` (CAPACITY, 29 tests); `test/41` 50, `test/45` 41 (was 38). `registry.mjs` reads
+  `divergences.json` directly (an import of `divergences.mjs` closed a TDZ cycle through the `lanes/index` ROSTER).
+- Golden digests (`calibration/golden/scripts-1000.json`, test/42): the 10 old lanes identical; 2 new, REGISTRY
+  47106932525c46f7... and CAPACITY 23c7fb2f....
+- Timed calibration recut (quiet-lock --strict, host QUIET at start: load1 2.85 / baseline 2.21; load1 rose to 6.55
+  during the run; 1163 s, 2026-10-29, node v26.8.2, HEAD 5ce2fc4, one run; REGISTRY and CAPACITY on tree only): every
+  existing kernel x shape x lane cell is count-identical to the previous cut. REGISTRY smoke 1413 worlds / 60107 ops,
+  full 25376 worlds / 1100513 ops, failingWorlds = worlds in both (fail-stop by design, explained DIV-F10), rarest
+  required scenario destroy-in-batch 8298 hits. CAPACITY smoke 150 worlds / 61195 ops, full 2706 worlds / 1104049 ops,
+  0 failing, rarest required scenario grow-past-initial 23495 hits. Throughput (tree ops/s per cycle, min / median /
+  max; REPORTED tier, PRELIMINARY for the tail of the run, gates nothing, no speed claim): REGISTRY 51189 / 52870 /
+  53668, CAPACITY 123253 / 126176 / 132032. Evidence: `.handoff/b141-evidence/b3/README.txt`.
+
 ### Tests / Docs -- soak: RECYCLE update op rsupd + T-RC-updgen (LEDGER #51 tooth, b137)
 
 Dev-only (`bench/soak/`, not shipped). No engine change in this unit: Signal.js stays sha256/8 ea0b64d1 (the b136 #51 fix).

@@ -539,6 +539,66 @@ Line numbers are scheduler-bench.mjs at f2c2d45 (blob below).
 - Archive pointer (last tree that carried it): `git show f2c2d45:bench/torture/scheduler-bench.mjs   blob
   9320608d31e8400c33040df7eda33c781dc2b267`.
 
+### 17. Amendment 2026-10-29 (b139-b141): REGISTRY + CAPACITY lanes (R5)
+
+Harness only; Signal.js sha256/8 ea0b64d1 unchanged. Plan: .handoff/PLAN-R5-registry-capacity.md (RECONCILE, RULED and
+the b139-END / b140 addenda override the two plan bodies; where the plan body and the code differ, the code is the
+record). Lanes: REGISTRY (lanes/registry.mjs, LANE_INDEX 10) and CAPACITY (lanes/capacity.mjs, LANE_INDEX 12), both
+rostered in lanes/index.mjs.
+
+- REGISTRY is red by design, explained (S3-D3). Every in-flight rdestroy (batch / body / computed) is judged by the O6
+  "(v)" list: expectFromThrow(DIV-D2-destroy-throws.expectedThrow) from divergences.json, read once at module load.
+  While expectedThrow is null (until A6) the list is [EXPECT_NEVER_ENTRY] (oracles.mjs), which absorbs nothing: a
+  destroy that returns is expected-escape-missing. Every tree world fail-stops and each failure is explained by
+  DIV-F10 (lane REGISTRY, oracle O6, op rdestroy; fixBy A6). L-REGISTRY-F10 is the explained control (exit 1, known
+  DIV-F10); P-REGISTRY-TRIGGERLESS (every rdestroy at 'top') is the clean control (exit 3, INCONCLUSIVE on
+  destroy-in-flight and the three in-flight <at> scenarios).
+- test/41 (f) exemption and expiry (D-b139-1, maintainer, in-burst): the exempt set is exactly {ERROR: [DIV-F22],
+  REGISTRY: [DIV-F10]}, at both literals (B6_F_EXEMPT_RULED and exRuled). An expiry row makes the gate red once
+  DIV-F10 is fixed (fixedIn set) or absent while the exemption stays; dropping the exemption while DIV-F10 is open is
+  red too.
+- Tree-only kernels (D-b139-2, maintainer): calibration/calibrate.mjs LANE_KERNELS REGISTRY = ['tree'], CAPACITY =
+  ['tree'] (the LIFECYCLE b111 and OWNER / RECYCLE precedents).
+- DIV-F10 co-shape and LEDGER #52 (D-b139-3, maintainer, at the TASK 0 stop): destroy() inside an effect or computed
+  body with another effect queued in the same flush makes the engine throw a TypeError (tree Signal.js flushEffects
+  reads .flags of a queue slot destroy() cleared); no leak, the registry recovers. Ruled an explained CO-SHAPE of
+  DIV-F10 (O6 escape-TypeError WITH expected-escape-missing; destroy-in-body / destroy-in-computed only, never batch),
+  recorded as LEDGER.md row 52 (OPEN, fixBy A6) so the A6 brief gates this exact case. Not matched by DIV-F10: an
+  escape-TypeError alone or on a batch destroy, any other TypeError message, any O1 / O2 / O4 / O5 co-fail, a
+  top-level rdestroy fail.
+- soakPatch (D-b140-1, maintainer, in-burst): _mustfail controls may carry an optional soakPatch, [{file, find,
+  replace}], only on run 'main', to mutate HARNESS files (the T-REG-* mutants edit lanes/registry.mjs; kernel patches
+  cannot). The run copies bench/soak into a zero-commit scratch repository under bench/soak/out and drives that copy's
+  main.mjs. Each find must match exactly once in the original file. A stale (0 matches), multi-match (>= 2) or
+  symlinked target, or a missing file, is INVALID: the mutant is not built, nothing is spawned, the CLI prints INVALID
+  and exits 1 -- never OK, never a MISS (the symlink case was the B2 r1 fail-open finding, fixed in b140 fix1). A
+  malformed field fails validSpec instead: the CLI refuses the whole selection (`control <name> is malformed`, exit 1)
+  before any control runs. T-REG-expectnone and T-REG-destroyall land through it; a control with replace === find
+  (no-op) MISSes, so the field can fail.
+- G12 and the capacity cfg: gen.mjs rule G12 is the one exception to G10 (a world is a fresh registry, maxNodes 4096,
+  grow). The CAPACITY lane seeds Gen.capacity = {maxNodes: 32 | 64, maxLinks: 1x | 2x maxNodes, onCapacityExceeded:
+  'throw' | 'grow'}; the script carries it as the key `capacity`, present only on CAPACITY scripts (null on Gen, no
+  key, on every other lane, so the 10 old lanes' golden digests are byte-identical). exec.mjs passes it to
+  adapter.open() and lanes/capacity.mjs checks the W.capacity() echo against it; predictions come from the model and
+  the echo, not the script.
+- TASK 0 deviation (RULED, maintainer): under 'grow' the 33rd node of a maxNodes-32 pool raises nodePoolCapacity to
+  512, not 64, so the grow-past-initial scenario counts only when stats().nodePoolCapacity >= 2 x the initial
+  maxNodes, never a literal 64 (evidence .handoff/b139-evidence/{r5,cap}/README.txt).
+- Counts that moved (measured from the code at this commit): _mustfail 89 controls (70 short + 19 long); teeth
+  universe 72, CHECKS ids 62, GAPS 22; SCENARIOS 77 (+6 REGISTRY, +5 CAPACITY); divergences.json 28 entries; tests
+  test/92 30, test/93 29, test/41 50, test/45 41.
+- Recut (b141 B3, DETERMINISTIC counts, copied from .handoff/b141-evidence/b3/README.txt; HEAD 5ce2fc4, Node v26.8.2,
+  one timed run): every existing kernel x shape x lane cell count-identical; golden digests 10 old lanes identical, 2
+  new (REGISTRY 47106932..., CAPACITY 23c7fb2f...). REGISTRY tree smoke 1413 worlds / 60107 ops / 1413 failing, full
+  25376 worlds / 1100513 ops / 25376 failing (by design); rarest required scenario destroy-in-batch 8298. CAPACITY
+  tree smoke 150 worlds / 61195 ops / 0 failing, full 2706 worlds / 1104049 ops / 0 failing; rarest required
+  grow-past-initial 23495. Throughput (tree ops/s per cycle, min / median / max) REGISTRY 51189 / 52870 / 53668,
+  CAPACITY 123253 / 126176 / 132032 and the 1163 s wall time are REPORTED tier and PRELIMINARY (host QUIET at the
+  --strict start, load1 2.85, rose to 6.55 during the run): they gate nothing and make no speed claim.
+- Evidence: .handoff/b139-evidence/{facts.md, r5, cap, b1a, b1b}; .handoff/b140-evidence/{b2a, b2b, fix1, review-b2};
+  .handoff/b141-evidence/b3/README.txt. Reviews: B1 r1 REJECTED (test-only), r2 literal, APPROVED; B2 r1 REJECTED
+  (soakPatch symlink fail-open, DIV-F10 teeth), fix, r2 APPROVED.
+
 ## Consequences
 
 - The BATCH cov-off switch is closed: lanes/batch.mjs:42 compares DECODED values with Object.is, as the detector does
