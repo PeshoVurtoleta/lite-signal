@@ -81,6 +81,17 @@ The LEDGER #45 / #46 op-3 rules are unchanged (a throwing `onConnect` still anno
 bodies (+ `allocateLink`, `freeLink`, values unchanged); `test/torture.mjs` gains the `mreg` lane (steady-state, whole-run window
 gate and retention half in the pinned child). (User code running with `this` = the internal node was fixed later, LEDGER #48: see the #48 entry above.)
 
+### Tests / Docs -- bench: inlining-budget-diff (dev tool, 2026-10-29)
+
+Dev-only (`bench/inlining-budget-diff.sh`, `npm run inline-budget-diff -- ...`; not shipped, never in `npm test` /
+`verify` except its `--self-test`). The deep companion of `bench/inline-diff.mjs`, which stays: the same multiset +
+null-control verdict (exit 0 SAME / 1 DIFF / 2 NO-VERDICT), plus each decision tagged with the compile unit it was
+made in, a TurboFan budget report (bytes charged per unit, candidates dropped for budget, a check of the model against
+V8's printed `Budget used`), bytecode lengths against the inlining limits, several `--fn` at once, and a git-ref mode
+(`--before-ref` / `--after-ref`). A git-tracked `--before` (or a symlink / hard link to one that the check can see; see the header) is refused; any unplanned failure exits
+2, never 1. Tests: `test/94` (the 31-check self-test on canned text, no V8 spawn, plus 12 must-fail mutants of the
+script). A byte-identical copy lives at the suite level in `LiteUtils/`.
+
 ### Tests / Docs -- soak: RECYCLE update op rsupd + T-RC-updgen (LEDGER #51 tooth, b137)
 
 Dev-only (`bench/soak/`, not shipped). No engine change in this unit: Signal.js stays sha256/8 ea0b64d1 (the b136 #51 fix).
