@@ -1,13 +1,15 @@
 // 91-l51-stale-update.test.mjs -- LEDGER #51 (burst 136, unit B1): sharedUpdate (signal s.update(fn); the resident may be a
-// computed) had no gen guard, so a STALE handle (slot disposed, possibly re-seated) called fn with the slot's CURRENT resident value (or
-// undefined for a dead slot / effect resident) and only THEN had the write dropped by set's gen guard.
+// computed) had no gen guard, so a STALE handle (slot disposed, possibly re-seated) called fn with the slot's CURRENT
+// resident value (or undefined for a dead slot / effect resident) and only THEN had the write dropped by set's gen
+// guard.
 // Ruling D-b135-1 (binding): a STALE handle's update(fn) returns undefined WITHOUT calling fn (like peek and boxUpdate).
 // INDEPENDENT ORACLE from PLAN-L51-b136 A1 / A3 / A4 + D-b135-1; no value is copied from a kernel run.
 // Slot reuse is PROVEN, not assumed: each scene runs in a registry whose maxNodes equals the live node count, so a
-// re-seated node can only land in the one freed slot (asserted: activeNodes === cap and one more create throws CapacityError).
+// re-seated node can only land in the one freed slot (asserted: activeNodes === cap and one more create throws
+// CapacityError).
 // RED-CHECK: R1-R6 and C6 are RED on the pre-fix build (HEAD aa154b6, Signal.js sha256/8 ec6d7156) and GREEN after the
-// one-line guard. C1-C5, A3 and A4 rows are GREEN on both builds (C4 and C2/C3/C5 are regression pins; the A3 transient control
-// and the A4 keep-alive control are the must-fail rows of their families).
+// one-line guard. C1-C5, A3 and A4 rows are GREEN on both builds (C4 and C2/C3/C5 are regression pins; the A3 transient
+// control and the A4 keep-alive control are the must-fail rows of their families).
 // Kernel: LITE_SIGNAL_KERNEL (absolute path), default ../Signal.js. GC rows need --expose-gc (else SKIP).
 // MIT (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
 import { describe, it } from 'node:test';

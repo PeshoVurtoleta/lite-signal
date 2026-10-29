@@ -117,8 +117,8 @@ Dev-only (`bench/soak/`, not shipped). No engine change in this unit: Signal.js 
 
 Dev-only (`bench/`, not shipped). No engine change: Signal.js sha256/8 ec6d7156 unchanged.
 - `bench/torture/scheduler-bench.mjs` retired 2026-10-29 (authority ruling S3-D4): delisted from `run.mjs`, its npm
-  script removed from `bench/package.json`, the file moved to the gitignored `archived/` (source: `git show
-  f2c2d45:bench/torture/scheduler-bench.mjs`). Absorbed by the soak SCHEDULER lane; coverage table and accepted loss in
+  script removed from `bench/package.json`, the file moved to the gitignored `archived/`
+  (source: `git show f2c2d45:bench/torture/scheduler-bench.mjs`). Absorbed by the soak SCHEDULER lane; coverage table and accepted loss in
   `decisions/0001-soak-design.md` section 16, RETIRED block in `bench/torture/MANIFEST.txt`.
 - The torture suite is now 24 scenarios (23 semantic + 1 opt-in soak, `wraparound-torture`). `npm run torture:soak` runs
   0 scenarios by default ("0 passed, 1 skipped, 0 failed", exit 0).

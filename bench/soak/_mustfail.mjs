@@ -888,6 +888,7 @@ export const CONTROLS = deepFreeze([
     // stderr BREACH line (judgeMain presence, not the first head). b130 B2b census, 200 worlds per mutant
     // (.handoff/b130-evidence/census/fix1/mut-<id>.txt): O9 stale-write / stale-read / stale-dispose present 200 / 200 in
     // its own row. Measured heads of THESE rows (MUSTFAIL_HEADS=1, 3 runs): .handoff/b130-evidence/b5/heads-{1,2,3}.txt.
+    // b137 heads on ea0b64d1 (Signal.js sha256/8): .handoff/b137-evidence/b4/rows-live.txt
     // setgen: a stale signal handle's set lands on the recycled resident: O9 stale-write.
     M('T-RC-setgen', 'tree', RC_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=RECYCLE sig=stale-write known=none'],

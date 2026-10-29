@@ -585,14 +585,14 @@ The harness is intentionally small (under 400 lines) and intentionally portable 
 
 ### Semantic torture (`oracle-fuzzer`, `glitch-hunter`, `work-accounting`)
 
-The retired soaks shared a single oracle: nothing threw, and the pool came back to
-baseline. Both are liveness questions. Neither reads a value and asks whether it
-is *right* -- so an engine that returns stale values from every computed passed
-all three soaks of the time green.
+The retired soaks shared a single oracle: nothing threw, and the pool came back
+to baseline. Both are liveness questions. Neither reads a value and asks whether
+it is *right* -- so an engine that returns stale values from every computed
+passed all three soaks of the time green.
 
 That is not hypothetical. Flipping the clean short-circuit in `pullComputed`
 from `<= 0` to `<= 1` -- a one-character off-by-one of exactly the kind a perf
-tweak makes -- throws nothing, keeps the pool perfectly balanced, and is
+tweak makes -- throws nothing, keeps the pool perfectly balanced, and was
 invisible to all three soaks of the time (`graph-fuzzer`, `scheduler-bench`,
 `torture-soak`; all three since retired). The unit suite catches it, but only on small
 hand-written graphs; the soaks were the only thing exploring large random

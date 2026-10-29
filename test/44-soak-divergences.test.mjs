@@ -1052,9 +1052,10 @@ test('b126 B4: DIV-48 entry (every key, file order): fix #48, fixedIn b120-#48 (
     const r = fresh();
     const e = r.entries.find((x) => x.id === D48);
     assert.ok(e !== undefined, 'DIV-48 exists');
-    // b137: DIV-51 (fixed b136-#51) is the next engine rung, appended after DIV-48
-    assert.equal(r.entries[r.entries.length - 1].id, 'DIV-51', 'an engine rung APPENDS its entry at the end');
-    assert.equal(r.entries[r.entries.length - 2].id, D48);
+    // b137: DIV-51 (fixed b136-#51) is the next engine rung, appended after DIV-48; the next engine rung appends after
+    // DIV-51 without editing this row
+    assert.equal(r.entries[r.entries.findIndex((x) => x.id === D48) + 1].id, 'DIV-51',
+        'DIV-51 (the next engine rung) follows DIV-48');
     assert.deepEqual(e, {"id":"DIV-48","kind":"fix","finding":"#48","since":"1.5.2","fixedIn":"b120-#48","fixBy":"b120","decision":"fix (LEDGER #48, maintainer D-b124-1 / R3 Q1 = A): every onCleanup function runs with this === undefined. fixed: fixedIn b120-#48 (699b9ef, Signal.js 2f7974f3 -> ec6d7156, bursts 120-121 rung #48: runOwnCleanup calls through a local, const fn = cleanup[i]; fn();). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. headpatched or rev152); on the tree a callback-this shape is a regression (known=none)","engines":["lite"],"lanes":["OWNER"],"oracles":["OW"],"sigs":["callback-this"],"ops":[],"scen":[],"worldScen":["cleanup-fifo"],"priorScen":[],"shapes":[{"pair":"OW:callback-this","detail":"^cleanup #\\d+ k=\\d+ this=array\\((?:[2-9]|[1-9]\\d+)\\)$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"Before #48, an owner that registered 2+ cleanups in one run called each of them (the first included) as a method of the internal cleanup array: this = the FULL array, length = the number of cleanups, on dispose AND on re-run; a single cleanup ran with this === undefined (b125 R3 kernel truth, controls headpatched fa2871f0 and rev152 f8dd50f8). S3 OWNER lane (R3): OW callback-this on a cleanup callback with this=array(N), N >= 2, in a world that carries cleanup-fifo (b126 B4 census: every failing OWNER world on both controls). Still NOT matched: this=array(0) or array(1), a this that is an object, a number or any other typeof, a createRoot or runWithOwner callback, any OW cleanup-order fail, and the shape in a world without cleanup-fifo."});
     assert.match(e.decision, /fixedIn b120-#48 \(699b9ef, Signal\.js 2f7974f3 -> ec6d7156,/);
     assert.ok(ROSTER.indexOf('OWNER') !== -1, 'OWNER is rostered');

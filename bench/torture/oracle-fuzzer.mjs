@@ -7,10 +7,10 @@
  * returns stale values from every computed passes all three green. That is not
  * hypothetical: flipping the clean short-circuit in `pullComputed` from `<= 0`
  * to `<= 1` (a one-character off-by-one, exactly the kind of edit a perf tweak
- * makes) keeps the pool perfectly balanced, throws nothing, and is invisible to
+ * makes) keeps the pool perfectly balanced, throws nothing, and was invisible to
  * graph-fuzzer, scheduler-bench and torture-soak alike (all three since retired
- * into bench/soak). The unit suite catches
- * it — but only on small hand-written graphs.
+ * into bench/soak). The unit suite catches it -- but only on small hand-written
+ * graphs.
  *
  * This file closes that gap: it drives a random DAG and compares EVERY computed
  * against an independent reference model that recomputes from the leaves with no
