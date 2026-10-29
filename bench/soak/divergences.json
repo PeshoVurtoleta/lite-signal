@@ -97,11 +97,16 @@
     },
     {
       "id": "DIV-F10", "kind": "fix", "finding": "F10", "since": "1.5.2", "fixedIn": null, "fixBy": "A6",
-      "decision": "contract D2 (DIV-D2-destroy-throws) replaces FIX-D's clamp",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
-      "pending": "S3 REGISTRY lane (G9 keeps destroy() out of S1)",
+      "decision": "contract D2 (DIV-D2-destroy-throws) replaces FIX-D's clamp; A6 fills DIV-D2-destroy-throws.expectedThrow (lanes/registry.mjs predicts it through oracles.mjs expectFromThrow; null = the O6 (v) never entry)",
+      "engines": ["lite"], "lanes": ["REGISTRY"], "oracles": ["O6"], "sigs": ["expected-escape-missing", "escape-TypeError"], "ops": ["rdestroy"], "scen": ["destroy-in-flight"], "worldScen": [], "priorScen": [],
+      "shapes": [
+        { "pair": "O6:expected-escape-missing", "detail": "^predicted expectedThrow did not happen$" },
+        { "pair": "O6:escape-TypeError", "detail": "^engine error escaped: TypeError: Cannot read properties of undefined \\(reading 'flags'\\)$", "with": ["O6:expected-escape-missing"], "scen": ["destroy-in-body"] },
+        { "pair": "O6:escape-TypeError", "detail": "^engine error escaped: TypeError: Cannot read properties of undefined \\(reading 'flags'\\)$", "with": ["O6:expected-escape-missing"], "scen": ["destroy-in-computed"] }
+      ],
+      "attribution": null, "pending": null,
       "conformanceCases": [], "expectedThrow": null,
-      "description": "destroy() inside batch() drives batchDepth to -1 and set() never flushes again."
+      "description": "destroy() inside batch() drives batchDepth to -1 and set() never flushes again. S3 REGISTRY lane (R5, b139; G9 keeps destroy() out of every other lane): each in-flight rdestroy (batch / body / computed) predicts DIV-D2-destroy-throws.expectedThrow, null until A6 (the never entry), so a destroy() that returns is O6 expected-escape-missing. CO-SHAPE (D-b139-3, LEDGER #52): destroy() in an effect or computed body with another effect queued in the same flush throws an engine TypeError (tree Signal.js flushEffects reads .flags of a cleared queue slot), O6 escape-TypeError WITH expected-escape-missing, body / computed only, never batch. B1a census (200 tree worlds, full drain): 6 shapes, all of them these. Still NOT matched: an escape-TypeError alone or on a batch destroy, any other TypeError message (the frozen headpatched / rev152 read .scheduler; REGISTRY is cut on tree only), any O1 / O2 / O4 / O5 co-fail, and any top-level rdestroy fail."
     },
     {
       "id": "DIV-F11", "kind": "fix", "finding": "F11", "since": "1.5.2", "fixedIn": null, "fixBy": "A10/A7",
@@ -182,7 +187,7 @@
       "id": "DIV-D2-destroy-throws", "kind": "contract", "finding": "F10", "since": "1.6.0", "fixedIn": null, "fixBy": "A6",
       "decision": "D2: destroy() inside batch, flush or any body throws (fail closed); expectedThrow is filled in by the A6 coder",
       "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
-      "pending": "S3 REGISTRY lane, O6 (v) expectedThrow",
+      "pending": "A6 fills expectedThrow (the S3 REGISTRY lane reads it once: lanes/registry.mjs REG_EXPECT = expectFromThrow(expectedThrow); null = the O6 (v) never entry, explained by DIV-F10)",
       "conformanceCases": [], "expectedThrow": null,
       "description": "Flips llms.txt 'Safe to call mid-flight' and test/12-coverage's mid-flush destroy pin (PLAN-1.6.0 D2)."
     },

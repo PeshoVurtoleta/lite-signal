@@ -164,7 +164,11 @@ class Exec {
         this.caps = adapter.caps;
         this.script = script;
         this.opts = opts;
-        this.W = adapter.open({ maxFlushPasses: script.flushPasses });
+        // G12 (CAPACITY, lanes/capacity.mjs): the script's capacity cfg goes to open() only when the script carries the
+        // key; every other script opens with the exact same { maxFlushPasses } object as before
+        this.W = script.capacity !== undefined
+            ? adapter.open({ maxFlushPasses: script.flushPasses, capacity: script.capacity })
+            : adapter.open({ maxFlushPasses: script.flushPasses });
         this.M = new Model(adapter.caps);
         this.H = [];
         this.RH = [];
@@ -200,6 +204,10 @@ class Exec {
         // reads exactly 7 members (the header's contract): calls sc.onBody(i, depth) per runBody, reads sc.pend /
         // sc.st.susp at rest, calls sc.close() after W.close(), then scClosed() reads sc.size / sc.ringT / sc.x
         this.sc = null;
+        // REGISTRY (S3 R5): the expect[] list (oracles.mjs expectFromThrow) of the NEXT guard only. lanes/registry.mjs sets
+        // it right before the guarded in-flight destroy; guard() takes it into g.expect and resets it to null at entry, so
+        // no nested guard (a body write) and no later op ever sees it. null = EXPECT_CYCLE / EXPECT_NONE as before
+        this.regExpect = null;
     }
 
     /** Count one performed check / one taint skip (capped: never leaves Smi range). */
@@ -306,7 +314,8 @@ class Exec {
     /* ---- guarded calls (O6) ---------------------------------------------------------------------- */
 
     guard(fn, cycle) {
-        const g = { base: this.frames.length, thrown: [], eq: [], batchTok: null, cycle: cycle === true };
+        const g = { base: this.frames.length, thrown: [], eq: [], batchTok: null, cycle: cycle === true, expect: this.regExpect };
+        this.regExpect = null;
         this.guards.push(g);
         let esc = NONE;
         try { fn(g); } catch (e) { esc = e; }
@@ -324,7 +333,7 @@ class Exec {
         // LOSES it (F22) and fails here as expected-escape-missing. No allowance.
         if (g.batchTok !== null) pred.push(g.batchTok);
         for (const t of g.eq) pred.push(t);
-        for (const f of O.checkEscape(pred, got, g.cycle ? O.EXPECT_CYCLE : O.EXPECT_NONE)) this.failF(f);
+        for (const f of O.checkEscape(pred, got, g.expect !== null ? g.expect : g.cycle ? O.EXPECT_CYCLE : O.EXPECT_NONE)) this.failF(f);
         if (g.batchTok !== null) for (const leaf of got) if (leaf.token === g.batchTok) { this.gateHits.batchTokenEscaped++; break; }
         this.D.onEscape(g, got);
         return esc;

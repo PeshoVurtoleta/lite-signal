@@ -377,8 +377,8 @@ describe('R4c delta (vi): fifo-delivery / lifo-delivery under each policy (D2 + 
         for (let s = 1; s <= 64; s++) { const p = policyOf(s); assert.ok(p === 0 || p === 1 || p === 2); seen.add(p); }
         assert.equal(seen.size, 3);
     });
-    it('SCENARIOS: 66 names, fifo-delivery and lifo-delivery directly after hold-retry (D4)', () => {
-        assert.equal(SCENARIOS.length, 66);
+    it('SCENARIOS: 77 names (R5: + 11), fifo-delivery and lifo-delivery directly after hold-retry (D4)', () => {
+        assert.equal(SCENARIOS.length, 77);
         const k = SCENARIOS.indexOf('hold-retry');
         assert.ok(k >= 0);
         assert.equal(SCENARIOS[k + 1], 'fifo-delivery');

@@ -79,6 +79,9 @@ export const PARITY_FILES = Object.freeze([
     'bench/soak/lanes/recycle.mjs',
     // R4c (b134 B3): the SCHEDULER lane decides its scripts, O9 stale-thunk / O4 delivery checks and coverage
     'bench/soak/lanes/scheduler.mjs',
+    // R5 (b139 B2): the REGISTRY lane decides its rdestroy scripts, O6 (v) predictions and coverage; the CAPACITY lane
+    // its cedge scripts, per-world capacity cfg, O6 cap-edge predictions and coverage
+    'bench/soak/lanes/registry.mjs', 'bench/soak/lanes/capacity.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

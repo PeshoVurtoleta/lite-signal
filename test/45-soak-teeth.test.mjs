@@ -23,12 +23,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, symlinkSync, unlinkSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { universe, CHECKS, GAPS, UNREACHABLE, TEST_ANCHORS, NOT_TEETH, audit, controlMatches } from '../bench/soak/teeth.mjs';
-import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, LONG_RE, SHORT_RE, wrapJudge, BASES, verifyControls, LC_ITER_PATCH } from '../bench/soak/_mustfail.mjs';
+import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, buildSoakPatches, runControl, LONG_RE, SHORT_RE, wrapJudge, BASES, verifyControls, LC_ITER_PATCH } from '../bench/soak/_mustfail.mjs';
 import { GATES, oracleFamily, INCONCLUSIVE_CAUSES } from '../bench/soak/gates.mjs';
 import { GATE_N, WARMUP_CYCLES, MIN_ACTIVE_CYCLES } from '../bench/soak/config.mjs';
 import { SIGS } from '../bench/soak/oracles.mjs';
@@ -60,9 +61,10 @@ const GAP_COVERED = [
 // sig:O8:ghost-listener, sig:O8:mirror-links; 47 at burst 112: lane:LIFECYCLE, oracle:O7 and the five sig:O7:* ids;
 // 53 at burst 127 B5: lane:OWNER, oracle:OW, sig:OW:cleanup-order, sig:OW:callback-this, and (A6) sig:O5:node-count,
 // sig:O5:kind-count; 58 at burst 130 B5: lane:RECYCLE, oracle:O9, sig:O9:stale-write, sig:O9:stale-read,
-// sig:O9:stale-dispose; 60 at burst 134 B5: lane:SCHEDULER, sig:O9:stale-thunk).
+// sig:O9:stale-dispose; 60 at burst 134 B5: lane:SCHEDULER, sig:O9:stale-thunk; 62 at burst 140 B2b: lane:REGISTRY,
+// lane:CAPACITY).
 // A dropped id is a lost tooth; raise it when one lands.
-const CHECKS_MIN = 60;
+const CHECKS_MIN = 62;
 
 const copy = (x) => structuredClone(x);
 const live = (over) => audit(Object.assign({ controls: CONTROL_NAMES.slice(), ceiling: GAPS_CEILING.slice(), max: GAPS_MAX }, over || {}));
@@ -81,7 +83,7 @@ test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 22-n
     assert.deepEqual(live(), []);
 });
 
-test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 60 ids (a tooth never quietly becomes a gap)', () => {
+test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 62 ids (a tooth never quietly becomes a gap)', () => {
     assert.equal(GAP_COVERED.length, 9);
     assert.deepEqual(coveredBy(GAPS), GAP_COVERED.slice().sort());
     assert.ok(Object.keys(CHECKS).length >= CHECKS_MIN, 'CHECKS ids ' + Object.keys(CHECKS).length + ' < ' + CHECKS_MIN);
@@ -695,7 +697,7 @@ test('teeth j: B5 -- validSpec: extra.pass is wrap-only, a non-empty list of dis
 });
 
 test('teeth j: B5 -- audit(): every _mustfail control is under some CHECKS id or in NOT_TEETH (orphan control: <name>)', () => {
-    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP']);
+    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP', 'P-CAP-TREE']);
     assert.ok(CHECKS['cause:scenario'].includes('P-HOOK-TREE-COVOFF'), 'the b93 HOOK cov-off scenario control is a cause:scenario tooth');
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']) }), ['orphan control: X-orphan']);
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']), notTeeth: Object.assign({}, NOT_TEETH, { 'X-orphan': 'a reason' }) }), []);
@@ -1232,4 +1234,202 @@ test('teeth s: the SCHEDULER ids have teeth -- P-SC-TREE, P-SC-HP, T-cov-SCHEDUL
     const nt = Object.assign({}, NOT_TEETH);
     delete nt['P-SC-HP'];
     hasProblem(live({ notTeeth: nt }), 'orphan control: P-SC-HP');
+});
+
+/* ---- t. the REGISTRY + CAPACITY teeth (b140 B2b, PLAN-R5 REGISTRY TASK 4 / CAPACITY TASK 5; D-b140-1 soakPatch) ---- */
+
+const REG = (o, sig) => 'oracle=' + o + ' lane=REGISTRY sig=' + sig + ' known=none';
+const CAP = (o, sig) => 'oracle=' + o + ' lane=CAPACITY sig=' + sig + ' known=none';
+const REG_ENV = { SOAK_LANES: 'REGISTRY' };
+const REG_COV_ENV = { SOAK_LANES: 'REGISTRY', SOAK_MUSTFAIL: 'cov-off:destroy-in-flight' };
+// A-R3: the in-flight scenario ids P-REGISTRY-TRIGGERLESS prints missing, exactly (MEASURED b140 r1 fix --smoke, .handoff/b140-evidence/fix1/triggerless.stderr)
+const REG_COV_LINES = ['destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed'].map((s) => 'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=' + s);
+const CAP_ENV = { SOAK_LANES: 'CAPACITY' };
+const CAP_COV_ENV = { SOAK_LANES: 'CAPACITY', SOAK_MUSTFAIL: 'cov-off:link-ceiling-grow' };
+const CAP_COV_LINE = 'soak: INCONCLUSIVE -- scenario lane=CAPACITY missing=link-ceiling-grow';
+// [name, env, the soakPatch find in bench/soak/lanes/registry.mjs, its replacement (the b139 B1a mutant-T-REG-*.json edit), specs]
+const REG_ROWS = [
+    ['T-REG-expectnone', REG_ENV, 'export const REG_EXPECT = expectFromThrow(d2Row().expectedThrow);\n',
+        'export const REG_EXPECT = Object.freeze([]); d2Row(); expectFromThrow(null);   // MUTANT T-REG-expectnone: EXPECT_NONE for in-flight destroys\n',
+        [REG('O6', 'escape-TypeError')]],
+    ['T-REG-destroyall', REG_COV_ENV, '    x.M.destroyAll();\n    st.destroyed++;\n',
+        '    st.destroyed++;   // MUTANT T-REG-destroyall: model.destroyAll() skipped\n', [REG('O5', 'node-count')]],
+];
+// [name, the anchor in the live Signal.js, the replacement (b139 B1b mkmut.mjs), specs, kernel sha256/8 on ROWS_BASE8]
+// (each kernel byte-equal to .handoff/b139-evidence/b1b/mut/<name>/Signal.js, b140 B2b)
+const CAP_ROWS = [
+    ['T-cap-node', 'policy === "throw" && nodePool.length >= currentNodesCapacity', 'policy === "throw" && nodePool.length > currentNodesCapacity',
+        [CAP('O6', 'expected-escape-missing')], '41adb908'],
+    ['T-cap-link', 'policy === "throw" && linkPool.length >= currentLinkCapacity', 'policy === "throw" && linkPool.length > currentLinkCapacity',
+        [CAP('O6', 'expected-escape-missing')], 'de93ed07'],
+    ['T-cap-ceiling', 'const maxLinkLimit = currentLinkCapacity * 16;', 'const maxLinkLimit = currentLinkCapacity * 17;',
+        [CAP('O6', 'expected-escape-missing')], '0654fa09'],
+    ['T-cap-residue', '        link.nextFree = freeLinkHead;\n        freeLinkHead = link;\n        activeLinks = (activeLinks - 1) | 0;\n',
+        '        // MUTANT T-cap-residue: link not freed (not pooled, activeLinks not decremented)\n', [CAP('O5', 'link-count')], '97048858'],
+];
+const shape = (c) => [c.run, c.base, c.env, c.argv, c.patches, c.arm, c.expect.exit, c.expect.kind, c.expect.lines, c.expect.specs];
+
+test('teeth t: the REGISTRY + CAPACITY ids have teeth -- L-REGISTRY-F10, two soakPatch T-REG-* rows, four T-cap-* tree mutants', () => {
+    const NEW = ['lane:REGISTRY', 'lane:CAPACITY'];
+    const u = universe();
+    for (const id of NEW) {
+        assert.ok(u.includes(id), id + ' is a judged id');
+        assert.ok(Array.isArray(CHECKS[id]) && CHECKS[id].length >= 1, id + ' has a CHECKS control');
+    }
+    assert.deepEqual(CHECKS['lane:REGISTRY'], ['L-REGISTRY-F10'].concat(REG_ROWS.map((r) => r[0])));
+    assert.deepEqual(CHECKS['lane:CAPACITY'], CAP_ROWS.map((r) => r[0]));
+    for (const n of ['P-REGISTRY-TRIGGERLESS', 'T-cov-CAPACITY']) assert.ok(CHECKS['cause:scenario'].includes(n), 'cause:scenario -> ' + n);
+    assert.equal(typeof NOT_TEETH['P-CAP-TREE'], 'string');
+    const get = (n) => { const c = CONTROLS.find((x) => x.name === n); assert.ok(c, n + ' exists'); assert.deepEqual(validSpec(c), [], n); return c; };
+    // A-R3: the triggerless row (the revert of both T-REG-* rows): exit 3, 0 BREACH, the three in-flight ids missing
+    const pr = get('P-REGISTRY-TRIGGERLESS');
+    assert.ok(SHORT_RE.test(pr.name) && !own(pr, 'soakPatch'));
+    assert.deepEqual(shape(pr), ['main', 'tree', REG_COV_ENV, ['--smoke'], [], null, 3, 'nobreach', REG_COV_LINES, ['INCONCLUSIVE scenario lane=REGISTRY missing=destroy-in-flight']]);
+    // A-R4: the red-explained long row, the control budget, explained by DIV-F10 only
+    const lf = get('L-REGISTRY-F10');
+    assert.ok(LONG_RE.test(lf.name));
+    assert.deepEqual(shape(lf).concat([lf.expect.known]), ['main', 'tree', { SOAK_LANES: 'REGISTRY', SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: '100000' }, [], [], null,
+        1, 'explained', [], ['oracle=O6 lane=REGISTRY sig=expected-escape-missing'], ['DIV-F10']]);
+    // A-C2: the CAPACITY pass control and the coverage row
+    const pc = get('P-CAP-TREE');
+    assert.deepEqual(shape(pc).concat([pc.expect.extra]), ['main', 'tree', CAP_ENV, ['--smoke'], [], null, 0, 'nobreach', [], [], { verdict: 'SMOKE' }]);
+    const tc = get('T-cov-CAPACITY');
+    assert.deepEqual(shape(tc), ['main', 'tree', CAP_COV_ENV, ['--smoke'], [], null, 3, 'nobreach', [CAP_COV_LINE], ['INCONCLUSIVE scenario lane=CAPACITY missing=link-ceiling-grow']]);
+    // T-REG-*: no kernel patch; ONE soakPatch edit, its find exactly once in the live harness file, the built file = that one hunk
+    assert.deepEqual(CONTROLS.filter((x) => x.name.indexOf('T-REG-') === 0).map((x) => x.name), REG_ROWS.map((r) => r[0]), 'REG_ROWS names every T-REG-* row, in order');
+    const regSrc = readFileSync(join(ROOT, 'bench', 'soak', 'lanes', 'registry.mjs'), 'utf8');
+    for (const [name, env, find, replace, specs] of REG_ROWS) {
+        const c = get(name);
+        assert.ok(SHORT_RE.test(name));
+        assert.deepEqual(shape(c), ['main', 'tree', env, ['--smoke'], [], null, 1, 'match', [], specs], name);
+        assert.deepEqual(c.soakPatch, [{ file: 'lanes/registry.mjs', find, replace }], name);
+        assert.equal(regSrc.split(find).length - 1, 1, name + ': the find occurs exactly once in lanes/registry.mjs');
+        const b = buildSoakPatches(c);
+        assert.equal(b.length, 1, name);
+        assert.equal(b[0].file, 'lanes/registry.mjs');
+        assert.equal(b[0].src, regSrc.replace(find, () => replace), name + ': the copy = registry.mjs with exactly that hunk replaced');
+        assert.equal(buildKernel(c).src, rowsBase(), name + ': the kernel is the unpatched tree');
+    }
+    // T-cap-*: one exactly-once Signal.js hunk each (the b1b mkmut.mjs mutants), P-CAP-TREE's shape, kernel sha pinned
+    assert.deepEqual(CONTROLS.filter((x) => x.name.indexOf('T-cap-') === 0).map((x) => x.name), CAP_ROWS.map((r) => r[0]), 'CAP_ROWS names every T-cap-* row, in order');
+    const base = rowsBase();
+    for (const [name, anchor, repl, specs, sha] of CAP_ROWS) {
+        const c = get(name);
+        assert.ok(SHORT_RE.test(name) && !own(c, 'soakPatch'));
+        assert.deepEqual(shape(c), ['main', 'tree', CAP_ENV, ['--smoke'], [[anchor, repl]], null, 1, 'match', [], specs], name);
+        assert.equal(base.split(anchor).length - 1, 1, name + ': the anchor occurs exactly once in Signal.js');
+        const k = buildKernel(c).src;
+        assert.equal(k, base.replace(anchor, () => repl), name);
+        assert.equal(createHash('sha256').update(k).digest('hex').slice(0, 8), sha, name + ': kernel sha256/8 (on ' + ROWS_BASE8 + ')');
+    }
+    assert.deepEqual(pairing(CHECKS, CONTROLS), []);
+    // must-fail: a lane=RECYCLE spec does not back lane:CAPACITY; an L-REGISTRY-F10 spec on another lane does not back lane:REGISTRY
+    const ctl = copy(CONTROLS);
+    ctl.find((x) => x.name === 'T-cap-node').expect.specs = ['oracle=O6 lane=RECYCLE sig=expected-escape-missing known=none'];
+    assert.deepEqual(pairing(CHECKS, ctl), ['lane:CAPACITY: T-cap-node -- no BREACH spec naming lane=CAPACITY']);
+    const ctl2 = copy(CONTROLS);
+    ctl2.find((x) => x.name === 'L-REGISTRY-F10').expect.specs = ['oracle=O6 lane=ERROR sig=expected-escape-missing'];
+    assert.deepEqual(pairing(CHECKS, ctl2), ['lane:REGISTRY: L-REGISTRY-F10 -- no BREACH spec naming lane=REGISTRY']);
+    // must-fail: a row dropped from CHECKS is an orphan; P-CAP-TREE out of NOT_TEETH is an orphan; both lane ids uncovered
+    const c1 = copy(CHECKS);
+    for (const id of Object.keys(c1)) c1[id] = c1[id].filter((n) => n !== 'T-REG-destroyall');
+    hasProblem(live({ checks: c1 }), 'orphan control: T-REG-destroyall');
+    const nt = Object.assign({}, NOT_TEETH);
+    delete nt['P-CAP-TREE'];
+    hasProblem(live({ notTeeth: nt }), 'orphan control: P-CAP-TREE');
+    const c2 = copy(CHECKS);
+    for (const id of NEW) delete c2[id];
+    const probs = live({ checks: c2 });
+    for (const id of NEW) hasProblem(probs, 'uncovered: ' + id + ' has no CHECKS control, no GAP and no UNREACHABLE proof');
+});
+
+/** A copy of T-REG-destroyall with its soakPatch replaced by f(the live soakPatch). */
+const spRow = (f) => { const c = copy(CONTROLS.find((x) => x.name === 'T-REG-destroyall')); c.soakPatch = f(c.soakPatch); return c; };
+
+test('teeth t: soakPatch (D-b140-1) -- validSpec refuses every malformed shape; a stale find is a staleAnchors entry and a build throw', () => {
+    const ok = spRow((s) => s);
+    assert.deepEqual(validSpec(ok), []);
+    assert.deepEqual(staleAnchors([ok]), []);
+    const S = ok.soakPatch[0];
+    const SP = /^soakPatch/;
+    const bad = [
+        ['present but undefined', (c) => { c.soakPatch = undefined; }, 'soakPatch must be a non-empty array of {file, find, replace}'],
+        ['not an array', (c) => { c.soakPatch = S; }, 'soakPatch must be a non-empty array of {file, find, replace}'],
+        ['empty', (c) => { c.soakPatch = []; }, 'soakPatch must be a non-empty array of {file, find, replace}'],
+        ['null entry', (c) => { c.soakPatch = [null]; }, 'soakPatch[0] must be a plain {file, find, replace} object'],
+        ['array entry', (c) => { c.soakPatch = [[S.file, S.find, S.replace]]; }, 'soakPatch[0] must be a plain {file, find, replace} object'],
+        ['class instance', (c) => { c.soakPatch = [Object.assign(new (class X {})(), S)]; }, 'soakPatch[0] must be a plain {file, find, replace} object'],
+        ['missing replace', (c) => { c.soakPatch = [{ file: S.file, find: S.find }]; }, 'soakPatch[0] missing key replace'],
+        ['missing file', (c) => { c.soakPatch = [{ find: S.find, replace: S.replace }]; }, 'soakPatch[0] missing key file'],
+        ['unknown key', (c) => { c.soakPatch = [Object.assign({ fin: 1 }, S)]; }, 'soakPatch[0] unknown key fin'],
+        ['symbol key', (c) => { c.soakPatch = [Object.assign({ [Symbol('k')]: 1 }, S)]; }, 'soakPatch[0] unknown key Symbol(k)'],
+        ['empty find', (c) => { c.soakPatch = [Object.assign({}, S, { find: '' })]; }, 'soakPatch[0].find must be a non-empty string'],
+        ['non-string find', (c) => { c.soakPatch = [Object.assign({}, S, { find: 7 })]; }, 'soakPatch[0].find must be a non-empty string'],
+        ['non-string replace', (c) => { c.soakPatch = [Object.assign({}, S, { replace: null })]; }, 'soakPatch[0].replace must be a string'],
+        ['empty file', (c) => { c.soakPatch = [Object.assign({}, S, { file: '' })]; }, 'soakPatch[0].file must be a non-empty string'],
+        ['second entry bad', (c) => { c.soakPatch = [S, Object.assign({}, S, { replace: 1 })]; }, 'soakPatch[1].replace must be a string'],
+        ['on a cfg control', (c) => { c.run = 'cfg'; }, 'soakPatch belongs to run main'],
+        ['on a wrap control', (c) => { c.run = 'wrap'; }, 'soakPatch belongs to run main'],
+    ];
+    for (const f of ['/etc/passwd', '../main.mjs', 'lanes/../../Signal.js', './main.mjs', 'lanes//registry.mjs', 'lanes\\registry.mjs', 'out/x.mjs', 'lanes/registry.mjs/', '..']) {
+        bad.push(['file ' + f, (c) => { c.soakPatch = [Object.assign({}, S, { file: f })]; }, 'soakPatch[0].file ' + JSON.stringify(f) + ' escapes bench/soak (a relative path inside it, not out/)']);
+    }
+    for (const [label, mut, want] of bad) {
+        const c = copy(ok);
+        mut(c);
+        const p = validSpec(c);
+        assert.ok(p.includes(want), label + ': want ' + JSON.stringify(want) + ' in ' + JSON.stringify(p));
+        assert.throws(() => buildSoakPatches(c), /^Error: soakPatch malformed: /, label);
+        assert.ok(staleAnchors([c]).length === 1 && SP.test(staleAnchors([c])[0].error), label + ': staleAnchors reports it');
+    }
+    // a find that matches 0 or 2 times, or a file that does not exist: staleAnchors names it, buildSoakPatches throws
+    const zero = spRow((s) => [Object.assign({}, s[0], { find: s[0].find + 'XYZ' })]);
+    const two = spRow((s) => [Object.assign({}, s[0], { find: 'export const ' })]);
+    const nofile = spRow((s) => [Object.assign({}, s[0], { file: 'lanes/nope.mjs' })]);
+    for (const c of [zero, two, nofile]) assert.deepEqual(validSpec(c), [], 'shape-valid: only the build can refuse it');
+    assert.deepEqual(staleAnchors([zero, two, nofile]).map((x) => x.error.replace(/: ".*$/, '')),
+        ['soakPatch lanes/registry.mjs: stale anchor: 0 matches', 'soakPatch lanes/registry.mjs: stale anchor: 2 matches', 'soakPatch lanes/nope.mjs: ENOENT']);
+    // b140 r1 fix B1: a file that resolves through a symlink (lanes/_sp-link.mjs -> a tmpdir file) is shape-valid but
+    // never built: buildSoakPatches throws, staleAnchors names it, runControl is INVALID (never spawned, nothing written)
+    const spDir = mkdtempSync(join(tmpdir(), 'litesignal-t45-splink-'));
+    const spOut = join(spDir, 'outside.mjs');
+    const spLink = join(ROOT, 'bench', 'soak', 'lanes', '_sp-link.mjs');
+    writeFileSync(spOut, 'TARGET LINE\n');
+    try {
+        symlinkSync(spOut, spLink);
+        const sl = spRow(() => [{ file: 'lanes/_sp-link.mjs', find: 'TARGET LINE\n', replace: 'PATCHED THROUGH SYMLINK\n' }]);
+        assert.deepEqual(validSpec(sl), [], 'shape-valid: only the build can refuse it');
+        assert.throws(() => buildSoakPatches(sl), /^Error: soakPatch lanes\/_sp-link\.mjs: resolves through a symlink$/);
+        assert.deepEqual(staleAnchors([sl]).map((x) => x.error), ['soakPatch lanes/_sp-link.mjs: resolves through a symlink']);
+        const sr = runControl(sl);
+        assert.deepEqual([sr.ok, sr.invalid, sr.status], [false, true, null]);
+        assert.match(sr.problems[0], /^INVALID soakPatch lanes\/_sp-link\.mjs: resolves through a symlink$/);
+        assert.equal(readFileSync(spOut, 'utf8'), 'TARGET LINE\n', 'the outside file is untouched');
+    } finally {
+        try { unlinkSync(spLink); } catch { /* never planted */ }
+        rmSync(spDir, { recursive: true, force: true });
+    }
+    // two edits of one file apply against the ORIGINAL text; overlapping finds throw
+    const both = spRow((s) => [s[0], { file: 'lanes/registry.mjs', find: REG_ROWS[0][2], replace: REG_ROWS[0][3] }]);
+    const regSrc = readFileSync(join(ROOT, 'bench', 'soak', 'lanes', 'registry.mjs'), 'utf8');
+    const bb = buildSoakPatches(both);
+    assert.equal(bb.length, 2);
+    assert.equal(bb[0].src, regSrc.replace(REG_ROWS[1][2], () => REG_ROWS[1][3]).replace(REG_ROWS[0][2], () => REG_ROWS[0][3]));
+    const ovl = spRow((s) => [s[0], { file: 'lanes/registry.mjs', find: '    st.destroyed++;\n', replace: '' }]);
+    assert.throws(() => buildSoakPatches(ovl), /overlapping anchors/);
+});
+
+test('teeth t: soakPatch runs -- a 0-match / 2-match find is INVALID (never spawned), a no-op edit MISSes, the real edit is KILLED', () => {
+    const inv = (c) => { const r = runControl(c); assert.equal(r.ok, false); assert.equal(r.invalid, true); assert.equal(r.status, null, 'never spawned'); return r.problems; };
+    assert.match(inv(spRow((s) => [Object.assign({}, s[0], { find: s[0].find + 'XYZ' })]))[0], /^INVALID soakPatch lanes\/registry\.mjs: stale anchor: 0 matches/);
+    assert.match(inv(spRow((s) => [Object.assign({}, s[0], { find: 'export const ' })]))[0], /^INVALID soakPatch lanes\/registry\.mjs: stale anchor: 2 matches/);
+    // the field can fail: the same row with replace === find runs the unmutated harness (P-REGISTRY-TRIGGERLESS): exit 3, MISS
+    const noop = runControl(spRow((s) => [Object.assign({}, s[0], { replace: s[0].find })]));
+    assert.equal(noop.ok, false);
+    assert.equal(noop.invalid, false);
+    assert.equal(noop.status, 3);
+    assert.ok(noop.problems.includes('no line matches spec [' + REG('O5', 'node-count') + ']'), JSON.stringify(noop.problems));
+    // and pass: the live row (the copy carries the edit) is KILLED
+    const real = runControl(CONTROLS.find((x) => x.name === 'T-REG-destroyall'));
+    assert.deepEqual([real.ok, real.invalid, real.status, real.problems], [true, false, 1, []]);
 });

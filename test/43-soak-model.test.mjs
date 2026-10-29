@@ -241,7 +241,7 @@ test('model: owner rule kills children recursively; a disposed handle reads unde
 /* -- 4. G0 determinism ---------------------------------------------------------------------------------- */
 
 test('G0: the script is a pure function of (lane, seed); distinct seeds differ', () => {
-    assert.deepEqual(ROSTER, ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER']);
+    assert.deepEqual(ROSTER, ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY']);
     for (const d of LANES) {
         for (const seed of [1, 0x9e3779b9, 0xdeadbeef]) {
             const a = scriptJson(generateWorld(d, seed, { steps: 120 }));

@@ -405,6 +405,21 @@ export class Model {
         return this.sinkSet(i, memo).size;
     }
 
+    /**
+     * REGISTRY (S3 R5, lanes/registry.mjs): registry.destroy() dropped every node and registration at once. Every live
+     * node dies (no cascade order, no cleanup fire, no taint: nothing stays live to read a dead node) and every
+     * registration goes off. Returns the number of nodes it killed (0 on a second call).
+     */
+    destroyAll() {
+        let n = 0;
+        for (let k = 0; k < this.n.length; k++) {
+            const nd = this.n[k];
+            if (nd !== undefined && nd.live) { nd.live = false; n++; }
+        }
+        for (let r = 0; r < this.regs.length; r++) if (this.regs[r] !== undefined) this.regs[r].live = false;
+        return n;
+    }
+
     addReg(r, target) {
         this.regs[r] = { r, target, live: true };
     }

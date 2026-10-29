@@ -100,6 +100,13 @@ export const LANE_KERNELS = Object.freeze({
     // SCHEDULER (R4c, b134 B3; D-b128-3 = PLAN-R4 M3): every kernel (the lane does not judge scheduler `this`; B2b
     // census x headpatched / lite-1.5.2 / tree, 0 BREACH); listed so tree cuts it; headpatched first (covOff)
     SCHEDULER: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
+    // REGISTRY (R5, b139 B2; D-b139-2 = LIFECYCLE's b111 precedent): tree only while DIV-F10 is open: every world
+    // fail-stops at its first in-flight rdestroy (red-explained DIV-F10, test/41 (f) exemption D-b139-1); cov-off
+    // destroy-in-flight (P-REGISTRY-TRIGGERLESS) is the clean control; ends with the A6 rung
+    REGISTRY: Object.freeze(['tree']),
+    // CAPACITY (R5, b139 B2; D-b139-2 = RECYCLE's precedent): tree only: B0-9 shows the same throw point and 0 pinned
+    // slots at rest on all 3 kernels, so more kernels lengthen the recut without changing a verdict; P-CAP-TREE passes
+    CAPACITY: Object.freeze(['tree']),
 });
 /** The kernel ids that cut `lane` (a fresh array). */
 export const kernelsFor = (lane) => (own(LANE_KERNELS, lane) ? LANE_KERNELS[lane].slice() : Object.keys(KERNELS));
@@ -171,6 +178,7 @@ export { PINNED };
 export const LANE_PINS = Object.freeze({
     WIE: 'bench/soak/lanes/wie.mjs', HOOK: 'bench/soak/lanes/hook.mjs', LIFECYCLE: 'bench/soak/lanes/lifecycle.mjs',
     OWNER: 'bench/soak/lanes/owner.mjs', RECYCLE: 'bench/soak/lanes/recycle.mjs', SCHEDULER: 'bench/soak/lanes/scheduler.mjs',
+    REGISTRY: 'bench/soak/lanes/registry.mjs', CAPACITY: 'bench/soak/lanes/capacity.mjs',
 });
 /** PINNED + the pins of the rostered lanes (roster order). */
 export const pinnedFor = (roster) => PINNED.concat(roster.filter((l) => own(LANE_PINS, l)).map((l) => LANE_PINS[l]));

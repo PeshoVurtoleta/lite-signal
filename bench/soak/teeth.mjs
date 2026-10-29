@@ -112,6 +112,14 @@ export const CHECKS = deepFreeze({
     // b134 B5 (PLAN-R4 R4c TASKS 6 + 7): the four T-SC-* tree mutants (the b131 R4c / b133 D6 kernels, SC_ENV --smoke),
     // each spec known=none; heads: .handoff/b134-evidence/b5/heads-{1,2,3}.txt. P-SC-TREE is their pass control / revert.
     'lane:SCHEDULER': ['T-SC-dropcall', 'T-SC-wedge', 'T-SC-thunkgen', 'T-SC-syncrun'],
+    // b140 B2b (PLAN-R5 REGISTRY TASK 4): L-REGISTRY-F10 (the tree lane, red-explained) heads `oracle=O6 lane=REGISTRY
+    // sig=expected-escape-missing known=DIV-F10`; the two harness mutants T-REG-expectnone (lanes/registry.mjs predicts
+    // EXPECT_NONE) and T-REG-destroyall (opDestroy skips model.destroyAll(), cov-off) head known=none
+    // (.handoff/b139-evidence/b2/). P-REGISTRY-TRIGGERLESS is their revert. T-A6 stays a GAP (no engine fix yet).
+    'lane:REGISTRY': ['L-REGISTRY-F10', 'T-REG-expectnone', 'T-REG-destroyall'],
+    // b140 B2b (PLAN-R5 CAPACITY TASK 5): the four T-cap-* tree mutants (b1b mkmut.mjs hunks, CAP_ENV --smoke), each spec
+    // known=none; P-CAP-TREE is their pass control / revert.
+    'lane:CAPACITY': ['T-cap-node', 'T-cap-link', 'T-cap-ceiling', 'T-cap-residue'],
     'gate:oracle': ['L-REV-152'],
     // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
     // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
@@ -185,7 +193,9 @@ export const CHECKS = deepFreeze({
     // (cov-off:stale-dispose-recycled), T-cov-OWNER's shape
     // b134 B5: T-cov-SCHEDULER (tree) prints `INCONCLUSIVE -- scenario lane=SCHEDULER missing=thunk-recycled`
     // (cov-off:thunk-recycled), T-cov-RECYCLE's shape
-    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'T-cov-LIFECYCLE', 'P-HOOK-TREE-COVOFF', 'T-cov-OWNER', 'P-OWNER-HP', 'T-cov-RECYCLE', 'T-cov-SCHEDULER']),
+    // b140 B2b: P-REGISTRY-TRIGGERLESS (tree, cov-off:destroy-in-flight) prints the in-flight scenario ids missing; T-cov-CAPACITY
+    // (tree, cov-off:link-ceiling-grow) prints `missing=link-ceiling-grow`
+    'cause:scenario': T_COV.concat(['P-NEST-TRIGGERLESS', 'T-cov-LIFECYCLE', 'P-HOOK-TREE-COVOFF', 'T-cov-OWNER', 'P-OWNER-HP', 'T-cov-RECYCLE', 'T-cov-SCHEDULER', 'P-REGISTRY-TRIGGERLESS', 'T-cov-CAPACITY']),
     'cause:check-floor': ['T-floor-BATCH'],
     // test/67 drives the same patch on live AND headpatched NEST and checks each line is inconclusiveLine('taint-skip')
     'cause:taint-skip': ['P-NEST-TAINT-HALF', TEST67],
@@ -302,6 +312,8 @@ export const NOT_TEETH = deepFreeze({
     // b134 B5 (PLAN-R4 R4c TASK 7; .handoff/b134-evidence/b5/heads-{1,2,3}.txt): the SCHEDULER pass controls
     'P-SC-TREE': 'the SCHEDULER pass control on the tree, the revert of every T-SC-* row incl. syncrun (' + MF + ' P-SC-TREE comment)',
     'P-SC-HP': 'the SCHEDULER pass control on headpatched (' + MF + ' P-SC-HP comment)',
+    // b140 B2b (PLAN-R5 CAPACITY TASK 5): the CAPACITY pass control
+    'P-CAP-TREE': 'the CAPACITY pass control on the tree, the revert of every T-cap-* row (' + MF + ' P-CAP-TREE comment)',
 });
 
 /** Does control `name` (or prefix pattern `X-*`) name something in `controls`? Returns the matches. */

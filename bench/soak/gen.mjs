@@ -22,8 +22,11 @@
  *   G6   GRAPH / BATCH / ERROR computeds read only non-disposable signals. NEST lifts it.
  *   G7   cycle-bomb only in ERROR (flushPasses 8), its effects stopped in the same op.
  *   G8   lifecycle registrations target live handles only.
- *   G9   no destroy() (REGISTRY is S3).
- *   G10  a world is a fresh registry (maxNodes 4096, grow).
+ *   G9   no destroy() outside the REGISTRY lane (lanes/registry.mjs owns rdestroy).
+ *   G10  a world is a fresh registry (maxNodes 4096, grow). Exception G12 (CAPACITY lane, lanes/capacity.mjs): the
+ *        lane seeds Gen.capacity { maxNodes, maxLinks, onCapacityExceeded }, the script carries it as `capacity`
+ *        (emitted after flushPasses, ONLY when non-null: no other lane's script has the key) and exec.mjs passes it
+ *        to open(); the lane keeps its core graph within maxNodes/2 - 2 live nodes and maxLinks/2 links.
  *   cov-off:<scenario>  switches off exactly the generator rule that can produce that scenario
  *        (lanes/<lane>.mjs covOff map); recorded in the header, never a release soak.
  *
@@ -54,6 +57,7 @@ export class Gen {
         this.covOff = opts && opts.covOff ? opts.covOff : null;
         this.large = false;
         this.flushPasses = null;
+        this.capacity = null;   // G12: the CAPACITY lane's registry cfg; null on every other lane (no script key)
         this.meta = [];   // gen-only facts per node (variant data for NEST outers)
     }
 
@@ -225,9 +229,15 @@ export class Gen {
     }
 
     script() {
+        if (this.capacity === null) {
+            return {
+                genVersion: GEN_VERSION, lane: this.desc.name, seed: this.seed, large: this.large, covOff: this.covOff,
+                flushPasses: this.flushPasses, ops: this.ops,
+            };
+        }
         return {
             genVersion: GEN_VERSION, lane: this.desc.name, seed: this.seed, large: this.large, covOff: this.covOff,
-            flushPasses: this.flushPasses, ops: this.ops,
+            flushPasses: this.flushPasses, capacity: this.capacity, ops: this.ops,
         };
     }
 }
