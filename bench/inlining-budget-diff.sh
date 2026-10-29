@@ -45,10 +45,19 @@
 #     node v26.8.2); those are listed as "dropped".
 #     Maglev on V8 <= 14.6 (node <= 26) prints no budget counters; newer V8 prints
 #     small_budget / regular_budget, which are reported when present.
+#   * "small" CROSSES lines: TurboFan is small at <= max-inlined-bytecode-size-small (30), or <= the heapnum
+#     limit (75) where a HeapNumber may cross the call; both are reported. Maglev's "greedy inlining ... small
+#     function" follows max-maglev-eager-inlined-bytecode-size (< 30): measured on node v26.8.2, the cutoff was 29,
+#     24 and 35 with that flag at 30, 25 and 36, and did not move with ...-size-small. The single-inline lines
+#     (<= 460, < 100) match V8's own messages.
+#   * Dropped candidates count call sites by node id ("- candidate: JSCall node #N"): inlining one callee can
+#     expose new sites of another, so a site seen only in a later round still counts.
+#   * --concurrent merges all compiles into one unit "*" (and interleaves lines): its used / dropped / model are "-".
+#   * Limits this binary does not report fall back to node 26 defaults, and a NOTE lists them.
 # Node 22: Maglev does not run by default, so the maglev tier is NO-VERDICT; use --tiers turbo.
 # Artifacts: raw/ dec/ bud/ ms/ under the out dir, plus all.<tier>.diff.txt (<fn>.<tier>.diff.txt with
 # --only-fn), budget.<tier>.tsv (every unit, both sides) and report.txt (this output).
-#   The last budget.<tier>.tsv column is the TurboFan budget-model check: ok = the summed charged
+#   The last budget.<tier>.tsv column is the TurboFan budget-model check ("-" under --concurrent): ok = the summed charged
 #   inline sizes equal V8's last printed "Budget used"; ok(+N after last print) = inlines happened
 #   after the last print; MISMATCH = V8 printed MORE than the model charged (the model is wrong for
 #   this V8). REPORTED: a MISMATCH is printed as a NOTE and never changes the verdict.
@@ -118,6 +127,7 @@ BEGIN { unit = (tag == 1) ? "?" : "*"; greedy = 0 }
   sub(/^\[(ML|TLV):[0-9]+\] */, "", l)            # --trace-with-compilation-id prefix
 }
 l ~ /^\[compiling method / {
+  greedy = 0; cn = ""
   if (tag != 1) next
   nm = ""; i = index(l, "<JSFunction ")
   if (i > 0) { r = substr(l, i + 12); j = index(r, " (sfi"); if (j > 1) nm = substr(r, 1, j - 1) }
@@ -128,18 +138,23 @@ l ~ /^\[compiling method / {
   ev("K\t" unit "\t" nm)
   next
 }
-l ~ /^\[(completed compiling|aborted|bailout)/ { if (tag == 1) unit = "?"; next }
+l ~ /^\[(completed compiling|aborted|bailout)/ { greedy = 0; if (tag == 1) unit = "?"; next }
 l ~ /^\[/ { next }
 tier == "turbo" {
   l = trim(l)
+  # One "Inlining small function(s)" marker covers EVERY Inlining line of that call site (a polymorphic small site
+  # prints two), so greedy stays set until the next Considering / Budget used / compile boundary. Every regular
+  # inline follows a "Budget used:" line, so it is never counted as small.
+  if (l ~ /^(Budget used:|Considering )/ || l ~ /candidate\(s\) for inlining:/) greedy = 0
   if (l ~ /^Budget used: [0-9]+\/[0-9]+/) { split(substr(l, 14), a, /[\/ ]/); ev("U\t" unit "\t" a[1] "\t" a[2]); next }
+  if (l ~ /^- candidate: /) { cn = num_after(l, "node #[0-9]+", 6); next }   # the call site the next targets belong to
   if (l ~ /^- target: /) {
     sz = num_after(l, "bytecode size: [0-9]+", 15); if (sz == "") sz = "?"
     ex = num_after(l, "inlined bytecode size: [0-9]+", 23); if (ex == "") ex = 0
-    ev("C\t" unit "\t" sfi(l) "\t" sz "\t" ex); next
+    ev("C\t" unit "\t" sfi(l) "\t" sz "\t" ex "\t" cn); next
   }
   if (l ~ /^Inlining small function/) { greedy = 1; next }
-  if (l ~ /^Inlining 0x/) { ev("I\t" unit "\t" sfi(l) "\t" greedy); greedy = 0 }
+  if (l ~ /^Inlining 0x/) ev("I\t" unit "\t" sfi(l) "\t" greedy)
   else if (l ~ /^(Cannot consider|Not inlining|Not considering) /) ev("X\t" unit "\t" sfi(l) "\t" reason_of(l))
   n = norm_turbo(l)
   if (n ~ /^(Inlining 0x|Cannot consider |Not inlining |Not considering )/) emit(n)
@@ -151,10 +166,7 @@ tier == "maglev" {
   split(l, f, " ")
   if (l ~ /^greedy inlining /) greedy = 1
   else if (l ~ /^== Inlining /) { ev("I\t" unit "\t" sfi(l) "\t" greedy); greedy = 0 }
-  else if (l ~ /^cannot inline /) {
-    ev("X\t" unit "\t" sfi(l) "\t" reason_of(l))
-    sz = num_after(l, ", size \\([0-9]+", 8); if (sz != "") ev("Z\t" unit "\t" sfi(l) "\t" sz)
-  }
+  else if (l ~ /^cannot inline /) { greedy = 0; ev("X\t" unit "\t" sfi(l) "\t" reason_of(l)) }
   else if (l ~ /^INLINE /) { ev("I\t" unit "\t" f[2] "\t" eager); if (eager) l = "INLINE(eager)" substr(l, 7) }
   else if (l ~ /^SKIP /) ev("X\t" unit "\t" f[2] "\t" substr(l, length(f[2]) + 7))
   else if (l ~ /^Generated [0-9]+ nodes\. (small|regular)_budget \+= [0-9]+ ~~> [0-9]+/)
@@ -189,17 +201,20 @@ index(l, tok) > 0 || u == fn || ((f[1] == "SKIP" || f[1] ~ /^INLINE/) && f[2] ==
 MSDIFF_AWK='
 function key(s) { sub(/^ *[0-9]+ /, "", s); return s }
 function show(k,   u, l) { u = k; sub(/\t.*/, "", u); l = k; sub(/^[^\t]*\t/, "", l); return (u == "*") ? l : "[" u "] " l }
-FNR == NR { k = key($0); b[k] = $1 + 0; all[k] = 1; next }
+FILENAME == ARGV[1] { k = key($0); b[k] = $1 + 0; all[k] = 1; next }   # not FNR == NR: an empty first file breaks it
 { k = key($0); a[k] = $1 + 0; all[k] = 1 }
 END { for (k in all) if (b[k] + 0 != a[k] + 0) printf "  before=%d after=%d  %s\n", b[k], a[k], show(k) }
 '
 
-# `node --v8-options` -> name=value for the inlining limits; then --v8-flags overrides
+# `node --v8-options` -> name=value for the inlining limits; then --v8-flags overrides.
+# Two formats: "default: --flag=value" (node 26) and an older "default: value" under a "  --flag (...)" header.
 # shellcheck disable=SC2016
 LIMITS_AWK='
-/default: --max-(maglev-)?inlined-bytecode-size|default: --reserve-inline-budget-scale-factor/ {
-  s = $0; sub(/.*default: --/, "", s); print s
+/^  --(max-(maglev-)?(eager-)?inlined-bytecode-size[a-z-]*|reserve-inline-budget-scale-factor) / { k = $1; sub(/^--/, "", k); next }
+/default: --(max-(maglev-)?(eager-)?inlined-bytecode-size|reserve-inline-budget-scale-factor)/ {
+  s = $0; sub(/.*default: --/, "", s); print s; k = ""; next
 }
+k != "" && /default:/ { s = $0; sub(/.*default: */, "", s); sub(/ .*/, "", s); print k "=" s; k = "" }
 '
 
 # --print-bytecode output -> distinct "Bytecode length" values of functions named exactly fn
@@ -208,8 +223,8 @@ BYTECODE_AWK='
 /^\[generated bytecode for function: / {
   s = $0; sub(/^\[generated bytecode for function: /, "", s); sub(/ \(0x.*$/, "", s); want = (s == fn); next
 }
-want && /^Bytecode length: [0-9]+/ { seen[$3 + 0] = 1; want = 0 }
-END { out = ""; for (n in seen) out = out (out == "" ? "" : ",") n; print out }
+want && /^Bytecode length: [0-9]+/ { v = $3 + 0; if (!(v in seen)) { seen[v] = 1; ord[++nv] = v }; want = 0 }
+END { out = ""; for (i = 1; i <= nv; i++) out = out (out == "" ? "" : ",") ord[i]; print out }   # first-seen order
 '
 
 # bud(before run 1) + bud(after run 1) -> per-unit budget rows (TSV) for every unit
@@ -219,9 +234,15 @@ function base(u) { sub(/@.*/, "", u); return u }
 { k = $1; u = $2 }
 k == "K" { units[side, u] = 1; ord[side, ++nu[side]] = u; next }
 k != "K" && !((side, u) in units) { units[side, u] = 1; ord[side, ++nu[side]] = u }
-k == "C" { csz[side, u, $3] = $4; cex[side, u, $3] = $5; if (!((side, u, $3) in cand)) { cand[side, u, $3] = 1; clist[side, u] = clist[side, u] SUBSEP $3 } ; if ($3 == fn) inv[side, u] = 1 }
-k == "U" { if (!((side, u) in peak) || $3 + 0 > peak[side, u] + 0) peak[side, u] = $3; lim[side, u] = $4 }
-k == "I" { inl[side, u]++; got[side, u, $3] = 1; if ($4 == 1) small[side, u]++; else { nsmall[side, u, ++ni[side, u]] = $3 } ; if ($3 == fn) inv[side, u] = 1 }
+# Call sites per callee = distinct call-site node ids ($6, from "- candidate: JSCall node #N"). Each "Budget used"
+# round reprints the REMAINING candidates, and inlining one callee can expose NEW sites of another, so neither the
+# total over rounds nor the first round is the site count. Without node ids, fall back to the largest per-round count.
+k == "C" { csz[side, u, $3] = $4; cex[side, u, $3] = $5; if (!((side, u, $3) in cand)) { cand[side, u, $3] = 1; clist[side, u] = clist[side, u] SUBSEP $3 }
+           if ($6 != "") { if (!((side, u, $3, $6) in site)) { site[side, u, $3, $6] = 1; ns[side, u, $3]++ } }
+           r = rnd[side, u] + 0; if (++rc[side, u, r, $3] > cmax[side, u, $3] + 0) cmax[side, u, $3] = rc[side, u, r, $3]
+           if ($3 == fn) inv[side, u] = 1 }
+k == "U" { rnd[side, u]++; if (!((side, u) in peak) || $3 + 0 > peak[side, u] + 0) peak[side, u] = $3; lim[side, u] = $4 }
+k == "I" { inl[side, u]++; if ($4 == 1) small[side, u]++; else { nsmall[side, u, ++ni[side, u]] = $3; gn[side, u, $3]++ } ; if ($3 == fn) inv[side, u] = 1 }
 k == "X" { rej[side, u]++; if ($3 == fn) inv[side, u] = 1 }
 k == "B" { bt[side, u, $3] = $5 }
 k == "E" { exh[side, u] = exh[side, u] + 1 }
@@ -233,21 +254,24 @@ END {
       if (u !~ ("@" want) && u != "?" && u != "*") continue
       charged = 0; unk = 0
       for (j = 1; j <= ni[sd, u]; j++) { nm = nsmall[sd, u, j]; z = csz[sd, u, nm]; if (z ~ /^[0-9]+$/) charged += z; else unk = 1 }
-      used = (u ~ /@TF/) ? (unk ? "?" : charged) : ((sd, u, "regular") in bt ? bt[sd, u, "regular"] : "-")
-      sm = (u ~ /@TF/) ? "-" : ((sd, u, "small") in bt ? bt[sd, u, "small"] : "-")
-      L = (u ~ /@TF/) ? (lim[sd, u] != "" ? lim[sd, u] : tfcum) : mgcum
+      # want (not the unit name) decides the tier: under --concurrent every unit is "*", which names no tier.
+      # "*" merges every compile (and concurrent lines can be cut mid-line), so its used / dropped / model are "-".
+      used = (want == "TF") ? ((u == "*") ? "-" : (unk ? "?" : charged)) : ((sd, u, "regular") in bt ? bt[sd, u, "regular"] : "-")
+      sm = (want == "TF") ? "-" : ((sd, u, "small") in bt ? bt[sd, u, "small"] : "-")
+      L = (want == "TF") ? (lim[sd, u] != "" ? lim[sd, u] : tfcum) : mgcum
       drop = ""
-      if (u ~ /@TF/) {
+      if (want == "TF" && u != "*") {
         n = split(clist[sd, u], cl, SUBSEP)
         for (c = 2; c <= n; c++) {
-          nm = cl[c]; if ((sd, u, nm) in got) continue
+          nm = cl[c]; sites = (ns[sd, u, nm] > 0) ? ns[sd, u, nm] : cmax[sd, u, nm]
+          miss = sites - gn[sd, u, nm]; if (miss <= 0) continue   # some call site of nm was not inlined
           z = csz[sd, u, nm]; e = cex[sd, u, nm]
           why = (z ~ /^[0-9]+$/ && used ~ /^[0-9]+$/ && used + int((z + e) * scale) > L) ? "budget?" : "other"
-          drop = drop (drop == "" ? "" : " ") nm "(" z (e > 0 ? "+" e : "") "," why ")"
+          drop = drop (drop == "" ? "" : " ") nm "(" z (e > 0 ? "+" e : "") "," why ")" (miss > 1 ? "x" miss : "")
         }
       }
       chk = "-"
-      if (u ~ /@TF/ && used ~ /^[0-9]+$/ && ((sd, u) in peak)) {
+      if (want == "TF" && u != "*" && used ~ /^[0-9]+$/ && ((sd, u) in peak)) {
         if (used + 0 == peak[sd, u] + 0) chk = "ok"
         else if (used + 0 > peak[sd, u] + 0) chk = "ok(+" (used - peak[sd, u]) " after last print)"
         else chk = "MISMATCH(model " used " < printed " peak[sd, u] ")"
@@ -448,6 +472,102 @@ EOF
   check "driver mode (fake node): addresses / frequencies only -> SAME, exit 0" "$(fake before.trace same.trace)" "0|VERDICT SAME"
   check "driver mode (fake node): a budget-model MISMATCH prints a NOTE and leaves the verdict SAME" \
     "$(fake mm.trace mm.trace)|$(grep -c 'NOTE budget model MISMATCH' "$d/fake-mm.trace.out" || true)" "0|VERDICT SAME|1"
+  check "driver mode (fake node): limits the binary does not report are ASSUMED, with a NOTE" \
+    "$(grep -c 'NOTE    limits not reported by this node binary, ASSUMED' "$d/fake-same.trace.out" || true)" 1
+  check "ASSUMED fallbacks are the node 26 defaults (TurboFan small 30, Maglev eager 30)" \
+    "$(grep 'ASSUMED' "$d/fake-same.trace.out" | grep -o -e ' max-inlined-bytecode-size-small=[0-9]*' -e ' max-maglev-eager-inlined-bytecode-size=[0-9]*' | tr -d '\n')" \
+    " max-inlined-bytecode-size-small=30 max-maglev-eager-inlined-bytecode-size=30"
+
+  # --- 2026-10-30 fixes, each from a real node v26.8.2 trace shape -------------------------------------------
+  bud() { # canned-trace tag want fn [tier] -> BUDGET_AWK rows for side=before
+    awk -v tier="${5:-turbo}" -v tag="$2" -v dec="$d/x.dec" -v bud="$d/x.bud" "$NORMALIZE_AWK" "$d/$1"
+    awk -v fn="$4" -v want="$3" -v tfcum=920 -v mgcum=920 -v scale=1.2 -F '\t' "$BUDGET_AWK" side=before "$d/x.bud" side=after "$d/x.bud" \
+      | awk -F '\t' '$1 == "before"'
+  }
+  printf '%s\n' '[compiling method 0x1 <JSFunction hot (sfi = 0x2)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]' \
+    'Considering 0x3 {0x4 <SharedFunctionInfo t1>} for inlining with 0x5 {0x6 <FeedbackVector[1]>}' \
+    'Considering 0x7 {0x8 <SharedFunctionInfo t2>} for inlining with 0x9 {0xa <FeedbackVector[1]>}' \
+    'Inlining small function(s) at call site #49:JSCall' \
+    'Inlining 0x3 {0x4 <SharedFunctionInfo t1>} into 0x1 {0x2 <SharedFunctionInfo hot>}' \
+    'Inlining 0x7 {0x8 <SharedFunctionInfo t2>} into 0x1 {0x2 <SharedFunctionInfo hot>}' \
+    'Considering 0xb {0xc <SharedFunctionInfo big>} for inlining with 0xd {0xe <FeedbackVector[9]>}' \
+    'Budget used: 0/920 -- 1 candidate(s) for inlining:' \
+    '- candidate: JSCall node #60 with frequency 1, has_heapnum_param:0, 1 target(s):' \
+    '  - target: 0xb {0xc <SharedFunctionInfo big>}, bytecode size: 120' \
+    'Inlining 0xb {0xc <SharedFunctionInfo big>} into 0x1 {0x2 <SharedFunctionInfo hot>}' \
+    '[completed compiling 0x1 <JSFunction hot (sfi = 0x2)> (target TURBOFAN_JS) - took 0.1, 0.1, 0.1 ms]' >"$d/poly"
+  check "turbo budget: a polymorphic small site (1 marker, 2 Inlining lines) counts BOTH as small" \
+    "$(bud poly 1 TF hot | awk -F '\t' '{print $4"/"$5"/"$6"/"$13}')" "3/2/120/ok(+120 after last print)"
+  printf '%s\n' '[compiling method 0x1 <JSFunction hot (sfi = 0x2)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]' \
+    'Considering 0x3 {0x4 <SharedFunctionInfo s>} for inlining with 0x5 {0x6 <FeedbackVector[1]>}' \
+    'Inlining small function(s) at call site #12:JSCall' \
+    'Not inlining 0x3 {0x4 <SharedFunctionInfo s>} into 0x1 {0x2 <SharedFunctionInfo hot>} because of a test bailout' \
+    'Budget used: 0/920 -- 1 candidate(s) for inlining:' \
+    '  - target: 0xb {0xc <SharedFunctionInfo x>}, bytecode size: 100' \
+    'Inlining 0xb {0xc <SharedFunctionInfo x>} into 0x1 {0x2 <SharedFunctionInfo hot>}' \
+    '[completed compiling 0x1 <JSFunction hot (sfi = 0x2)> (target TURBOFAN_JS) - took 0.1, 0.1, 0.1 ms]' >"$d/leak"
+  check "turbo budget: a small marker with no Inlining does not leak into the next regular inline" \
+    "$(bud leak 1 TF hot | awk -F '\t' '{print $4"/"$5"/"$6}')" "1/0/100"
+  printf '%s\n' '[compiling method 0x1 <JSFunction hot (sfi = 0x2)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]' \
+    'Budget used: 0/920 -- 3 candidate(s) for inlining:' \
+    '  - target: 0x5 {0x6 <SharedFunctionInfo h>}, bytecode size: 454' \
+    '  - target: 0x5 {0x6 <SharedFunctionInfo h>}, bytecode size: 454' \
+    '  - target: 0x5 {0x6 <SharedFunctionInfo h>}, bytecode size: 454' \
+    'Inlining 0x5 {0x6 <SharedFunctionInfo h>} into 0x1 {0x2 <SharedFunctionInfo hot>}' \
+    'Budget used: 454/920 -- 2 candidate(s) for inlining:' \
+    '  - target: 0x5 {0x6 <SharedFunctionInfo h>}, bytecode size: 454' \
+    '  - target: 0x5 {0x6 <SharedFunctionInfo h>}, bytecode size: 454' \
+    '[completed compiling 0x1 <JSFunction hot (sfi = 0x2)> (target TURBOFAN_JS) - took 0.1, 0.1, 0.1 ms]' >"$d/sites"
+  check "turbo budget: no node ids -> sites = largest count in one round (3 sites, 1 inlined -> dropped x2)" \
+    "$(bud sites 1 TF h | awk -F '\t' '$2 == "hot@TF" {print $4"/"$6"/"$12"/"$13}')" "1/454/h(454,budget?)x2/ok"
+  # real node v26.8.2 shape (--max-inlined-bytecode-size-cumulative=300): med inlined at #18; inlining wrap then
+  # EXPOSES two new med sites (#178, #169) that are both dropped. Largest-per-round would say 2 sites -> x1.
+  printf '%s\n' '[compiling method 0x1 <JSFunction hot (sfi = 0x2)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]' \
+    'Budget used: 0/300 -- 2 candidate(s) for inlining:' \
+    '- candidate: JSCall node #18 with frequency 0.947368, has_heapnum_param:0, 1 target(s):' \
+    '  - target: 0x3 {0x4 <SharedFunctionInfo med>}, bytecode size: 131' \
+    '- candidate: JSCall node #64 with frequency 0.263158, has_heapnum_param:1, 1 target(s):' \
+    '  - target: 0x5 {0x6 <SharedFunctionInfo wrap>}, bytecode size: 80' \
+    'Inlining 0x3 {0x4 <SharedFunctionInfo med>} into 0x1 {0x2 <SharedFunctionInfo hot>}' \
+    'Budget used: 131/300 -- 1 candidate(s) for inlining:' \
+    '- candidate: JSCall node #64 with frequency 0.263158, has_heapnum_param:1, 1 target(s):' \
+    '  - target: 0x5 {0x6 <SharedFunctionInfo wrap>}, bytecode size: 80' \
+    'Inlining 0x5 {0x6 <SharedFunctionInfo wrap>} into 0x1 {0x2 <SharedFunctionInfo hot>}' \
+    'Budget used: 211/300 -- 2 candidate(s) for inlining:' \
+    '- candidate: JSCall node #178 with frequency 0.262118, has_heapnum_param:1, 1 target(s):' \
+    '  - target: 0x3 {0x4 <SharedFunctionInfo med>}, bytecode size: 131' \
+    '- candidate: JSCall node #169 with frequency 0.262118, has_heapnum_param:0, 1 target(s):' \
+    '  - target: 0x3 {0x4 <SharedFunctionInfo med>}, bytecode size: 131' \
+    '[completed compiling 0x1 <JSFunction hot (sfi = 0x2)> (target TURBOFAN_JS) - took 0.1, 0.1, 0.1 ms]' >"$d/exposed"
+  check "turbo budget: sites counted by node id; sites exposed in a later round count (med: 3 sites, 1 inlined -> x2)" \
+    "$(bud exposed 1 TF med | awk -F '\t' '$2 == "hot@TF" {print $4"/"$6"/"$12"/"$13}')" "2/211/med(131,budget?)x2/ok"
+  check "turbo budget under --concurrent (unit *): used / model '-' (all compiles merged)" \
+    "$(bud t1 0 TF read.set | awk -F '\t' '{print $2"/"$6"/"$12"/"$13}')" "*/-/-/-"
+  printf '%s\n' '[compiling method 0x1 <JSFunction hot (sfi = 0x2)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]' \
+    '  greedy inlining 0x3 {0x4 <SharedFunctionInfo s>}: small function, skipping max-depth' \
+    '  cannot inline 0x3 {0x4 <SharedFunctionInfo s>}: test rejection' \
+    '== Inlining 0x5 <SharedFunctionInfo y>' >"$d/mgleak"
+  check "maglev budget: a greedy line rejected by 'cannot inline' does not mark the next inline as small" \
+    "$(bud mgleak 1 ML y maglev | awk -F '\t' '$2 == "hot@ML" {print $4"/"$5}')" "1/0"
+  printf '%s\n' '  --max-inlined-bytecode-size (maximum size of bytecode for a single inlining)' '        type: int  default: --max-inlined-bytecode-size=460' \
+    '  --max-inlined-bytecode-size-small (maximum size of bytecode considered for small function inlining)' '        type: int  default: --max-inlined-bytecode-size-small=30' \
+    '  --reserve-inline-budget-scale-factor (scale factor)' '        type: float  default: --reserve-inline-budget-scale-factor=1.2' \
+    '  --max-maglev-eager-inlined-bytecode-size (maximum size of bytecode considered for eager inlining)' \
+    '        type: int  default: --max-maglev-eager-inlined-bytecode-size=30' >"$d/opts-new"
+  sed -E 's/default: --[a-z0-9-]+=/default: /' "$d/opts-new" >"$d/opts-old"
+  check "limits: node 26 'default: --flag=value' format (incl. the Maglev eager limit)" "$(awk "$LIMITS_AWK" "$d/opts-new" | tr '\n' ' ')" \
+    "max-inlined-bytecode-size=460 max-inlined-bytecode-size-small=30 reserve-inline-budget-scale-factor=1.2 max-maglev-eager-inlined-bytecode-size=30 "
+  check "limits: older 'default: value' format gives the same values" "$(awk "$LIMITS_AWK" "$d/opts-old" | tr '\n' ' ')" \
+    "max-inlined-bytecode-size=460 max-inlined-bytecode-size-small=30 reserve-inline-budget-scale-factor=1.2 max-maglev-eager-inlined-bytecode-size=30 "
+  : >"$d/empty.ms"; printf '      1 *\tInlining 0x {0x <SharedFunctionInfo f>} into 0x {0x <SharedFunctionInfo g>}\n' >"$d/one-line.ms"
+  check "multiset diff: an EMPTY first file still reads as before=0 (FILENAME, not FNR == NR)" \
+    "$(awk "$MSDIFF_AWK" "$d/empty.ms" "$d/one-line.ms" | cut -c1-21)" "  before=0 after=1  I"
+  printf '%s\n' '[generated bytecode for function: f (0x1 <SharedFunctionInfo f>)]' 'Bytecode length: 106' \
+    '[generated bytecode for function: f (0x2 <SharedFunctionInfo f>)]' 'Bytecode length: 35' \
+    '[generated bytecode for function: f (0x3 <SharedFunctionInfo f>)]' 'Bytecode length: 210' \
+    '[generated bytecode for function: f (0x4 <SharedFunctionInfo f>)]' 'Bytecode length: 106' >"$d/bc2"
+  # (for-in order printed 210,106,35 here on BSD awk: the order of the SET, not of the input)
+  check "bytecode probe: same-name functions -> first-seen order, no duplicates" "$(awk -v fn=f "$BYTECODE_AWK" "$d/bc2")" "106,35,210"
   rm -rf "$d"; echo
   if [[ $fails -eq 0 ]]; then echo "self-test: all checks passed"; return 0; fi
   echo "self-test: $fails check(s) FAILED"; return 1
@@ -589,11 +709,21 @@ for f in ${V8_EXTRA[@]+"${V8_EXTRA[@]}"}; do
     f="${f#--}"; f="${f//_/-}"; LIMITS=$(printf '%s\n%s\n' "$LIMITS" "$f") ;;
   esac
 done
-lim() { printf '%s\n' "$LIMITS" | awk -F= -v k="$1" -v d="$2" '$1 == k { v = $2 } END { print (v == "" ? d : v) }'; }
-TF_SMALL=$(lim max-inlined-bytecode-size-small 27); TF_ONE=$(lim max-inlined-bytecode-size 460)
-TF_CUM=$(lim max-inlined-bytecode-size-cumulative 920); SCALE=$(lim reserve-inline-budget-scale-factor 1.2)
-MG_SMALL=$(lim max-maglev-inlined-bytecode-size-small 27); MG_ONE=$(lim max-maglev-inlined-bytecode-size 100)
-MG_CUM=$(lim max-maglev-inlined-bytecode-size-cumulative 920)
+# lim VAR KEY DEFAULT: VAR = this binary's value (or the last --v8-flags override). A limit the binary does not
+# report falls back to the node 26 default and is listed in ASSUMED, which the report prints as a NOTE.
+ASSUMED=""
+lim() {
+  local v
+  v=$(printf '%s\n' "$LIMITS" | awk -F= -v k="$2" '$1 == k { v = $2 } END { print v }')
+  if [[ -z "$v" ]]; then v="$3"; ASSUMED="$ASSUMED $2=$3"; fi
+  eval "$1=\$v"
+}
+lim TF_SMALL max-inlined-bytecode-size-small 30; lim TF_SMALL_HN max-inlined-bytecode-size-small-with-heapnum-in-out 75
+lim TF_ONE max-inlined-bytecode-size 460; lim TF_CUM max-inlined-bytecode-size-cumulative 920
+lim SCALE reserve-inline-budget-scale-factor 1.2
+lim MG_SMALL max-maglev-inlined-bytecode-size-small 27; lim MG_ONE max-maglev-inlined-bytecode-size 100
+lim MG_EAGER max-maglev-eager-inlined-bytecode-size 30
+lim MG_CUM max-maglev-inlined-bytecode-size-cumulative 920
 
 # ---------------------------------------------------------------------------------------------
 # run
@@ -657,7 +787,10 @@ if [[ $STAGED == 1 ]] && cmp -s "$DRV_B" "$DRV_A" && cmp -s "$(dirname "$DRV_B")
 fi
 say "fn ${TARGETS[*]}  runs $RUNS  tiers ${TIER_LIST[*]}  scope $([[ $ONLY == 1 ]] && echo "--only-fn (lines naming fn / compiled in fn)" || echo "all decision lines (guarded on fn)")"
 say "v8 flags ${V8FLAGS:+$V8FLAGS }--trace-opt <trace flag>$([[ $CONCURRENT == 1 ]] || echo ' --no-concurrent-recompilation')"
-say "limits  TurboFan small<=$TF_SMALL single<=$TF_ONE cumulative $TF_CUM (reserve x$SCALE) | Maglev small<=$MG_SMALL single<$MG_ONE cumulative $MG_CUM"
+say "limits  TurboFan small<=$TF_SMALL (<=$TF_SMALL_HN if a HeapNumber may cross) single<=$TF_ONE cumulative $TF_CUM (reserve x$SCALE) | Maglev eager (greedy small)<$MG_EAGER small<=$MG_SMALL single<$MG_ONE cumulative $MG_CUM"
+if [[ -n "$ASSUMED" ]]; then
+  say "NOTE    limits not reported by this node binary, ASSUMED (node 26 defaults; REPORTED lines may be wrong):$ASSUMED"
+fi
 say "out     $OUT"
 say ""
 
@@ -751,8 +884,10 @@ if [[ $BYTECODE == 1 ]]; then
       say "  $fn: $b -> $a bytes ($( [[ $a -ge $b ]] && echo + )$((a - b)))"
       {
         cross "TurboFan small" "<=" "$TF_SMALL" "$b" "$a"
+        cross "TurboFan small where a HeapNumber may cross the call" "<=" "$TF_SMALL_HN" "$b" "$a"
         cross "TurboFan single-inline limit" "<=" "$TF_ONE" "$b" "$a"
-        cross "Maglev small" "<=" "$MG_SMALL" "$b" "$a"
+        # Maglev's "greedy inlining ... small function" follows the EAGER limit (<30), not ...-size-small (27)
+        cross "Maglev eager (greedy small) limit" "<" "$MG_EAGER" "$b" "$a"
         cross "Maglev single-inline limit" "<" "$MG_ONE" "$b" "$a"
       } | tee -a "$REPORT"
     else

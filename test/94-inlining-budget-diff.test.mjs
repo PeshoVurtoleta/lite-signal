@@ -11,7 +11,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'bench', 'inlining-budget-diff.sh');
-const CHECKS = 31;   // every `check` call in self_test(); a new check moves this literal
+const CHECKS = 43;   // every `check` call in self_test(); a new check moves this literal
 const skip = process.platform === 'win32' ? 'bash script: POSIX hosts only' : false;
 
 function selfTest(path) {
