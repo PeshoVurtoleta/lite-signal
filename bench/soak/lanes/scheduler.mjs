@@ -521,7 +521,7 @@ function opRec(x, op) {
 export const SCHEDULER = Object.freeze({
     name: 'SCHEDULER',
     index: 8,
-    needsCaps: Object.freeze(['scheduler', 'stopEffect']),
+    needsCaps: Object.freeze(['scheduler', 'stopEffect', 'recycle']),
     hardOracles: Object.freeze(['O1e', 'O4', 'O9']),
     required: Object.freeze(['thunk-after-dispose', 'thunk-recycled', 'pending-write', 'partial-drain', 'drain-all', 'hold-retry', 'fifo-delivery', 'lifo-delivery']),
     optional: Object.freeze([]),

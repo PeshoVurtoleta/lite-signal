@@ -101,7 +101,7 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * (b117: P-LC-tree, T-cov-LIFECYCLE and the six T-LC-* mutants; the tree is clean of DIV-D3 since A5a), and the HOOK
  * rows P-HOOK-TREE-COVOFF (b93) and P-HOOK-TREE (b117 B3b; the tree is clean of DIV-F9 since A5b), and the OWNER rows
  * (b127 B5: P-OWNER-TREE, T-cov-OWNER and the five T-owner-* mutants; LANE_KERNELS.OWNER = tree, A1), and the RECYCLE
- * rows (b130 B5: P-RC-TREE, T-cov-RECYCLE and the three T-RC-* mutants, PLAN-R4 TASK 7), and the SCHEDULER rows (b134
+ * rows (b130 B5: P-RC-TREE, T-cov-RECYCLE and the three T-RC-* mutants, PLAN-R4 TASK 7; b137 B4: + T-RC-updgen), and the SCHEDULER rows (b134
  * B5: P-SC-TREE, P-SC-HP, T-cov-SCHEDULER and the four T-SC-* mutants, PLAN-R4 R4c TASKS 6 + 7); no other main-run
  * control does until A1-A3
  * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
@@ -338,10 +338,12 @@ const LC_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE' });
 // T-cov-LIFECYCLE: no handle ever holds two live registrations (rule single-reg, lanes/lifecycle.mjs covOff).
 const LC_COV_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE', SOAK_MUSTFAIL: 'cov-off:lc-two-regs' });
 
-// T-owner-* anchors in the LIVE Signal.js (base tree ec6d7156; b127 B5, PLAN-R3-owner A5 (b)): each is the full line(s)
-// of the single hunk `diff Signal.js .handoff/b125-evidence/r3/mut/tree-<id>/Signal.js`, and each replacement is that
-// mutant's exact text, so every row's kernel IS the b125 mutant (sha256/8 cascade 158a58b3, cleanup ce6677c3, fifo
-// 195121be, outin 7ef2a2db, this b8135782; .handoff/b127-evidence/b5/). Each anchor occurs exactly once (patchAll).
+// T-owner-* anchors in the LIVE Signal.js (base tree ea0b64d1, b136 LEDGER #51; first cut b127 B5 on ec6d7156,
+// PLAN-R3-owner A5 (b)): each is the full line(s) of the single hunk `diff Signal.js
+// .handoff/b125-evidence/r3/mut/tree-<id>/Signal.js`, and each replacement is that mutant's exact text, so every row's
+// kernel is the b125 mutant's hunk on the live tree (sha256/8 on ea0b64d1, b137 B4: cascade 7581ec39, cleanup bb41a594,
+// fifo 84054fab, outin 1f9942cf, this 21a4e3ac; on ec6d7156 they were 158a58b3 / ce6677c3 / 195121be / 7ef2a2db /
+// b8135782, .handoff/b127-evidence/b5/). Each anchor occurs exactly once (patchAll).
 // :1450 disposeOwned's pop-from-the-front loop (8-space indent).
 const A_OW_CASCADE = '        while ((child = node.firstOwned) !== null) {\n';
 // :2577 onCleanup's first registration (12-space indent).
@@ -355,26 +357,33 @@ const OW_ENV = Object.freeze({ SOAK_LANES: 'OWNER' });
 // T-cov-OWNER / P-OWNER-HP: no dying owner ever holds two cleanups (lanes/owner.mjs covOff cleanup-fifo -> single-cleanup).
 const OW_COV_ENV = Object.freeze({ SOAK_LANES: 'OWNER', SOAK_MUSTFAIL: 'cov-off:cleanup-fifo' });
 
-// T-RC-* anchors in the LIVE Signal.js (base tree ec6d7156; b130 B5, PLAN-R4 TASK 7 + O9 / O11): each is the full line(s)
-// of the single hunk `diff Signal.js .handoff/b129-evidence/r4a/mut/T-RC-<id>/Signal.js`, and each replacement is that
-// mutant's exact text, so every row's kernel IS the b129 mutant (sha256/8 setgen 57f16bfc, readgen 1fa4a0ca, dispgen
-// 8603ef56). Each anchor occurs exactly once (patchAll).
+// T-RC-* anchors in the LIVE Signal.js (base tree ea0b64d1, b136 LEDGER #51; first cut b130 B5 on ec6d7156, PLAN-R4
+// TASK 7 + O9 / O11): each is the full line(s) of the single hunk `diff Signal.js
+// .handoff/b129-evidence/r4a/mut/T-RC-<id>/Signal.js` (updgen: the b136 #51 hunk reverted), and each replacement is that
+// mutant's exact text, so every row's kernel is that hunk on the live tree (sha256/8 on ea0b64d1, b137 B4: setgen
+// fb1de503, readgen 5b4ef7e2, dispgen b9a480da, updgen ec6d7156 == `git show HEAD:Signal.js`; on ec6d7156 the first
+// three were 57f16bfc / 1fa4a0ca / 8603ef56). Each anchor occurs exactly once (patchAll).
 // :2075-:2076 the callable read's read.set closure gen guard (O11: adapters/lite.mjs hands the lane the callable read).
 const A_RC_SETGEN = '        read.set = (value) => {\n            if (node.gen !== birthGen) return;\n';
 // :2019 sharedSignalPeek's stale-handle guard (O10: moves only a stale SIGNAL handle's peek).
 const A_RC_READGEN = '        if (this[NODE_GEN] !== node.gen) return undefined;   // stale handle: slot recycled (ABA guard, matches read())\n';
 // :2425 the registry dispose(api) gen guard inside `function dispose(api)` :2419 (O9; :2745 is not it).
 const A_RC_DISPGEN = '        if (api[NODE_GEN] !== node.gen) return;\n';
+// :1998 sharedUpdate's stale-handle gen guard (b136 LEDGER #51; O9 via lanes/recycle.mjs rsupd: fn must not be called).
+// T-RC-updgen swaps it for the HEAD aa154b6 line (b137 B0 FACTS 3a), so that row's kernel IS `git show HEAD:Signal.js`.
+const A_RC_UPDGEN = '    function sharedUpdate(fn) { const node = this[NODE_PTR]; if (this[NODE_GEN] !== node.gen) return undefined; return this.set(fn(node.value)); }\n';
+const P_RC_UPDGEN = '    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }\n';
 // The tree RECYCLE lane, every scenario on.
 const RC_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE' });
 // T-cov-RECYCLE: rsdisp only names entries whose slot is dead (lanes/recycle.mjs covOff stale-dispose-recycled ->
 // rule stale-dispose-dead).
 const RC_COV_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE', SOAK_MUSTFAIL: 'cov-off:stale-dispose-recycled' });
 
-// T-SC-* anchors in the LIVE Signal.js (base tree ec6d7156; b134 B5, PLAN-R4 R4c TASKS 6 + 7): each is the full line of
-// the single hunk .handoff/b131-evidence/r4c/mut/tree-<id>.diff (dropcall, wedge, thunkgen) or
-// .handoff/b133-evidence/census/mut/syncrun.diff, and each replacement is that mutant's exact text, so every row's
-// kernel IS that mutant (sha256/8 dropcall 9cc16933, wedge dbb57692, thunkgen 304984f9, syncrun 542fcf14; proof:
+// T-SC-* anchors in the LIVE Signal.js (base tree ea0b64d1, b136 LEDGER #51; first cut b134 B5 on ec6d7156, PLAN-R4
+// R4c TASKS 6 + 7): each is the full line of the single hunk .handoff/b131-evidence/r4c/mut/tree-<id>.diff (dropcall,
+// wedge, thunkgen) or .handoff/b133-evidence/census/mut/syncrun.diff, and each replacement is that mutant's exact text,
+// so every row's kernel is that hunk on the live tree (sha256/8 on ea0b64d1, test/45 SC_ROWS: dropcall 92b060e3, wedge
+// 63e4de65, thunkgen f5b90744, syncrun 01569c06; on ec6d7156 they were 9cc16933 / dbb57692 / 304984f9 / 542fcf14,
 // .handoff/b134-evidence/b5/kernels.txt). Each anchor occurs exactly once (patchAll).
 // :1699 the flush loop's queued-effect delivery through the cached thunk (32-space indent; dropcall drops it).
 const A_SC_DROPCALL = '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n';
@@ -891,6 +900,12 @@ export const CONTROLS = deepFreeze([
     M('T-RC-dispgen', 'tree', RC_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=RECYCLE sig=stale-dispose known=none'],
     }, { patches: [[A_RC_DISPGEN, '']] }),
+    // updgen (b137 B4, PLAN-b137 TASK 7 / A4; D-b136-1, D-b136-2: no new sig, no new scenario): the HEAD sharedUpdate
+    // (no gen guard) calls a stale signal handle's update fn with the recycled resident's value: O9 stale-write via
+    // rsupd (`fn called 1 time(s)`; b137 B1 census on ec6d7156: 200 / 200 worlds).
+    M('T-RC-updgen', 'tree', RC_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=RECYCLE sig=stale-write known=none'],
+    }, { patches: [[A_RC_UPDGEN, P_RC_UPDGEN]] }),
     // P-SC-TREE (b134 B5, PLAN-R4 R4c TASK 7): the SCHEDULER pass control on the tree, P-RC-TREE's shape: the full lane,
     // exit 0, zero BREACH lines, END verdict=SMOKE. Also the revert of every T-SC-* row incl. syncrun (the same env and
     // argv, patches []). MEASURED: .handoff/b134-evidence/b5/heads-{1,2,3}.txt.

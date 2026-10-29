@@ -1995,7 +1995,7 @@ export function createRegistry(config) {
     // closures: set() is the hot write path (a closure over `node` beats the
     // this[NODE_PTR] load and keeps `const {set} = signal()` working), and peek()'s
     // body is too cheap to absorb the node recovery.
-    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }
+    function sharedUpdate(fn) { const node = this[NODE_PTR]; if (this[NODE_GEN] !== node.gen) return undefined; return this.set(fn(node.value)); }
     function sharedSubscribe(fn) {
         const read = this;
         return effect(() => {

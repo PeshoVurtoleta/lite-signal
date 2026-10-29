@@ -30,7 +30,10 @@
  *                        while exec.ow !== null)
  *   O9   checkO9Read     (S3 R4a, the RECYCLE lane only) a read / peek through a STALE handle (its node disposed, the
  *                        slot dead or recycled) returned a value: anything but undefined (null is a value)
- *        checkO9Write    a set through a stale handle moved a live signal's value off the model or ran an effect body
+ *        checkO9Write    a set / update through a stale handle moved a live signal's value (or a clean computed's,
+ *                        kind 'computed') off the model or ran an effect body
+ *        checkO9Update   an update(fn) through a stale SIGNAL handle called fn or returned anything but undefined
+ *                        (D-b135-1; same sig stale-write)
  *        checkO9Dispose  a dispose of a stale handle moved stats() activeNodes / activeLinks or left a live handle
  *                        reading undefined (lanes/recycle.mjs calls all three right after its own stale op; no other
  *                        lane and no exec path pays: exec only carries exec.rc, null off the lane)
@@ -464,13 +467,28 @@ export function checkO9Read(label, got) {
 }
 
 /**
- * O9 stale-write: after a set through a stale handle, mism = live signals whose peek differs from the model and
- * ran = effect bodies that ran during the op. Any non-zero count is the finding.
+ * O9 stale-write: after a set / update through a stale handle, mism = live nodes of kind `kind` whose peek differs
+ * from the model and ran = effect bodies that ran during the op. Any non-zero count is the finding. kind (optional):
+ * 'signal' (the default: undefined reads the same, so the detail text is unchanged for a 3-argument call) or
+ * 'computed' (mism counts clean live computeds, lanes/recycle.mjs M6); anything else is a TypeError.
  */
-export function checkO9Write(label, mism, ran) {
+export function checkO9Write(label, mism, ran, kind) {
     o9Check('checkO9Write', label, ['mism', 'ran'], [mism, ran]);
+    if (kind !== undefined && kind !== 'signal' && kind !== 'computed') throw new TypeError('checkO9Write: kind must be undefined, \'signal\' or \'computed\', got ' + o9Show(kind));
     if (mism === 0 && ran === 0) return null;
-    return { oracle: 'O9', sig: 'stale-write', detail: cut(label + ': ' + mism + ' live signal(s) off the model, ' + ran + ' effect body run(s) during the stale op') };
+    const what = kind === 'computed' ? ' clean live computed(s) off the model, ' : ' live signal(s) off the model, ';
+    return { oracle: 'O9', sig: 'stale-write', detail: cut(label + ': ' + mism + what + ran + ' effect body run(s) during the stale op') };
+}
+
+/**
+ * O9 stale-write, update form (D-b135-1): an update(fn) through a stale SIGNAL handle called fn `calls` times and
+ * returned `got`. Only calls === 0 with got === undefined passes (null is a value). Fails closed (TypeError) on a
+ * non-string label or a calls that is not a safe integer >= 0 (-0 rejected); got is any value.
+ */
+export function checkO9Update(label, calls, got) {
+    o9Check('checkO9Update', label, ['calls'], [calls]);
+    if (calls === 0 && got === undefined) return null;
+    return { oracle: 'O9', sig: 'stale-write', detail: cut(label + ': fn called ' + calls + ' time(s), returned ' + o9Show(got) + ' (want 0 calls, undefined)') };
 }
 
 /**

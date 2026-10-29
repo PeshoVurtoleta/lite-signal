@@ -1,7 +1,7 @@
 /**
  * RECYCLE lane (S3 rung R4a, .handoff/PLAN-R4-recycle-sched.md TASK 2 + ADDENDA O7-O14, M5): STALE HANDLES -- a handle
  * kept after its node was disposed, used while the engine slot is dead or after the free list handed the slot to a new
- * node (signal, computed or effect). LANE_INDEX 11 (S3-D6). NOT rostered yet (R4a B3 adds it to lanes/index.mjs ROSTER,
+ * node (signal, computed or effect). LANE_INDEX 11 (S3-D6). Rostered since R4a B3 (lanes/index.mjs ROSTER,
  * adapters/contract.mjs ORACLE_CAPS O9 and gates.mjs FAMILY).
  *
  * World: 2 base signals (never disposed) + few-slot churn (<= MAX_CHURN live churn nodes: signals, computeds and
@@ -16,13 +16,16 @@
  *   rdisp  { i, s }        dispose live churn node i (exec.guard + exec.disposeIdx: model kill first) and retain its
  *                          handle in ring entry s (the older handle there is dropped)
  *   rsset  { s, v }        stale SIGNAL set(v) (v 1..9), guarded (O6)
+ *   rsupd  { s, v }        stale SIGNAL update(fn) through the adapter update(h, fn) (cap recycle, b137), guarded
+ *                          (O6); fn (rc.ufn, one closure per RcState) counts its calls and returns v (1..9)
  *   rsread { s, mode }     stale signal / computed read() or peek(), guarded (O6); mode 'read' | 'peek'
  *   rsdisp { s }           registry dispose of the stale handle: ALWAYS adapter dispose(h) = r.dispose(h) (O10)
  * O9 (oracles.mjs) is judged inside each stale op handler, right after the engine call: one did('O9') per judged op,
- * findings through failF. stale-read: the return is not undefined. stale-write (M6 = D-b130-1): a live signal's peek
- * is off the model, or an effect body ran during the op (the model's effect run counts), or -- only when both are
+ * findings through failF. stale-read: the return is not undefined. stale-write (rsupd, D-b135-1 / D-b136-1, first):
+ * update called fn or returned anything but undefined (checkO9Update); then (rsset and rsupd, M6 = D-b130-1,
+ * checkO9Write, the detail naming the kind that mismatched): a live signal's peek is off the model, or an effect body ran during the op (the model's effect run counts), or -- only when both are
  * clean -- a CLEAN live computed peeks a value off the model (model.val). Clean is established, never assumed: rsset
- * first pulls every live computed through exec.readCheck (O1c judged there, index order), so each one the model does
+ * (and rsupd) first pulls every live computed through exec.readCheck (O1c judged there, index order), so each one the model does
  * not taint has just evaluated; with no signal moved and no effect run since, its peek is a cached read. A tainted
  * computed is skipped, never peeked. The peek pass stops at the first mismatch (a computed downstream of a corrupted
  * one may be dirty) and counts a body run during it (exec.bodies moved) as a mismatch, so no body runs outside
@@ -36,28 +39,31 @@
  * in creation order (node index order). res (the kind of the node the stale handle's slot hosts now, null = dead) and
  * held (ring entries on that slot) are the exec's own. D.onRcStale(op, kind, res, held) counts the scenarios:
  * stale-write-recycled, stale-peek-recycled, stale-read-recycled, stale-dispose-recycled, stale-dead-unrecycled,
- * multi-gen (required). Proven for readgen only (b129 T0 S5 probe: its stale peek moves only on a slot hosting a
- * signal / computed); the census shows each T-RC mutant breaching with its own sig.
+ * multi-gen (required); an upd counts only stale-dead-unrecycled and multi-gen (D-b136-2: no new scenario). The exec
+ * replay agrees with the engine's slot reuse (b130 review probe .handoff/b130-evidence/review-b2b/scratch/bench/soak/
+ * probe-replay.mjs: 679/679 resident-signal peeks x 3 kernels); the census shows each T-RC mutant breaching with its
+ * own sig.
  * covOff stale-dispose-recycled -> rule stale-dispose-dead: rsdisp only names entries whose slot is dead.
  *
  * exec state (exec.rc, an RcState): set by the lane's first op, one per world (exec constructs rc = null per world, so
  * a world an unmodelled throw ends -- skipping rc.close() -- leaks nothing into the next). hs / hk / hslot: the fixed
  * ring of RING retained stale handles (preallocated; close() nulls it and never throws); free / host / slotOf: the
- * slot replay; st: int32 diagnostic counters (capped). Fail closed (exec.unmodelled): a malformed ring index, rsset
- * value or rsread mode, or a slot replay ahead of exec.H. rdisp on a dead / absent / non-integer i is a silent no-op,
+ * slot replay; st: int32 diagnostic counters (capped); ufn / ugo: the rsupd closures, built once per RcState (no
+ * per-op closure), with their per-op slots uv / uh / uw / ucalls / uval. Fail closed (exec.unmodelled): a malformed
+ * ring index, rsset / rsupd value or rsread mode, or a slot replay ahead of exec.H. rdisp on a dead / absent / non-integer i is a silent no-op,
  * as exec.disposeIdx is (a shrunk script).
  * COLD module: harness code, never an engine hot path.
  */
 
 import { specRefs } from '../kinds.mjs';
-import { checkO9Read, checkO9Write, checkO9Dispose, checkComputed } from '../oracles.mjs';
+import { checkO9Read, checkO9Write, checkO9Update, checkO9Dispose, checkComputed } from '../oracles.mjs';
 
 const RING = 8;           // retained stale handles per world (power of 2)
 const RING_MASK = RING - 1;
 const MAX_CHURN = 6;      // live churn nodes (+ 2 base signals = 8 live nodes at most)
 const ST_CAP = 0x3FFFFFFF;
 const MIX = Object.freeze({ mk: 26, rdisp: 16, stale: 30, set: 15, read: 13 });
-const STALE = Object.freeze({ rsset: 10, rsread: 12, rsdisp: 8 });   // a stale step = 2..5 of these (a seq)
+const STALE = Object.freeze({ rsset: 10, rsread: 12, rsdisp: 8, rsupd: 6 });   // a stale step = 2..5 of these (a seq)
 const KIND = Object.freeze({ s: 27, c: 31, e: 42 });
 const EFF_KEEP_P = 0.6;   // an rdisp prefers a non-effect victim
 const BASE_P = 0.7;       // a core set targets a base signal (read by most churn nodes)
@@ -174,6 +180,12 @@ function pickSet(g, sh) {
     return { o: 'rsset', s, v: val(g) };
 }
 
+function pickUpd(g, sh) {
+    const s = pickEntry(g, sh, (k) => k === 's', 0.75);
+    if (s < 0) return null;
+    return { o: 'rsupd', s, v: val(g) };
+}
+
 function pickRead(g, sh) {
     const s = pickEntry(g, sh, (k) => k !== 'e', 0.7);
     if (s < 0) return null;
@@ -202,7 +214,7 @@ function staleOp(g, sh) {
     const ops = [];
     for (let k = 0; k < n; k++) {
         const w = g.weighted(STALE);
-        const s = w === 'rsset' ? pickSet(g, sh) : w === 'rsread' ? pickRead(g, sh) : pickDisp(g, sh);
+        const s = w === 'rsset' ? pickSet(g, sh) : w === 'rsread' ? pickRead(g, sh) : w === 'rsupd' ? pickUpd(g, sh) : pickDisp(g, sh);
         if (s !== null) ops.push(s);
     }
     if (ops.length === 0) return mkOp(g, sh);
@@ -257,12 +269,23 @@ export class RcState {
         this.slotOf = [];
         this.host = [];
         this.seen = 0;   // exec.H indices the slot replay has caught up with
-        this.st = { rdisp: 0, set: 0, read: 0, peek: 0, disp: 0, recycled: 0, dead: 0 };
+        this.st = { rdisp: 0, set: 0, upd: 0, read: 0, peek: 0, disp: 0, recycled: 0, dead: 0 };
+        // rsupd (opUpd): per-op slots + two closures built here once, so an rsupd op allocates no closure of its own
+        this.uv = 0;            // the value ufn returns (op.v, 1..9)
+        this.uh = null;         // the stale handle under update
+        this.uw = null;         // the world (exec.W) whose update(h, fn) ugo calls
+        this.ucalls = 0;        // ufn calls during the current op
+        this.uval = undefined;  // what update(h, fn) returned (exec.guard discards its fn's return)
+        this.ufn = () => { this.ucalls = (this.ucalls + 1) | 0; return this.uv; };
+        this.ugo = () => { this.uval = this.uw.update(this.uh, this.ufn); };
     }
 
     /** Teardown: drop every retained handle and the replay. Never throws. */
     close() {
         for (let j = 0; j < RING; j++) { this.hs[j] = null; this.hk[j] = null; }
+        this.uh = null;
+        this.uw = null;
+        this.uval = undefined;
         this.free.length = 0;
         this.slotOf.length = 0;
         this.host.length = 0;
@@ -384,11 +407,41 @@ function opSet(x, op) {
     x.did('O9');
     let mism = liveSignals(x, 0);
     const ran = effRuns(x) - e0;
-    if (mism === 0 && ran === 0) mism = cleanComputeds(x, cs);
-    const f = checkO9Write(label(rc, 'rsset', s), mism, ran);
+    let kind = 'signal';
+    if (mism === 0 && ran === 0) { mism = cleanComputeds(x, cs); kind = 'computed'; }
+    const f = checkO9Write(label(rc, 'rsset', s), mism, ran, kind);
     if (f !== null) x.failF(f);
     bump(rc.st, 'set');
     report(x, rc, s, 'set');
+}
+
+/** rsupd: update(fn) through a stale signal handle (D-b135-1: fn never called, undefined returned, nothing moved). */
+function opUpd(x, op) {
+    const rc = stateOf(x);
+    const s = ringIndex(x, op.s);
+    const v = op.v;
+    if (!(Number.isInteger(v) && v >= 1 && v <= 9)) unmodelled(x, 'rsupd value ' + JSON.stringify(v) + ' is not 1..9');
+    if (rc.hk[s] !== 's') return;   // empty entry / not a signal handle (a shrunk script)
+    const cs = prePull(x);
+    const e0 = effRuns(x);
+    rc.uh = rc.hs[s];
+    rc.uw = x.W;
+    rc.uv = v;
+    rc.ucalls = 0;
+    rc.uval = undefined;
+    x.guard(rc.ugo);
+    x.did('O9');
+    let mism = liveSignals(x, 0);
+    const ran = effRuns(x) - e0;
+    let kind = 'signal';
+    if (mism === 0 && ran === 0) { mism = cleanComputeds(x, cs); kind = 'computed'; }
+    const lbl = label(rc, 'rsupd', s);
+    const f = checkO9Update(lbl, rc.ucalls, rc.uval) ?? checkO9Write(lbl, mism, ran, kind);
+    rc.uh = null;
+    rc.uval = undefined;
+    if (f !== null) x.failF(f);
+    bump(rc.st, 'upd');
+    report(x, rc, s, 'upd');
 }
 
 function opRead(x, op) {
@@ -440,5 +493,5 @@ export const RECYCLE = Object.freeze({
     init,
     step,
     specRefs,
-    ops: Object.freeze({ rdisp: opDisp, rsset: opSet, rsread: opRead, rsdisp: opSDisp }),
+    ops: Object.freeze({ rdisp: opDisp, rsset: opSet, rsread: opRead, rsdisp: opSDisp, rsupd: opUpd }),
 });
