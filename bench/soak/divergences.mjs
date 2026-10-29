@@ -65,7 +65,7 @@ export const REGISTRY_URL = new URL('./divergences.json', import.meta.url);
 export const KINDS = Object.freeze(['fix', 'contract', 'engine']);
 export const ENGINES = Object.freeze(['lite']);
 /** exec.mjs failure.op values: script ops plus the world-end and teardown pseudo-ops. */
-export const OPS = Object.freeze(['sig', 'comp', 'eff', 'set', 'burst', 'read', 'stop', 'disp', 'batch', 'reg', 'off', 'arm', 'seq', 'end', 'teardown']);
+export const OPS = Object.freeze(['sig', 'comp', 'eff', 'set', 'burst', 'read', 'stop', 'disp', 'batch', 'reg', 'off', 'arm', 'seq', 'end', 'teardown', 'rdestroy']);
 /** Scenarios a step counts at most once (one cycle-bomb guard per op), so prior = count - inStep is exact. */
 export const ONCE_PER_STEP = Object.freeze(['cycle-error-surfaces']);
 export const ATTRIBUTIONS = Object.freeze(['batch-token-replaced']);

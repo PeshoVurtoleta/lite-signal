@@ -42,7 +42,7 @@ const DIV_F9 = new RegExp(JSON.parse(readFileSync(ROOT + 'bench/soak/divergences
 
 test('A1 laneSpan is max LANE_INDEX + 1 of the roster, not its size; unknown or empty rosters throw', () => {
     assert.equal(laneSpan(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE']), 5, 'the S1 roster');
-    assert.equal(laneSpan(ROSTER), 12, 'ROSTER (S1 + HOOK + LIFECYCLE + OWNER + RECYCLE + SCHEDULER): 10 lanes, 12 indices (RECYCLE = 11 is the max)');
+    assert.equal(laneSpan(ROSTER), 13, 'ROSTER (S1 + HOOK + LIFECYCLE + OWNER + RECYCLE + SCHEDULER + REGISTRY + CAPACITY): 12 lanes, 13 indices (CAPACITY = 12 is the max)');
     assert.equal(laneSpan(['GRAPH', 'SCHEDULER']), 9);
     assert.equal(laneSpan(['SNAPSHOT']), 14);
     assert.throws(() => laneSpan(['GRAPH', 'NOPE']), /no LANE_INDEX entry/);
@@ -77,7 +77,7 @@ test('A1 rosterRemapCollision returns the pair whose lane index is >= the roster
 });
 
 test('A1 exactness: a pair on an UNROSTERED index inside the span is null; rostering that index brings it back', () => {
-    const RH = ROSTER.filter((l) => l !== 'LIFECYCLE' && l !== 'OWNER' && l !== 'RECYCLE' && l !== 'SCHEDULER');   // S1 + HOOK (R1b), without LIFECYCLE, OWNER, RECYCLE and SCHEDULER
+    const RH = ROSTER.filter((l) => l !== 'LIFECYCLE' && l !== 'OWNER' && l !== 'RECYCLE' && l !== 'SCHEDULER' && l !== 'REGISTRY' && l !== 'CAPACITY');   // S1 + HOOK (R1b), without LIFECYCLE, OWNER, RECYCLE, SCHEDULER, REGISTRY and CAPACITY
     // the plan literal: S1 + HOOK spans 7, so pair (5, 13) is outside the span already -> null
     assert.equal(rosterRemapCollision(5, RH, 0), null);
     assert.equal(rosterRemapCollision(13, RH, 0), null);
@@ -107,7 +107,7 @@ test('A1 header: seedRemapCollision is the rostered-index pair (provenance.mjs),
     const h2 = buildHeader(stubCfg(3, ['NEST', 'RECYCLE'], cB + 1), EXTRAS);
     assert.deepEqual(h2.seedRemapCollision, { cycleA: 0, laneA: 3, cycleB: ((3 ^ REMAP_PREIMAGE) >>> 0) >>> 4, laneB: 11 });
     assert.equal(buildHeader(stubCfg(DEFAULT_SEED, ROSTER, 11), EXTRAS).seedRemapCollision, null);
-    assert.equal(buildHeader(stubCfg(5, ROSTER.filter((l) => l !== 'LIFECYCLE' && l !== 'OWNER' && l !== 'RECYCLE' && l !== 'SCHEDULER').concat(['SNAPSHOT']), 0), EXTRAS).seedRemapCollision, null, 'exactness through the header');
+    assert.equal(buildHeader(stubCfg(5, ROSTER.filter((l) => l !== 'LIFECYCLE' && l !== 'OWNER' && l !== 'RECYCLE' && l !== 'SCHEDULER' && l !== 'REGISTRY' && l !== 'CAPACITY').concat(['SNAPSHOT']), 0), EXTRAS).seedRemapCollision, null, 'exactness through the header');
 });
 
 /* ---- A2: mirror + O8 ----------------------------------------------------------------------------- */
@@ -280,11 +280,11 @@ const flat = (ops, out) => { for (const op of ops) { if (op.o === 'seq') flat(op
 const controlAdapter = async (kn) => liteS3AdapterFor(await import(CONTROL[kn]));
 const fails = (r) => (r.failure === null ? [] : r.failure.fails);
 
-test('A3 HOOK is rostered just before LIFECYCLE (HOOK 6), OWNER (7), RECYCLE (11), SCHEDULER (8) last, needs cap hook, hard oracle O8, the four required scenarios', () => {
+test('A3 HOOK is rostered just before LIFECYCLE (HOOK 6), OWNER (7), RECYCLE (11), SCHEDULER (8), then R5 REGISTRY (10), CAPACITY (12) last, needs cap hook, hard oracle O8, the four required scenarios', () => {
     assert.equal(ROSTER[ROSTER.indexOf('LIFECYCLE') - 1], 'HOOK');
     assert.equal(ROSTER[ROSTER.indexOf('LIFECYCLE') + 1], 'OWNER');
-    assert.equal(ROSTER[ROSTER.length - 1], 'SCHEDULER');
-    assert.equal(ROSTER.length, 10);
+    assert.deepEqual(ROSTER.slice(-3), ['SCHEDULER', 'REGISTRY', 'CAPACITY']);
+    assert.equal(ROSTER.length, 12);
     assert.equal(HOOK_DESC.index, 6);
     assert.deepEqual(HOOK_DESC.needsCaps, ['hook']);
     assert.ok(HOOK_DESC.hardOracles.includes('O8'));

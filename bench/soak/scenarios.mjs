@@ -40,6 +40,10 @@ export const SCENARIOS = Object.freeze([
     // SCHEDULER (S3 R4c; lanes/scheduler.mjs, not rostered until R4c B3)
     'thunk-after-dispose', 'thunk-recycled', 'pending-write', 'partial-drain', 'drain-all', 'hold-retry',
     'fifo-delivery', 'lifo-delivery',
+    // REGISTRY (S3 R5; lanes/registry.mjs, not rostered until R5 B2)
+    'destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy',
+    // CAPACITY (S3 R5; lanes/capacity.mjs, not rostered until R5 B2)
+    'node-cap-throw', 'link-cap-throw', 'link-ceiling-grow', 'grow-past-initial', 'reuse-at-edge',
 ]);
 
 const DEEP_PULL_MIN = 16;
@@ -540,6 +544,46 @@ export class Detectors {
             const nd = M.n[k];
             if (nd !== undefined && nd.live && nd.t === 'e' && sc.pend[k] > 0) { this.count('partial-drain'); return; }
         }
+    }
+
+    /* ---- REGISTRY (called by lanes/registry.mjs only: no other lane pays) ------------------------------ */
+
+    /**
+     * One registry destroy() ran. at: 'top' (no batch, flush or body open) | 'batch' | 'body' | 'computed' (in flight:
+     * destroy-in-flight plus destroy-in-<at>). Throws TypeError on any other at (fail closed).
+     */
+    onRegDestroy(at) {
+        if (at === 'top') { this.count('destroy-top'); return; }
+        if (at !== 'batch' && at !== 'body' && at !== 'computed') throw new TypeError('onRegDestroy: at must be top / batch / body / computed, got ' + String(at));
+        this.count('destroy-in-flight');
+        this.count('destroy-in-' + at);
+    }
+
+    /** A world rebuilt after a destroy() and the rebuilt nodes are live (n: live model nodes, an integer >= 1). */
+    onRegReuse(n) {
+        if (!Number.isSafeInteger(n) || n < 1) throw new TypeError('onRegReuse: n must be an integer >= 1, got ' + String(n));
+        this.count('reuse-after-destroy');
+    }
+
+    /* ---- CAPACITY (called by lanes/capacity.mjs only: no other lane pays) ------------------------------ */
+
+    /**
+     * One judged capacity edge op. kind: 'node' | 'link' | 'ceil'; policy: 'throw' | 'grow'; threw: the expected
+     * CapacityError escaped (boolean); reused: the reuse-at-edge leg ran and the second throw came too (boolean).
+     * node-cap-throw = node + throw + threw; link-cap-throw = link + throw + threw; link-ceiling-grow = ceil + grow +
+     * threw; grow-past-initial = node + grow + no throw (the lane calls it only after the pool grew to >= 2x the initial
+     * maxNodes); reuse-at-edge = threw + reused. Throws TypeError on any other kind / policy or a non-boolean flag.
+     */
+    onCapEdge(kind, policy, threw, reused) {
+        if (kind !== 'node' && kind !== 'link' && kind !== 'ceil') throw new TypeError('onCapEdge: kind must be node / link / ceil, got ' + String(kind));
+        if (policy !== 'throw' && policy !== 'grow') throw new TypeError('onCapEdge: policy must be throw / grow, got ' + String(policy));
+        if (typeof threw !== 'boolean' || typeof reused !== 'boolean') throw new TypeError('onCapEdge: threw / reused must be booleans');
+        if (threw) {
+            if (kind === 'node' && policy === 'throw') this.count('node-cap-throw');
+            else if (kind === 'link' && policy === 'throw') this.count('link-cap-throw');
+            else if (kind === 'ceil' && policy === 'grow') this.count('link-ceiling-grow');
+            if (reused) this.count('reuse-at-edge');
+        } else if (kind === 'node' && policy === 'grow') this.count('grow-past-initial');
     }
 
     /* ---- ERROR -------------------------------------------------------------------------------------- */

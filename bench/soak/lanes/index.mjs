@@ -18,6 +18,8 @@ import { LIFECYCLE } from './lifecycle.mjs';
 import { OWNER } from './owner.mjs';
 import { RECYCLE } from './recycle.mjs';
 import { SCHEDULER } from './scheduler.mjs';
+import { REGISTRY } from './registry.mjs';
+import { CAPACITY } from './capacity.mjs';
 import { SCENARIOS } from '../scenarios.mjs';
 import { LANE_LIMIT, remapCollision } from '../seeds.mjs';
 
@@ -47,9 +49,10 @@ export function checkLaneIndex(table, roster) {
 
 // HOOK (index 6) landed S3 R1; LIFECYCLE (index 5) S3 R2 (b111), OWNER (index 7) R3 (b126), RECYCLE (index 11)
 // R4a (b130) and SCHEDULER (index 8) R4c (b134) are appended last; the span stays 12 (laneSpan: max LANE_INDEX + 1,
-// SCHEDULER 8 < RECYCLE 11)
-export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER']);
-const BY_NAME = { GRAPH, BATCH, ERROR, NEST, WIE, HOOK, LIFECYCLE, OWNER, RECYCLE, SCHEDULER };
+// SCHEDULER 8 < RECYCLE 11). R5 (b139): REGISTRY (index 10) then CAPACITY (index 12) are appended last; CAPACITY raises
+// the span to 13 (A-R8: the remap result equals the 10-lane one on every calibrate seed base)
+export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY']);
+const BY_NAME = { GRAPH, BATCH, ERROR, NEST, WIE, HOOK, LIFECYCLE, OWNER, RECYCLE, SCHEDULER, REGISTRY, CAPACITY };
 checkLaneIndex(LANE_INDEX, ROSTER);
 
 /**

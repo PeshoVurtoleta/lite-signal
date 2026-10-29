@@ -16,6 +16,13 @@
  * driven through the REAL main.mjs via SOAK_KERNEL (spawnSync, --expose-gc, 30-minute timeout, piped stderr).
  * Nothing here calls a gate module directly.
  *
+ * soakPatch (b140 B2b, D-b140-1; optional, run 'main' only): [{file, find, replace}] edits of HARNESS files, each
+ * `file` a relative path inside bench/soak (no '..', no absolute path, not out/). The run copies bench/soak (and
+ * the files main.mjs reaches outside it) into a zero-commit scratch repository under bench/soak/out (the
+ * zeroCommitCopy idiom), applies every edit there (each `find` exactly once in the ORIGINAL file, patchAll), and
+ * drives that copy's main.mjs; the kernel patches apply unchanged. A find that matches 0 or >= 2 times, or a file
+ * that does not exist, makes the control INVALID (never OK, never a MISS: the mutant was not built).
+ *
  * A control PASSES (OK) only when ALL of these hold; anything else is a MISS:
  *   - the base's sha256 pins verify first (controls.json for headpatched / rev152, parity.json for tree);
  *   - the exact exit code;
@@ -47,7 +54,8 @@
  *   patch, patchAll exactly-once anchor patching (a count != 1 throws `stale anchor: <n> matches`)
  *   hasToken        one protocol line vs one spec
  *   validSpec       shape problems of one control ([] when valid)
- *   staleAnchors    the controls whose patches do not apply exactly once ([{name, error}], never throws)
+ *   staleAnchors    the controls whose patches (kernel or soakPatch) do not apply exactly once ([{name, error}])
+ *   buildSoakPatches  the patched harness files of one control ([{file, src, line}]; throws on a stale find)
  *   buildKernel     the patched Signal.js source of one control (+ its anchors' file:line)
  *   verifyControls  the sha256 pin check of every base
  *   BASES           base name -> { dir, pins, pinName }
@@ -55,7 +63,8 @@
  *   judgeMain       the main-run judgement of one finished child (problem strings pushed into `problems`)
  *   wrapJudge       the wrap-control stream checks (pure: problem strings of a parsed wrap stream)
  *   runControl      run ONE control: verifies its base pins itself unless the caller passes the problems map
- *                   of a verifyControls() it already ran; removes its scratch dir (and zero-commit copy) on return
+ *                   of a verifyControls() it already ran; removes its scratch dir (and zero-commit copy) on return;
+ *                   { invalid: true } when a soakPatch does not apply (the CLI prints INVALID, exit 1)
  *   LONG_RE, SHORT_RE  the ^L- / ^(?!L-) partition of the battery
  *
  * COLD module (a battery driver).
@@ -65,7 +74,7 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync, mkdirSync, rmSync
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join, sep, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB, GATE_N, WARMUP_CYCLES, MARK_DEDUPE_NOTE, VERDICT } from './config.mjs';
 import { wrapRule, wrapStreamProblems } from './wraprules.mjs';
@@ -102,8 +111,10 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * rows P-HOOK-TREE-COVOFF (b93) and P-HOOK-TREE (b117 B3b; the tree is clean of DIV-F9 since A5b), and the OWNER rows
  * (b127 B5: P-OWNER-TREE, T-cov-OWNER and the five T-owner-* mutants; LANE_KERNELS.OWNER = tree, A1), and the RECYCLE
  * rows (b130 B5: P-RC-TREE, T-cov-RECYCLE and the three T-RC-* mutants, PLAN-R4 TASK 7; b137 B4: + T-RC-updgen), and the SCHEDULER rows (b134
- * B5: P-SC-TREE, P-SC-HP, T-cov-SCHEDULER and the four T-SC-* mutants, PLAN-R4 R4c TASKS 6 + 7); no other main-run
- * control does until A1-A3
+ * B5: P-SC-TREE, P-SC-HP, T-cov-SCHEDULER and the four T-SC-* mutants, PLAN-R4 R4c TASKS 6 + 7), and the REGISTRY rows
+ * (b140 B2b: P-REGISTRY-TRIGGERLESS, L-REGISTRY-F10 -- red-explained on DIV-F10 --, T-REG-expectnone / T-REG-destroyall
+ * via soakPatch; LANE_KERNELS.REGISTRY = tree) and the CAPACITY rows (b140 B2b: P-CAP-TREE, T-cov-CAPACITY and the four
+ * T-cap-* mutants; LANE_KERNELS.CAPACITY = tree); no other main-run control does until A1-A3
  * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
  * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
@@ -396,6 +407,31 @@ const SC_ENV = Object.freeze({ SOAK_LANES: 'SCHEDULER' });
 // T-cov-SCHEDULER: no srec ever lets a pending thunk's slot be recycled (lanes/scheduler.mjs covOff thunk-recycled ->
 // rule no-recycle).
 const SC_COV_ENV = Object.freeze({ SOAK_LANES: 'SCHEDULER', SOAK_MUSTFAIL: 'cov-off:thunk-recycled' });
+
+// The tree REGISTRY lane (b140 B2b, PLAN-R5 REGISTRY TASK 4 + D-b140-1), every scenario on: red-explained on DIV-F10
+// (S3-D3 fail-stop at the first in-flight destroy) until the A6 engine rung.
+const REG_ENV = Object.freeze({ SOAK_LANES: 'REGISTRY' });
+// P-REGISTRY-TRIGGERLESS / T-REG-destroyall: every rdestroy at 'top' (lanes/registry.mjs covOff destroy-in-flight ->
+// rule in-flight), so the lane is clean but INCONCLUSIVE on its in-flight scenarios.
+const REG_COV_ENV = Object.freeze({ SOAK_LANES: 'REGISTRY', SOAK_MUSTFAIL: 'cov-off:destroy-in-flight' });
+// T-REG-* soakPatch anchors in bench/soak/lanes/registry.mjs (the b139 B1a mutant-T-REG-*.json edits verbatim).
+// :55 the lane's in-flight destroy prediction (expectnone predicts EXPECT_NONE, d2Row() still validated).
+const S_REG_EXPECT = 'export const REG_EXPECT = expectFromThrow(d2Row().expectedThrow);\n';
+// :188-:189 opDestroy's model teardown (destroyall skips model.destroyAll()).
+const S_REG_DESTROYALL = '    x.M.destroyAll();\n    st.destroyed++;\n';
+
+// T-cap-* anchors in the LIVE Signal.js (base tree ea0b64d1; .handoff/b139-evidence/b1b/mkmut.mjs, each 1x).
+// The node-pool cap test under onCapacityExceeded 'throw' (T-cap-node: >= -> >, one node past the cap).
+const A_CAP_NODE = 'policy === "throw" && nodePool.length >= currentNodesCapacity';
+// The link-pool cap test under 'throw' (T-cap-link: >= -> >).
+const A_CAP_LINK = 'policy === "throw" && linkPool.length >= currentLinkCapacity';
+// The 16x link ceiling under 'grow' (T-cap-ceiling: * 16 -> * 17).
+const A_CAP_CEIL = 'const maxLinkLimit = currentLinkCapacity * 16;';
+// T-cap-residue patches A_FREE_LINK (above; the same three lines occur exactly once in the tree Signal.js).
+// The tree CAPACITY lane (b140 B2b, PLAN-R5 CAPACITY TASK 5), every scenario on.
+const CAP_ENV = Object.freeze({ SOAK_LANES: 'CAPACITY' });
+// T-cov-CAPACITY: no ceil op is generated (lanes/capacity.mjs covOff link-ceiling-grow -> rule no-ceiling).
+const CAP_COV_ENV = Object.freeze({ SOAK_LANES: 'CAPACITY', SOAK_MUSTFAIL: 'cov-off:link-ceiling-grow' });
 
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
@@ -944,6 +980,64 @@ export const CONTROLS = deepFreeze([
     M('T-SC-syncrun', 'tree', SC_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=SCHEDULER sig=stale-thunk known=none'],
     }, { patches: [[A_SC_SYNCRUN, '                /* MUT syncrun */ executeEffect(node);\n']] }),
+    // ---- REGISTRY (b140 B2b, PLAN-R5 REGISTRY TASK 4 + A-R3 / A-R4; D-b140-1 for the soakPatch rows) ----
+    // P-REGISTRY-TRIGGERLESS: the tree REGISTRY lane with every rdestroy at 'top' (cov-off:destroy-in-flight -> rule
+    // in-flight) must not false-fail: clean, INCONCLUSIVE on exactly four ids: destroy-in-flight plus the three in-flight
+    // <at> scenarios (batch / body / computed; b140 r1 fix: the batch line was unpinned). It is the revert of
+    // both T-REG-* rows (the same env and argv, no soakPatch). MEASURED: .handoff/b140-evidence/fix1/triggerless.stderr.
+    M('P-REGISTRY-TRIGGERLESS', 'tree', REG_COV_ENV, ['--smoke'], {
+        exit: 3, kind: 'nobreach', specs: ['INCONCLUSIVE scenario lane=REGISTRY missing=destroy-in-flight'],
+        lines: ['soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=destroy-in-flight',
+            'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=destroy-in-batch',
+            'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=destroy-in-body',
+            'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=destroy-in-computed'],
+    }),
+    // L-REGISTRY-F10 (A-R4): the full tree REGISTRY lane at the control budget is red-explained: every BREACH is an
+    // oracle line known=DIV-F10 (the S3-D3 fail-stop at an in-flight destroy, LEDGER #52 / A6), none unexplained.
+    M('L-REGISTRY-F10', 'tree', { SOAK_LANES: 'REGISTRY', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 1, kind: 'explained', lines: [], specs: ['oracle=O6 lane=REGISTRY sig=expected-escape-missing'], known: ['DIV-F10'],
+    }),
+    // T-REG-expectnone (soakPatch, lanes/registry.mjs): the lane predicts EXPECT_NONE for an in-flight destroy, so the
+    // engine's escape is no longer the predicted DIV-F10 shape: an unexplained O6 escape (known=none). Its revert is
+    // the live lane (L-REGISTRY-F10 / the default smoke: known=DIV-F10 only).
+    M('T-REG-expectnone', 'tree', REG_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O6 lane=REGISTRY sig=escape-TypeError known=none'],
+    }, { soakPatch: [{ file: 'lanes/registry.mjs', find: S_REG_EXPECT,
+        replace: 'export const REG_EXPECT = Object.freeze([]); d2Row(); expectFromThrow(null);   // MUTANT T-REG-expectnone: EXPECT_NONE for in-flight destroys\n' }] }),
+    // T-REG-destroyall (soakPatch, lanes/registry.mjs): opDestroy skips model.destroyAll(), so the model keeps the
+    // destroyed registry's nodes: O5 node-count at rest (known=none). Its revert is P-REGISTRY-TRIGGERLESS.
+    M('T-REG-destroyall', 'tree', REG_COV_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O5 lane=REGISTRY sig=node-count known=none'],
+    }, { soakPatch: [{ file: 'lanes/registry.mjs', find: S_REG_DESTROYALL,
+        replace: '    st.destroyed++;   // MUTANT T-REG-destroyall: model.destroyAll() skipped\n' }] }),
+    // ---- CAPACITY (b140 B2b, PLAN-R5 CAPACITY TASK 5 + A-C2 / A-C3) ----
+    // P-CAP-TREE: the CAPACITY pass control on the tree, P-RC-TREE's shape (exit 0, zero BREACH, END verdict=SMOKE);
+    // the revert of every T-cap-* row (the same env and argv, patches []).
+    M('P-CAP-TREE', 'tree', CAP_ENV, ['--smoke'], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { verdict: 'SMOKE' },
+    }),
+    // T-cov-CAPACITY: no ceil op is generated (cov-off:link-ceiling-grow -> rule no-ceiling): clean but INCONCLUSIVE.
+    M('T-cov-CAPACITY', 'tree', CAP_COV_ENV, ['--smoke'], {
+        exit: 3, kind: 'nobreach', lines: ['soak: INCONCLUSIVE -- scenario lane=CAPACITY missing=link-ceiling-grow'],
+        specs: ['INCONCLUSIVE scenario lane=CAPACITY missing=link-ceiling-grow'],
+    }),
+    // T-cap-* (b139 B1b mkmut.mjs hunks on the tree, P-CAP-TREE's shape, known=none; a spec matches ANY stderr BREACH line).
+    // node / link: the throw-policy cap test lets one more slot in: the predicted CapacityError does not happen.
+    M('T-cap-node', 'tree', CAP_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O6 lane=CAPACITY sig=expected-escape-missing known=none'],
+    }, { patches: [[A_CAP_NODE, 'policy === "throw" && nodePool.length > currentNodesCapacity']] }),
+    M('T-cap-link', 'tree', CAP_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O6 lane=CAPACITY sig=expected-escape-missing known=none'],
+    }, { patches: [[A_CAP_LINK, 'policy === "throw" && linkPool.length > currentLinkCapacity']] }),
+    // ceiling: the grow-policy link ceiling moves 16x -> 17x: the predicted ceiling CapacityError does not happen.
+    M('T-cap-ceiling', 'tree', CAP_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O6 lane=CAPACITY sig=expected-escape-missing known=none'],
+    }, { patches: [[A_CAP_CEIL, 'const maxLinkLimit = currentLinkCapacity * 17;']] }),
+    // residue: a freed link is never returned to the pool (activeLinks not decremented): O5 link-count at rest (PRESENCE;
+    // some worlds also print O6 escape-CapacityError -- not a spec).
+    M('T-cap-residue', 'tree', CAP_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O5 lane=CAPACITY sig=link-count known=none'],
+    }, { patches: [[A_FREE_LINK, '        // MUTANT T-cap-residue: link not freed (not pooled, activeLinks not decremented)\n']] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375
@@ -995,6 +1089,7 @@ export function validSpec(c) {
     if (!Array.isArray(c.flags) || !c.flags.every((f) => typeof f === 'string')) p.push('flags');
     if (!Array.isArray(c.patches) || !c.patches.every((x) => Array.isArray(x) && x.length === 2 && typeof x[0] === 'string' && x[0].length > 0 && typeof x[1] === 'string')) p.push('patches');
     if (c.arm !== null && typeof c.arm !== 'string') p.push('arm');
+    if (own(c, 'soakPatch')) for (const q of soakPatchProblems(c)) p.push(q);
     const e = c.expect;
     if (e === null || typeof e !== 'object') return p.concat(['expect']);
     if (!(Number.isInteger(e.exit) && e.exit >= 0 && e.exit <= 3)) p.push('expect.exit');
@@ -1073,6 +1168,64 @@ function passProblems(c, pass) {
 /** Line number (1-based) of the start of `anchor` in `src`, or null. */
 const lineOf = (src, anchor) => { const i = src.indexOf(anchor); return i === -1 ? null : src.slice(0, i).split('\n').length; };
 
+const SOAK_PATCH_KEYS = Object.freeze(['file', 'find', 'replace']);
+/** One relative path segment of a soakPatch file: a plain name, never '.' / '..' / empty. */
+const SEG_RE = /^[A-Za-z0-9_.-]+$/;
+const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x) &&
+    (Object.getPrototypeOf(x) === Object.prototype || Object.getPrototypeOf(x) === null);
+/**
+ * soakPatch (b140 B2b, D-b140-1): run main only; a non-empty array of plain {file, find, replace} objects (exactly
+ * those keys); file a relative '/'-separated path inside bench/soak (no absolute path, no backslash, no '.' / '..' /
+ * empty segment, not under out/); find a non-empty string; replace a string.
+ */
+function soakPatchProblems(c) {
+    const sp = c.soakPatch;
+    if (c.run !== 'main') return ['soakPatch belongs to run main'];
+    if (!Array.isArray(sp) || sp.length === 0) return ['soakPatch must be a non-empty array of {file, find, replace}'];
+    const p = [];
+    for (let i = 0; i < sp.length; i++) {
+        const x = sp[i], at = 'soakPatch[' + i + ']';
+        if (!isPlain(x)) { p.push(at + ' must be a plain {file, find, replace} object'); continue; }
+        for (const k of Reflect.ownKeys(x)) if (typeof k !== 'string' || SOAK_PATCH_KEYS.indexOf(k) === -1) p.push(at + ' unknown key ' + String(k));
+        for (const k of SOAK_PATCH_KEYS) if (!own(x, k)) p.push(at + ' missing key ' + k);
+        const f = x.file;
+        if (own(x, 'file')) {
+            if (typeof f !== 'string' || f.length === 0) p.push(at + '.file must be a non-empty string');
+            else if (isAbsolute(f) || f.indexOf('\\') !== -1 || !f.split('/').every((g) => SEG_RE.test(g) && g !== '.' && g !== '..') ||
+                f.split('/')[0] === 'out' || !join(SOAK, f).startsWith(SOAK + sep)) {
+                p.push(at + '.file ' + JSON.stringify(f) + ' escapes bench/soak (a relative path inside it, not out/)');
+            }
+        }
+        if (own(x, 'find') && !(typeof x.find === 'string' && x.find.length > 0)) p.push(at + '.find must be a non-empty string');
+        if (own(x, 'replace') && typeof x.replace !== 'string') p.push(at + '.replace must be a string');
+    }
+    return p;
+}
+
+/**
+ * The patched harness files of one control's soakPatch: each file read from bench/soak, every find of that file
+ * applied exactly once against the ORIGINAL text (patchAll). [] for a control without soakPatch. Throws
+ * `soakPatch <file>: ...` on a malformed field, a missing file, or a find that occurs 0 or >= 2 times. Returns
+ * [{file, src, line}], one entry per edit (line: the find's 1-based line in the original; src: the whole patched file).
+ */
+export function buildSoakPatches(c) {
+    if (c === null || typeof c !== 'object' || !own(c, 'soakPatch')) return [];
+    const bad = soakPatchProblems(c);
+    if (bad.length > 0) throw new Error('soakPatch malformed: ' + bad.join('; '));
+    const byFile = new Map();
+    for (const x of c.soakPatch) { if (!byFile.has(x.file)) byFile.set(x.file, []); byFile.get(x.file).push(x); }
+    const out = [];
+    for (const [file, edits] of byFile) {
+        try { if (realpathSync(join(SOAK, file)) !== join(realpathSync(SOAK), file)) throw new Error('resolves through a symlink'); } catch (e) { throw new Error('soakPatch ' + file + ': ' + (e && e.code ? e.code : e.message)); }
+        let orig;
+        try { orig = readFileSync(join(SOAK, file), 'utf8'); } catch (e) { throw new Error('soakPatch ' + file + ': ' + (e && e.code ? e.code : String(e))); }
+        let src;
+        try { src = patchAll(orig, edits.map((x) => [x.find, x.replace])); } catch (e) { throw new Error('soakPatch ' + file + ': ' + e.message); }
+        for (const x of edits) out.push({ file, src, line: lineOf(orig, x.find) });
+    }
+    return out;
+}
+
 /**
  * The scratch Signal.js source of one control: its base, every patch (exactly-once, counted on the base), then
  * its arm tail. Throws on a stale anchor. Returns { src, anchors: [{file, line}] }.
@@ -1089,7 +1242,7 @@ export function buildKernel(c) {
 export function staleAnchors(controls) {
     const out = [];
     for (const c of controls) {
-        try { buildKernel(c); } catch (e) { out.push({ name: c && c.name, error: String(e && e.message ? e.message : e) }); }
+        try { buildKernel(c); buildSoakPatches(c); } catch (e) { out.push({ name: c && c.name, error: String(e && e.message ? e.message : e) }); }
     }
     return out;
 }
@@ -1167,7 +1320,8 @@ export function runControl(c, pinProblems) {
     const problems = [];
     const matched = [];   // [{spec, head}]: the first protocol line each spec matched (MUSTFAIL_HEADS=1 prints them)
     let r = null;
-    const fin = () => ({ ok: problems.length === 0, matched, status: r === null ? null : (r.status === null ? -1 : r.status), problems, secs: Math.round((Date.now() - t0) / 1000), first: r === null ? '' : firstLine(r) });
+    let invalid = false;   // a soakPatch that does not apply: the mutant was never built (INVALID, not OK, not a MISS)
+    const fin = () => ({ ok: problems.length === 0, invalid, matched, status: r === null ? null : (r.status === null ? -1 : r.status), problems, secs: Math.round((Date.now() - t0) / 1000), first: r === null ? '' : firstLine(r) });
     const shape = validSpec(c);
     if (shape.length > 0) { problems.push('malformed control: ' + shape.join('; ')); return fin(); }
     let pins = pinProblems;
@@ -1202,8 +1356,17 @@ export function runControl(c, pinProblems) {
             zeroCommitCopy(repo);
             main = join(repo, 'bench', 'soak', 'main.mjs');
         }
+        if (own(c, 'soakPatch')) {
+            // b140 B2b (D-b140-1): build every harness edit BEFORE the copy; a stale find is INVALID, never run
+            let built;
+            try { built = buildSoakPatches(c); } catch (e) { invalid = true; problems.push('INVALID ' + e.message); return fin(); }
+            repo = zeroCommitDir(c.name);
+            zeroCommitCopy(repo);
+            for (const b of built) writeFileSync(join(repo, 'bench', 'soak', b.file), b.src);
+            main = join(repo, 'bench', 'soak', 'main.mjs');
+        }
         r = spawnSync(NODE, c.flags.concat([main], c.argv), {
-            cwd: ROOT, env: childEnv(keys, c.repo === 'zero-commit'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+            cwd: ROOT, env: childEnv(keys, repo !== null), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
             maxBuffer: 256 * 1024 * 1024, timeout: RUN_TIMEOUT_MS,
         });
         if (r.error) problems.push('spawn: ' + r.error.message);
@@ -1435,7 +1598,7 @@ function cli() {
         const built = new Map();
         for (const c of sel) {
             if (!(c.run === 'main' || c.run === 'wrap' || c.kernel === 'scratch')) { built.set(c.name, []); continue; }
-            try { built.set(c.name, buildKernel(c).anchors); } catch (e) {
+            try { built.set(c.name, buildKernel(c).anchors.concat(buildSoakPatches(c).map((b) => ({ file: 'bench/soak/' + b.file, line: b.line })))); } catch (e) {
                 process.stderr.write('_mustfail: ' + c.name + ': ' + e.message + '\n');
                 return 1;
             }
@@ -1446,7 +1609,7 @@ function cli() {
                 name: c.name, run: c.run, base: c.base, long: LONG_RE.test(c.name), env: c.env, argv: c.argv, flags: c.flags,
                 kind: c.expect.kind, exit: c.expect.exit, specs: c.expect.specs, lines: c.expect.lines,
                 config: c.expect.config === undefined ? null : c.expect.config, configMatch: c.expect.configMatch || null, known: c.expect.known || null, anchors,
-                arm: c.arm !== null,
+                arm: c.arm !== null, soakPatch: own(c, 'soakPatch') ? c.soakPatch.map((x) => x.file) : null,
             }) + '\n');
         }
         process.stdout.write(JSON.stringify({ end: true, count: sel.length }) + '\n');
@@ -1456,16 +1619,16 @@ function cli() {
     for (const c of sel) if (bases.indexOf(c.base) === -1) bases.push(c.base);
     const pins = verifyControls(bases);
     for (const b of Object.keys(pins.problems)) process.stdout.write('  PIN  ' + b + ': ' + pins.problems[b] + '\n');
-    let ok = 0, miss = 0;
+    let ok = 0, miss = 0, inv = 0;
     for (const c of sel) {
         const res = runControl(c, pins.problems);
-        if (res.ok) ok++; else miss++;
-        process.stdout.write('  ' + (res.ok ? 'OK  ' : 'MISS') + ' ' + c.name.padEnd(28) + ' exit=' + res.status + ' want=' + c.expect.exit + ' ' + res.secs + 's' +
+        if (res.ok) ok++; else if (res.invalid) inv++; else miss++;
+        process.stdout.write('  ' + (res.ok ? 'OK  ' : res.invalid ? 'INVALID' : 'MISS') + ' ' + c.name.padEnd(28) + ' exit=' + res.status + ' want=' + c.expect.exit + ' ' + res.secs + 's' +
             (res.ok ? '' : '  <<< ' + res.problems.join(' | ') + (res.first ? ' || first: ' + res.first : '')) + '\n');
         if (HEADS) for (const m of res.matched) process.stdout.write('       [' + m.spec + '] -> ' + m.head + '\n');
     }
-    process.stdout.write(ok + ' OK / ' + miss + ' MISS\n');
-    return miss === 0 ? 0 : 1;
+    process.stdout.write(ok + ' OK / ' + miss + ' MISS' + (inv > 0 ? ' / ' + inv + ' INVALID' : '') + '\n');
+    return miss === 0 && inv === 0 ? 0 : 1;
 }
 
 /** Run the CLI only when this file is the process entry (test/45 and teeth.mjs import the exports above). */

@@ -1133,3 +1133,36 @@ test('b126 B4 validate: DIV-48 dropping its shape, its lane, or a lane typo fail
     assert.ok(mut((e) => { e.lanes = ['OWNERS']; }).some((p) => /unknown lane OWNERS/.test(p)));
     assert.ok(mut((e) => { e.sigs = ['callback-this', 'cleanup-order']; }).some((p) => /pair OW:cleanup-order has no shape/.test(p)));
 });
+
+test('DIV-F10: the b1a census shapes -> DIV-F10; near-misses -> null', () => {
+    // b140 r1 fix B2: the 14 records of .handoff/b140-evidence/review-b2/f10probe.mjs verbatim (5 census shapes, 9 near-misses)
+    const EEM = { oracle: 'O6', sig: 'expected-escape-missing', detail: 'predicted expectedThrow did not happen' };
+    const TE = { oracle: 'O6', sig: 'escape-TypeError', detail: "engine error escaped: TypeError: Cannot read properties of undefined (reading 'flags')" };
+    const TES = { oracle: 'O6', sig: 'escape-TypeError', detail: "engine error escaped: TypeError: Cannot read properties of undefined (reading 'scheduler')" };
+    const O5 = { oracle: 'O5', sig: 'node-count', detail: 'x' };
+    const W = ['destroy-in-flight', 'destroy-top'];
+    const R = (op, fails, scen, lane) => ({ engine: 'lite', lane: lane || 'REGISTRY', step: 3, op, fails, scen, worldScen: W, escape: [] });
+    const B = ['destroy-in-flight', 'destroy-in-batch'], BO = ['destroy-in-flight', 'destroy-in-body'], CO = ['destroy-in-flight', 'destroy-in-computed'];
+    const cases = [
+        ['MUST computed EEM+TE', R('rdestroy', [EEM, TE], CO), true],
+        ['MUST computed EEM', R('rdestroy', [EEM], CO), true],
+        ['MUST batch EEM', R('rdestroy', [EEM], B), true],
+        ['MUST body EEM+TE', R('rdestroy', [TE, EEM], BO), true],
+        ['MUST body EEM', R('rdestroy', [EEM], BO), true],
+        ['NOT batch EEM+TE', R('rdestroy', [EEM, TE], B), false],
+        ['NOT body TE alone', R('rdestroy', [TE], BO), false],
+        ['NOT body EEM+TE(scheduler)', R('rdestroy', [EEM, TES], BO), false],
+        ['NOT top EEM', R('rdestroy', [EEM], ['destroy-top']), false],
+        ['NOT set EEM in-flight', R('set', [EEM], BO), false],
+        ['NOT CAPACITY lane EEM', R('rdestroy', [EEM], BO, 'CAPACITY'), false],
+        ['NOT body EEM+TE+O5', R('rdestroy', [EEM, TE, O5], BO), false],
+        ['NOT EEM other detail', R('rdestroy', [{ ...EEM, detail: 'predicted expectedThrow did not happen!' }], BO), false],
+        ['NOT batch+body tag TE (no flight)', R('rdestroy', [EEM, TE], ['destroy-in-body']), false],
+    ];
+    assert.equal(cases.filter((x) => x[2]).length, 5);
+    assert.equal(cases.filter((x) => !x[2]).length, 9);
+    for (const [n, rec, want] of cases) {
+        const r = classify(rec);
+        assert.deepEqual(r === null ? null : r.ids, want ? ['DIV-F10'] : null, n);
+    }
+});

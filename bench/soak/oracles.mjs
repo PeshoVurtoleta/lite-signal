@@ -12,7 +12,8 @@
  *   O4   checkEffect     the effect's inputs changed during the op and it ran 0 times (live inputs only
  *                        when tainted), or a live effect never ran at all
  *   O5   checkCounts / checkTeardown   per-kind counts, activeNodes, activeLinks in [E, E + 0] (G4)
- *   O6   checkEscape     the escape set of one guarded call equals the predicted set (tokens, CycleError)
+ *   O6   checkEscape     the escape set of one guarded call equals the predicted set (tokens, CycleError; O6 (v),
+ *                        S3 R5: a divergence row's expectedThrow through expectFromThrow, null = EXPECT_NEVER_ENTRY)
  *   O7a  checkFire       a lifecycle callback fires only for a live registration on a live target
  *   O7   checkLcFire     (LIFECYCLE lane, S3 R2) a fire matches the registration's phase: onConnect only while
  *                        disconnected, onDisconnect only while connected (lanes/lifecycle.mjs calls it after O7a passes)
@@ -190,15 +191,40 @@ export const EXPECT_NONE = Object.freeze([]);
 export const EXPECT_CYCLE = Object.freeze([Object.freeze({ id: 'CycleError', ctor: null, prefix: 'CycleError:' })]);
 
 /**
+ * O6 (v) (S3 R5, the REGISTRY lane): the frozen NEVER entry stands for a contract throw whose shape is not known yet
+ * (DIV-D2-destroy-throws.expectedThrow === null until A6 fills it). checkEscape accepts it by IDENTITY only (a copy
+ * fails the entry check) and absorb() skips it: it absorbs no leaf, so no throw reports expected-escape-missing and
+ * any engine throw reports escape-<Ctor> as well.
+ */
+export const EXPECT_NEVER_ENTRY = Object.freeze({ id: 'expectedThrow', ctor: null, prefix: '' });
+
+/**
+ * O6 (v): the expect[] list of a divergence row's expectedThrow. null -> [EXPECT_NEVER_ENTRY]; else a plain
+ * { ctor: non-empty string, messagePrefix: non-empty string } (exactly those 2 keys) -> one frozen entry. Anything
+ * else (messagePrefix '' included, which divergences.mjs validate() accepts) throws TypeError: fail closed.
+ */
+export function expectFromThrow(et) {
+    if (et === null) return Object.freeze([EXPECT_NEVER_ENTRY]);
+    if (et === undefined || typeof et !== 'object' || Array.isArray(et) || Object.getPrototypeOf(et) !== Object.prototype ||
+        Object.keys(et).length !== 2 || typeof et.ctor !== 'string' || et.ctor === '' ||
+        typeof et.messagePrefix !== 'string' || et.messagePrefix === '') {
+        throw new TypeError('expectFromThrow: expectedThrow must be null or a plain { ctor, messagePrefix } of non-empty strings');
+    }
+    return Object.freeze([Object.freeze({ id: 'expectedThrow', ctor: et.ctor, prefix: et.messagePrefix })]);
+}
+
+/**
  * O6 for one guarded call. pred: predicted SoakThrow tokens (multiset). got: normalizeEscape(escape) or [].
  * expect: the engine errors expected, an array of { id, ctor: string | null (null = any), prefix } (EXPECT_NONE,
- * EXPECT_CYCLE). Each entry absorbs at most ONE non-token leaf, entries tried in order; an entry that absorbed
- * nothing reports 'predicted <id> did not happen' after the token misses. EXPECT_CYCLE gives exactly the former
- * cycle === true result, EXPECT_NONE the former false. Throws TypeError (before any check) on a malformed list.
+ * EXPECT_CYCLE, expectFromThrow()). Each entry absorbs at most ONE non-token leaf, entries tried in order; an entry
+ * that absorbed nothing reports 'predicted <id> did not happen' after the token misses (EXPECT_NEVER_ENTRY absorbs
+ * nothing, so it always does). EXPECT_CYCLE gives exactly the former cycle === true result, EXPECT_NONE the former
+ * false. Throws TypeError (before any check) on a malformed list.
  */
 export function checkEscape(pred, got, expect) {
     if (!Array.isArray(expect)) throw new TypeError('checkEscape: expect must be an array (EXPECT_NONE / EXPECT_CYCLE), got ' + (expect === null ? 'null' : typeof expect));
     for (const e of expect) {
+        if (e === EXPECT_NEVER_ENTRY) continue;
         if (e === null || typeof e !== 'object' || typeof e.id !== 'string' || typeof e.prefix !== 'string' || e.prefix === '' || (e.ctor !== null && typeof e.ctor !== 'string')) {
             throw new TypeError('checkEscape: expect entries are { id: string, ctor: string | null, prefix: non-empty string }');
         }
@@ -230,6 +256,7 @@ function absorb(expect, seen, leaf) {
     if (typeof leaf.message !== 'string') return false;
     for (let j = 0; j < expect.length; j++) {
         const e = expect[j];
+        if (e === EXPECT_NEVER_ENTRY) continue;
         if (seen[j] || (e.ctor !== null && leaf.ctor !== e.ctor) || leaf.message.indexOf(e.prefix) !== 0) continue;
         seen[j] = true;
         return true;

@@ -255,42 +255,80 @@
     "O4",
     "O9"
    ]
+  },
+  "REGISTRY": {
+   "index": 10,
+   "required": [
+    "destroy-top",
+    "destroy-in-flight",
+    "destroy-in-batch",
+    "destroy-in-body",
+    "destroy-in-computed",
+    "reuse-after-destroy"
+   ],
+   "optional": [],
+   "oracles": [
+    "O1c",
+    "O1e",
+    "O2",
+    "O4",
+    "O5",
+    "O6"
+   ]
+  },
+  "CAPACITY": {
+   "index": 12,
+   "required": [
+    "node-cap-throw",
+    "link-cap-throw",
+    "link-ceiling-grow",
+    "grow-past-initial",
+    "reuse-at-edge"
+   ],
+   "optional": [],
+   "oracles": [
+    "O1c",
+    "O1e",
+    "O2",
+    "O4",
+    "O5",
+    "O6"
+   ]
   }
  },
  "provenance": {
-  "date": "2026-10-29T01:39:50.534Z",
-  "gitHead": "aa154b6d804dd80505f808006189bffa0965c450",
+  "date": "2026-10-29T06:09:20.564Z",
+  "gitHead": "5ce2fc42018184da3a46f2a7d708e3f88cd1baf0",
   "gitDirty": [
-   " M CHANGELOG.md",
    " M LEDGER.md",
-   " M README.md",
-   " M Signal.d.ts",
-   " M Signal.js",
    " M bench/soak/_mustfail.mjs",
-   " M bench/soak/adapters/contract.mjs",
-   " M bench/soak/adapters/lite-s3.mjs",
    " M bench/soak/calibration/calibrate.mjs",
-   " M bench/soak/config.mjs",
+   " M bench/soak/calibration/golden/scripts-1000.json",
    " M bench/soak/divergences.json",
-   " M bench/soak/lanes/owner.mjs",
-   " M bench/soak/lanes/recycle.mjs",
-   " M bench/soak/lanes/scheduler.mjs",
+   " M bench/soak/divergences.mjs",
+   " M bench/soak/exec.mjs",
+   " M bench/soak/gen.mjs",
+   " M bench/soak/lanes/index.mjs",
+   " M bench/soak/model.mjs",
    " M bench/soak/oracles.mjs",
    " M bench/soak/parity.json",
    " M bench/soak/parity.mjs",
    " M bench/soak/scenarios.mjs",
    " M bench/soak/teeth.mjs",
-   " M decisions/0001-soak-design.md",
-   " M llms.txt",
    " M test/41-soak-config.test.mjs",
+   " M test/43-soak-model.test.mjs",
    " M test/44-soak-divergences.test.mjs",
    " M test/45-soak-teeth.test.mjs",
    " M test/46-soak-report.test.mjs",
-   " M test/88-soak-recycle.test.mjs",
+   " M test/74-soak-s3-seam.test.mjs",
+   " M test/75-soak-hook.test.mjs",
    " M test/89-soak-scheduler.test.mjs",
    "?? BRIEF.md",
    "?? bench/bench-runs/",
-   "?? test/91-l51-stale-update.test.mjs"
+   "?? bench/soak/lanes/capacity.mjs",
+   "?? bench/soak/lanes/registry.mjs",
+   "?? test/92-soak-registry.test.mjs",
+   "?? test/93-soak-capacity.test.mjs"
   ],
   "engineSha256": "ea0b64d17e6d68b49809f2124a44abf0204e47cd1e48bcefeccd33fcba023fe9",
   "engineNote": "sha256 of <root>/Signal.js (the tree kernel), equal at launch, at the end and in kernels.tree.files (--write dies otherwise): the engine actually cut, also on a dirty tree",
@@ -299,34 +337,34 @@
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   1.23,
-   2.74,
-   4.04
+   2.85,
+   5.02,
+   4.74
   ],
   "loadavgAfterTimed": [
-   1.5,
-   1.73,
-   2.8
+   2.27,
+   2.11,
+   3.09
   ],
   "loadavgAfter": [
-   5.96,
-   4.5,
-   3.75
+   6.55,
+   4.86,
+   4.05
   ],
   "busyNodeBefore": [],
   "busyNodeRule": "other node processes (not this process or its node launcher chain, e.g. the quiet-lock wrapper) >= 10% CPU at launch, as pid pcpu command; [] = none, null = ps failed",
-  "seconds": 1079,
-  "cutSeconds": 598,
+  "seconds": 1163,
+  "cutSeconds": 633,
   "secondsClock": "wall clock (Date.now), whole seconds: seconds = --write entry to the evidence write (every step; the origin of the \"(N s)\" log stamps); cutSeconds = step 1, the cut (the only timed phase under --timed)",
   "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
   "pinnedSha256": {
-   "bench/soak/gen.mjs": "99f83279be956ba25714a2731401c8995da392deff03044f7ae8977e95faac7c",
-   "bench/soak/exec.mjs": "a23975d372f8f95294056fcf8d957b977b9e040f96dac9dd0a21afcdeccd3650",
-   "bench/soak/oracles.mjs": "03e5c44597b2037db3002a2aba82afb5f370b0f066fd8bd6a7fe1ee64af332ae",
-   "bench/soak/model.mjs": "d37ca646cdca63f563579d23beaa698d818cc5d6e3bb95179d292374bc386e12",
-   "bench/soak/scenarios.mjs": "0a63a007e77f1dd61e72f6aa22f5b09b62320b5394a5dfb3ea37b47eddcfef91",
+   "bench/soak/gen.mjs": "9ce4d2a7eb9294a899a867938dfbefc4a6c10b4704605cc407391a8806b3315a",
+   "bench/soak/exec.mjs": "29149e85f674561c66b11fd5e360f9a3ae2397a264df3a3fe7fe95a87af8bcc9",
+   "bench/soak/oracles.mjs": "a85e261fcb680fc4d73733ee8a9913faaf357807c65e144d76ea2c665e4bae96",
+   "bench/soak/model.mjs": "a87052623d3cb7b90af865df146ab1a390555cc9ec1bbe0dcb2de4fd67ebd81f",
+   "bench/soak/scenarios.mjs": "671b9591a32bfc07bb243c07eafc1c9a9c6106b8bf4fc647a4db4e01a0d6fd8d",
    "bench/soak/seeds.mjs": "b68b535f7dcc83c2e12582c488fea1299704d41b492420854279e768010e9ff5",
-   "bench/soak/lanes/index.mjs": "81b625ae75f182c2feac60090123377161886f5350a2473bee6401cac9f69720",
+   "bench/soak/lanes/index.mjs": "539d3ed1b436aeb3f1d9b87971586b1c0411a20e988670ac63a006c05e10ae46",
    "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
    "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
@@ -342,7 +380,9 @@
    "bench/soak/lanes/lifecycle.mjs": "1be1721a7f04caa993ed6e16ea18490602322c2452befbb9f80efc8544c43a4c",
    "bench/soak/lanes/owner.mjs": "f8e803e3481e2f5693368862119bb102053287bd74ddd3cba138291637982eb6",
    "bench/soak/lanes/recycle.mjs": "2f7e0d56a3e9e4e6dd94220a0b1af424b08defdc0908a46df39eb197a59aa7b8",
-   "bench/soak/lanes/scheduler.mjs": "e03f0fc102fb076d7055493c0795d29eef99a1ddc77a242082a4c243206930b0"
+   "bench/soak/lanes/scheduler.mjs": "e03f0fc102fb076d7055493c0795d29eef99a1ddc77a242082a4c243206930b0",
+   "bench/soak/lanes/registry.mjs": "ddf650bb0665e2633f4b7082d85ccb5182cbfddc81665aef8d3ba58b40755732",
+   "bench/soak/lanes/capacity.mjs": "f94162ff661918b01a0809a1daa762bfcdaeeb167eb0577909e5c378eb2f4f9e"
   }
  },
  "worst": {
@@ -765,6 +805,34 @@
       "oracle": "O1e",
       "ratio": 0
      }
+    },
+    "REGISTRY": {
+     "rarestRequired": {
+      "scenario": "destroy-in-batch",
+      "hits": 8298
+     },
+     "leastPerformed": {
+      "oracle": "O6",
+      "performed": 1093819
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "CAPACITY": {
+     "rarestRequired": {
+      "scenario": "grow-past-initial",
+      "hits": 23495
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 1106755
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
     }
    },
    "smoke": {
@@ -863,6 +931,34 @@
      },
      "maxTaint": {
       "oracle": "O1e",
+      "ratio": 0
+     }
+    },
+    "REGISTRY": {
+     "rarestRequired": {
+      "scenario": "destroy-in-batch",
+      "hits": 448
+     },
+     "leastPerformed": {
+      "oracle": "O6",
+      "performed": 59867
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    "CAPACITY": {
+     "rarestRequired": {
+      "scenario": "link-ceiling-grow",
+      "hits": 1347
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61345
+     },
+     "maxTaint": {
+      "oracle": "O1c",
       "ratio": 0
      }
     }
@@ -1498,111 +1594,111 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      14448,
-      14421,
-      14300,
-      14525,
-      13622,
-      13740,
-      14127,
-      14045,
-      13930,
-      13693,
-      13875
+      13759,
+      13755,
+      13822,
+      14061,
+      13370,
+      13508,
+      13804,
+      13803,
+      13832,
+      13512,
+      13668
      ],
-     "min": 13622,
-     "median": 14045,
-     "max": 14525
+     "min": 13370,
+     "median": 13759,
+     "max": 14061
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      48008,
-      48473,
-      48944,
-      47885,
-      47921,
-      47930,
-      48803,
-      48167,
-      48720,
-      49646,
-      49431
+      47603,
+      49864,
+      51355,
+      49133,
+      49196,
+      49849,
+      50344,
+      49916,
+      49996,
+      49782,
+      49213
      ],
-     "min": 47885,
-     "median": 48473,
-     "max": 49646
+     "min": 47603,
+     "median": 49849,
+     "max": 51355
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      46528,
-      47128,
-      46968,
-      48604,
-      49972,
-      49273,
-      48092,
-      49898,
-      48741,
-      49521,
-      48916
+      46695,
+      47433,
+      47001,
+      48271,
+      50122,
+      49568,
+      49066,
+      50650,
+      49129,
+      49962,
+      48923
      ],
-     "min": 46528,
-     "median": 48741,
-     "max": 49972
+     "min": 46695,
+     "median": 49066,
+     "max": 50650
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      33529,
-      36613,
-      36910,
-      36949,
-      36668,
-      37040,
-      36508,
-      36920,
-      36748,
-      36753,
-      36799
+      32085,
+      35258,
+      35218,
+      35400,
+      35422,
+      35436,
+      35102,
+      35221,
+      35226,
+      35276,
+      35226
      ],
-     "min": 33529,
-     "median": 36753,
-     "max": 37040
+     "min": 32085,
+     "median": 35226,
+     "max": 35436
     },
     "HOOK": {
      "opsPerSecPerCycle": [
-      38060,
-      38371,
-      37751,
-      37993,
-      38645,
-      38523,
-      39175,
-      37235,
-      39107,
-      37761,
-      37518
+      38100,
+      38542,
+      37663,
+      38181,
+      38826,
+      38494,
+      39056,
+      37330,
+      39198,
+      37975,
+      37700
      ],
-     "min": 37235,
-     "median": 38060,
-     "max": 39175
+     "min": 37330,
+     "median": 38181,
+     "max": 39198
     },
     "SCHEDULER": {
      "opsPerSecPerCycle": [
-      193598,
-      227092,
-      225357,
-      230485,
-      227453,
-      231016,
-      230115,
-      230115,
-      229483,
-      228907,
-      229221
+      195181,
+      227195,
+      224751,
+      229116,
+      229798,
+      228594,
+      229168,
+      228646,
+      229221,
+      229221,
+      226784
      ],
-     "min": 193598,
-     "median": 229221,
-     "max": 231016
+     "min": 195181,
+     "median": 228646,
+     "max": 229798
     }
    }
   },
@@ -2144,93 +2240,93 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      13635,
-      13927,
-      13800,
-      14142,
-      13260,
-      13527,
-      13715,
-      13844,
-      13793,
-      13459,
-      13710
+      13469,
+      13725,
+      13579,
+      13970,
+      13256,
+      13486,
+      13807,
+      13821,
+      13788,
+      13472,
+      13742
      ],
-     "min": 13260,
-     "median": 13715,
-     "max": 14142
+     "min": 13256,
+     "median": 13725,
+     "max": 13970
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      18400,
-      20297,
-      20665,
-      20545,
-      20439,
-      20575,
-      20482,
-      20679,
-      20390,
-      20580,
-      20548
+      20072,
+      19955,
+      20157,
+      20021,
+      19885,
+      20003,
+      19982,
+      20115,
+      19863,
+      20034,
+      19889
      ],
-     "min": 18400,
-     "median": 20545,
-     "max": 20679
+     "min": 19863,
+     "median": 20003,
+     "max": 20157
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      47732,
-      65925,
-      66180,
-      66466,
-      66592,
-      66978,
-      66481,
-      67315,
-      66504,
-      66839,
-      67000
+      48196,
+      64335,
+      64910,
+      65180,
+      65407,
+      64884,
+      65516,
+      65541,
+      65001,
+      65245,
+      65194
      ],
-     "min": 47732,
-     "median": 66504,
-     "max": 67315
+     "min": 48196,
+     "median": 65180,
+     "max": 65541
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      30598,
-      34192,
-      34367,
-      34408,
-      34435,
-      34445,
-      34283,
-      34549,
-      34443,
-      34614,
-      34502
+      30612,
+      32855,
+      33198,
+      33401,
+      33307,
+      33334,
+      33098,
+      33441,
+      33313,
+      33412,
+      33369
      ],
-     "min": 30598,
-     "median": 34435,
-     "max": 34614
+     "min": 30612,
+     "median": 33313,
+     "max": 33441
     },
     "SCHEDULER": {
      "opsPerSecPerCycle": [
-      194236,
-      226273,
-      226324,
-      230803,
-      229851,
-      229640,
-      220162,
-      225054,
-      228281,
-      227608,
-      218961
+      193225,
+      226784,
+      225408,
+      228698,
+      226938,
+      224148,
+      228437,
+      227401,
+      224550,
+      228854,
+      227401
      ],
-     "min": 194236,
-     "median": 226324,
-     "max": 230803
+     "min": 193225,
+     "median": 226938,
+     "max": 228854
     }
    }
   },
@@ -2600,6 +2696,102 @@
       "fifo-delivery": 24173,
       "lifo-delivery": 24061
      }
+    },
+    "REGISTRY": {
+     "cycles": 11,
+     "worlds": 25376,
+     "ops": 1100513,
+     "failingWorlds": 25376,
+     "crashes": 0,
+     "scenarios": {
+      "destroy-top": 16989,
+      "destroy-in-flight": 25376,
+      "destroy-in-batch": 8298,
+      "destroy-in-body": 8533,
+      "destroy-in-computed": 8545,
+      "reuse-after-destroy": 16989
+     },
+     "performed": {
+      "O1c": 2336305,
+      "O1e": 2149232,
+      "O2": 4618779,
+      "O4": 1281961,
+      "O5": 1100513,
+      "O6": 1093819,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "destroy-top": 1468,
+      "destroy-in-flight": 2261,
+      "destroy-in-batch": 695,
+      "destroy-in-body": 732,
+      "destroy-in-computed": 743,
+      "reuse-after-destroy": 1468
+     }
+    },
+    "CAPACITY": {
+     "cycles": 11,
+     "worlds": 2706,
+     "ops": 1104049,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "node-cap-throw": 35142,
+      "link-cap-throw": 35799,
+      "link-ceiling-grow": 23760,
+      "grow-past-initial": 23495,
+      "reuse-at-edge": 47709
+     },
+     "performed": {
+      "O1c": 7056727,
+      "O1e": 2260233,
+      "O2": 6405077,
+      "O4": 1499972,
+      "O5": 1106755,
+      "O6": 10984440,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "node-cap-throw": 2916,
+      "link-cap-throw": 3042,
+      "link-ceiling-grow": 1920,
+      "grow-past-initial": 1861,
+      "reuse-at-edge": 4081
+     }
     }
    },
    "smoke": {
@@ -2955,134 +3147,266 @@
       "fifo-delivery": 5844,
       "lifo-delivery": 5035
      }
+    },
+    "REGISTRY": {
+     "cycles": 3,
+     "worlds": 1413,
+     "ops": 60107,
+     "failingWorlds": 1413,
+     "crashes": 0,
+     "scenarios": {
+      "destroy-top": 937,
+      "destroy-in-flight": 1413,
+      "destroy-in-batch": 448,
+      "destroy-in-body": 472,
+      "destroy-in-computed": 493,
+      "reuse-after-destroy": 937
+     },
+     "performed": {
+      "O1c": 126844,
+      "O1e": 119878,
+      "O2": 256496,
+      "O4": 70908,
+      "O5": 60107,
+      "O6": 59867,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "destroy-top": 296,
+      "destroy-in-flight": 459,
+      "destroy-in-batch": 144,
+      "destroy-in-body": 141,
+      "destroy-in-computed": 157,
+      "reuse-after-destroy": 296
+     }
+    },
+    "CAPACITY": {
+     "cycles": 3,
+     "worlds": 150,
+     "ops": 61195,
+     "failingWorlds": 0,
+     "crashes": 0,
+     "scenarios": {
+      "node-cap-throw": 1834,
+      "link-cap-throw": 1736,
+      "link-ceiling-grow": 1347,
+      "grow-past-initial": 1402,
+      "reuse-at-edge": 2475
+     },
+     "performed": {
+      "O1c": 394119,
+      "O1e": 129068,
+      "O2": 351500,
+      "O4": 86277,
+      "O5": 61345,
+      "O6": 626830,
+      "O7a": 0,
+      "O7": 0,
+      "OB": 0,
+      "O8": 0,
+      "OW": 0,
+      "O9": 0
+     },
+     "skipTainted": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "taintRatio": {
+      "O1c": 0,
+      "O1e": 0,
+      "O2": 0,
+      "O4": 0
+     },
+     "scenarioMinPerCycle": {
+      "node-cap-throw": 510,
+      "link-cap-throw": 496,
+      "link-ceiling-grow": 404,
+      "grow-past-initial": 394,
+      "reuse-at-edge": 799
+     }
     }
    },
    "throughput": {
     "NEST": {
      "opsPerSecPerCycle": [
-      47965,
-      48901,
-      50163,
-      49397,
-      49013,
-      49068,
-      49406,
-      49046,
-      49176,
-      49789,
-      49268
+      47599,
+      48607,
+      50329,
+      49467,
+      49414,
+      49307,
+      49599,
+      49353,
+      49609,
+      49883,
+      49582
      ],
-     "min": 47965,
-     "median": 49176,
-     "max": 50163
+     "min": 47599,
+     "median": 49467,
+     "max": 50329
     },
     "WIE": {
      "opsPerSecPerCycle": [
-      10621,
-      10242,
-      10170,
-      10316,
-      10692,
-      10114,
-      10289,
-      10189,
-      10626,
-      10392,
-      10399
+      10588,
+      10239,
+      10153,
+      10309,
+      10671,
+      10102,
+      10290,
+      10174,
+      10612,
+      10364,
+      10406
      ],
-     "min": 10114,
-     "median": 10316,
-     "max": 10692
+     "min": 10102,
+     "median": 10309,
+     "max": 10671
     },
     "HOOK": {
      "opsPerSecPerCycle": [
-      37806,
-      37648,
-      37296,
-      37357,
-      38122,
-      37821,
-      38513,
-      36758,
-      38505,
-      37143,
-      36944
+      37803,
+      38023,
+      37360,
+      37644,
+      38152,
+      38204,
+      38743,
+      36994,
+      38720,
+      37512,
+      37116
      ],
-     "min": 36758,
-     "median": 37648,
-     "max": 38513
+     "min": 36994,
+     "median": 37803,
+     "max": 38743
     },
     "LIFECYCLE": {
      "opsPerSecPerCycle": [
-      28997,
-      29673,
-      29405,
-      29966,
-      29910,
-      30179,
-      29584,
-      28738,
-      28846,
-      29004,
-      29388
+      28955,
+      29485,
+      29436,
+      29838,
+      29773,
+      30172,
+      29109,
+      28714,
+      29148,
+      28985,
+      29338
      ],
-     "min": 28738,
-     "median": 29405,
-     "max": 30179
+     "min": 28714,
+     "median": 29338,
+     "max": 30172
     },
     "OWNER": {
      "opsPerSecPerCycle": [
-      69796,
-      71342,
-      71064,
-      70863,
-      71261,
-      70838,
-      70868,
-      71054,
-      71669,
-      70663,
-      71505
+      69708,
+      71322,
+      71135,
+      70988,
+      71271,
+      70858,
+      71079,
+      70873,
+      71221,
+      70878,
+      71327
      ],
-     "min": 69796,
-     "median": 71054,
-     "max": 71669
+     "min": 69708,
+     "median": 71079,
+     "max": 71327
     },
     "RECYCLE": {
      "opsPerSecPerCycle": [
-      269709,
-      280997,
-      283385,
-      280839,
+      270731,
+      277721,
+      279349,
+      279505,
+      278960,
+      278727,
       283065,
-      283787,
-      286880,
-      283787,
-      282505,
-      280839,
-      282665
+      267402,
+      279271,
+      276493,
+      278029
      ],
-     "min": 269709,
-     "median": 282665,
-     "max": 286880
+     "min": 267402,
+     "median": 278727,
+     "max": 283065
     },
     "SCHEDULER": {
      "opsPerSecPerCycle": [
-      182800,
+      183234,
+      192410,
+      194311,
       193561,
-      193598,
-      193337,
-      193337,
-      194424,
-      193449,
-      193561,
-      193337,
-      193636,
-      193449
+      193673,
+      192780,
+      193524,
+      192965,
+      193412,
+      192262,
+      193412
      ],
-     "min": 182800,
-     "median": 193449,
-     "max": 194424
+     "min": 183234,
+     "median": 193412,
+     "max": 194311
+    },
+    "REGISTRY": {
+     "opsPerSecPerCycle": [
+      52346,
+      52583,
+      52895,
+      53668,
+      53477,
+      51189,
+      52870,
+      52289,
+      53169,
+      52883,
+      52605
+     ],
+     "min": 51189,
+     "median": 52870,
+     "max": 53668
+    },
+    "CAPACITY": {
+     "opsPerSecPerCycle": [
+      123253,
+      129952,
+      127389,
+      126176,
+      125543,
+      123764,
+      127631,
+      123584,
+      129325,
+      125141,
+      132032
+     ],
+     "min": 123253,
+     "median": 126176,
+     "max": 132032
     }
    }
   }
@@ -3112,7 +3436,7 @@
     ]
    },
    "tree": {
-    "mainExit": 0,
+    "mainExit": 1,
     "lanesEqual": [
      "NEST",
      "WIE",
@@ -3120,7 +3444,9 @@
      "LIFECYCLE",
      "OWNER",
      "RECYCLE",
-     "SCHEDULER"
+     "SCHEDULER",
+     "REGISTRY",
+     "CAPACITY"
     ]
    }
   },
@@ -3147,7 +3473,7 @@
     ]
    },
    "tree": {
-    "mainExit": 0,
+    "mainExit": 1,
     "lanesEqual": [
      "NEST",
      "WIE",
@@ -3155,7 +3481,9 @@
      "LIFECYCLE",
      "OWNER",
      "RECYCLE",
-     "SCHEDULER"
+     "SCHEDULER",
+     "REGISTRY",
+     "CAPACITY"
     ]
    }
   }
@@ -3847,6 +4175,74 @@
       "ratio": 0
      }
     }
+   },
+   "REGISTRY": {
+    "cycles": 11,
+    "ops": 11327,
+    "worlds": 270,
+    "failingWorlds": 270,
+    "performed": {
+     "O1c": 23705,
+     "O1e": 22335,
+     "O2": 48290,
+     "O4": 13151,
+     "O5": 11327,
+     "O6": 11441,
+     "O7a": 0,
+     "O7": 0,
+     "OB": 0,
+     "O8": 0,
+     "OW": 0,
+     "O9": 0
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "destroy-in-batch",
+      "hits": 71
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 11327
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   },
+   "CAPACITY": {
+    "cycles": 11,
+    "ops": 13456,
+    "worlds": 33,
+    "failingWorlds": 0,
+    "performed": {
+     "O1c": 84616,
+     "O1e": 30787,
+     "O2": 79770,
+     "O4": 19472,
+     "O5": 13489,
+     "O6": 129802,
+     "O7a": 0,
+     "O7": 0,
+     "OB": 0,
+     "O8": 0,
+     "OW": 0,
+     "O9": 0
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "link-ceiling-grow",
+      "hits": 250
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 13489
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
    }
   }
  },
@@ -4327,6 +4723,102 @@
     },
     "maxTaint": {
      "oracle": "O1e",
+     "ratio": 0
+    }
+   }
+  },
+  "REGISTRY:destroy-in-flight": {
+   "lane": "REGISTRY",
+   "scenario": "destroy-in-flight",
+   "kernel": "tree",
+   "hits": 0,
+   "ops": 60208,
+   "worlds": 147,
+   "performed": {
+    "O1c": 157741,
+    "O1e": 141341,
+    "O2": 305517,
+    "O4": 82804,
+    "O5": 60355,
+    "O6": 72409,
+    "O7a": 0,
+    "O7": 0,
+    "OB": 0,
+    "O8": 0,
+    "OW": 0,
+    "O9": 0
+   },
+   "skipTainted": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "taintRatio": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "worst": {
+    "rarestRequired": {
+     "scenario": "destroy-in-flight",
+     "hits": 0
+    },
+    "leastPerformed": {
+     "oracle": "O5",
+     "performed": 60355
+    },
+    "maxTaint": {
+     "oracle": "O1c",
+     "ratio": 0
+    }
+   }
+  },
+  "CAPACITY:link-ceiling-grow": {
+   "lane": "CAPACITY",
+   "scenario": "link-ceiling-grow",
+   "kernel": "tree",
+   "hits": 0,
+   "ops": 61195,
+   "worlds": 150,
+   "performed": {
+    "O1c": 395648,
+    "O1e": 131400,
+    "O2": 354253,
+    "O4": 87581,
+    "O5": 61345,
+    "O6": 456187,
+    "O7a": 0,
+    "O7": 0,
+    "OB": 0,
+    "O8": 0,
+    "OW": 0,
+    "O9": 0
+   },
+   "skipTainted": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "taintRatio": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "worst": {
+    "rarestRequired": {
+     "scenario": "link-ceiling-grow",
+     "hits": 0
+    },
+    "leastPerformed": {
+     "oracle": "O5",
+     "performed": 61345
+    },
+    "maxTaint": {
+     "oracle": "O1c",
      "ratio": 0
     }
    }
@@ -6537,6 +7029,250 @@
      },
      "maxTaint": {
       "oracle": "O1e",
+      "ratio": 0
+     }
+    }
+   ],
+   "tree:REGISTRY": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "destroy-in-computed",
+      "hits": 436
+     },
+     "leastPerformed": {
+      "oracle": "O6",
+      "performed": 60089
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "destroy-in-computed",
+      "hits": 424
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60142
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "destroy-in-body",
+      "hits": 419
+     },
+     "leastPerformed": {
+      "oracle": "O6",
+      "performed": 59581
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "destroy-in-batch",
+      "hits": 447
+     },
+     "leastPerformed": {
+      "oracle": "O6",
+      "performed": 59659
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "destroy-in-batch",
+      "hits": 430
+     },
+     "leastPerformed": {
+      "oracle": "O6",
+      "performed": 59994
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "destroy-in-batch",
+      "hits": 455
+     },
+     "leastPerformed": {
+      "oracle": "O6",
+      "performed": 59067
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "destroy-in-body",
+      "hits": 454
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60007
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "destroy-in-batch",
+      "hits": 454
+     },
+     "leastPerformed": {
+      "oracle": "O6",
+      "performed": 58954
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "tree:CAPACITY": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "grow-past-initial",
+      "hits": 1235
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61362
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "grow-past-initial",
+      "hits": 1296
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61342
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "grow-past-initial",
+      "hits": 1266
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61349
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "link-ceiling-grow",
+      "hits": 1133
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60952
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "link-ceiling-grow",
+      "hits": 1460
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61347
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "grow-past-initial",
+      "hits": 1361
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 60543
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "grow-past-initial",
+      "hits": 1218
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61362
+     },
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "link-ceiling-grow",
+      "hits": 1338
+     },
+     "leastPerformed": {
+      "oracle": "O5",
+      "performed": 61353
+     },
+     "maxTaint": {
+      "oracle": "O1c",
       "ratio": 0
      }
     }
@@ -9184,6 +9920,282 @@
      "hits": 0,
      "maxTaint": {
       "oracle": "O1e",
+      "ratio": 0
+     }
+    }
+   ],
+   "tree:REGISTRY:destroy-in-flight": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "tree:CAPACITY:link-ceiling-grow": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
       "ratio": 0
      }
     }
