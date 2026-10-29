@@ -461,19 +461,25 @@ _mustfail.mjs / parity.json / controls.json as the tree stands; those marked [B5
   767f808, Signal.js 0f75866f, the last kernel before A5a / A5b, byte-frozen in controls/prea5/. T-A5b runs it on HOOK
   (smoke) and must show O8 ghost-listener explained by DIV-F9. parity.json pins 52 files (+ lanes/owner.mjs, R3 b126;
   + lanes/recycle.mjs, R4a b130; + lanes/scheduler.mjs, R4c b134).
-- Counts now (b134 R4c; b137 T-RC-updgen): universe 70, CHECKS ids 60, GAPS 22, NOT_TEETH 11, UNREACHABLE 5, _mustfail controls 79 (61
-  short + 18 long; b137 + T-RC-updgen), test/45 38 tests (b127 R3 OWNER added the lane, the OW family and 8 controls, SPEC-B addendum 14;
+- Counts now (b134 R4c; b137 T-RC-updgen): universe 70, CHECKS ids 60, GAPS 22, NOT_TEETH 11, UNREACHABLE 5, _mustfail
+  controls 79 (61
+  short + 18 long; b137 + T-RC-updgen), test/45 38 tests (b127 R3 OWNER added the lane, the OW family and 8 controls,
+  SPEC-B addendum 14;
   b130 R4a added the RECYCLE lane and the O9 family, SPEC-B addendum 15; b134 R4c added the SCHEDULER lane and the O9
   stale-thunk sig, SPEC-B addendum 16). Roster 10, SCENARIOS 66.
 - R4a (b130; harness only, Signal.js ec6d7156 unchanged): lane RECYCLE (LANE_INDEX 11; lanes/recycle.mjs), the 9th ROSTER
   lane (laneSpan 12), ops rdisp / rsset / rsread / rsdisp over a fixed per-world ring of 8 stale handles. Oracle O9 (judged
   only inside RECYCLE's op handlers), sigs stale-write (a live signal peek != model, any effect ran, or, D-b130-1, a live
   computed the model holds CLEAN peeks != model), stale-read (a stale read / peek returns != undefined) and stale-dispose
-  (activeNodes / activeLinks moved, or a live signal handle reads undefined). LANE_KERNELS.RECYCLE = tree (was headpatched, lite-1.5.2,
-  tree; b137 D-b137-1: the controls carry DIV-51, see below). SCENARIOS 52 -> 58 (stale-write-recycled, stale-peek-recycled, stale-read-recycled, stale-dispose-recycled,
+  (activeNodes / activeLinks moved, or a live signal handle reads undefined). LANE_KERNELS.RECYCLE = tree (was
+  headpatched, lite-1.5.2,
+  tree; b137 D-b137-1: the controls carry DIV-51, see below). SCENARIOS 52 -> 58 (stale-write-recycled,
+  stale-peek-recycled, stale-read-recycled, stale-dispose-recycled,
   stale-dead-unrecycled, multi-gen; covOff stale-dispose-recycled -> stale-dispose-dead). Must-fail: T-RC-setgen /
-  T-RC-readgen / T-RC-dispgen (one-hunk tree mutants of the gen guards, each breaches O9 with its sig), T-RC-updgen (b137, below), T-cov-RECYCLE
-  (exit 3, missing=stale-dispose-recycled), pass control P-RC-TREE. Census 200 worlds (b130, before rsupd): 0 failing on all 3 kernels.
+  T-RC-readgen / T-RC-dispgen (one-hunk tree mutants of the gen guards, each breaches O9 with its sig), T-RC-updgen
+  (b137, below), T-cov-RECYCLE
+  (exit 3, missing=stale-dispose-recycled), pass control P-RC-TREE. Census 200 worlds (b130, before rsupd): 0 failing on
+  all 3 kernels.
 - b137 (harness only, Signal.js ea0b64d1 unchanged): RECYCLE gains op rsupd {s, v} (a stale SIGNAL update(fn) through the S3
   world method update(h, fn); EXT_METHODS.recycle = ['update']; generator weight 6; no new scenario, SCENARIOS stays 66).
   Oracle checkO9Update raises the existing O9 sig stale-write (fn called, or a return other than undefined; D-b136-1, O9

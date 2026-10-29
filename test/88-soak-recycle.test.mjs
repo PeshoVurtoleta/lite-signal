@@ -3,7 +3,8 @@
 // facts (.handoff/b129-evidence/r4a/T0-FACTS.md, re-verified by .handoff/b129-evidence/r4a-h1/probe.mjs). No value is copied
 // from a run of the new code. LEDGER #51 (stale update leaked the resident value to fn; M5 / D-b129-1) is PINNED since b137 (checkO9Update + adapter world.update rows at the end).
 // Groups: REG, ORACLE (fires / silent), MALFORMED (TypeError matrix), KERNEL (live Signal.js), MUTANT (kernels built at runtime).
-// Oracle rows are new (no prior O9 export): they fail on the old code by import. KERNEL rows are regression pins of engine facts.
+// Oracle rows are new (no prior O9 export): they fail on the old code by call.
+// KERNEL rows are regression pins of engine facts.
 // MIT (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,8 +29,8 @@ const expectFind = (r, sig) => {
 };
 
 describe('O9 registration', () => {
-    it('ORACLES ends with O9 and SIGS.O9 is [stale-write, stale-read, stale-dispose, stale-thunk], SIGS frozen', () => {
-        assert.equal(ORACLES[ORACLES.length - 1], 'O9');
+    it('ORACLES includes O9 and SIGS.O9 is [stale-write, stale-read, stale-dispose, stale-thunk], SIGS frozen', () => {
+        assert.ok(ORACLES.includes('O9'));
         assert.deepEqual(SIGS.O9, ['stale-write', 'stale-read', 'stale-dispose', 'stale-thunk']);
         assert.ok(Object.isFrozen(SIGS));
     });
@@ -304,7 +305,7 @@ describe('MUTANT: the oracles have teeth on the engine', () => {
         } finally { rmSync(dir, { recursive: true, force: true }); }
     });
 
-    it('T-RC-setgen -> stale-write (resident changes, effect runs) for signal and computed-hosting slots', async () => {
+    it('T-RC-setgen -> stale-write (resident changes, effect runs) on the signal-resident shape', async () => {
         const K = await buildMutant('setgen');
         // signal resident: the stale set overwrites 5 with 99 and wakes the watcher (T0 d: resident 5 -> 99 + 1 run)
         const c = staleSignalCase(K, 'signal');
@@ -499,5 +500,37 @@ describe('ADAPTER GC: 1e6 stale world.update (b137 A5)', { skip: typeof globalTh
         const m = await window(step, 1000000);
         assert.ok(m.minor >= 1, 'control must scavenge: minor ' + m.minor);
         assert.ok(m.grewBpo < 0.5, 'control must be transient, not retained: ' + m.grewBpo);
+    });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// b138 T1 (FILLER 89): opUpd must CAPTURE what update(h, fn) returned (rc.uval) and hand it to checkO9Update.
+// Oracle: D-b135-1 (a stale update returns undefined without calling fn) + the checkO9Update contract: calls 0 and
+// got !== undefined -> stale-write whose detail names the returned value. A stub world returns 7 / undefined WITHOUT
+// calling fn. Regression pin: dropping `this.uval =` from RcState.ugo survives every other gate (op sees undefined).
+describe('RECYCLE rsupd: the update return value reaches checkO9Update (b138 T1)', () => {
+    const stubX = (ret) => {
+        const rc = new RcState();
+        rc.hs[2] = function staleSignal() {}; rc.hk[2] = 's';
+        const finds = [];
+        const x = {
+            rc, H: [], M: { n: [], tainted: () => false }, bodies: 0, unmodelled: null,
+            W: { update: () => ret, peek: () => undefined },   // never calls fn: ucalls stays 0
+            guard: (f) => { f(); }, did: () => {}, failF: (f) => { finds.push(f); },
+            readCheck: () => {}, D: { onRcStale: () => {} },
+        };
+        return { x, finds };
+    };
+    it('stale update returning 7 without calling fn -> O9 stale-write finding naming "returned 7"', () => {
+        const { x, finds } = stubX(7);
+        RECYCLE.ops.rsupd(x, { s: 2, v: 3 });
+        assert.equal(finds.length, 1);
+        expectFind(finds[0], 'stale-write');
+        assert.match(finds[0].detail, /returned 7/);
+    });
+    it('CONTROL: stale update returning undefined without calling fn -> no finding', () => {
+        const { x, finds } = stubX(undefined);
+        RECYCLE.ops.rsupd(x, { s: 2, v: 3 });
+        assert.equal(finds.length, 0);
     });
 });

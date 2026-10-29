@@ -9,10 +9,9 @@
  * value correct, every wakeup count correct and the pool perfectly balanced --
  * it just recomputes bodies that did not need recomputing. graph-fuzzer,
  * scheduler-bench, torture-soak (those three since retired into bench/soak),
- * oracle-fuzzer and glitch-hunter are all blind
- * to it. On a wide graph that is the difference between O(changed) and
- * O(everything), which is the entire value proposition of a pull engine with
- * versioned short-circuits.
+ * oracle-fuzzer and glitch-hunter are all blind to it. On a wide graph that is
+ * the difference between O(changed) and O(everything), which is the entire value
+ * proposition of a pull engine with versioned short-circuits.
  *
  * So this file counts BODY EXECUTIONS. Every computed and effect increments a
  * counter, and each scenario asserts an exact expected count derived from the
