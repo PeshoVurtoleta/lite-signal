@@ -39,9 +39,14 @@
  *      When EVERY batch bracket inverts, gc-profiler has no floor at all
  *      (bytesPerCall null, verdict inconclusive): that is the host's GC timing,
  *      so the witness re-measures, up to ALLOC_ATTEMPTS (3) in total
- *      (helpers/alloc-verdict.mjs). A measured fail is never retried; any other
+ *      (helpers/alloc-verdict.mjs). A well-sampled measured fail is never
+ *      retried; an under-sampled one (the min rests on <= half the batches
+ *      because the rest inverted) is re-measured like an inverted-bracket
+ *      inconclusive, and a fail on the last attempt FAILs. A measured fail is
+ *      sticky: if no later attempt passes, the witness FAILs (the last measured
+ *      fail's report), never INCONCLUSIVE. Any other
  *      inconclusive (unsettled, no memory channel) is a broken harness and FAILs
- *      (UNVERIFIABLE). Still inverted after 3 attempts: a NOTE, not a FAIL --
+ *      (UNVERIFIABLE). Inverted on all 3 attempts: a NOTE, not a FAIL --
  *      the scenario stands on witness 3 (and witness 4 for steady scenarios).
  *   2. major GC count and longest pause over a measured window (`measureOps` +
  *      `checkNoGc`, `maxMajor: 0` / `maxPauseMs: 2`) -- a zero-alloc window
@@ -361,8 +366,11 @@ let bytesInconclusive = 0;
 function gateAllocAndGc(name, st, maxBytesPerCall, steady) {
     const fn = st.hot;
 
-    // Witness 1 through bytesWitness (helpers/alloc-verdict.mjs): only an inverted-bracket inconclusive is
-    // re-measured (ALLOC_ATTEMPTS); a measured fail is never retried; any other inconclusive is a FAIL.
+    // Witness 1 through bytesWitness (helpers/alloc-verdict.mjs): an inverted-bracket inconclusive is
+    // re-measured (ALLOC_ATTEMPTS); a well-sampled measured fail is never retried; an under-sampled one (the
+    // min rests on <= half the batches because the rest inverted) is re-measured like an inverted-bracket
+    // inconclusive, and a fail on the last attempt FAILs; a measured fail is sticky (no later pass -> FAIL, never
+    // inconclusive); any other inconclusive is a FAIL.
     const w = bytesWitness(
         () => measureAllocs(fn, { iterations: ITER, warmup: WARMUP }),
         (alloc) => checkAllocs(alloc, { maxBytesPerCall }),

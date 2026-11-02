@@ -1272,12 +1272,27 @@ node 22 since f64e05c). The flag parse is unchanged: unpinned, only `--min-...`,
 value other than 4 are still refused. Gates: test/41 (`semiSpaceProblem` band + flag vectors,
 NEARWRAP with `--expose-gc` only).
 
+### Fixed -- zerogc torture: an under-sampled retained-bytes fail is re-measured (dev-only, not shipped)
+
+`allocStep` in `bench/torture/helpers/alloc-verdict.mjs` (the retained-bytes witness of
+`bench/torture/zerogc-torture.mjs`) now re-measures a gc-profiler 1.16.0 verdict `fail` whose min rests on at
+most half the batches because the rest inverted (`measuredBatches * 2 <= batches`, `invertedBatches > 0`,
+settled), up to `ALLOC_ATTEMPTS` (3) (D-b146-1). A fail on the last attempt still FAILs, and a measured fail is
+sticky (D-b146-2, in `bytesWitness`): a fail followed only by all-inverted re-measures still FAILs (with the
+last measured fail's report), never INCONCLUSIVE; only a later pass clears it. A well-sampled fail is never
+retried; a missing or non-integer batch count fails closed. Previously one CI run failed the `semantic
+torture` step on churn-box: 2.9944 B/call vs floor 1, 7 of 8 batches inverted, so the min rested on one batch
+(ubuntu node 22, gh run 41369296785; CI class 11). Gates: test/55 (11 new tests, 28 total: under-sampled retry,
+last-attempt fail, the 4-of-8 boundary, fail-closed fields, sticky fail ([U, INV, INV] / [U, U, INV] /
+[INV, U, INV] -> fail, [U, INV, PASS] -> pass), a real `checkAllocs` on the under-sampled shape);
+zerogc-torture with `ZEROGC_BREAK=1` still FAILs on attempt 1/3.
+
 ### Fixed -- zerogc torture: an all-inverted retained-bytes witness is re-measured, then reported INCONCLUSIVE (dev-only, not shipped)
 
 The retained-bytes witness in `bench/torture/zerogc-torture.mjs` (new helper
 `bench/torture/helpers/alloc-verdict.mjs`) re-measures a run whose every batch bracket inverted
 (gc-profiler 1.16.0 verdict `inconclusive`, `bytesPerCall` null, settled) up to 3 attempts
-(`ALLOC_ATTEMPTS`). A measured fail and an unsettled run are never retried (an unsettled run FAILs as
+(`ALLOC_ATTEMPTS`). A well-sampled measured fail and an unsettled run are never retried (an unsettled run FAILs as
 UNVERIFIABLE). A witness still unmeasured after 3 attempts is a labelled INCONCLUSIVE note, not a
 FAIL: the scenario stands on its exact counters (`poolGrowths` / `totalAllocations` / `activeNodes`)
 and, for steady scenarios, the scavenge + nursery window, and the PASS line says so ("(byte witness
