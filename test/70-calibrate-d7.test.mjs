@@ -196,7 +196,7 @@ const PROV = {
     timing: 'timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)', pinnedSha256: {},
 };
 const kern = (tp, w) => ({ kernel: 'k', knownAs: 'k', files: [], full: LANE_COUNTS(w), smoke: LANE_COUNTS(1), throughput: tp });
-// the shape of the committed soak-calibration.json (an --import-throughput run): PENDING cells + throughputRun
+// the --import-throughput (chained) doc shape: PENDING cells + throughputRun (the committed doc is a --timed recut since R7 C3, b152: no throughputRun key)
 const chained = () => ({
     provenance: { ...PROV, timing: 'PENDING (untimed run; throughput decides no gate)' },
     kernels: { headpatched: kern({ GRAPH: 'PENDING' }, 5), tree: kern({ WIE: 'PENDING' }, 5) },

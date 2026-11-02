@@ -558,7 +558,7 @@ test('ONCE_PER_STEP pin: the generator puts at most one cycle trigger (cyc:1 set
         }
         if (desc.name === 'ERROR') assert.ok(total > 0, 'ERROR generated no cycle-bomb: the pin would be vacuous');
         // R7 C-4: the BOX mix contains the ERROR sub-lane, so BOX may carry cycle triggers (probed 175 on this tree); none elsewhere
-        else if (desc.name === 'BOX') assert.equal(total, 175, 'BOX cycle-bomb count');   // probed 175 on head
+        else if (desc.name === 'BOX') assert.equal(total, 175, 'BOX cycle-bomb count');
         else assert.equal(total, 0, desc.name + ' generated a cycle trigger (G7: ERROR and BOX only)');
     }
 });

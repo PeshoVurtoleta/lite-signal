@@ -160,9 +160,14 @@ function mainSmoke(envExtra) {
     for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
     env.SOAK_LANES = 'BOX'; env.SOAK_OUT = out;
     if (envExtra !== undefined) for (const k of Object.keys(envExtra)) env[k] = envExtra[k];
-    const r = spawnSync(process.execPath, [HEAP, '--expose-gc', join(HERE, 'bench/soak/main.mjs'), '--smoke'], { cwd: HERE, env, encoding: 'utf8', maxBuffer: 1 << 26 });
-    const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    rmSync(dir, { recursive: true, force: true });
+    let r, recs;
+    try {
+        // bounded: SIGKILL (main.mjs traps SIGTERM), so a hung child fails this row (status null, no JSONL) instead of hanging the suite
+        r = spawnSync(process.execPath, [HEAP, '--expose-gc', join(HERE, 'bench/soak/main.mjs'), '--smoke'], { cwd: HERE, env, encoding: 'utf8', maxBuffer: 1 << 26, timeout: 300000, killSignal: 'SIGKILL' });
+        recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
     const res = { status: r.status, stderr: r.stderr, stdout: r.stdout, recs, cyc: recs.filter((x) => x.lane === 'BOX' && typeof x.worlds === 'number' && x.checks !== undefined) };
     if (envExtra === undefined) MAIN = res;
     return res;

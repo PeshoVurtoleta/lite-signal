@@ -78,8 +78,9 @@ for (const name of SUBN) {
             assert.deepEqual(t.gateHits, plain.gateHits);
             assert.deepEqual(t.skipTainted, plain.skipTainted);
             assert.equal(t.trace, plain.trace);
-                        const { OT, ...rest } = t.checks;
-                        { const { OT: _p, ...plainRest } = plain.checks; assert.equal(_p, 0, 'a non-twin world books OT 0'); assert.deepEqual(rest, plainRest); }
+            const { OT, ...rest } = t.checks;
+            const { OT: _p, ...plainRest } = plain.checks;
+            assert.equal(_p, 0, 'a non-twin world books OT 0'); assert.deepEqual(rest, plainRest);
             assert.deepEqual(t.failure, plain.failure);   // clean + equal -> null; dirty + equal -> the primary failure untouched
             for (const k of Object.keys(plain.scen)) assert.equal(t.scen[k], plain.scen[k], k);
         }

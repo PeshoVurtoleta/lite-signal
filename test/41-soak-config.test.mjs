@@ -732,7 +732,7 @@ const B6_JSON = join(SOAK, 'calibration', 'soak-calibration.json');
 const B6_DOC = JSON.parse(readFileSync(B6_JSON, 'utf8'));
 // parity.json files: a lane-only kernel's evidence must be this engine (D7: tree's Signal.js / Watch.js shas)
 const B6_PARITY_FILES = JSON.parse(readFileSync(join(SOAK, 'parity.json'), 'utf8')).files;
-const B6_RECUT = 'recut: node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json (~13 min, untimed), then review the JSON diff';
+const B6_RECUT = 'recut: node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --timed under quiet-lock run --strict (b152: 1421 s), then review the JSON diff';
 const b6Copy = (x) => JSON.parse(JSON.stringify(x));
 const b6Has = (o, k) => o !== null && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
 const b6ShaOf = (rel) => { try { return b6Sha(join(ROOT, rel)); } catch { return null; } };
@@ -1556,7 +1556,7 @@ test('B6 BOX world floors (C-39): calibrated BOX worlds >= 2 x BOX_WORLD_FLOOR_S
         ['smoke missing', synth(undefined, F2)], ['full missing', synth(S2, undefined)], ['no kernels', {}]]) {
         assert.ok(problems(doc).length > 0, 'must-fail: ' + why);
     }
-    // the live calibration (RED until the R7 C3 recut writes the BOX cells)
+    // the live calibration (the R7 C3 TIMED recut, b152, wrote the BOX cells)
     assert.deepEqual(problems(B6_DOC), []);
 });
 
