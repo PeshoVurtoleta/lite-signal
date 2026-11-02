@@ -668,7 +668,7 @@ ROSTER[12], laneSpan 13). Where this text and the code differ, the code is the r
 - Calibration (b151, TIMED recut under the quiet lock, `run --strict` exit 0, 1421 s, load1 3.21 before / 8.86 after):
   BOX tree full 2793 worlds, smoke 150, OT === worlds; the 40 old-lane cells are unchanged once the OT keys are
   stripped. parity 59 files; golden scripts-1000 gains the BOX digest, the 12 old digests are identical.
-- Tests and gates: `test/96-soak-box` (31 rows), `test/97-soak-twin` (61), `test/98-soak-box-roster` (14), fixture
+- Tests and gates: `test/96-soak-box` (31 rows), `test/97-soak-twin` (63), `test/98-soak-box-roster` (14), fixture
   `test/fixtures/r7-b0-applicability.json`; the closing `npm test` 2940 tests / 2927 pass / 0 fail / 12 skip / 1 todo,
   torture 0 B/op (Node v26.8.2). Detail: CHANGELOG [Unreleased] and SPEC-B Addendum 17.
 

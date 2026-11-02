@@ -22,7 +22,7 @@
     "bench/soak/replay.mjs": "209aac12399cff0bf3d510285d43495eaf01cc07f1953e8c107c88ef0fec3fab",
     "bench/soak/shrink.mjs": "e08ad24f68ed258216ddeb72b9cc0c6ee367f6fe840755ad36bff7193bfa6314",
     "bench/soak/emit.mjs": "ced1b520142e8e314791713da65fb506f4f973d5c9438d80cf3d88378d554f0f",
-    "bench/soak/config.mjs": "038bf263d1f46f13c08a372ba4295d6258759a30778eb991c540eb2553df69cc",
+    "bench/soak/config.mjs": "b38da7c2e5f3bbae71b785015d2400f8b148b8a7f65b5fb6a15dab595df86be3",
     "bench/soak/SoakReport.mjs": "c27355793e290cb8ff58445c877fd9fa069dfbafb29c0b2ddddea2430f5cf92d",
     "bench/soak/wrap.mjs": "7279a0e5d2d58afa5c63558fe261747624b22a4e15488d6938626ff77adaf1d9",
     "bench/soak/wrap-repr.mjs": "6e21bc5be94ef62100e5d6c021e0d2d1e10365c22b35647968623249ee9e72e6",

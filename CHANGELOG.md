@@ -122,7 +122,7 @@ facade `lite-box`, and the two call traces must be identical.
   = {lite: 'lite-box/alt', 'lite-box': 'lite-box/alt'}; `applicability` skips a twin lane with `missingCaps ['twin']`
   when the engine has no twin. `main.mjs` `loadAdapter('name[/mode]')` and a twin tap; replay / shrink run twin lanes
   with `runWorldTwin`. `divergences.json`: engines += lite-box on all 28 entries, lanes += BOX on DIV-F15 and DIV-F22;
-  the validator rule binds OPEN entries only (D-b149-1). Tests: `test/97` (61 rows), fixture
+  the validator rule binds OPEN entries only (D-b149-1). Tests: `test/97` (63 rows), fixture
   `test/fixtures/r7-b0-applicability.json`.
 - C (commit 65d5c95). BOX is rostered (13th lane, ROSTER[12], `LANE_INDEX.BOX` 9, laneSpan 13). Oracle OT joins
   ORACLES / SIGS / CHECK_NAMES / FAMILY. OT is the first PER-WORLD floor (D-b150-1): `gates.mjs` `PER_WORLD {OT}` passes

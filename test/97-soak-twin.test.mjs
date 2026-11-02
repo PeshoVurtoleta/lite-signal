@@ -16,20 +16,24 @@
  * lanes/box.mjs, TWINS, the 3rd applicability arg, the lite-box engine and the two scenario names do not exist there.
  * Modules that are new are loaded dynamically, so one missing module fails its rows, not the file.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { K } from '../bench/soak/kernel.mjs';
 import { liteS3Adapter } from '../bench/soak/adapters/lite-s3.mjs';
-import { liteBoxAltAdapter, liteBoxAdapterFor } from '../bench/soak/adapters/lite-box.mjs';
+import { liteBoxAdapter, liteBoxAltAdapter, liteBoxAdapterFor } from '../bench/soak/adapters/lite-box.mjs';
 import * as CT from '../bench/soak/adapters/contract.mjs';
 import { runWorld } from '../bench/soak/exec.mjs';
 import { generateWorld } from '../bench/soak/gen.mjs';
 import { seedFor, worldSeed } from '../bench/soak/seeds.mjs';
 import { laneByName, isLargeWorld, LANE_INDEX, ROSTER } from '../bench/soak/lanes/index.mjs';
 import { SCENARIOS } from '../bench/soak/scenarios.mjs';
-import { parseConfig, SoakConfigError, MUSTFAIL_MODES, ENGINES_AVAILABLE } from '../bench/soak/config.mjs';
+import { parseConfig, SoakConfigError, MUSTFAIL_MODES, ENGINES_AVAILABLE, LATENCY_METHODS, LATENCY_UNTIMED } from '../bench/soak/config.mjs';
+import { LatencyLane } from '../bench/soak/latency.mjs';
 
 let TW = null, TW_ERR = null, BX = null, BX_ERR = null;
 try { TW = await import('../bench/soak/twin.mjs'); } catch (e) { TW_ERR = e; }
@@ -351,6 +355,56 @@ test('config (C-30): SOAK_CYCLES=1 is refused (>= 11), 11 and 0 accepted -- pinn
     assert.match(cfgMsg({ SOAK_CYCLES: '1' }), /SOAK_CYCLES='1' must be an integer >= 11/);
     assert.equal(cfgOf({ SOAK_CYCLES: '11' }).cycles, 11);
     assert.equal(cfgOf({ SOAK_CYCLES: '0' }).forever, true);
+});
+
+const GRAPH_F144 = scriptOf(laneByName('GRAPH'), 0);
+// ---- 7b. F144 (b154): SOAK_ENGINE=lite-box worlds pass the latency classification (config.mjs LATENCY_UNTIMED) ----
+// At e9ea693 every SOAK_ENGINE=lite-box main run crashed: adapters/lite-box.mjs open() adds world.boxCounts (C-16) and
+// latency.mjs arm() fails closed on a function key that neither LATENCY_METHODS nor LATENCY_UNTIMED lists. The unit row
+// is the tooth per member (a future world accessor fails here, not in a soak run); the spawn row is the live repro.
+test('F144 every function-valued key of an opened lite-box world (all + alt, plain + capacity scripts) is classified; an armed LatencyLane opens it', () => {
+    const scripts = [GRAPH_F144, scriptOf(laneByName('CAPACITY'), 0)];
+    let sawBoxCounts = 0;
+    for (const ad of [liteBoxAdapter, liteBoxAltAdapter]) {
+        for (const sc of scripts) {
+            const o = sc.capacity !== undefined ? { maxFlushPasses: sc.flushPasses, capacity: sc.capacity } : { maxFlushPasses: sc.flushPasses };
+            const w = ad.open(o);
+            try {
+                for (const k of Object.keys(w)) {
+                    if (typeof w[k] !== 'function') continue;
+                    if (k === 'boxCounts') sawBoxCounts++;
+                    assert.ok(LATENCY_METHODS.includes(k) || LATENCY_UNTIMED.includes(k), ad.name + ': world method ' + k + ' is in neither LATENCY_METHODS nor LATENCY_UNTIMED');
+                }
+            } finally { w.close(); }
+            const lane = new LatencyLane({ floorNs: 40 });
+            lane.armed = true;
+            const aw = lane.wrap(ad).open(o);
+            assert.equal(typeof aw.boxCounts, 'function', ad.name + ': the armed world keeps boxCounts');
+            assert.deepEqual(Object.keys(aw.boxCounts()), ['box', 'callable', 'crossRead']);
+            aw.close();
+        }
+    }
+    assert.equal(sawBoxCounts, 4, 'boxCounts is an own function key of every opened lite-box world (non-vacuous)');
+});
+const F144_TMP = mkdtempSync(join(tmpdir(), 'soak-f144-'));
+after(() => rmSync(F144_TMP, { recursive: true, force: true }));
+test('F144 SOAK_ENGINE=lite-box SOAK_LANES=GRAPH SOAK_SEED=1 main --smoke: no CRASH, no unclassified method, exit 0 (SIGKILL-bounded)', () => {
+    const env = {};
+    for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
+    const out = join(F144_TMP, 'graph-lite-box.jsonl');
+    Object.assign(env, { SOAK_ENGINE: 'lite-box', SOAK_LANES: 'GRAPH', SOAK_SEED: '1', SOAK_OUT: out });
+    const main = fileURLToPath(new URL('../bench/soak/main.mjs', import.meta.url));
+    const r = spawnSync(process.execPath, ['--expose-gc', '--max-old-space-size=512', main, '--smoke'],
+        { encoding: 'utf8', env, timeout: 120000, killSignal: 'SIGKILL' });
+    const both = String(r.stderr) + String(r.stdout);
+    const tail = both.split('\n').slice(-8).join(' | ');
+    assert.equal(r.error, undefined, 'spawn error / timeout: ' + String(r.error));
+    assert.equal(r.signal, null, 'killed: ' + r.signal);
+    assert.equal(both.includes('soak: CRASH'), false, tail);
+    assert.equal(both.includes('unclassified world method'), false, tail);
+    assert.equal(r.status, 0, 'exit ' + r.status + ': ' + tail);
+    assert.equal(r.stdout.trim().split('\n').pop().startsWith('soak: END verdict=SMOKE exit=0 '), true, tail);
+    assert.ok(existsSync(out), 'SOAK_OUT written');
 });
 
 const GRAPH_D = laneByName('GRAPH');

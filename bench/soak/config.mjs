@@ -107,13 +107,15 @@ const CONSTANTS = Object.freeze({
     // through untimed. Together they classify every function-valued key of an opened world (adapters/lite-s3.mjs
     // open(): adapters/lite.mjs's 15 functions + the 8 S3 extension methods hook, destroy, createRoot, runWithOwner,
     // getOwner, onCleanup, capacity, update (contract.mjs EXT_METHODS, top-level world keys: maintainer ruling
-    // D-R0-2) + the non-function 'registry'); an armed open that meets any other function key, or a
-    // listed method whose .length > 2, throws TypeError (fail closed: the wrapper forwards at most two arguments).
+    // D-R0-2) + the non-function 'registry'; SOAK_ENGINE=lite-box worlds (adapters/lite-box.mjs open()) add the
+    // untimed arity-0 counter accessor boxCounts, R7 C-16, read by twin.mjs / trace.mjs); an armed open that meets
+    // any other function key, or a listed method whose .length > 2, throws TypeError (fail closed: the wrapper
+    // forwards at most two arguments).
     SKETCH_ALPHA: 0.01,
     LATENCY_METHODS: Object.freeze(['signal', 'computed', 'effect', 'set', 'read', 'peek', 'batch', 'untrack', 'dispose',
         'lifecycle', 'settle', 'close']),
     LATENCY_UNTIMED: Object.freeze(['normalizeEscape', 'stats', 'links', 'hook', 'destroy', 'createRoot', 'runWithOwner',
-        'getOwner', 'onCleanup', 'capacity', 'update']),
+        'getOwner', 'onCleanup', 'capacity', 'update', 'boxCounts']),
     // retention
     DRAIN_MS: 2000,
     DRAIN_TRIES: 8,
