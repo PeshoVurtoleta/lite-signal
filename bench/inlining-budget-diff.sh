@@ -146,7 +146,7 @@ tier == "turbo" {
   # prints two), so greedy stays set until the next Considering / Budget used / compile boundary. Every regular
   # inline follows a "Budget used:" line, so it is never counted as small.
   if (l ~ /^(Budget used:|Considering )/ || l ~ /candidate\(s\) for inlining:/) greedy = 0
-  if (l ~ /^Budget used: [0-9]+\/[0-9]+/) { split(substr(l, 14), a, /[\/ ]/); ev("U\t" unit "\t" a[1] "\t" a[2]); next }
+  if (l ~ /^Budget used: [0-9]+\/[0-9]+/) { cn = ""; split(substr(l, 14), a, /[\/ ]/); ev("U\t" unit "\t" a[1] "\t" a[2]); next }
   if (l ~ /^- candidate: /) { cn = num_after(l, "node #[0-9]+", 6); next }   # the call site the next targets belong to
   if (l ~ /^- target: /) {
     sz = num_after(l, "bytecode size: [0-9]+", 15); if (sz == "") sz = "?"
@@ -716,7 +716,7 @@ lim() {
   local v
   v=$(printf '%s\n' "$LIMITS" | awk -F= -v k="$2" '$1 == k { v = $2 } END { print v }')
   if [[ -z "$v" ]]; then v="$3"; ASSUMED="$ASSUMED $2=$3"; fi
-  eval "$1=\$v"
+  printf -v "$1" '%s' "$v"   # bash >= 3.1, so macOS /bin/bash 3.2 too
 }
 lim TF_SMALL max-inlined-bytecode-size-small 30; lim TF_SMALL_HN max-inlined-bytecode-size-small-with-heapnum-in-out 75
 lim TF_ONE max-inlined-bytecode-size 460; lim TF_CUM max-inlined-bytecode-size-cumulative 920
