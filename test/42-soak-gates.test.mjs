@@ -215,6 +215,26 @@ test('LaneGates OT (C-38): smoke OT === worlds === BOX_WORLD_FLOOR_SMOKE passes;
         ['soak: INCONCLUSIVE -- checks lane=BOX oracle=OT performed=69 worlds=69 floor=' + CFG.BOX_WORLD_FLOOR_SMOKE], JSON.stringify(lowW.causes));
 });
 
+// R8 C2b (C1 review r1 blocker): OS is a PER-EVENT oracle; the gate's event count is the lane's 'snap-restore' scenario count,
+// NOT the OS performed count. Smoke: 8 cycles x 125 = 1000 = SNAP_FLOOR_SMOKE. Expected values are from the spec (R8-1/R8-23).
+function snapRun(os, ev, n) {   // both are functions of the cycle index
+    const L = new G.LaneGates({ lane: 'SNAPSHOT', oracles: ['OS'], required: ['snap-restore'] });
+    for (let c = 0; c < n; c++) L.push(rec('SNAPSHOT', c, { scenarios: { 'snap-restore': ev(c) },
+        checks: Object.assign(rec('SNAPSHOT', 0).checks, { OS: os(c) }) }));
+    return L.compute({ smoke: true });
+}
+test('LaneGates OS (R8): per-event floor; the event count is the snap-restore scenario count, and the cause line names performed, events and floor', () => {
+    const line = (p, e) => ['soak: INCONCLUSIVE -- checks lane=SNAPSHOT oracle=OS performed=' + p + ' events=' + e + ' floor=1000'];
+    const causes = (r) => r.causes.filter((c) => c.cause === 'check-floor').map((c) => c.line);
+    assert.equal(snapRun(() => 125, () => 125, 8).status, 'PASS');
+    const lowOs = snapRun((c) => (c === 7 ? 124 : 125), () => 125, 8);   // one restore event without its OS check
+    assert.deepEqual(causes(lowOs), line(999, 1000), JSON.stringify(lowOs.causes));
+    const highOs = snapRun((c) => (c === 7 ? 126 : 125), () => 125, 8);   // an extra OS check: performed 1001 vs events 1000
+    assert.deepEqual(causes(highOs), line(1001, 1000), JSON.stringify(highOs.causes));
+    const both = snapRun((c) => (c === 7 ? 124 : 125), (c) => (c === 7 ? 124 : 125), 8);
+    assert.deepEqual(causes(both), line(999, 999), JSON.stringify(both.causes));
+});
+
 test('LaneGates oracle gate and failure totals; malformed records throw (fail closed), with no partial fold', () => {
     const r = laneRun(11, (c) => (c === 2 ? { failingWorlds: 1, failureCounts: { 'O6:escape-computed': 1 } } : {}));
     assert.equal(r.gates.oracle.verdict, 'FAIL');
@@ -327,7 +347,7 @@ test('oracleFamily: O1c/O1e -> O1, O7a -> O7, every S1 oracle maps, an unknown o
     assert.equal(G.oracleFamily('O1c'), 'O1');
     assert.equal(G.oracleFamily('O1e'), 'O1');
     assert.equal(G.oracleFamily('O7a'), 'O7');
-    for (const o of ORACLES) assert.match(G.oracleFamily(o), /^O(?:[0-9]|B|W|T)$/, o);
+    for (const o of ORACLES) assert.match(G.oracleFamily(o), /^O(?:[0-9]|B|W|T|S)$/, o);
     assert.equal(G.oracleFamily('OB'), 'OB');
     for (const o of CHECK_NAMES) G.oracleFamily(o);
     assert.throws(() => G.oracleFamily('OX'), TypeError);

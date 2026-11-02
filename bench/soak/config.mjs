@@ -92,6 +92,13 @@ const CONSTANTS = Object.freeze({
     //                    the measured minimum (PLAN-R7-box C-39).
     BOX_WORLD_FLOOR: 1300,
     BOX_WORLD_FLOOR_SMOKE: 70,
+    //   SNAP_FLOOR(_SMOKE)  the floor of a PER-EVENT oracle (gates.mjs PER_EVENT: OS, counted once per SNAPSHOT
+    //                    restore EVENT): the lane must run at least this many restore events (its scenario count
+    //                    snap-restore) AND perform exactly one OS check per event (R8-3 / R8-12). C0 (b156,
+    //                    2026-11-02) SOAK_LANES=SNAPSHOT main.mjs on tree: --smoke 8 seeds events 2012..2111,
+    //                    default 3 seeds 37070..37428; floor = about half the measured minimum (C-39).
+    SNAP_FLOOR: 18500,
+    SNAP_FLOOR_SMOKE: 1000,
     TAINT_SKIP_MAX: 0.35,
     // memory (HEAP_* applies to residentBytes = heapUsed + arrayBuffers)
     HEAP_RATIO: 1.10,
@@ -105,17 +112,18 @@ const CONSTANTS = Object.freeze({
     // error SKETCH_ALPHA, default maxBins 2048) per LATENCY_METHODS entry, armed on worlds w % 16 === 8.
     // LATENCY_METHODS are the TIMED world methods (record key order); LATENCY_UNTIMED are the world methods passed
     // through untimed. Together they classify every function-valued key of an opened world (adapters/lite-s3.mjs
-    // open(): adapters/lite.mjs's 15 functions + the 8 S3 extension methods hook, destroy, createRoot, runWithOwner,
+    // open(): adapters/lite.mjs's 17 functions + the 8 S3 extension methods hook, destroy, createRoot, runWithOwner,
     // getOwner, onCleanup, capacity, update (contract.mjs EXT_METHODS, top-level world keys: maintainer ruling
     // D-R0-2) + the non-function 'registry'; SOAK_ENGINE=lite-box worlds (adapters/lite-box.mjs open()) add the
-    // untimed arity-0 counter accessor boxCounts, R7 C-16, read by twin.mjs / trace.mjs); an armed open that meets
-    // any other function key, or a listed method whose .length > 2, throws TypeError (fail closed: the wrapper
+    // untimed arity-0 counter accessor boxCounts, R7 C-16, read by twin.mjs / trace.mjs; R8 B1 adds the untimed
+    // snapshot surface snapshot / nodeId -- snapshot allocates by design); an armed open that meets any other
+    // function key, or a listed method whose .length > 2, throws TypeError (fail closed: the wrapper
     // forwards at most two arguments).
     SKETCH_ALPHA: 0.01,
     LATENCY_METHODS: Object.freeze(['signal', 'computed', 'effect', 'set', 'read', 'peek', 'batch', 'untrack', 'dispose',
         'lifecycle', 'settle', 'close']),
     LATENCY_UNTIMED: Object.freeze(['normalizeEscape', 'stats', 'links', 'hook', 'destroy', 'createRoot', 'runWithOwner',
-        'getOwner', 'onCleanup', 'capacity', 'update', 'boxCounts']),
+        'getOwner', 'onCleanup', 'capacity', 'update', 'boxCounts', 'snapshot', 'nodeId']),
     // retention
     DRAIN_MS: 2000,
     DRAIN_TRIES: 8,
@@ -161,7 +169,7 @@ export const {
     GATE_N, WARMUP_CYCLES, MIN_ACTIVE_CYCLES, DEFAULT_CYCLES, CYCLES_MAX,
     DEFAULT_OPS, OPS_MIN, OPS_MAX, SMOKE_CYCLES, SMOKE_OPS, DEFAULT_SEED,
     CHECK_P, WORLD_STEPS, LARGE_WORLD_EVERY, SHAPE_EVERY, MARK_DEDUPE_NOTE, MAX_DEPTH,
-    SCEN_MIN, SCEN_MIN_SMOKE, FAIL_CAP, DETAIL_MAX, CHECK_FLOOR, CHECK_FLOOR_SMOKE, BOX_WORLD_FLOOR, BOX_WORLD_FLOOR_SMOKE, TAINT_SKIP_MAX,
+    SCEN_MIN, SCEN_MIN_SMOKE, FAIL_CAP, DETAIL_MAX, CHECK_FLOOR, CHECK_FLOOR_SMOKE, BOX_WORLD_FLOOR, BOX_WORLD_FLOOR_SMOKE, SNAP_FLOOR, SNAP_FLOOR_SMOKE, TAINT_SKIP_MAX,
     HEAP_RATIO, HEAP_SLACK_MB, RSS_RATIO, RSS_SLACK_MB, RSS_BUF, SKETCH_ALPHA, LATENCY_METHODS, LATENCY_UNTIMED,
     DRAIN_MS, DRAIN_TRIES, RETAIN_MAX, RETAIN_BAD_BOUNDARIES,
     W5_BOP_FAIL, W5_ITER, W5_BATCHES, W5_WARMUP,

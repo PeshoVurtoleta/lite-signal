@@ -25,12 +25,19 @@
  * kind differs from the body owner's kind (effects count as callable). The counters live in one Int32Array per world
  * (int32: a world's op budget is far below 2^31). No other coverage counting.
  *
+ * SNAPSHOT (R8 B1, D-b154-4 passthrough): shimKernel.restoreRegistry(cfg, from) restores through lite.mjs restoreOf
+ * (from.registry is the old world's facade; its restore() is the real registry's, by prototype) and wraps the fresh
+ * registry in a NEW facade with a fresh counter block (restored handles are not creations: boxCounts starts at 0, and
+ * the restored bodies are the caller's fnsById, unmarked). world.snapshot() / nodeId() come from lite.mjs through the
+ * facade's prototype. caps = { ...base.caps, box: true }, so caps.snapshot is the base kernel's cached probe
+ * (lite.mjs snapshotProbeAs: no registry of its own is built for it; CAPS_LITE_BOX for K).
+ *
  * Name 'lite-box'; version / files / knownAs are lite's (liteAdapterFor(kernel): the kernel's identity). exec.mjs
  * keys the O6 (iii) creation prediction on the lite family (A2: isLiteFamily). COLD module: never on a measured path.
  */
 
 import { K } from '../kernel.mjs';
-import { CAPS_LITE } from './lite.mjs';
+import { CAPS_LITE, restoreOf, snapshotProbeAs } from './lite.mjs';
 import { liteS3AdapterFor } from './lite-s3.mjs';
 
 export const CAPS_LITE_BOX = Object.freeze({ ...CAPS_LITE, box: true });
@@ -97,49 +104,52 @@ export function liteBoxAdapterFor(kernel, mode, opts) {
     if (MODES.indexOf(mode) === -1) throw new TypeError('lite-box: mode must be one of ' + MODES.join(', ') + ', got ' + JSON.stringify(String(mode)));
     const broken = brokenOf(opts);
     const all = mode === 'all';
-    const shimKernel = {
-        createRegistry(cfg) {
-            const real = kernel.createRegistry(cfg);
-            const c = new Int32Array(C_SLOTS);
-            const facade = Object.create(real);
-            facade.signal = function (v, sopts) {
-                const box = all || (c[C_ORD] & 1) === 1;
-                c[C_ORD]++;
-                if (box) {
-                    c[C_BOX]++;
-                    return sopts === undefined ? real.signalBox(v) : real.signalBox(v, sopts);
-                }
-                c[C_CALLABLE]++;
-                return sopts === undefined ? real.signal(v) : real.signal(v, sopts);
-            };
-            facade.computed = function (fn, copts) {
-                const box = all || (c[C_ORD] & 1) === 1;
-                c[C_ORD]++;
-                if (box) {
-                    c[C_BOX]++;
-                    const bfn = marked(c, KIND_BOX, fn);
-                    return copts === undefined ? real.computedBox(bfn) : real.computedBox(bfn, copts);
-                }
-                c[C_CALLABLE]++;
-                const cfn = marked(c, KIND_CALLABLE, fn);
-                return copts === undefined ? real.computed(cfn) : real.computed(cfn, copts);
-            };
-            facade.effect = function (fn, eopts) {
-                const efn = marked(c, KIND_CALLABLE, fn);
-                return eopts === undefined ? real.effect(efn) : real.effect(efn, eopts);
-            };
-            COUNTERS.set(facade, c);
-            return facade;
-        },
+    const facadeOf = (real) => {
+        const c = new Int32Array(C_SLOTS);
+        const facade = Object.create(real);
+        facade.signal = function (v, sopts) {
+            const box = all || (c[C_ORD] & 1) === 1;
+            c[C_ORD]++;
+            if (box) {
+                c[C_BOX]++;
+                return sopts === undefined ? real.signalBox(v) : real.signalBox(v, sopts);
+            }
+            c[C_CALLABLE]++;
+            return sopts === undefined ? real.signal(v) : real.signal(v, sopts);
+        };
+        facade.computed = function (fn, copts) {
+            const box = all || (c[C_ORD] & 1) === 1;
+            c[C_ORD]++;
+            if (box) {
+                c[C_BOX]++;
+                const bfn = marked(c, KIND_BOX, fn);
+                return copts === undefined ? real.computedBox(bfn) : real.computedBox(bfn, copts);
+            }
+            c[C_CALLABLE]++;
+            const cfn = marked(c, KIND_CALLABLE, fn);
+            return copts === undefined ? real.computed(cfn) : real.computed(cfn, copts);
+        };
+        facade.effect = function (fn, eopts) {
+            const efn = marked(c, KIND_CALLABLE, fn);
+            return eopts === undefined ? real.effect(efn) : real.effect(efn, eopts);
+        };
+        COUNTERS.set(facade, c);
+        return facade;
     };
+    const shimKernel = {
+        createRegistry(cfg) { return facadeOf(kernel.createRegistry(cfg)); },
+        restoreRegistry(cfg, from) { return facadeOf(restoreOf(kernel, cfg, from)); },
+    };
+    snapshotProbeAs(shimKernel, kernel);   // the facade inherits snapshot / restore: read the base kernel's probe
     const base = liteS3AdapterFor(shimKernel);
+    const caps = base.caps === CAPS_LITE ? CAPS_LITE_BOX : Object.freeze({ ...base.caps, box: true });
     return Object.freeze({
         name: 'lite-box',
         mode,
         version: base.version,
         files: base.files,
         knownAs: base.knownAs,
-        caps: CAPS_LITE_BOX,
+        caps,
         open(o) {
             const w = base.open(o);
             const c = COUNTERS.get(w.registry);

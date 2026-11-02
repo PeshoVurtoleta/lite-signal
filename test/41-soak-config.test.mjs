@@ -33,7 +33,7 @@ const MAIN = join(SOAK, 'main.mjs');
 const SOAK_URL = pathToFileURL(SOAK).href + '/';
 
 // SPEC-B v2 section 5.1 (S1 roster + S3 R1 HOOK + S3 R2 LIFECYCLE + R3 OWNER + R4a RECYCLE + R4c SCHEDULER + R5 REGISTRY + CAPACITY, scenario ids). Used only by the inline entry; main.mjs brings its own.
-const ROSTER = ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY', 'BOX'];
+const ROSTER = ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY', 'BOX', 'SNAPSHOT'];
 const SCENARIOS = [
     'diamond-write', 'dep-set-flip', 'deep-pull', 'second-invalidation', 'equality-cutoff', 'adversarial-equality', 'wide-mark',
     'revert-after-mid-read', 'revert-no-read', 'nested-close', 'throw-in-batch', 'effect-created-mid-batch', 'multi-write-same-signal',
@@ -50,13 +50,14 @@ const SCENARIOS = [
     'destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy',
     'node-cap-throw', 'link-cap-throw', 'link-ceiling-grow', 'grow-past-initial', 'reuse-at-edge',
     'box-trace-equal', 'box-interop',
+    'snap-restore', 'restore-after-dispose', 'restore-recycled', 'restore-twice', 'snap-refused-batch', 'snap-refused-body', 'snap-untrack-ok',
 ];
 // unit 0s B2 (PLAN-0s-wie ADDENDUM 2 item 6): the two literals above are pinned to the code they stand in for
 import { SCENARIOS as LIT_SCENARIOS_CODE } from '../bench/soak/scenarios.mjs';
 import { ROSTER as LIT_ROSTER_CODE } from '../bench/soak/lanes/index.mjs';
-test('the ROSTER (13 lanes, BOX 13th) and SCENARIOS (79 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
-    assert.equal(ROSTER.length, 13);
-    assert.equal(SCENARIOS.length, 79);
+test('the ROSTER (14 lanes, SNAPSHOT 14th) and SCENARIOS (86 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
+    assert.equal(ROSTER.length, 14);
+    assert.equal(SCENARIOS.length, 86);
     assert.deepEqual(ROSTER, LIT_ROSTER_CODE.slice());
     assert.deepEqual(SCENARIOS, LIT_SCENARIOS_CODE.slice());
 });
@@ -117,7 +118,7 @@ function run(caseEnv, { gc = true, entry = 'auto', extraEnv = {}, base = null, a
     const src = entry === 'kernel' ? KERNEL_ONLY_ENTRY : (base !== null ? entrySrc(base) : ENTRY);
     const args = useMain ? flags.concat([MAIN], argv) : flags.concat(['--input-type=module', '-e', src, '--'], argv);
     const t0 = Date.now();
-    const r = spawnSync(process.execPath, args, { cwd: ROOT, env, encoding: 'utf8', timeout: 60000 });
+    const r = spawnSync(process.execPath, args, { cwd: ROOT, env, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
     return { status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr, ms: Date.now() - t0, out: env.SOAK_OUT };
 }
 
@@ -391,7 +392,7 @@ test('the SOAK_ prefix is case-insensitive: a non-upper-case known key is an err
     rejects({ soak_lanes: 'grpah' }, "env key 'soak_lanes' must be upper-case (did you mean SOAK_LANES?)");
     rejects({ Soak_Require_Provenance: '1' }, 'did you mean SOAK_REQUIRE_PROVENANCE?');
     rejects({ soak_nope: '1' }, "unknown env key 'soak_nope'");
-    assert.equal(P({ SOAKY: '1', MY_SOAK_LANES: 'x' }).lanes.length, 13, 'only the SOAK_ prefix is reserved');
+    assert.equal(P({ SOAKY: '1', MY_SOAK_LANES: 'x' }).lanes.length, 14, 'only the SOAK_ prefix is reserved');
 });
 
 test('did-you-mean is computed on the suffix: SOAK_X, SOAK_FOO and SOAK_TIME no longer "mean" SOAK_OPS', () => {
@@ -441,7 +442,8 @@ function provenanceCopy() {
     const runtime = ['config.mjs', 'kernel.mjs', 'nearwrap.mjs', 'provenance.mjs', 'parity.mjs', 'seeds.mjs', 'jsonl.mjs', 'controls.json']
         .map((x) => 'bench/soak/' + x).concat(['bench/torture/helpers/index.mjs',
         // R7 C2b: lanes/index.mjs now imports lanes/box.mjs (twin.mjs, trace.mjs, adapters/lite-box.mjs); not parity files until the C3 re-pin
-        'bench/soak/lanes/box.mjs', 'bench/soak/twin.mjs', 'bench/soak/trace.mjs', 'bench/soak/adapters/lite-box.mjs']);
+        // R8 C2b: + lanes/snapshot.mjs (imports graph.mjs and oracles.mjs, both pinned)
+        'bench/soak/lanes/box.mjs', 'bench/soak/lanes/snapshot.mjs', 'bench/soak/twin.mjs', 'bench/soak/trace.mjs', 'bench/soak/adapters/lite-box.mjs']);
     for (const rel of new Set(runtime.concat(PARITY_FILES))) {
         mkdirSync(dirname(join(dir, rel)), { recursive: true });
         copyFileSync(join(ROOT, rel), join(dir, rel));
@@ -573,7 +575,7 @@ test('T-cfg argv R6 e2e: shrink.mjs takes --emit-test; main / replay / wrap keep
     const go = (entry, argv, extra = {}) => {
         const r = spawnSync(process.execPath, ['--expose-gc', join(SOAK, entry)].concat(argv),
             { cwd: ROOT, env: Object.assign({}, env, { SOAK_LANES: 'NOPE' }, extra), encoding: 'utf8',
-                timeout: 60000 });
+                timeout: 60000, killSignal: 'SIGKILL' });
         return { status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr };
     };
     const LANE = "SOAK_LANES: unknown lane 'NOPE'";
@@ -1347,11 +1349,15 @@ test('B6 LANE_KERNELS: BOX runs on the tree kernel only (R7 C1 b150 C-6; mutant 
     assert.deepEqual(b6KernelsFor('BOX'), ['tree']);
 });
 
+test('B6 LANE_KERNELS: SNAPSHOT runs on the tree kernel only (R8 C1: the lite-signal-1.5.2 kernel has no snapshot(); a lane-kernel map edit must be red)', () => {
+    assert.deepEqual(b6KernelsFor('SNAPSHOT'), ['tree']);
+});
+
 test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing or off-parity lane-only kernel -> red', () => {
     // the map (calibrate.mjs): an unlisted lane runs on every binding kernel; a lane's pin joins only when rostered
     // after the roster flip (b68 B2b): roster4 = the pre-flip roster (the 4 S1 lanes), roster5 = the live one
     const roster4 = B6_ROSTER.filter((l) => l !== 'WIE' && l !== 'HOOK' && l !== 'LIFECYCLE' && l !== 'OWNER' && l !== 'RECYCLE' && l !== 'SCHEDULER'
-        && l !== 'REGISTRY' && l !== 'CAPACITY' && l !== 'BOX');
+        && l !== 'REGISTRY' && l !== 'CAPACITY' && l !== 'BOX' && l !== 'SNAPSHOT');
     const roster5 = B6_ROSTER.slice();
     assert.deepEqual(b6KernelsFor('WIE'), ['tree']);
     // S3 R1 (b93): HOOK was cut on headpatched only (DIV-F9 ghost-listener reddened lite-1.5.2 and tree); b117: DIV-F9
@@ -1378,7 +1384,7 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.deepEqual(b6KernelsOf(['GRAPH', 'BATCH', 'ERROR']), Object.keys(B6_KERNELS));
     assert.deepEqual(b6KernelsOf(roster4), Object.keys(B6_KERNELS).concat(['tree']));
     assert.deepEqual(b6KernelsOf(roster5), Object.keys(B6_KERNELS).concat(['tree']));
-    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY', 'BOX']);
+    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY', 'BOX', 'SNAPSHOT']);
     assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), roster4.concat(['SCHEDULER']));
     assert.equal(b6KernelPath('tree'), 'Signal.js');
     assert.throws(() => b6KernelPath('nope'), /unknown kernel nope/);
@@ -1388,7 +1394,7 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     // LANE_PINS only: PINNED's bench/torture/helpers/index.mjs is deliberately not a parity file (:437)
     for (const f of Object.values(B6_LANE_PINS)) assert.ok(PARITY_FILES.includes(f), f);
     assert.deepEqual(b6PinnedFor(roster5).slice(20), ['bench/soak/lanes/wie.mjs', 'bench/soak/lanes/hook.mjs', 'bench/soak/lanes/lifecycle.mjs', 'bench/soak/lanes/owner.mjs', 'bench/soak/lanes/recycle.mjs', 'bench/soak/lanes/scheduler.mjs',
-        'bench/soak/lanes/registry.mjs', 'bench/soak/lanes/capacity.mjs', 'bench/soak/lanes/box.mjs']);
+        'bench/soak/lanes/registry.mjs', 'bench/soak/lanes/capacity.mjs', 'bench/soak/lanes/box.mjs', 'bench/soak/lanes/snapshot.mjs']);
     // A2 (the real roster): a WIE cell on lite-1.5.2 is a cell no binding cuts -> exactly one new problem
     const base = calibrationProblems(B6_DOC, B6_C);
     const a2 = b6Copy(B6_DOC);
@@ -1611,7 +1617,7 @@ test('D4 NEARWRAP sign:8 end to end: header.nearwrap.derivedSha256 == kernel.fil
     assert.ok(h.nearwrap.rewrites.length >= 3 && h.nearwrap.rewrites.every((x) => x.to === String(x.arith === 'mask30' ? 2 ** 30 - 8 : 2 ** 31 - 8)), JSON.stringify(h.nearwrap.rewrites));
     assert.equal(h.kernel.override, false);
     assert.deepEqual(h.config.SOAK_NEARWRAP, { value: { phase: 'sign', k: 8 }, source: 'env' });
-    const rep = spawnSync(process.execPath, [NW_REPORT, r.out], { encoding: 'utf8', timeout: 60000 });
+    const rep = spawnSync(process.execPath, [NW_REPORT, r.out], { encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
     assert.equal(rep.status, 1, rep.stderr);
     assert.match(rep.stderr, /^soak:report: NOT A RELEASE SOAK -- nearwrap: sign:8 -- /m, 'the NEARWRAP reason fires first (before tree-parity)');
 });
@@ -1636,7 +1642,7 @@ test('D4 the wrap job refuses a NEARWRAP kernel: wrap.mjs with SOAK_NEARWRAP=zer
     for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_OPTIONS' && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
     const out = join(TMP, 'nw-wrap.jsonl');
     Object.assign(env, { SOAK_NEARWRAP: 'zero:63', SOAK_WRAP: 'W1', SOAK_OUT: out });
-    const w = spawnSync(process.execPath, ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4', NW_WRAP], { cwd: ROOT, env, encoding: 'utf8', timeout: 60000 });
+    const w = spawnSync(process.execPath, ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4', NW_WRAP], { cwd: ROOT, env, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
     assert.equal(w.status, 2, w.stderr);
     assert.match(w.stderr, /^soak: CONFIG -- the wrap job drives the real kernel; a NEARWRAP kernel is refused$/m);
     assert.doesNotMatch(w.stderr, /semi-space/, 'the pure-config NEARWRAP refusal fires before the semi-space probe');
@@ -1688,7 +1694,7 @@ test('0b the wrap job refuses SOAK_NEARWRAP before the semi-space probe: NEARWRA
     const derivedDirs = () => (existsSync(NWROOT) ? readdirSync(NWROOT) : []).filter((n) => n.indexOf(d.derivedSha256.slice(0, 7)) === 0);
     for (const n of derivedDirs()) rmSync(join(NWROOT, n), { recursive: true, force: true });
     const out = join(TMP, 'nw-wrap-gconly.jsonl');
-    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP], { cwd: ROOT, env: wrapEnv({ SOAK_NEARWRAP: 'zero:63', SOAK_WRAP: 'W1', SOAK_OUT: out }), encoding: 'utf8', timeout: 60000 });
+    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP], { cwd: ROOT, env: wrapEnv({ SOAK_NEARWRAP: 'zero:63', SOAK_WRAP: 'W1', SOAK_OUT: out }), encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
     assert.equal(w.status, 2, w.stderr);
     assert.equal(w.stderr, 'soak: CONFIG -- the wrap job drives the real kernel; a NEARWRAP kernel is refused\n');
     assert.equal((w.stderr.match(/semi-space/g) || []).length, 0, 'no semi-space line');
@@ -1700,7 +1706,7 @@ test('0b the wrap job refuses SOAK_NEARWRAP before the semi-space probe: NEARWRA
 // --expose-gc stays on: without it readConfig refuses first ('--expose-gc is required'), which would not reach the probe
 test('0b control: without SOAK_NEARWRAP and without the semi-space flags the wrap job still exits 2 on the semi-space probe', () => {
     const out = join(TMP, 'wrap-noflags.jsonl');
-    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP], { cwd: ROOT, env: wrapEnv({ SOAK_WRAP: 'W1', SOAK_OUT: out }), encoding: 'utf8', timeout: 60000 });
+    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP], { cwd: ROOT, env: wrapEnv({ SOAK_WRAP: 'W1', SOAK_OUT: out }), encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
     assert.equal(w.status, 2, w.stderr);
     assert.equal(w.stderr, 'soak: CONFIG -- the wrap job needs the pinned semi-space: --min-semi-space-size=4 is not in execArgv (run: npm run soak:wrap)\n');
     assert.equal(w.stdout, '');

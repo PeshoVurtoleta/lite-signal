@@ -30,35 +30,48 @@ const ROOT = process.env.SOAK98_ROOT ? resolve(process.env.SOAK98_ROOT) : HERE;
 const HEAP = '--max-old-space-size=2048';   // CI heap is ~2 GB (b124)
 const BASES = COVOFF_SEEDS.concat(SWEEP_SEEDS);
 const ROSTER12 = ROSTER.slice(0, 12);
+const ROSTER13 = ROSTER.slice(0, 13);   // R8 C2b: the pre-SNAPSHOT roster (the old 13-lane prefix)
 
 // ---- 1. C-A1 roster / index / span / seeds ----
-test('C-A1: ROSTER has 13 lanes, ROSTER[12] is BOX, LANE_INDEX.BOX is 9, laneSpan 13 (12-lane span also 13)', () => {
-    assert.equal(ROSTER.length, 13);
+test('C-A1: ROSTER has 14 lanes, ROSTER[12] is BOX, ROSTER[13] is SNAPSHOT, LANE_INDEX.BOX is 9, LANE_INDEX.SNAPSHOT 13, laneSpan 14 (13- and 12-lane span 13)', () => {
+    assert.equal(ROSTER.length, 14);
     assert.equal(ROSTER[12], 'BOX');
+    assert.equal(ROSTER[13], 'SNAPSHOT');
     assert.equal(LANE_INDEX.BOX, 9);
-    assert.equal(laneSpan(ROSTER), 13);
-    assert.equal(laneSpan(ROSTER12), 13);   // C-37: laneSpan 13 for both rosters
+    assert.equal(LANE_INDEX.SNAPSHOT, 13);
+    assert.equal(laneSpan(ROSTER), 14);     // R8: SNAPSHOT (index 13) is the max index + 1
+    assert.equal(laneSpan(ROSTER13), 13);
+    assert.equal(laneSpan(ROSTER12), 13);   // C-37: laneSpan 13 for both old rosters
     assert.equal(ROSTER12.includes('BOX'), false);
+    assert.equal(ROSTER13.includes('SNAPSHOT'), false);
 });
 
-test('C-A1: seedFor(s, i, c) is fmix32((base ^ ((c << 4) | i)) >>> 0) (0 -> 0x9e3779b9) for lane index 0..12', () => {
+test('C-A1: seedFor(s, i, c) is fmix32((base ^ ((c << 4) | i)) >>> 0) (0 -> 0x9e3779b9) for lane index 0..13', () => {
     const fmix = (h) => {
         h >>>= 0; h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0;
     };
     let n = 0;
-    for (const b of [0xC0FFEE, 1, 0x9e3779b9]) for (let i = 0; i <= 12; i++) for (const c of [0, 1, 2, 10]) {
+    for (const b of [0xC0FFEE, 1, 0x9e3779b9]) for (let i = 0; i <= 13; i++) for (const c of [0, 1, 2, 10]) {
         const s = fmix((b ^ ((c << 4) | i)) >>> 0);
         assert.equal(seedFor(b, i, c), s === 0 ? 0x9e3779b9 : s);
         n++;
     }
-    assert.equal(n, 3 * 13 * 4);
+    assert.equal(n, 3 * 14 * 4);
 });
 
 // ---- 2. C-31 / C-37 remap ----
 test('C-31: rosterRemapCollision(13 lanes) deepEquals the 12-lane result at cycles 3 and 11 on all 25 base entries', () => {
     assert.equal(BASES.length, 25);
     for (const b of BASES) for (const c of [3, 11]) {
-        assert.deepEqual(rosterRemapCollision(b, ROSTER, c), rosterRemapCollision(b, ROSTER12, c));
+        assert.deepEqual(rosterRemapCollision(b, ROSTER13, c), rosterRemapCollision(b, ROSTER12, c));
+    }
+});
+
+// R8 C2b (C0 evidence (b)): the 14-lane roster equals the old 13-lane prefix at cycles 3 and 11 on all 27 base entries
+// (the BASES here are 25 values in this file's enumeration; C0 counted 27 cells over its own seed lists)
+test('R8 C-31: rosterRemapCollision(14 lanes) deepEquals the 13-lane result at cycles 3 and 11 on every base entry', () => {
+    for (const b of BASES) for (const c of [3, 11]) {
+        assert.deepEqual(rosterRemapCollision(b, ROSTER, c), rosterRemapCollision(b, ROSTER13, c));
     }
 });
 
@@ -66,7 +79,7 @@ test('C-31/C-37 forever (cycles 0): exactly 3 base entries differ from the 12-la
     const diff = [];
     for (let k = 0; k < BASES.length; k++) {
         const b = BASES[k];
-        const a = rosterRemapCollision(b, ROSTER, 0);
+        const a = rosterRemapCollision(b, ROSTER13, 0);
         const o = rosterRemapCollision(b, ROSTER12, 0);
         if (JSON.stringify(a) !== JSON.stringify(o)) diff.push({ k, b, a, o });
     }
@@ -80,29 +93,49 @@ test('C-31/C-37 forever (cycles 0): exactly 3 base entries differ from the 12-la
     assert.deepEqual(diff[1].a, { cycleA: 1, laneA: 1, cycleB: 11489174, laneB: 9 });
 });
 
+// R8 C2b (C0 evidence (b)): SNAPSHOT (index 13) pairs with LIFECYCLE (index 5) at cycles 0; the values below were probed with
+// rosterRemapCollision over this file's 25 BASES (COVOFF_SEEDS ++ SWEEP_SEEDS) and match C0: 3 entries differ from the 13-lane
+// result (SWEEP_SEEDS[4] and COVOFF_SEEDS[5] are one value 0x1715609d; COVOFF_SEEDS[11] is 0xd). The 13-lane result is null there.
+test('R8 C-31 forever (cycles 0): exactly 3 base entries differ from the 13-lane result, and they are the pinned SNAPSHOT(13) vs LIFECYCLE(5) collisions', () => {
+    const diff = [];
+    for (let k = 0; k < BASES.length; k++) {
+        const b = BASES[k];
+        const a = rosterRemapCollision(b, ROSTER, 0);
+        const o = rosterRemapCollision(b, ROSTER13, 0);
+        if (JSON.stringify(a) !== JSON.stringify(o)) diff.push({ k, b, a, o });
+    }
+    assert.equal(diff.length, 3);
+    assert.deepEqual(diff.map((d) => d.b), [0x1715609d, 0xd, 0x1715609d]);
+    assert.equal(COVOFF_SEEDS[5], 0x1715609d); assert.equal(COVOFF_SEEDS[11], 0xd); assert.equal(SWEEP_SEEDS[4], 0x1715609d);
+    for (const d of diff) assert.equal(d.o, null);   // 13 lanes: no collision
+    assert.deepEqual(diff[0].a, { cycleA: 24204809, laneA: 13, cycleB: 31332766, laneB: 5 });
+    assert.deepEqual(diff[2].a, diff[0].a);
+    assert.deepEqual(diff[1].a, { cycleA: 0, laneA: 13, cycleB: 11489175, laneB: 5 });
+});
+
 // ---- 3. import cycle: both orders (b139 TDZ lesson) ----
 const loadOrder = (first, second) => {
     const code = "await import('" + first + "'); await import('" + second + "'); " +
         "const I = await import('./bench/soak/lanes/index.mjs'); " +
         "const D = await import('./bench/soak/divergences.mjs'); " +
-        "process.stdout.write(JSON.stringify([I.ROSTER.length, I.ROSTER[12], I.LANE_INDEX.BOX, typeof D]));";
-    return spawnSync(process.execPath, [HEAP, '--input-type=module', '-e', code], { cwd: HERE, encoding: 'utf8' });
+        "process.stdout.write(JSON.stringify([I.ROSTER.length, I.ROSTER[13], I.LANE_INDEX.SNAPSHOT, typeof D]));";
+    return spawnSync(process.execPath, [HEAP, '--input-type=module', '-e', code], { cwd: HERE, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
 };
-test('import cycle: divergences.mjs first, then lanes/index.mjs -> loads, 13 lanes', () => {
+test('import cycle: divergences.mjs first, then lanes/index.mjs -> loads, 14 lanes', () => {
     const r = loadOrder('./bench/soak/divergences.mjs', './bench/soak/lanes/index.mjs');
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.stdout, '[13,"BOX",9,"object"]');
+    assert.equal(r.stdout, '[14,"SNAPSHOT",13,"object"]');
 });
-test('import cycle: lanes/index.mjs first, then divergences.mjs -> loads, 13 lanes', () => {
+test('import cycle: lanes/index.mjs first, then divergences.mjs -> loads, 14 lanes', () => {
     const r = loadOrder('./bench/soak/lanes/index.mjs', './bench/soak/divergences.mjs');
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.stdout, '[13,"BOX",9,"object"]');
+    assert.equal(r.stdout, '[14,"SNAPSHOT",13,"object"]');
 });
 
 // ---- 4. m3: calibrate child runs the TWIN ----
 const childRun = (cycles, ops) => {
     const r = spawnSync(process.execPath, [HEAP, join(ROOT, 'bench/soak/calibration/calibrate.mjs'), '--child', '--kernel', 'Signal.js', '--lanes', 'BOX', '--cycles', String(cycles), '--ops', String(ops)],
-        { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 });
+        { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28, timeout: 600000, killSignal: 'SIGKILL' });
     assert.equal(r.status, 0, r.stderr);
     return JSON.parse(r.stdout);
 };
@@ -139,7 +172,7 @@ test('m3 / C-A2: child BOX smoke fold (cycles 3 x 20000) equals the main --smoke
 
 // ---- 5. m6: _dev-run drives the twin ----
 test('m6: _dev-run.mjs Signal.js BOX 3 -> twin ran: checks performed OT === 3 === worlds, 1 failing world O6 DIV-F22 shape', () => {
-    const r = spawnSync(process.execPath, [HEAP, '--expose-gc', join(ROOT, 'bench/soak/_dev-run.mjs'), 'Signal.js', 'BOX', '3'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 });
+    const r = spawnSync(process.execPath, [HEAP, '--expose-gc', join(ROOT, 'bench/soak/_dev-run.mjs'), 'Signal.js', 'BOX', '3'], { cwd: ROOT, timeout: 300000, killSignal: 'SIGKILL', encoding: 'utf8', maxBuffer: 1 << 26 });
     assert.equal(r.status, 1, r.stderr);   // exit 1 = a failing world (DIV-F22)
     const w = /worlds=(\d+) /.exec(r.stdout);
     assert.equal(Number(w[1]), 3);
@@ -234,7 +267,7 @@ test('C-A4/C-35 tooth (M6: twin witness concat dropped): a retained twin registr
         const env = {};
         for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
         env.SOAK_LANES = 'BOX'; env.SOAK_OUT = out;
-        const r = spawnSync(process.execPath, [HEAP, '--expose-gc', cli, '--smoke'], { cwd: dir, env, encoding: 'utf8', maxBuffer: 1 << 26 });
+        const r = spawnSync(process.execPath, [HEAP, '--expose-gc', cli, '--smoke'], { cwd: dir, env, encoding: 'utf8', maxBuffer: 1 << 26, timeout: 300000, killSignal: 'SIGKILL' });
         const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
         const bs = boundariesOf(recs);
         assert.deepEqual(bs.map((b) => [b.worlds, b.weakAlive, b.trackerSize]), [[51, 51, 51], [49, 49, 100], [50, 50, 150]], r.stderr);

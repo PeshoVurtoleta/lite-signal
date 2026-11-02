@@ -23,13 +23,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, symlinkSync, unlinkSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, symlinkSync, unlinkSync, mkdtempSync, rmSync, existsSync, copyFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { universe, CHECKS, GAPS, UNREACHABLE, TEST_ANCHORS, NOT_TEETH, audit, controlMatches } from '../bench/soak/teeth.mjs';
-import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, buildSoakPatches, runControl, LONG_RE, SHORT_RE, wrapJudge, BASES, verifyControls, LC_ITER_PATCH } from '../bench/soak/_mustfail.mjs';
+import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, buildSoakPatches, runControl, judgeMain, LONG_RE, SHORT_RE, wrapJudge, BASES, verifyControls, LC_ITER_PATCH } from '../bench/soak/_mustfail.mjs';
 import { GATES, oracleFamily, INCONCLUSIVE_CAUSES } from '../bench/soak/gates.mjs';
 import { GATE_N, WARMUP_CYCLES, MIN_ACTIVE_CYCLES } from '../bench/soak/config.mjs';
 import { SIGS } from '../bench/soak/oracles.mjs';
@@ -62,9 +63,10 @@ const GAP_COVERED = [
 // 53 at burst 127 B5: lane:OWNER, oracle:OW, sig:OW:cleanup-order, sig:OW:callback-this, and (A6) sig:O5:node-count,
 // sig:O5:kind-count; 58 at burst 130 B5: lane:RECYCLE, oracle:O9, sig:O9:stale-write, sig:O9:stale-read,
 // sig:O9:stale-dispose; 60 at burst 134 B5: lane:SCHEDULER, sig:O9:stale-thunk; 62 at burst 140 B2b: lane:REGISTRY,
-// lane:CAPACITY; 65 at burst 151 C2a: lane:BOX, oracle:OT, sig:OT:trace-diff).
+// lane:CAPACITY; 65 at burst 151 C2a: lane:BOX, oracle:OT, sig:OT:trace-diff; 70 at burst 156 R8 C2a: lane:SNAPSHOT,
+// oracle:OS, sig:OS:roundtrip, sig:OS:refire, sig:OS:clean-bit).
 // A dropped id is a lost tooth; raise it when one lands.
-const CHECKS_MIN = 65;
+const CHECKS_MIN = 70;
 
 const copy = (x) => structuredClone(x);
 const live = (over) => audit(Object.assign({ controls: CONTROL_NAMES.slice(), ceiling: GAPS_CEILING.slice(), max: GAPS_MAX }, over || {}));
@@ -83,7 +85,7 @@ test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 22-n
     assert.deepEqual(live(), []);
 });
 
-test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 65 ids (a tooth never quietly becomes a gap)', () => {
+test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 70 ids (a tooth never quietly becomes a gap)', () => {
     assert.equal(GAP_COVERED.length, 9);
     assert.deepEqual(coveredBy(GAPS), GAP_COVERED.slice().sort());
     assert.ok(Object.keys(CHECKS).length >= CHECKS_MIN, 'CHECKS ids ' + Object.keys(CHECKS).length + ' < ' + CHECKS_MIN);
@@ -697,7 +699,7 @@ test('teeth j: B5 -- validSpec: extra.pass is wrap-only, a non-empty list of dis
 });
 
 test('teeth j: B5 -- audit(): every _mustfail control is under some CHECKS id or in NOT_TEETH (orphan control: <name>)', () => {
-    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP', 'P-CAP-TREE', 'P-BOX-TREE']);
+    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP', 'P-CAP-TREE', 'P-BOX-TREE', 'P-SNAP-TREE']);
     assert.ok(CHECKS['cause:scenario'].includes('P-HOOK-TREE-COVOFF'), 'the b93 HOOK cov-off scenario control is a cause:scenario tooth');
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']) }), ['orphan control: X-orphan']);
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']), notTeeth: Object.assign({}, NOT_TEETH, { 'X-orphan': 'a reason' }) }), []);
@@ -1444,9 +1446,10 @@ const BOX_MF_ENV = { SOAK_LANES: 'BOX', SOAK_MUSTFAIL: 'box-untracked' };
 const BOX_SPEC = 'oracle=OT lane=BOX sig=trace-diff known=none';
 
 test('teeth u: the BOX ids have teeth -- T-BOX-untracked (SHORT, OT trace-diff known=none), P-BOX-TREE explained by DIV-F22 (C-40)', () => {
-    // C-A3: the universe gains exactly the three BOX ids; GAPS ceiling + max unchanged (teeth a pins both literals)
+    // C-A3: the universe gains exactly the three BOX ids; GAPS ceiling + max unchanged (teeth a pins both literals);
+    // R8 C2a then adds the five SNAPSHOT ids (teeth v pins 75 -> 80)
     const u = universe();
-    assert.equal(u.length, UNIVERSE_PRE_BOX + BOX_IDS.length);
+    assert.equal(u.length, UNIVERSE_PRE_BOX + BOX_IDS.length + SNAP_IDS.length);
     for (const id of BOX_IDS) assert.equal(u.filter((x) => x === id).length, 1, id + ' is a judged id, once');
     assert.deepEqual(u.filter((x) => /^(lane:BOX|oracle:OT|sig:OT:)/.test(x)), BOX_IDS);
     assert.equal(Object.keys(GAPS).length, GAPS_MAX);
@@ -1487,4 +1490,123 @@ test('teeth u: the BOX ids have teeth -- T-BOX-untracked (SHORT, OT trace-diff k
     for (const id of BOX_IDS) delete c2[id];
     const probs = live({ checks: c2 });
     for (const id of BOX_IDS) hasProblem(probs, 'uncovered: ' + id + ' has no CHECKS control, no GAP and no UNREACHABLE proof');
+});
+
+/* ---- v. the SNAPSHOT teeth (R8 C2a, PLAN-R8 GROUP C task 4 + ASSERTION 3; CURRENT R8-5, R8-16, R8-21) ---- */
+
+// The universe before the SNAPSHOT lane (b151 C2a .. R8 C1) held 75 ids; C1 adds exactly these five (C2a maps them).
+const UNIVERSE_PRE_SNAP = 75;
+const SNAP_IDS = ['lane:SNAPSHOT', 'oracle:OS', 'sig:OS:roundtrip', 'sig:OS:refire', 'sig:OS:clean-bit'];
+const SNAP_ENV = { SOAK_LANES: 'SNAPSHOT' };
+const SNAP = (sig) => 'oracle=OS lane=SNAPSHOT sig=' + sig + ' known=none';
+const A_SNAP_EV = '                    node.evalVersion = evs[i];   // D-M: the recorded stamps\n';
+// [name, anchor in the live Signal.js restore() pass 1, replacement, spec sig, kernel sha256/8 on ROWS_BASE8]; each kernel is
+// byte-equal to .handoff/r8-evidence/A0/kernels/M-OS-<x>/Signal.js (the A0 measured tamper kernels, R8-16)
+const SNAP_ROWS = [
+    ['T-SNAP-roundtrip', A_SNAP_EV + '                    node.markEpoch = mes[i];\n', A_SNAP_EV, 'roundtrip', '5900bf33'],
+    ['T-SNAP-refire', '                handle = disposeFn;\n',
+        '                handle = disposeFn;\n                try { fn(); } catch (e) { /* M-OS-refire */ }\n', 'refire', 'bf6c52af'],
+    ['T-SNAP-clean', A_SNAP_EV, '                    node.evalVersion = 0;   // M-OS-clean\n', 'clean-bit', 'f3c08f86'],
+];
+// The frozen pre-C1 build (git archive 7548461, rebased as dc7ed8f; .handoff is gitignored, so this row SKIPS without it)
+const FROZEN_MAIN = join(ROOT, '.handoff', 'r8-evidence', 'before-C-7548461', 'bench', 'soak', 'main.mjs');
+const FROZEN_CONFIG = "soak: CONFIG -- SOAK_LANES: unknown lane 'SNAPSHOT' (roster: GRAPH, BATCH, ERROR, NEST, WIE, HOOK, LIFECYCLE, OWNER, RECYCLE, SCHEDULER, REGISTRY, CAPACITY, BOX)";
+
+test('teeth v: the SNAPSHOT ids have teeth -- three T-SNAP-* tree kernel mutants (SHORT, OS known=none), P-SNAP-TREE their revert', () => {
+    // ASSERTION 3: the universe gains exactly the five SNAPSHOT ids; GAPS ceiling + max unchanged
+    const u = universe();
+    assert.equal(u.length, UNIVERSE_PRE_SNAP + SNAP_IDS.length);
+    assert.deepEqual(u.filter((x) => /^(lane:SNAPSHOT|oracle:OS|sig:OS:)/.test(x)), SNAP_IDS);
+    assert.equal(Object.keys(GAPS).length, GAPS_MAX);
+    assert.deepEqual(Object.keys(GAPS), GAPS_CEILING);
+    for (const g of Object.keys(GAPS)) for (const id of SNAP_IDS) assert.ok(!GAPS[g].covers.includes(id), g + ' never covers ' + id);
+    const all = SNAP_ROWS.map((r) => r[0]);
+    assert.deepEqual(CHECKS['lane:SNAPSHOT'], all);
+    assert.deepEqual(CHECKS['oracle:OS'], all);
+    assert.deepEqual(SIGS.OS, ['roundtrip', 'refire', 'clean-bit']);
+    for (const [name, , , sig] of SNAP_ROWS) assert.deepEqual(CHECKS['sig:OS:' + sig], [name], 'sig:OS:' + sig + ' -> ' + name);
+    assert.equal(typeof NOT_TEETH['P-SNAP-TREE'], 'string');
+    const get = (n) => { const c = CONTROLS.find((x) => x.name === n); assert.ok(c, n + ' exists'); assert.deepEqual(validSpec(c), [], n); return c; };
+    const ps = get('P-SNAP-TREE');
+    assert.ok(SHORT_RE.test(ps.name) && !own(ps, 'soakPatch'));
+    assert.deepEqual(shape(ps).concat([ps.expect.extra]), ['main', 'tree', SNAP_ENV, ['--smoke'], [], null, 0, 'nobreach', [], [], { verdict: 'SMOKE' }]);
+    assert.equal(buildKernel(ps).src, rowsBase(), 'the pass control runs the unpatched tree');
+    assert.deepEqual(CONTROLS.filter((x) => /SNAP/.test(x.name)).map((x) => x.name), ['P-SNAP-TREE'].concat(all));
+    const base = rowsBase();
+    for (const [name, anchor, repl, sig, sha] of SNAP_ROWS) {
+        const c = get(name);
+        assert.ok(SHORT_RE.test(name) && !LONG_RE.test(name) && !own(c, 'soakPatch'), name + ': SHORT battery, no soakPatch (C-7, R8-5)');
+        assert.deepEqual(shape(c), ['main', 'tree', SNAP_ENV, ['--smoke'], [[anchor, repl]], null, 1, 'match', [], [SNAP(sig)]], name);
+        assert.equal(base.split(anchor).length - 1, 1, name + ': the anchor occurs exactly once in Signal.js');
+        const k = buildKernel(c).src;
+        assert.equal(k, base.replace(anchor, () => repl), name);
+        assert.equal(createHash('sha256').update(k).digest('hex').slice(0, 8), sha, name + ': kernel sha256/8 (on ' + ROWS_BASE8 + ')');
+    }
+    assert.deepEqual(pairing(CHECKS, CONTROLS), []);
+    // must-fail: a spec on another lane does not back lane:SNAPSHOT; another sig does not back its sig id
+    const ctl = copy(CONTROLS);
+    for (const n of all) ctl.find((x) => x.name === n).expect.specs = ctl.find((x) => x.name === n).expect.specs.map((sp) => sp.replace('lane=SNAPSHOT', 'lane=GRAPH'));
+    assert.deepEqual(pairing(CHECKS, ctl).filter((p) => p.indexOf('lane:SNAPSHOT: ') === 0).length, 3, JSON.stringify(pairing(CHECKS, ctl)));
+    const ctl2 = copy(CONTROLS);
+    ctl2.find((x) => x.name === 'T-SNAP-clean').expect.specs = [SNAP('roundtrip')];
+    const p2 = pairing(CHECKS, ctl2);
+    assert.equal(p2.length, 1, JSON.stringify(p2));
+    assert.ok(p2[0].indexOf('sig:OS:clean-bit: T-SNAP-clean -- ') === 0, JSON.stringify(p2));
+    // must-fail: a T-SNAP-* row dropped from CHECKS is an orphan; P-SNAP-TREE out of NOT_TEETH is an orphan; the ids uncovered
+    const c1 = copy(CHECKS);
+    for (const id of Object.keys(c1)) c1[id] = c1[id].filter((n) => n !== 'T-SNAP-refire');
+    hasProblem(live({ checks: c1 }), 'orphan control: T-SNAP-refire');
+    const nt = Object.assign({}, NOT_TEETH);
+    delete nt['P-SNAP-TREE'];
+    hasProblem(live({ notTeeth: nt }), 'orphan control: P-SNAP-TREE');
+    const c2 = copy(CHECKS);
+    for (const id of SNAP_IDS) delete c2[id];
+    const probs = live({ checks: c2 });
+    for (const id of SNAP_IDS) hasProblem(probs, 'uncovered: ' + id + ' has no CHECKS control, no GAP and no UNREACHABLE proof');
+});
+
+test('teeth v: runs -- P-SNAP-TREE exits 0 clean; each T-SNAP-* exits 1 with its spec matched (KILLED); its patch dropped MISSes', () => {
+    const p = runControl(CONTROLS.find((x) => x.name === 'P-SNAP-TREE'));
+    assert.deepEqual([p.ok, p.invalid, p.status, p.problems], [true, false, 0, []]);
+    for (const [name, , , sig] of SNAP_ROWS) {
+        const r = runControl(CONTROLS.find((x) => x.name === name));
+        assert.deepEqual([r.ok, r.invalid, r.status, r.problems], [true, false, 1, []], name);
+        assert.deepEqual(r.matched.map((m) => m.spec), [SNAP(sig)], name);
+        // R8-21: the matched head is the lane's own OS BREACH line (T-SNAP-clean: checkOsCleanBit -> x.failF)
+        assert.ok(r.matched[0].head.indexOf('soak: BREACH ' + SNAP(sig) + ' ') === 0, name + ': ' + r.matched[0].head);
+    }
+    // the revert of T-SNAP-clean (patches []) is the tree: exit 0, MISS on its spec
+    const rv = copy(CONTROLS.find((x) => x.name === 'T-SNAP-clean'));
+    rv.patches = [];
+    const r = runControl(rv);
+    assert.deepEqual([r.ok, r.status], [false, 0]);
+    assert.ok(r.problems.includes('no line matches spec [' + SNAP('clean-bit') + ']'), JSON.stringify(r.problems));
+});
+
+test('teeth v: on the frozen pre-C1 build (before-C-7548461) each T-SNAP-* MISSes: exit 2, unknown lane SNAPSHOT', (t) => {
+    if (!existsSync(FROZEN_MAIN)) { t.skip('frozen pre-C1 copy absent (.handoff is gitignored): ' + FROZEN_MAIN); return; }
+    const env = {};
+    for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_OPTIONS' && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
+    for (const [name, , , sig] of SNAP_ROWS) {
+        const c = CONTROLS.find((x) => x.name === name);
+        const dir = mkdtempSync(join(tmpdir(), 'teeth-v-frozen-'));
+        try {
+            writeFileSync(join(dir, 'Signal.js'), buildKernel(c).src);
+            copyFileSync(join(ROOT, 'Watch.js'), join(dir, 'Watch.js'));
+            const out = join(dir, 'run.jsonl');
+            const r = spawnSync(process.execPath, ['--expose-gc', FROZEN_MAIN].concat(c.argv), {
+                cwd: ROOT, env: Object.assign({}, env, c.env, { SOAK_KERNEL: join(dir, 'Signal.js'), SOAK_OUT: out }),
+                encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 5 * 60 * 1000, killSignal: 'SIGKILL',
+            });
+            assert.equal(r.error, undefined, name);
+            assert.equal(r.status, 2, name + ': EXIT_CODE.CONFIG on the pre-C1 roster');
+            const err = r.stderr.split('\n').filter((l) => l.length > 0);
+            assert.deepEqual(err, [FROZEN_CONFIG], name);
+            assert.equal(r.stdout, '', name + ': no heartbeat, no END');
+            const problems = [], matched = [];
+            judgeMain(c, r, err, [], out, problems, matched);
+            assert.deepEqual(matched, [], name);
+            assert.ok(problems.includes('no line matches spec [' + SNAP(sig) + ']'), name + ': ' + JSON.stringify(problems));
+        } finally { rmSync(dir, { recursive: true, force: true }); }
+    }
 });

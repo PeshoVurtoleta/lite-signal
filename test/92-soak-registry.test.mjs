@@ -290,7 +290,7 @@ describe('RETENTION (A-R5): destroy + close leaves nothing', () => {
 });
 
 describe('ROSTER import smoke (b140 B2a): divergences.mjs <-> lanes/index.mjs -> lanes/registry.mjs, no TDZ cycle', () => {
-    it('each load order in a FRESH node process: no throw, ROSTER 13 lanes, laneSpan 13, REGISTRY_PROBLEMS []', async () => {
+    it('each load order in a FRESH node process: no throw, ROSTER 14 lanes, laneSpan 14, REGISTRY_PROBLEMS []', async () => {
         const { spawnSync } = await import('node:child_process');
         const soak = new URL('../bench/soak/', import.meta.url).href;
         for (const [first, second] of [['lanes/index.mjs', 'divergences.mjs'], ['divergences.mjs', 'lanes/index.mjs']]) {
@@ -298,9 +298,9 @@ describe('ROSTER import smoke (b140 B2a): divergences.mjs <-> lanes/index.mjs ->
                 JSON.stringify(soak + second) + '); const idx = ' + (first === 'lanes/index.mjs' ? 'a' : 'b') + '; const div = ' +
                 (first === 'lanes/index.mjs' ? 'b' : 'a') + '; console.log(JSON.stringify([idx.ROSTER.length, ' +
                 'idx.laneSpan(idx.ROSTER), idx.ROSTER.includes("REGISTRY"), div.REGISTRY_PROBLEMS]));';
-            const r = spawnSync(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8', timeout: 60000 });
+            const r = spawnSync(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
             assert.equal(r.status, 0, first + ' first: exit ' + r.status + ' ' + r.stderr);
-            assert.deepEqual(JSON.parse(r.stdout.trim()), [13, 13, true, []], first + ' first');
+            assert.deepEqual(JSON.parse(r.stdout.trim()), [14, 14, true, []], first + ' first');
         }
     });
 });

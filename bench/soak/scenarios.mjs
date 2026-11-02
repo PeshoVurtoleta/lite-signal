@@ -44,8 +44,11 @@ export const SCENARIOS = Object.freeze([
     'destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy',
     // CAPACITY (S3 R5; lanes/capacity.mjs, not rostered until R5 B2)
     'node-cap-throw', 'link-cap-throw', 'link-ceiling-grow', 'grow-past-initial', 'reuse-at-edge',
-    // BOX (R7; lanes/box.mjs, not rostered until C)
+    // BOX (R7; lanes/box.mjs, rostered in R7 C1, b150)
     'box-trace-equal', 'box-interop',
+    // SNAPSHOT (R8 B2; lanes/snapshot.mjs, rostered in R8 C1, b156)
+    'snap-restore', 'restore-after-dispose', 'restore-recycled', 'restore-twice', 'snap-refused-batch', 'snap-refused-body',
+    'snap-untrack-ok',
 ]);
 
 const DEEP_PULL_MIN = 16;
@@ -586,6 +589,42 @@ export class Detectors {
             else if (kind === 'ceil' && policy === 'grow') this.count('link-ceiling-grow');
             if (reused) this.count('reuse-at-edge');
         } else if (kind === 'node' && policy === 'grow') this.count('grow-past-initial');
+    }
+
+    /* ---- SNAPSHOT (called by lanes/snapshot.mjs only: no other lane pays) ------------------------------ */
+
+    /**
+     * One SNAPSHOT event (R8 B2). ev 'rest': a restore EVENT ran through its world swap. a: the live world disposed >= 1
+     * node the snapshot holds (the restore resurrects it); b: the live world holds >= 1 live node the snapshot does not
+     * (created after the snap; the restore drops it); c: this snapshot slot's restore count, this one included (an
+     * integer >= 1).
+     *   snap-restore            every rest event
+     *   restore-after-dispose   a
+     *   restore-recycled        a && b (a pool slot the disposal freed was there for the later creation to take)
+     *   restore-twice           c >= 2 (one snapshot restored again, into a registry it was not taken from)
+     * A rest also clears the second-invalidation write tally (wsp): the restored computeds' freshness is the snapshot's,
+     * so a tally from the dropped timeline is no trigger (an undercount, never a false count).
+     * ev 'in': one snapin probe; a: 'batch' | 'body' | 'untrack'; b: the probe met its contract (batch / body: snapshot()
+     * threw the not-settled Error; untrack: snapshot() returned at the top level). c unused.
+     *   snap-refused-batch / snap-refused-body / snap-untrack-ok   when b
+     * TypeError on any other ev / a / b / c (fail closed).
+     */
+    onSnap(ev, a, b, c) {
+        if (ev === 'rest') {
+            if (typeof a !== 'boolean' || typeof b !== 'boolean') throw new TypeError('onSnap: rest flags must be booleans');
+            if (!Number.isSafeInteger(c) || c < 1) throw new TypeError('onSnap: rest count must be an integer >= 1, got ' + String(c));
+            this.wsp.clear();
+            this.count('snap-restore');
+            if (a) this.count('restore-after-dispose');
+            if (a && b) this.count('restore-recycled');
+            if (c >= 2) this.count('restore-twice');
+            return;
+        }
+        if (ev !== 'in') throw new TypeError('onSnap: ev must be rest / in, got ' + String(ev));
+        if (a !== 'batch' && a !== 'body' && a !== 'untrack') throw new TypeError('onSnap: where must be batch / body / untrack, got ' + String(a));
+        if (typeof b !== 'boolean') throw new TypeError('onSnap: in flag must be a boolean');
+        if (!b) return;
+        this.count(a === 'untrack' ? 'snap-untrack-ok' : a === 'batch' ? 'snap-refused-batch' : 'snap-refused-body');
     }
 
     /* ---- ERROR -------------------------------------------------------------------------------------- */

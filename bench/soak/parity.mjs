@@ -89,6 +89,8 @@ export const PARITY_FILES = Object.freeze([
     'bench/soak/adapters/lite-box.mjs', 'bench/soak/trace.mjs',
     // b152 R7 C3 (C-18): the twin runner decides the OT world pair and its checks; the BOX lane its scripts / coverage
     'bench/soak/twin.mjs', 'bench/soak/lanes/box.mjs',
+    // b157 R8 C3: the SNAPSHOT lane decides its snap / restore scripts, OS checks and coverage
+    'bench/soak/lanes/snapshot.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

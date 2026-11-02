@@ -46,6 +46,18 @@
  *                        thunk); same sig stale-thunk (O9 keeps its 4 sigs), called from exec.sc.onBody
  *   OT   checkTrace      (R7, twin lanes only: twin.mjs runWorldTwin) the primary and twin trace sinks differ at a
  *                        line (sig trace-diff, C-10 / C-27)
+ *   OS   checkOsRoundtrip  (R8, the SNAPSHOT lane: judged once per restore EVENT) snapshot S1 vs the restored
+ *                        registry's snapshot S2: exact-key shape check of both sides, then every field BY ID, values
+ *                        Object.is, deps / subPos elementwise ===, NO mask (sig roundtrip; a malformed side reports
+ *                        'malformed a|b: <reason>', never null, never a throw)
+ *        checkOsModel    S1 vs the model copy: every live model node maps via idOf to a record of its kind, signal
+ *                        values Object.is, record count === live count, no two indices on one id (sig roundtrip;
+ *                        computed values stay O1c / O1e's on the swapped world)
+ *        checkOsRefire   a body ran during restore() (sig refire; R8-12: no body runs DURING restore)
+ *        osCleanClass / checkOsCleanBit   a restored computed's runs = the record's own body runs from restore()
+ *                        through the end of its first top-level untracked read (so a never-read computed refreshed
+ *                        earlier as a dep counts): a 'clean' record runs 0 bodies, a 'never'-evaluated one >= 1, a
+ *                        'dirty' one is unjudged (a skip, b98; sig clean-bit)
  *
  * COLD module.
  */
@@ -54,7 +66,7 @@ import { Model } from './model.mjs';
 import { SoakThrow, sameValue, showValue, specRefs } from './kinds.mjs';
 import { firstTraceDiff, traceLine } from './trace.mjs';
 
-export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9', 'OT']);
+export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9', 'OT', 'OS']);
 
 /** The sig vocabulary (SPEC-B section 6; escape-<origin> / escape-<Ctor> are open families). */
 export const SIGS = Object.freeze({
@@ -71,6 +83,7 @@ export const SIGS = Object.freeze({
     OW: ['cleanup-order', 'callback-this'],
     O9: ['stale-write', 'stale-read', 'stale-dispose', 'stale-thunk'],
     OT: ['trace-diff'],
+    OS: ['roundtrip', 'refire', 'clean-bit'],
 });
 
 const DETAIL_MAX = 240;
@@ -591,4 +604,245 @@ export function checkScheduledBody(label, ran, inDelivery) {
     if (typeof inDelivery !== 'boolean') throw new TypeError('checkScheduledBody: inDelivery must be a boolean, got ' + o9Show(inDelivery));
     if (inDelivery === true) return null;
     return { oracle: 'O9', sig: 'stale-thunk', detail: cut(label + ': scheduled effect #' + ran + ' ran its body outside any delivery') };
+}
+
+/* ---- OS (R8, the SNAPSHOT lane: one judgement per restore EVENT, R8-3 / R8-12). Pure; exec / lanes/snapshot.mjs
+ * makes the engine calls. 'OS' joins ORACLES / SIGS in C1 (R8-4). -------------------------------------------------- */
+
+/** The 12 record keys and the 5 kinds of Signal.js snapshot() (records :2914-2927, snapshotKind :2828). */
+const OS_FIELDS = Object.freeze(['id', 'kind', 'flags', 'value', 'version', 'clean', 'ownerId', 'ownerPos', 'deps', 'subPos', 'evalVersion', 'markEpoch']);
+const OS_KINDS = Object.freeze(['signal', 'signalBox', 'computed', 'computedBox', 'effect']);
+const OS_SNAP_KEYS = Object.freeze(['v', 'nodes', 'gv', 'nextId']);
+const OS_ID_MAX = 0x7FFFFFFF;
+const OS_HAS_OWN = Object.prototype.hasOwnProperty;
+
+/** int32 and not -0. */
+const osI32 = (x) => typeof x === 'number' && (x | 0) === x && !Object.is(x, -0);
+/** A snapshot id: an int in [1, 2^31 - 1] (-0 is not > 0). */
+const osId = (x) => typeof x === 'number' && Number.isInteger(x) && x >= 1 && x <= OS_ID_MAX;
+
+/** Any value as text, never throwing (String() of a null-prototype object throws); arrays elementwise (deps / subPos). */
+function osShow(x) {
+    if (typeof x === 'number') return Object.is(x, -0) ? '-0' : String(x);
+    if (typeof x === 'string') return JSON.stringify(x);
+    if (x === null) return 'null';
+    if (Array.isArray(x)) {
+        let s = '[';
+        for (let k = 0; k < x.length; k++) s += (k > 0 ? ',' : '') + osShow(x[k]);
+        return s + ']';
+    }
+    if (x instanceof SoakThrow) return 'ERR(' + x.token + ')';
+    if (typeof x === 'object' || typeof x === 'function' || typeof x === 'symbol') return '(' + typeof x + ')';
+    return String(x);   // undefined, boolean, bigint
+}
+
+/** Unknown own keys (string or symbol) first, then the missing ones, in `keys` order. null = exact. */
+function osKeys(o, keys, at) {
+    const own = Reflect.ownKeys(o);
+    for (let k = 0; k < own.length; k++) {
+        const key = own[k];
+        if (typeof key !== 'string' || !keys.includes(key)) return at + 'unknown key ' + (typeof key === 'string' ? key : 'symbol');
+    }
+    for (let k = 0; k < keys.length; k++) if (!OS_HAS_OWN.call(o, keys[k])) return at + 'missing ' + keys[k];
+    return null;
+}
+
+/** The first shape violation of one record (index j), or null. ids: the ids seen so far (duplicate check). */
+function osRecordReason(rec, j, ids) {
+    const at = 'node[' + j + '] ';
+    if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) return at + 'not an object';
+    const keyErr = osKeys(rec, OS_FIELDS, at);
+    if (keyErr !== null) return keyErr;
+    const id = rec.id;
+    if (!osId(id)) return at + 'id ' + osShow(id);
+    if (ids.has(id)) return at + 'duplicate id ' + id;
+    ids.add(id);
+    if (!OS_KINDS.includes(rec.kind)) return at + 'kind ' + osShow(rec.kind);
+    if (!osI32(rec.flags)) return at + 'flags ' + osShow(rec.flags);
+    if (!osI32(rec.version)) return at + 'version ' + osShow(rec.version);
+    void rec.value;   // any value; read once so a throwing getter is a shape reason, not a throw in the compare
+    if (typeof rec.clean !== 'boolean') return at + 'clean ' + osShow(rec.clean);
+    const ownerId = rec.ownerId, ownerPos = rec.ownerPos;
+    if (ownerId !== null && !osId(ownerId)) return at + 'ownerId ' + osShow(ownerId);
+    if (ownerId === null ? ownerPos !== -1 : !(osI32(ownerPos) && ownerPos >= 0)) return at + 'ownerPos ' + osShow(ownerPos) + ' with ownerId ' + osShow(ownerId);
+    const deps = rec.deps, subPos = rec.subPos;
+    if (!Array.isArray(deps)) return at + 'deps ' + osShow(deps);
+    if (!Array.isArray(subPos)) return at + 'subPos ' + osShow(subPos);
+    if (deps.length !== subPos.length) return at + 'deps/subPos length ' + deps.length + '/' + subPos.length;
+    for (let k = 0; k < deps.length; k++) {
+        if (!osId(deps[k])) return at + 'deps[' + k + '] ' + osShow(deps[k]);
+        if (!(osI32(subPos[k]) && subPos[k] >= 0)) return at + 'subPos[' + k + '] ' + osShow(subPos[k]);
+    }
+    if (!osI32(rec.evalVersion)) return at + 'evalVersion ' + osShow(rec.evalVersion);
+    if (!osI32(rec.markEpoch)) return at + 'markEpoch ' + osShow(rec.markEpoch);
+    return null;
+}
+
+/** The first shape violation of a snapshot, or null. Never throws: a throwing getter / proxy trap is a reason too. */
+function osSnapReason(s) {
+    try {
+        if (s === null || typeof s !== 'object' || Array.isArray(s)) return 'snapshot ' + osShow(s);
+        const keyErr = osKeys(s, OS_SNAP_KEYS, '');
+        if (keyErr !== null) return keyErr;
+        if (s.v !== 1) return 'v ' + osShow(s.v);
+        const nodes = s.nodes;
+        if (!Array.isArray(nodes)) return 'nodes ' + osShow(nodes);
+        if (!osI32(s.gv) || s.gv === 0) return 'gv ' + osShow(s.gv);
+        if (!osI32(s.nextId)) return 'nextId ' + osShow(s.nextId);
+        const ids = new Set();
+        for (let j = 0; j < nodes.length; j++) {
+            const why = osRecordReason(nodes[j], j, ids);
+            if (why !== null) return why;
+        }
+        return null;
+    } catch (e) {
+        return 'threw ' + (e instanceof Error && typeof e.message === 'string' ? e.message : typeof e);
+    }
+}
+
+const osFail = (sig, id, detail) => ({ oracle: 'OS', sig, id, detail: cut(detail) });
+
+/** One field of two records: arrays elementwise === (lengths too), everything else Object.is. */
+function osFieldEq(x, y) {
+    if (Array.isArray(x) && Array.isArray(y)) {
+        if (x.length !== y.length) return false;
+        for (let k = 0; k < x.length; k++) if (x[k] !== y[k]) return false;
+        return true;
+    }
+    return Object.is(x, y);
+}
+
+/**
+ * OS roundtrip: snapshot a (S1, at rest before restore) vs snapshot b (S2 = the restored registry's snapshot, taken
+ * before any read). Both sides get the exact-key shape check first (a first; the snapshot {v: 1, nodes, gv: int32 !== 0,
+ * nextId: int32}; each record exactly the 12 OS_FIELDS: id an int in [1, 2^31 - 1], unique; kind one of OS_KINDS;
+ * flags / version / evalVersion / markEpoch int32, -0 rejected; clean boolean; ownerId null | id; ownerPos -1 iff
+ * ownerId is null, else an int32 >= 0; deps (ids) / subPos (int32 >= 0) arrays of equal length). A malformed side
+ * returns { oracle: 'OS', sig: 'roundtrip', id: null, detail: 'malformed a|b: <reason>' } -- never null, never a
+ * throw (this judges engine output). Then BY ID, NO mask, the FIRST difference in this order: gv, nextId (id null,
+ * detail '<field> a=.. b=..'), then each record of a.nodes in a's order -- absent from b ('node#<id> record
+ * a=present b=absent'), else its fields in OS_FIELDS order (values Object.is, deps / subPos elementwise ===:
+ * 'node#<id> <field> a=.. b=..') -- then the ids only in b in b's order ('node#<id> record a=absent b=present').
+ * Node ORDER is not judged (the comparison is by id; subPos / ownerPos carry the list orders that matter).
+ * detail is cut() to DETAIL_MAX. null when the two snapshots are equal.
+ */
+export function checkOsRoundtrip(a, b) {
+    const whyA = osSnapReason(a);
+    if (whyA !== null) return osFail('roundtrip', null, 'malformed a: ' + whyA);
+    const whyB = osSnapReason(b);
+    if (whyB !== null) return osFail('roundtrip', null, 'malformed b: ' + whyB);
+    if (a.gv !== b.gv) return osFail('roundtrip', null, 'gv a=' + osShow(a.gv) + ' b=' + osShow(b.gv));
+    if (a.nextId !== b.nextId) return osFail('roundtrip', null, 'nextId a=' + osShow(a.nextId) + ' b=' + osShow(b.nextId));
+    const byId = new Map();
+    for (let j = 0; j < b.nodes.length; j++) byId.set(b.nodes[j].id, b.nodes[j]);
+    for (let j = 0; j < a.nodes.length; j++) {
+        const ra = a.nodes[j], id = ra.id;
+        const rb = byId.get(id);
+        if (rb === undefined) return osFail('roundtrip', id, 'node#' + id + ' record a=present b=absent');
+        for (let k = 0; k < OS_FIELDS.length; k++) {
+            const f = OS_FIELDS[k];
+            if (!((f === 'deps' || f === 'subPos') ? osFieldEq(ra[f], rb[f]) : Object.is(ra[f], rb[f]))) return osFail('roundtrip', id, 'node#' + id + ' ' + f + ' a=' + osShow(ra[f]) + ' b=' + osShow(rb[f]));
+        }
+        byId.delete(id);
+    }
+    for (let j = 0; j < b.nodes.length; j++) {
+        const id = b.nodes[j].id;
+        if (byId.has(id)) return osFail('roundtrip', id, 'node#' + id + ' record a=absent b=present');
+    }
+    return null;
+}
+
+/** The model kind letter -> the snapshot kinds it may map to. */
+function osKindOk(t, kind) {
+    if (t === 's') return kind === 'signal' || kind === 'signalBox';
+    if (t === 'c') return kind === 'computed' || kind === 'computedBox';
+    return t === 'e' && kind === 'effect';
+}
+
+/**
+ * OS roundtrip vs the model (R8-13: OS judges against the model copy, never engine vs engine). snap: S1; model: the
+ * Model copy taken with it (Model#restoreCopy); idOf: Int32Array, idOf[i] = the snapshot id of model node i, -1 = no
+ * node (an index past idOf.length reads as -1). Every LIVE model node i must map to a record of its kind (s -> signal |
+ * signalBox, c -> computed | computedBox, e -> effect), a signal's rec.value must be Object.is its model v, no two
+ * indices may map to one id, and snap.nodes.length must equal the live model count. Dead nodes (live false, or no
+ * node) are not judged. Computed values are NOT judged here (O1c / O1e on the swapped world: no double count).
+ * The FIRST failure in model index order, then the count: { oracle: 'OS', sig: 'roundtrip', id, detail } (id null for
+ * the count row and a live node with no id). A malformed snap -> detail 'malformed snap: <reason>' (never a throw).
+ * TypeError (harness bugs): model not a Model; idOf not an Int32Array; an idOf entry of a live node that is neither
+ * -1 nor an id >= 1.
+ */
+export function checkOsModel(snap, model, idOf) {
+    if (!(model instanceof Model)) throw new TypeError('checkOsModel: model must be a Model, got ' + osShow(model));
+    if (!(idOf instanceof Int32Array)) throw new TypeError('checkOsModel: idOf must be an Int32Array, got ' + osShow(idOf));
+    const why = osSnapReason(snap);
+    if (why !== null) return osFail('roundtrip', null, 'malformed snap: ' + why);
+    const byId = new Map();
+    for (let j = 0; j < snap.nodes.length; j++) byId.set(snap.nodes[j].id, snap.nodes[j]);
+    const owner = new Map();   // id -> the first model index mapped to it
+    let live = 0;
+    for (let i = 0; i < model.n.length; i++) {
+        const nd = model.n[i];
+        if (nd === undefined || !nd.live) continue;
+        live++;
+        const id = i < idOf.length ? idOf[i] : -1;
+        if (id === -1) return osFail('roundtrip', null, 'model#' + i + ' (' + nd.t + ') live but idOf -1 (no node)');
+        if (!(id >= 1)) throw new TypeError('checkOsModel: idOf[' + i + '] must be -1 or an id >= 1, got ' + id);
+        const prev = owner.get(id);
+        if (prev !== undefined) return osFail('roundtrip', id, 'node#' + id + ' mapped by model#' + prev + ' and model#' + i);
+        owner.set(id, i);
+        const rec = byId.get(id);
+        if (rec === undefined) return osFail('roundtrip', id, 'node#' + id + ' absent for model#' + i + ' (' + nd.t + ')');
+        if (!osKindOk(nd.t, rec.kind)) return osFail('roundtrip', id, 'node#' + id + ' kind snap=' + rec.kind + ' model=' + nd.t + ' (model#' + i + ')');
+        if (nd.t === 's' && !Object.is(rec.value, nd.v)) return osFail('roundtrip', id, 'node#' + id + ' value snap=' + osShow(rec.value) + ' model=' + osShow(nd.v) + ' (model#' + i + ')');
+    }
+    if (snap.nodes.length !== live) return osFail('roundtrip', null, 'nodes ' + snap.nodes.length + ' != live model nodes ' + live);
+    return null;
+}
+
+/** Fails closed (TypeError) unless label is a string and runs is a safe integer >= 0 that is not -0. Scalar args: no
+ *  array per call (o9Check takes arrays), so the pass path allocates nothing. */
+function osCheck(fn, label, runs) {
+    if (typeof label !== 'string') throw new TypeError(fn + ': label must be a string, got ' + o9Show(label));
+    if (!Number.isSafeInteger(runs) || runs < 0 || Object.is(runs, -0)) throw new TypeError(fn + ': runs must be an integer >= 0, got ' + o9Show(runs));
+}
+
+/** OS refire (R8-12): runs = body runs counted around restore(); any run is the finding. null iff runs === 0. */
+export function checkOsRefire(label, runs) {
+    osCheck('checkOsRefire', label, runs);
+    if (runs === 0) return null;
+    return { oracle: 'OS', sig: 'refire', detail: cut(label + ': ' + runs + ' body run(s) during restore (want 0)') };
+}
+
+/**
+ * The cache class of a computed / computedBox snapshot record, derived as the R8 A0 census does (A0/census.mjs):
+ * rec.clean === true -> 'clean', else rec.evalVersion === 0 -> 'never' (never evaluated), else 'dirty'. Returns one of
+ * three constant strings (no allocation). TypeError when rec is not an object of kind computed / computedBox, or its
+ * clean is not a boolean, or its evalVersion is not an int32 (-0 rejected).
+ */
+export function osCleanClass(rec) {
+    if (rec === null || typeof rec !== 'object' || (rec.kind !== 'computed' && rec.kind !== 'computedBox')) {
+        throw new TypeError('osCleanClass: rec must be a computed / computedBox snapshot record, got ' + (rec !== null && typeof rec === 'object' ? 'kind ' + osShow(rec.kind) : osShow(rec)));
+    }
+    if (typeof rec.clean !== 'boolean' || !osI32(rec.evalVersion)) throw new TypeError('osCleanClass: rec.clean must be a boolean and rec.evalVersion an int32 (not -0), got clean ' + osShow(rec.clean) + ', evalVersion ' + osShow(rec.evalVersion));
+    if (rec.clean === true) return 'clean';
+    return rec.evalVersion === 0 ? 'never' : 'dirty';
+}
+
+/**
+ * OS clean-bit (R8-12): runs = the record's own body runs from restore() through the end of its first top-level
+ * untracked read (so a never-read computed refreshed earlier as a dep counts).
+ * 'clean' needs runs === 0, 'never' needs runs >= 1, 'dirty' is unjudged (null: the caller counts it as a skip, b98).
+ * TypeError on a non-string label, a runs that is not a safe integer >= 0 (-0 rejected), or a rec osCleanClass refuses.
+ */
+export function checkOsCleanBit(label, rec, runs) {
+    osCheck('checkOsCleanBit', label, runs);
+    const cls = osCleanClass(rec);
+    if (cls === 'clean') {
+        if (runs === 0) return null;
+        return { oracle: 'OS', sig: 'clean-bit', detail: cut(label + ': clean node#' + rec.id + ' ran ' + runs + ' body run(s) on its first read (want 0)') };
+    }
+    if (cls === 'never' && runs === 0) {
+        return { oracle: 'OS', sig: 'clean-bit', detail: cut(label + ': never-evaluated node#' + rec.id + ' ran 0 body runs on its first read (want >= 1)') };
+    }
+    return null;
 }

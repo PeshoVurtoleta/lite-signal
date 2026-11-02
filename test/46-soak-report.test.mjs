@@ -44,14 +44,15 @@ const MAIN = join(SOAK, 'main.mjs');
 const REPORT = join(SOAK, 'SoakReport.mjs');
 const K_HP_DIR = join(SOAK, 'controls', 'headpatched');
 const K_HP = join(K_HP_DIR, 'Signal.js');
+const REV_LANES = ROSTER.filter((l) => l !== 'SNAPSHOT');   // R8 C2b: the 13-lane prefix (SNAPSHOT is the 14th)
 const K_152 = join(ROOT, 'node_modules', 'lite-signal-1.5.2', 'Signal.js');
 const SMALL = { SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: String(OPS_MIN) };
 // A cycle that cannot finish before the kernel-armed event lands: ~2,000 worlds, ~30 yields (main yields every 64 worlds).
 const LONG = { SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: '1000000' };
 /**
  * Scratch-kernel tail: wrap the module's createRegistry binding (a function declaration: a mutable live binding
- * the adapter reads through the namespace) and run `action` on the 2nd registry, i.e. inside world 1 of cycle 0,
- * after the stream is open. The event fires at the next yield (world 63), mid-cycle, whatever the host load.
+ * the adapter reads through the namespace) and run `action` on the 2nd registry, i.e. inside world 0 of cycle 0
+ * (the 1st registry is adapters/lite.mjs's caps.snapshot probe at import), after the stream is open. The event fires at the next yield (world 63), mid-cycle, whatever the host load.
  */
 const ARMED = 'test/46 ARMED';   // the kernel writes it to stderr when the armed event fires
 const armAt2 = (action) => '\n;const __t46Reg = createRegistry; let __t46N = 0;\n' +
@@ -161,7 +162,9 @@ before(async () => {
         copyFileSync(join(K_HP_DIR, 'Watch.js'), join(TMP, dir, 'Watch.js'));
     }
     await Promise.all([
-        gen('rev', Object.assign({ SOAK_KERNEL: K_152 }, SMALL)),
+        // R8 C2b: the lite-signal-1.5.2 kernel has no snapshot(), so the full roster exits CONFIG 'must SKIP nothing: SNAPSHOT'
+        // (R8-14, by design); the REV-152 fixture is pinned to the 13 lanes that kernel runs (SNAPSHOT is tree-only)
+        gen('rev', Object.assign({ SOAK_KERNEL: K_152, SOAK_LANES: REV_LANES.join(',') }, SMALL)),
         gen('hp', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'GRAPH' }, SMALL)),
         gen('hperr', Object.assign({ SOAK_KERNEL: K_HP, SOAK_LANES: 'ERROR' }, SMALL)),
         gen('scratch', Object.assign({ SOAK_KERNEL: join(TMP, 'kscratch', 'Signal.js'), SOAK_LANES: 'GRAPH' }, SMALL)),
@@ -331,7 +334,7 @@ test('honest FATAL stream (scratch kernel, uncaught throw armed mid-cycle) -> co
     const r = expectRefusal(S.fatal.path, 'overridden-kernel');
     assert.equal(r.out[r.out.length - 1], 'soak:report: verdict FAIL (consistent)');
 });
-test('honest SIGINT-interrupted stream (scratch kernel raises SIGINT in world 1 of cycle 0) -> consistent; the interrupted last cycle is accepted', () => {
+test('honest SIGINT-interrupted stream (scratch kernel raises SIGINT in world 0 of cycle 0) -> consistent; the interrupted last cycle is accepted', () => {
     const recs = S.sigint.recs;
     assert.ok(S.sigint.stderr.indexOf(ARMED) !== -1, 'the armed SIGINT fired: ' + S.sigint.stderr.slice(0, 400));
     assert.equal(summaryOf(recs).reason, 'signal', S.sigint.stderr.slice(0, 400));
@@ -390,7 +393,7 @@ function asTree(recs, sig, wat, parityOk) {
 test('a small GRAPH-only tree run at the parity.json pins, parity ok -> consistent, then NOT A RELEASE SOAK -- lane-subset (the first class), kernel=tree', () => {
     const r = expectRefusal(tamper('scratch', (recs) => asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true)), 'lane-subset');
     assert.match(r.out[0], / kernel=tree /);
-    assert.match(r.err[0], /ran GRAPH of the roster \["GRAPH","BATCH","ERROR","NEST","WIE","HOOK","LIFECYCLE","OWNER","RECYCLE","SCHEDULER","REGISTRY","CAPACITY","BOX"\]/);
+    assert.match(r.err[0], /ran GRAPH of the roster \["GRAPH","BATCH","ERROR","NEST","WIE","HOOK","LIFECYCLE","OWNER","RECYCLE","SCHEDULER","REGISTRY","CAPACITY","BOX","SNAPSHOT"\]/);
     assert.ok(!r.out.some((l) => l.indexOf('NOTE -- control kernel') !== -1), 'a tree run prints no control NOTE');
 });
 test('R7 C2b (m4): a BOX tree --smoke stream reads (consistent) and is refused only as smoke (a smoke run sits below the gate floor by design)', () => {
@@ -398,7 +401,9 @@ test('R7 C2b (m4): a BOX tree --smoke stream reads (consistent) and is refused o
     assert.match(r.out[0], / kernel=tree engine=lite lanes=BOX /);
     assert.equal(r.err[0], 'soak:report: NOT A RELEASE SOAK -- smoke: a smoke run sits below the gate floor by design');
 });
-test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x OPS_MIN) -> NOT A RELEASE SOAK -- volume', () => {
+// R8 C2b: the REV-152 stream is the 13-lane prefix (1.5.2 has no snapshot()), so as a tree run it is refused FIRST as a lane
+// subset (the 14th lane SNAPSHOT did not run); the volume class on a full-roster header is pinned by the pure releaseRefusal rows below
+test('the 13-lane REV-152 stream relabelled as a tree run at the pins (11 x OPS_MIN) -> NOT A RELEASE SOAK -- lane-subset (SNAPSHOT is the 14th lane)', () => {
     // a tree run classifies with includeFixed false: every 1.5.2 world a FIXED entry explains re-tags as known null there --
     // its WIE worlds (DIV-B33) and, since b103 (DIV-F6 fixed in A2-FIX-T), its F6 ERROR worlds (DIV-F6, DIV-F6+DIV-F22)
     // and, since b109 (DIV-F5 fixed in A3-FIX-R), its F5 BATCH/ERROR worlds
@@ -422,9 +427,9 @@ test('the full-roster REV-152 stream relabelled as a tree run at the pins (11 x 
         s.breaches = s.breaches.filter(isGate).concat(rebuilt,
             s.breaches.filter((b) => !isGate(b) && !FIXED_RE.test(String(b.known)) && !have.has(key(b))));
     };
-    const r = expectRefusal(tamper('rev', (recs) => { recs[0].controls.name = null; asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true); retag(recs); }), 'volume');
+    const r = expectRefusal(tamper('rev', (recs) => { recs[0].controls.name = null; asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true); retag(recs); }), 'lane-subset');
     assert.match(r.out[0], / kernel=tree engine=lite lanes=GRAPH,BATCH,ERROR,NEST,WIE,HOOK,LIFECYCLE,OWNER,RECYCLE,SCHEDULER,REGISTRY,CAPACITY,BOX /);
-    assert.match(r.err[0], new RegExp('SOAK_OPS ' + OPS_MIN + ' is not a count >= config DEFAULT_OPS ' + DEFAULT_OPS));
+    assert.match(r.err[0], /^soak:report: NOT A RELEASE SOAK -- lane-subset: ran GRAPH,BATCH,ERROR,NEST,WIE,HOOK,LIFECYCLE,OWNER,RECYCLE,SCHEDULER,REGISTRY,CAPACITY,BOX of the roster \[.*"BOX","SNAPSHOT"\]/);
 });
 
 /* ---- release policy: the PURE releaseRefusal() on the real REV-152 header, field by field ------------- */
@@ -435,11 +440,18 @@ function releaseBase() {
     recs[0].controls.name = null;
     asTree(recs, PINS['Signal.js'], PINS['Watch.js'], true);
     const h = recs[0];
+    // R8 C2b: the stream is the 13-lane prefix (1.5.2 cannot run SNAPSHOT); releaseRefusal is a pure function of the header +
+    // cycle records, so the full-roster base adds a SNAPSHOT lane entry and a SNAPSHOT clone after each BOX cycle record
+    h.lanes.push(Object.assign(clone(h.lanes[h.lanes.length - 1]), { name: 'SNAPSHOT' }));
+    h.laneRoster = ROSTER.slice();
+    h.config.SOAK_LANES = { value: ROSTER.slice(), source: 'env' };
     h.config.SOAK_OPS = { value: DEFAULT_OPS, source: 'default' };
     h.gitSha = '0123456789abcdef0123456789abcdef01234567';
     h.gitDirty = false;
     h.gitError = null;
-    return { h, cycles: cyclesOf(recs) };
+    const cycles = [];
+    for (const c of cyclesOf(recs)) { cycles.push(c); if (c.lane === 'BOX') cycles.push(Object.assign(clone(c), { lane: 'SNAPSHOT' })); }
+    return { h, cycles };
 }
 const lanesTo = (h, n) => { h.lanes = h.lanes.slice(0, n); h.config.SOAK_LANES = { value: ROSTER.slice(0, n), source: 'env' }; };
 const dropLastCycle = (cycles) => cycles.slice(0, (DEFAULT_CYCLES - 1) * ROSTER.length);
@@ -455,7 +467,7 @@ const RELEASE = [
     ['a forever run (SOAK_CYCLES=0) that completed DEFAULT_CYCLES', (h) => { h.config.SOAK_CYCLES = { value: 0, source: 'env' }; }, null],
     ['a pinned control kernel (rev152), small and dirty: the tree policy does not apply', (h) => { h.controls.name = 'rev152'; h.config.SOAK_OPS.value = OPS_MIN; h.gitDirty = true; lanesTo(h, 1); }, null],
     ['SOAK_LANES GRAPH,BATCH,ERROR', (h) => lanesTo(h, 3), 'lane-subset', /^ran GRAPH,BATCH,ERROR of the roster/],
-    ['a roster lane with status skip', (h) => { h.lanes[3].status = 'skip'; }, 'lane-subset', /^ran GRAPH,BATCH,ERROR,WIE,HOOK,LIFECYCLE,OWNER,RECYCLE,SCHEDULER,REGISTRY,CAPACITY,BOX of the roster/],
+    ['a roster lane with status skip', (h) => { h.lanes[3].status = 'skip'; }, 'lane-subset', /^ran GRAPH,BATCH,ERROR,WIE,HOOK,LIFECYCLE,OWNER,RECYCLE,SCHEDULER,REGISTRY,CAPACITY,BOX,SNAPSHOT of the roster/],
     ['a laneRoster that is not lanes/index.mjs ROSTER (all of it ran)', (h) => { lanesTo(h, 3); h.laneRoster = ROSTER.slice(0, 3); }, 'lane-subset', /is not lanes\/index\.mjs ROSTER/],
     ['SOAK_OPS DEFAULT_OPS - 1', (h) => { h.config.SOAK_OPS.value = DEFAULT_OPS - 1; }, 'volume', new RegExp('^SOAK_OPS ' + (DEFAULT_OPS - 1) + ' is not a count >= config DEFAULT_OPS')],
     ['SOAK_OPS null (fail closed)', (h) => { h.config.SOAK_OPS.value = null; }, 'volume', /^SOAK_OPS null is not a count/],
@@ -491,7 +503,7 @@ for (const [name, edit, reason, detail] of RELEASE) {
         assert.match(got.detail, detail);
     });
 }
-test('releaseRefusal: the base really is the REV-152 header (12 lanes x DEFAULT_CYCLES completed, the roster by import)', () => {
+test('releaseRefusal: the base really is the REV-152 header extended to the 14-lane roster (SNAPSHOT synthesized; 14 lanes x DEFAULT_CYCLES completed, the roster by import)', () => {
     const b = releaseBase();
     assert.deepEqual(b.h.laneRoster, ROSTER.slice());
     assert.deepEqual(b.h.lanes.map((L) => L.status), ROSTER.map(() => 'run'));

@@ -264,9 +264,9 @@ test('BOX is rostered last (ROSTER[12]) and has LANE_INDEX 9', () => {
     assert.equal(ROSTER.indexOf('BOX'), 12, 'R7 C1: BOX is ROSTER[12], rostered last');
     assert.equal(LANE_INDEX.BOX, 9);
 });
-test('scenarios.mjs lists box-trace-equal and box-interop as the last two ids', () => {
-    assert.deepEqual(SCENARIOS.slice(-2), ['box-trace-equal', 'box-interop']);
-    assert.equal(SCENARIOS.length, 79);
+test('scenarios.mjs lists box-trace-equal and box-interop directly before the 7 SNAPSHOT ids (R8: they are no longer the last two)', () => {
+    assert.deepEqual(SCENARIOS.slice(-9, -7), ['box-trace-equal', 'box-interop']);
+    assert.equal(SCENARIOS.length, 86);
 });
 test('BOX script = the picked sub-lane script on the same seed (pick = seed % 5 over GRAPH, BATCH, ERROR, NEST, WIE), lane name BOX; the pick draws nothing from the stream', () => {
     const b = BOX();

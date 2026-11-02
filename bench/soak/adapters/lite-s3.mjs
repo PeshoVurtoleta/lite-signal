@@ -17,6 +17,11 @@
  * linkPoolCapacity when maxLinks was sent) and throws on a mismatch: a world the model does not describe never runs.
  * The policy is not visible in stats(); capacity() echoes the one sent.
  *
+ * open({ ..., from }) (R8 B1 snapshot restore): the shim also has restoreRegistry(cfg, from), which merges the same
+ * capacity over cfg and restores through lite.mjs restoreOf(kernel, merged, from); the capacity echo check above runs
+ * on the restored registry too. liteS3AdapterFor(kernel, opts) forwards opts (lite.mjs liteAdapterFor: undefined or
+ * { broken: 'snapshot-refire' | 'snapshot-stale' }) to the inner world.
+ *
  * close(): the decorator's OWN lists first -- hook offs newest-first, then its own handles newest-first -- each
  * emptied, then the inner close() (whose residue is the world's).
  *
@@ -26,7 +31,7 @@
  */
 
 import { K } from '../kernel.mjs';
-import { openWorld, liteAdapterFor } from './lite.mjs';
+import { openWorld, liteAdapterFor, restoreOf, snapshotBrokenOf } from './lite.mjs';
 
 const CAPACITY_KEYS = Object.freeze(['maxNodes', 'maxLinks', 'onCapacityExceeded']);
 const EFFECT_KEYS = Object.freeze(['scheduler']);
@@ -61,12 +66,15 @@ function checkEffectOpts(e) {
 }
 
 /** One decorated world over `kernel`. */
-function openS3World(kernel, opts) {
+function openS3World(kernel, opts, broken) {
     const o = opts || {};
     const cap = capacityOf(o);
     let sent = null;
-    const shim = { createRegistry(cfg) { sent = Object.assign({}, cfg, cap); return kernel.createRegistry(sent); } };
-    const w = openWorld(shim, o);
+    const shim = {
+        createRegistry(cfg) { sent = Object.assign({}, cfg, cap); return kernel.createRegistry(sent); },
+        restoreRegistry(cfg, from) { sent = Object.assign({}, cfg, cap); return restoreOf(kernel, sent, from); },
+    };
+    const w = openWorld(shim, o, broken);
     const r = w.registry;
     const s = r.stats();
     if (s.nodePoolCapacity !== sent.maxNodes || (sent.maxLinks !== undefined && s.linkPoolCapacity !== sent.maxLinks)) {
@@ -105,17 +113,19 @@ function openS3World(kernel, opts) {
 
 /**
  * The decorator over `kernel`. Throws TypeError (before building anything, via liteAdapterFor) when kernel exports
- * no createRegistry(). Frozen; name 'lite'; version / files / knownAs / caps shared with liteAdapterFor(kernel).
+ * no createRegistry() or opts is bad. Frozen; name 'lite'; version / files / knownAs / caps shared with
+ * liteAdapterFor(kernel, opts).
  */
-export function liteS3AdapterFor(kernel) {
-    const base = liteAdapterFor(kernel);
+export function liteS3AdapterFor(kernel, opts) {
+    const base = liteAdapterFor(kernel, opts);
+    const broken = snapshotBrokenOf(opts);
     return Object.freeze({
         name: base.name,
         version: base.version,
         files: base.files,
         knownAs: base.knownAs,
         caps: base.caps,
-        open(opts) { return openS3World(kernel, opts); },
+        open(o) { return openS3World(kernel, o, broken); },
     });
 }
 

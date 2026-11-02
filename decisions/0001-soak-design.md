@@ -37,8 +37,8 @@ config.mjs:21, :35). Smoke = 3 x 20000 and can only be SMOKE, never PASS.
 ### 2. Cold-path policy
 
 Every bench/soak module is COLD (each header says so): none is imported by Signal.js, none sits on a hot body. The
-harness may allocate freely. Two rules keep it honest anyway: run totals live in a Float64Array (gates.mjs:74 Totals,
-exact to 2^53; the startup self-check `totals` feeds 3 x 2^30 and demands 3221225472, gates.mjs:307) and SOAK_OPS is
+harness may allocate freely. Two rules keep it honest anyway: run totals live in a Float64Array (gates.mjs `Totals`,
+exact to 2^53; the startup self-check `totals` feeds 3 x 2^30 and demands 3221225472, gates.mjs `totalsRule`) and SOAK_OPS is
 capped at 0x3FFFFFFF (config.mjs:39) so a per-lane counter stays a Smi on pointer-compressed V8 (the F20 class).
 Per-op 0 B/op stays owned by test/32-perf-gate and test/torture.mjs, not by the soak (GC_MAJOR_POLICY, config.mjs).
 
@@ -57,22 +57,22 @@ evidence (section 9).
 
 ### 4. Verdicts and the INCONCLUSIVE evidence gates
 
-Gates are data: `GATES = [{id, kind, check, pass, mustFail[], teeth}]` (gates.mjs:340); GATE_NAMES derives from it, so a
+Gates are data: `GATES = [{id, kind, check, pass, mustFail[], teeth}]` (gates.mjs `GATES`); GATE_NAMES derives from it, so a
 gate and its must-fail control land in one edit. Kinds: fail (oracle, heap, rss, retention), evidence (coverage,
-check-floor, taint-skip), startup (totals), wrap (the S2 wrap job's gate, WRAP_GATE from wraprules.mjs, judged by wrap.mjs). Verdict ladder (gates.mjs:660-687, first match wins): config/expose-gc/
+check-floor, taint-skip), startup (totals), wrap (the S2 wrap job's gate, WRAP_GATE from wraprules.mjs, judged by wrap.mjs). Verdict ladder (gates.mjs `verdict`, first match wins): config/expose-gc/
 provenance error -> 2; any FAIL gate, BREACH or fatal -> FAIL 1 (a crash is never PASS or INCONCLUSIVE); any
 INCONCLUSIVE cause -> 3; smoke -> SMOKE 0; a skip on a non-lite-family engine -> PARTIAL 0 (never the string PASS); else
 PASS 0. The lite family (lite and lite-box) must SKIP nothing (a roster bug exits 2, CONFIG, never PARTIAL).
 
 Evidence gates exist so thin evidence cannot pass (the S1b review reported a NEST cov-off run skipping 53% of its effect checks
 while green; not reproduced, section 8). They turn a run INCONCLUSIVE, never PASS and never FAIL:
-- check-floor (gates.mjs:264): every applicable per-op hard oracle PERFORMED >= CHECK_FLOOR checks; taint skips never count.
+- check-floor (gates.mjs `checkFloorRule`): every applicable per-op hard oracle PERFORMED >= CHECK_FLOOR checks; taint skips never count.
   CHECK_FLOOR is per-op for every per-op oracle; OT is per-world (performed.OT === worlds and worlds >= BOX_WORLD_FLOOR,
   smoke BOX_WORLD_FLOOR_SMOKE; section 19).
-- taint-skip (:284): per skipping oracle, skipped / (performed + skipped) <= TAINT_SKIP_MAX; 0/0 is NaN and fails closed.
-- coverage (:247): every required scenario >= SCEN_MIN hits (smoke: SCEN_MIN_SMOKE).
-Causes (gates.mjs:434): interrupted, no-lane, post-cycles, scenario, check-floor, taint-skip, lane-status. Retention
-FAILs on an UNMEASURED boundary at once (null is not zero); only a BAD warm-up boundary is ignored (gates.mjs:235).
+- taint-skip (`taintSkipRule`): per skipping oracle, skipped / (performed + skipped) <= TAINT_SKIP_MAX; 0/0 is NaN and fails closed.
+- coverage (`coverageRule`): every required scenario >= SCEN_MIN hits (smoke: SCEN_MIN_SMOKE).
+Causes (gates.mjs `INCONCLUSIVE_CAUSES`): interrupted, no-lane, post-cycles, scenario, check-floor, taint-skip, lane-status. Retention
+FAILs on an UNMEASURED boundary at once (null is not zero); only a BAD warm-up boundary is ignored (gates.mjs `retentionRule` / `boundaryState`).
 
 ### 5. Divergence registry
 
@@ -203,7 +203,7 @@ taint rule (p8, model.mjs:24) is narrowed to V1:
   CHECK_FLOOR / CHECK_FLOOR_SMOKE / SCEN_MIN / SCEN_MIN_SMOKE / TAINT_SKIP_MAX are unchanged.
 
 Amendment 2026-10-20 (bursts 84-89; commits c11abf0, 3ef853a, 85d02e8, 4f5f200, 1dea069, 66b6a50; harness only):
-- Report-only lanes (REPORT_ONLY_GATES, gates.mjs:427; neither gates): latency (3ef853a: one DDSketch alpha 0.01 per world
+- Report-only lanes (gates.mjs `REPORT_ONLY_GATES`; neither gates): latency (3ef853a: one DDSketch alpha 0.01 per world
   method, worlds w%16=8; devDependency lite-sketch 1.2.0) and anatomy (85d02e8: the resolved kernel instrumented into a
   temp copy, shape worlds re-run on it; cycle key `anatomy` or null).
 - T-mark (4f5f200): markDedupe >= MARK_DEDUPE_NOTE (0.99, config.mjs:54, in the header gates block), a NOTE spec kind.
@@ -637,7 +637,7 @@ maintainer's (D-b143-1, "Split"). Where this text and the code differ, the code 
 Harness only; Signal.js (ea0b64d1) unchanged. Commits 919015e (A1), d04c743 (A2 + A3), 527cd72 (B1 + B2), 65d5c95 (C).
 Rulings are maintainer's (D-b144-1..8, D-b149-1, D-b149-2, D-b150-1). The roster is now 13 lanes in ROSTER order: GRAPH,
 BATCH, ERROR, NEST, WIE, HOOK, LIFECYCLE, OWNER, RECYCLE, SCHEDULER, REGISTRY, CAPACITY, BOX (BOX: `LANE_INDEX` 9,
-ROSTER[12], laneSpan 13). Where this text and the code differ, the code is the record.
+ROSTER[12], laneSpan 13; SNAPSHOT joined last in R8, 14 lanes, section 20). Where this text and the code differ, the code is the record.
 
 - Why a twin lane. The box handles (`signalBox` / `computedBox`) are a second calling convention over the same graph.
   The model oracles O1-O9 cannot see a handle that is not tracked (a cross-kind read that fails to subscribe still
@@ -671,6 +671,36 @@ ROSTER[12], laneSpan 13). Where this text and the code differ, the code is the r
 - Tests and gates: `test/96-soak-box` (31 rows), `test/97-soak-twin` (63), `test/98-soak-box-roster` (14), fixture
   `test/fixtures/r7-b0-applicability.json`; the closing `npm test` 2940 tests / 2927 pass / 0 fail / 12 skip / 1 todo,
   torture 0 B/op (Node v26.8.2). Detail: CHANGELOG [Unreleased] and SPEC-B Addendum 17.
+
+### 20. Amendment 2026-11-02 (b154-b157): SNAPSHOT lane (R8)
+
+Harness only; Signal.js is untouched. The roster is now 14 lanes in ROSTER order: GRAPH, BATCH, ERROR, NEST, WIE, HOOK,
+LIFECYCLE, OWNER, RECYCLE, SCHEDULER, REGISTRY, CAPACITY, BOX, SNAPSHOT (SNAPSHOT: `LANE_INDEX` 13, ROSTER[13], laneSpan
+14). SNAPSHOT exercises registry `snapshot()` / `restore()` time travel: a GRAPH world plus lane ops snap / rest over a
+2-slot ring; each restore EVENT swaps the world for one reopened `from` the snapshot, and oracle OS judges it.
+Where this text and the code differ, the code is the record.
+
+- Oracle OS (`oracles.mjs`): checkOsRoundtrip (snapshot taken before vs right after restore, by id, values `Object.is`),
+  checkOsModel (the snapshot against the model's `restoreCopy()` via idOf), checkOsRefire (no body runs during
+  restore), checkOsCleanBit (clean 0, never-evaluated >= 1, dirty skipped). OS is its own FAMILY.
+- Why OS is per-EVENT. One restore event yields one OS check, so neither `CHECK_FLOOR` (per op) nor the per-world floor
+  fits: `gates.mjs` `PER_EVENT {OS}` passes iff OS === restore events and events >= `SNAP_FLOOR` 18500 (smoke
+  `SNAP_FLOOR_SMOKE` 1000). A missing events total is not a count (fail closed).
+- Retention. `main.mjs` `opensOf` adds the lane's own `snap-restore` count: a restore opens one world, so the
+  tracked / witnessed boundary target is 1 + restores; before this, every SNAPSHOT main run read UNMEASURED. A restore
+  on a twin lane is unmodelled (NaN, fails closed). If a restore's `open()` throws, OS is counted without
+  `snap-restore` (OS = events + 1) and the world fails anyway.
+- Teeth. P-SNAP-TREE (pass control) and the SHORT-battery kernel mutants T-SNAP-roundtrip / T-SNAP-refire /
+  T-SNAP-clean (oracle OS, known=none); the teeth universe is 80 ids (was 75); the must-fail runner kills a hung main
+  child with SIGKILL.
+- Burn-in budget (D-b156-3). `soak-nightly.yml` burn-in `timeout-minutes` 150 -> 180: the timed SNAPSHOT share 1.6151
+  (1 run under the quiet lock, QUIET: load1 1.97 vs baseline 2.21, Node v26.8.2, 2026-11-02 21:06)
+  gives worst13 90.30 x (1 + 1.6151/13) x 1.2 = 121.82 min > 120, so the budget rises (the
+  D-b149-2 paragraph above stays as history). parity 60 files (+ `lanes/snapshot.mjs`); golden scripts-1000 gains the
+  SNAPSHOT digest, the 13 old digests are identical.
+- Tests: `test/99-soak-snapshot-roster` (16 rows), `test/100-soak-os` (61), `test/101-soak-snapshot-adapter` (22),
+  `test/102-soak-snapshot-lane` (13), `test/43-soak-model` +14 (restoreCopy); SCENARIOS 79 -> 86. Detail: CHANGELOG
+  [Unreleased] and SPEC-B Addendum 18.
 
 ## Consequences
 

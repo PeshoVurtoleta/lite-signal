@@ -12,6 +12,27 @@
  * shadow under a name outside that family (or with its own identity) would predict differently and diverge from
  * the oracle world. openWorld(kernel, opts) is the one world factory both use (liteAdapter = liteAdapterFor(K)).
  *
+ * SNAPSHOT (R8 B1, PLAN-R8-snapshot.md CURRENT R8-13 / R8-15):
+ *   world.snapshot() -> registry.snapshot()     world.nodeId(h) -> registry.nodeId(h)
+ *   open({ ..., from })   from = a plain object with exactly the own keys registry, snap, fnsById, handles (else
+ *                         TypeError, before any registry is built). The world's registry is then
+ *                         restoreOf(kernel, cfg, from) instead of kernel.createRegistry(cfg): kernel.restoreRegistry(cfg,
+ *                         from) when the kernel has one (the lite-s3 / lite-box shims), else from.registry.restore(snap,
+ *                         { fnsById, handles, config: cfg }) -- the SAME cfg a fresh open sends (G10 maxNodes 4096 + grow,
+ *                         maxFlushPasses). Every restored handle (from.handles[id], filled by restore) is pushed into the
+ *                         world's handle list in ascending id order, so close() disposes it like a created one.
+ *   caps.snapshot         per kernel: one throwaway registry is probed at the kernel's first liteAdapterFor() (snapshot()
+ *                         and restore() both functions); true -> CAPS_LITE, false -> CAPS_LITE_NO_SNAPSHOT. A probe that
+ *                         throws reads as false (the cap is unverified: the lane SKIPs, which is CONFIG for lite). The
+ *                         result is cached per kernel object, and a wrapper kernel registered with snapshotProbeAs(shim,
+ *                         kernel) (lite-box's facade shim) reads its base kernel's probe: ONE extra createRegistry() per
+ *                         base kernel per process (test/46 armAt2 counts createRegistry calls).
+ *   liteAdapterFor(kernel, opts)   opts undefined, or exactly { broken: 'snapshot-refire' | 'snapshot-stale' } (else
+ *                         TypeError): must-fail shapes for test/101 / test/102 rows only (R8-5: the _mustfail teeth are
+ *                         kernel patches). 'snapshot-refire' calls each restored effect body (fnsById[id]) once, in id
+ *                         order, before open() returns; 'snapshot-stale' makes world.snapshot() return a snapshot whose
+ *                         first clean computed / computedBox record has markEpoch decremented.
+ *
  * COLD module: never on a measured path (zero-box law: the adapter is not a hot body).
  */
 
@@ -19,13 +40,125 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { K, KERNEL_FILES, KERNEL_DIR, KERNEL_KNOWN_AS, CONTROLS_ERROR } from '../kernel.mjs';
 import { normalizeEscape } from '../kinds.mjs';
+import { nearest } from '../config.mjs';
 
 export const CAPS_LITE = Object.freeze({
     effects: 'sync', batch: 'native', untrack: true, disposeSignal: true, disposeComputed: true, stopEffect: true,
     childEffects: 'parent-run', effectErrors: 'aggregate', equality: 'is', links: 'stats', lifecycle: 'register',
     hook: true, scheduler: true, owner: true, destroy: true, recycle: true, counters32: true, capacity: true,
-    box: false, snapshot: false,
+    box: false, snapshot: true,
 });
+
+/** The caps of a lite kernel whose registry has no snapshot() / restore() (a pre-1.6.0 control). */
+export const CAPS_LITE_NO_SNAPSHOT = Object.freeze({ ...CAPS_LITE, snapshot: false });
+
+const FROM_KEYS = Object.freeze(['registry', 'snap', 'fnsById', 'handles']);
+const OPT_KEYS = Object.freeze(['broken']);
+const BROKEN = Object.freeze(['snapshot-refire', 'snapshot-stale']);
+
+/** A plain object: not null, not an array, prototype Object.prototype or null. */
+function isPlain(v) {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
+    const p = Object.getPrototypeOf(v);
+    return p === Object.prototype || p === null;
+}
+
+function hintOf(k, list) {
+    const h = typeof k === 'string' ? nearest(k, list) : null;
+    return h === null ? '' : ' (did you mean ' + h + '?)';
+}
+
+/**
+ * liteAdapterFor opts -> the broken mode (null = clean). TypeError on anything but undefined |
+ * { broken: 'snapshot-refire' | 'snapshot-stale' }. Exported for adapters/lite-s3.mjs (it forwards opts).
+ */
+export function snapshotBrokenOf(opts) {
+    if (opts === undefined) return null;
+    if (!isPlain(opts)) throw new TypeError('lite adapter: opts must be undefined or a plain object { broken }');
+    for (const k of Reflect.ownKeys(opts)) {
+        if (OPT_KEYS.indexOf(k) === -1) throw new TypeError('lite adapter: opts key ' + String(k) + ' is not one of ' + OPT_KEYS.join(', ') + hintOf(k, OPT_KEYS));
+    }
+    if (!Object.hasOwn(opts, 'broken')) throw new TypeError('lite adapter: opts must be { broken }; use undefined for a clean adapter');
+    if (BROKEN.indexOf(opts.broken) === -1) {
+        throw new TypeError('lite adapter: opts.broken ' + JSON.stringify(String(opts.broken)) + ' is not one of ' + BROKEN.join(', '));
+    }
+    return opts.broken;
+}
+
+/** open({ from }) -> from, or TypeError: a plain object with exactly FROM_KEYS, from.registry a registry. */
+function checkFrom(from) {
+    if (!isPlain(from)) throw new TypeError('lite adapter: open({ from }) must be a plain object { ' + FROM_KEYS.join(', ') + ' }');
+    for (const k of Reflect.ownKeys(from)) {
+        if (FROM_KEYS.indexOf(k) === -1) throw new TypeError('lite adapter: open({ from }) key ' + String(k) + ' is not one of ' + FROM_KEYS.join(', ') + hintOf(k, FROM_KEYS));
+    }
+    for (const k of FROM_KEYS) if (!Object.hasOwn(from, k)) throw new TypeError('lite adapter: open({ from }) is missing ' + k);
+    const reg = from.registry;
+    if (reg === null || typeof reg !== 'object' || typeof reg.snapshot !== 'function' || typeof reg.restore !== 'function') {
+        throw new TypeError('lite adapter: open({ from }) from.registry is not a registry with snapshot() / restore()');
+    }
+    if (from.fnsById === null || typeof from.fnsById !== 'object') throw new TypeError('lite adapter: open({ from }) from.fnsById must be an object');
+    if (from.handles === null || typeof from.handles !== 'object') throw new TypeError('lite adapter: open({ from }) from.handles must be an object');
+    return from;
+}
+
+/**
+ * The registry restored from `from` over the cfg chain: kernel.restoreRegistry(cfg, from) when the kernel (a shim)
+ * has one, else from.registry.restore(snap, { fnsById, handles, config: cfg }).
+ */
+export function restoreOf(kernel, cfg, from) {
+    if (typeof kernel.restoreRegistry === 'function') return kernel.restoreRegistry(cfg, from);
+    return from.registry.restore(from.snap, { fnsById: from.fnsById, handles: from.handles, config: cfg });
+}
+
+/** The snapshot's node ids, ascending (restore validated them: unique int32 ids). */
+function idsOf(snap) {
+    const nodes = snap.nodes;
+    const ids = new Array(nodes.length);
+    for (let i = 0; i < nodes.length; i++) ids[i] = nodes[i].id;
+    return ids.sort((a, b) => a - b);
+}
+
+/** 'snapshot-stale': the first clean computed / computedBox record gets markEpoch - 1 (int32). */
+function staleOf(snap) {
+    const nodes = snap.nodes;
+    for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        if (n.clean === true && (n.kind === 'computed' || n.kind === 'computedBox')) { n.markEpoch = (n.markEpoch - 1) | 0; break; }
+    }
+    return snap;
+}
+
+/** kernel -> its cached caps.snapshot probe result; wrapper kernel -> the base kernel whose probe it reads. */
+const SNAPSHOT_CAP = new WeakMap();
+const PROBE_AS = new WeakMap();
+
+/**
+ * Register `shim` (a wrapper kernel whose registries forward snapshot / restore to `kernel`'s) to read `kernel`'s
+ * caps.snapshot probe instead of probing a registry of its own. COLD; TypeError on a non-object argument.
+ */
+export function snapshotProbeAs(shim, kernel) {
+    if (shim === null || typeof shim !== 'object' || kernel === null || (typeof kernel !== 'object' && typeof kernel !== 'function')) {
+        throw new TypeError('lite adapter: snapshotProbeAs(shim, kernel) needs two kernel objects');
+    }
+    PROBE_AS.set(shim, kernel);
+}
+
+/** caps.snapshot probe: one throwaway registry exposes snapshot() and restore(). A throw reads as false. Cached. */
+function snapshotCap(kernel) {
+    const base = PROBE_AS.get(kernel);
+    if (base !== undefined) return snapshotCap(base);
+    const hit = SNAPSHOT_CAP.get(kernel);
+    if (hit !== undefined) return hit;
+    let ok;
+    try {
+        const r = kernel.createRegistry();
+        ok = r !== null && typeof r === 'object' && typeof r.snapshot === 'function' && typeof r.restore === 'function';
+    } catch {
+        ok = false;
+    }
+    SNAPSHOT_CAP.set(kernel, ok);
+    return ok;
+}
 
 function kernelVersion() {
     for (const p of [join(KERNEL_DIR, 'package.json')]) {
@@ -51,14 +184,35 @@ function knownAs() {
     return KERNEL_KNOWN_AS;
 }
 
-/** One world over `kernel` (a module namespace exporting createRegistry). The former liteAdapter.open() body. */
-export function openWorld(kernel, opts) {
+/**
+ * One world over `kernel` (a module namespace exporting createRegistry). The former liteAdapter.open() body.
+ * broken: null / undefined (clean) or a snapshotBrokenOf() mode.
+ */
+export function openWorld(kernel, opts, broken) {
         const o = opts || {};
+        const from = o.from === undefined ? null : checkFrom(o.from);
         const cfg = { maxNodes: 4096, onCapacityExceeded: 'grow' };
         if (o.maxFlushPasses !== undefined && o.maxFlushPasses !== null) cfg.maxFlushPasses = o.maxFlushPasses;
-        const r = kernel.createRegistry(cfg);
+        const r = from === null ? kernel.createRegistry(cfg) : restoreOf(kernel, cfg, from);
         const handles = [];
         const offs = [];
+        if (from !== null) {
+            const ids = idsOf(from.snap);
+            for (let i = 0; i < ids.length; i++) {
+                const h = from.handles[ids[i]];
+                if (h === undefined) throw new Error('lite adapter: restore left no handle for node id ' + ids[i]);
+                handles.push(h);
+            }
+            if (broken === 'snapshot-refire') {
+                const nodes = from.snap.nodes;
+                for (let i = 0; i < ids.length; i++) {
+                    for (let j = 0; j < nodes.length; j++) {
+                        if (nodes[j].id === ids[i] && nodes[j].kind === 'effect') { const fn = from.fnsById[ids[i]]; fn(); break; }
+                    }
+                }
+            }
+        }
+        const stale = broken === 'snapshot-stale';
         return {
             registry: r,
             signal(v, sopts) { const h = sopts === undefined ? r.signal(v) : r.signal(v, sopts); handles.push(h); return h; },
@@ -74,6 +228,8 @@ export function openWorld(kernel, opts) {
             stats() { return r.stats(); },
             links() { return r.stats().activeLinks; },
             lifecycle(h, cbs) { const off = r.observeObservers(h, cbs); offs.push(off); return off; },
+            snapshot() { return stale ? staleOf(r.snapshot()) : r.snapshot(); },
+            nodeId(h) { return r.nodeId(h); },
             normalizeEscape,
             close() {
                 for (let i = 0; i < offs.length; i++) offs[i]();
@@ -86,19 +242,22 @@ export function openWorld(kernel, opts) {
 
 /**
  * The lite adapter over `kernel`. Throws TypeError (before building anything) when kernel exports no
- * createRegistry(). Frozen; name 'lite'; version / files / knownAs / caps are liteAdapter's own.
+ * createRegistry() or opts is not undefined | { broken: 'snapshot-refire' | 'snapshot-stale' }. Frozen; name 'lite';
+ * version / files / knownAs are liteAdapter's own; caps CAPS_LITE, or CAPS_LITE_NO_SNAPSHOT when the kernel's
+ * registry has no snapshot() / restore().
  */
-export function liteAdapterFor(kernel) {
+export function liteAdapterFor(kernel, opts) {
     if (kernel === null || (typeof kernel !== 'object' && typeof kernel !== 'function') || typeof kernel.createRegistry !== 'function') {
         throw new TypeError('lite adapter: liteAdapterFor(kernel) needs a kernel module exporting createRegistry()');
     }
+    const broken = snapshotBrokenOf(opts);
     return Object.freeze({
         name: 'lite',
         version: kernelVersion,
         files,
         knownAs,
-        caps: CAPS_LITE,
-        open(opts) { return openWorld(kernel, opts); },
+        caps: snapshotCap(kernel) ? CAPS_LITE : CAPS_LITE_NO_SNAPSHOT,
+        open(o) { return openWorld(kernel, o, broken); },
     });
 }
 

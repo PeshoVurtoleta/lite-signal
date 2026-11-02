@@ -437,6 +437,59 @@ export class Model {
         return null;
     }
 
+    /**
+     * SNAPSHOT (R8, D-N): the model of the world registry.restore(snapshot()) rebuilds, taken at rest. Returns a
+     * FRESH Model that keeps exactly what the engine's restore() keeps; this model is left untouched. A pure state
+     * copy: it evaluates no node, keeps no computed value of its own and numbers nothing (the naivety pin).
+     *   instance fields, copied as-is:
+     *     childOwned  the adapter's childEffects cap (engine semantics, not registry config; restore() does not
+     *                 carry the source config).
+     *     fired       cleanups already due stay due (the engine sentinel signal is restored with the value they wrote).
+     *     sentinel    a signal index; the restored signal keeps its value.
+     *   n[]   same length, holes stay holes. Each entry is a FRESH object carrying every field of the source entry:
+     *         children / links fresh arrays (slice), seen a fresh array of fresh {r, v, u} entries (v by reference),
+     *         mode a fresh spread (null stays null); spec, v, out, threw by reference; i, t, live, dis, rank, role,
+     *         parent, runs, taint, dying as-is (dead nodes stay dead).
+     *         cl  -> 0: snapshot() captures no cleanup, so a restored owner has none registered.
+     *         sch -> 0: snapshot() captures no scheduler; a restored effect runs unscheduled.
+     *   regs  same length, holes stay holes; each a fresh {r, target, live: false}: registrations are not captured.
+     * Throws TypeError, before any copy, when a node has dying === true (a copy happens only at rest).
+     */
+    restoreCopy() {
+        const src = this.n;
+        for (let k = 0; k < src.length; k++) {
+            const nd = src[k];
+            if (nd !== undefined && nd.dying === true) throw new TypeError('Model.restoreCopy: node #' + k + ' is mid-dispose (a copy happens only at rest)');
+        }
+        const m = new Model({});
+        m.childOwned = this.childOwned;
+        m.fired = this.fired;
+        m.sentinel = this.sentinel;
+        m.n.length = src.length;
+        for (let k = 0; k < src.length; k++) {
+            const nd = src[k];
+            if (nd === undefined) continue;
+            let seen = null;
+            if (nd.seen !== null) {
+                seen = new Array(nd.seen.length);
+                for (let j = 0; j < seen.length; j++) seen[j] = { ...nd.seen[j] };
+            }
+            m.n[k] = {
+                ...nd,
+                mode: nd.mode === null ? null : { ...nd.mode },
+                children: nd.children === null ? null : nd.children.slice(),
+                links: nd.links === null ? null : nd.links.slice(),
+                seen,
+                cl: 0,
+                sch: 0,
+            };
+        }
+        const regs = this.regs;
+        m.regs.length = regs.length;
+        for (let r = 0; r < regs.length; r++) if (regs[r] !== undefined) m.regs[r] = { ...regs[r], live: false };
+        return m;
+    }
+
     /** Two read lists are the same observation: same refs in order, sameValue per entry. */
     static sameSeen(a, b) {
         if (a.length !== b.length) return false;

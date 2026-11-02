@@ -97,6 +97,41 @@ D-b143-2, 2026-10-30). `--self-test` grows from 31 to 43 checks and the `test/94
 mutants are still killed. A real run on an identical Signal.js (2221b93 vs e9f8e6a, node v26.8.2) gave VERDICT SAME
 on both tiers.
 
+### Tests / Docs -- soak: SNAPSHOT lane (OS oracle, restoreCopy, adapter restore, world swap; R8, b154-b157)
+
+Dev-only (`bench/soak/` and `test/`, not in `files[]`, not shipped). No engine change in this unit: Signal.js is
+untouched, no version bump. The roster is now 14 lanes, SNAPSHOT last (`LANE_INDEX.SNAPSHOT` 13, ROSTER[13], laneSpan
+14). SNAPSHOT exercises registry `snapshot()` / `restore()` time travel: a GRAPH world plus snap / rest ops over a
+2-slot ring; each restore event swaps the world for one reopened from the snapshot.
+- Oracle OS (`oracles.mjs`, pure): `checkOsRoundtrip` (exact-key shape check, `malformed a|b` never throws; by id, values
+  `Object.is`, deps / subPos elementwise, no mask), `checkOsModel` (snapshot vs the model copy via idOf), `checkOsRefire`
+  (no body runs during restore), `osCleanClass` / `checkOsCleanBit` (runs = own body runs from restore() through the end
+  of the first top-level untracked read; clean 0, never-evaluated >= 1, dirty skipped). Tests: `test/100-soak-os` (61 rows).
+- Model: `Model#restoreCopy()` (fresh entries, cl 0, sch 0, regs off, dead stay dead, TypeError when a node is
+  mid-dispose); `test/43` +14 rows (a 50-cycle lite-leak retention check on 1000 nodes; 7 aliasing rows, each with a
+  must-fail copy).
+- Adapters: `world.snapshot()`, `world.nodeId(h)`, `open({from: {registry, snap, fnsById, handles}})` through the same
+  cfg chain (lite-s3 capacity merge + echo; the lite-box facade); a malformed `from` is a TypeError; `caps.snapshot`
+  comes from a cached per-kernel probe; test-only opts `{broken: 'snapshot-refire' | 'snapshot-stale'}`. `config.mjs`
+  `LATENCY_UNTIMED` += snapshot, nodeId. Tests: `test/101-soak-snapshot-adapter` (22 rows).
+- Lane (`lanes/snapshot.mjs`): `exec.mjs` `checks.OS` (0 on every other lane), the `sn` hook and `swapWorld` (the old world
+  is closed and gets its own O5); SCENARIOS 79 -> 86. Tests: `test/102-soak-snapshot-lane` (13 rows).
+- Gates: OS is counted once per restore EVENT, a new per-event floor (`gates.mjs` `PER_EVENT {OS}`): OS === restore
+  events and events >= `SNAP_FLOOR` 18500 (smoke `SNAP_FLOOR_SMOKE` 1000). If a restore's `open()` throws, OS is counted
+  without `snap-restore` (OS = events + 1) and the world fails anyway. SNAPSHOT is rostered at index 13 (kernel map:
+  tree only). `main.mjs` counts restored worlds in the retention boundary (a restore opens one world, `opensOf`; before,
+  every SNAPSHOT main run read UNMEASURED).
+- Teeth: P-SNAP-TREE (pass control) and the SHORT-battery kernel mutants T-SNAP-roundtrip / T-SNAP-refire /
+  T-SNAP-clean (oracle OS, known=none); the teeth universe grows 75 -> 80 ids; the must-fail runner kills a hung main
+  child with SIGKILL. Tests: `test/99-soak-snapshot-roster` (16 rows); the roster / SCENARIOS (86) literals are swept
+  across the soak tests.
+- Burn-in budget (D-b156-3). `soak-nightly.yml` burn-in `timeout-minutes` 150 -> 180: the timed SNAPSHOT share 1.6151
+  (one 14-lane release-volume run under the quiet lock, QUIET: load1 1.97 vs baseline 2.21, Node v26.8.2,
+  2026-11-02) puts the rule worst13 90.30 x (1 + 1.6151/13) x 1.2
+  at 121.82 min, over 120. `test/47` BUDGET and its sha256 pin follow, with a 181 must-fail row and an exactly-180
+  accept row. parity.mjs pins `lanes/snapshot.mjs` (60 files); golden scripts-1000 gains the SNAPSHOT digest, the 13
+  old digests are identical.
+
 ### Tests / Docs -- soak: BOX lane (lite-box facade + trace twin, R7, b144-b152)
 
 Dev-only (`bench/soak/`, not shipped). No engine change in this unit: Signal.js (sha256/8 ea0b64d1) is untouched, no
@@ -142,6 +177,9 @@ facade `lite-box`, and the two call traces must be identical.
   (the OT check-floor unit; settled by D-b150-1, the per-world floor), r2 APPROVED; C2a r1 REJECTED (a stale comment),
   literal r2 APPROVED; C2b + H r1 REJECTED, fix round r2 APPROVED; C3 r1 REJECTED test-only (OT === worlds unchecked in
   the test/41 evidence check), literal r2 APPROVED; the test/47 budget re-pin APPROVED.
+- Fix (acb9c5b, F144). Every `SOAK_ENGINE=lite-box` main run died before its first verdict ("latency: unclassified world
+  method boxCounts"): `config.mjs` `LATENCY_UNTIMED` did not list the untimed `world.boxCounts()` accessor. Now listed;
+  `test/97` section 7b classifies every function key of real lite-box worlds. No CI job ran main on lite-box.
 
 ### Tests / Docs -- soak: shrink --emit-test standalone repro (R6, b143)
 

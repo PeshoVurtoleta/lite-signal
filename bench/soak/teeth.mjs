@@ -124,6 +124,10 @@ export const CHECKS = deepFreeze({
     // `oracle=OT lane=BOX sig=trace-diff known=none` (.handoff/r7-evidence/C2a/probe-box-untracked.txt); P-BOX-TREE is its
     // pass control / revert.
     'lane:BOX': ['T-BOX-untracked'],
+    // R8 C2a (PLAN-R8 GROUP C task 4, R8-5 / R8-16): the three T-SNAP-* tree kernel mutants (the A0 M-OS-* kernels,
+    // SNAP_ENV --smoke) each head `oracle=OS lane=SNAPSHOT sig=<s> known=none` (.handoff/r8-evidence/C2a/c2a.out);
+    // P-SNAP-TREE is their pass control / revert.
+    'lane:SNAPSHOT': ['T-SNAP-roundtrip', 'T-SNAP-refire', 'T-SNAP-clean'],
     'gate:oracle': ['L-REV-152'],
     // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
     // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
@@ -166,6 +170,7 @@ export const CHECKS = deepFreeze({
     // b137 B4 (D-b136-1): updgen (a stale signal handle's update calls fn) breaches the EXISTING stale-write
     'oracle:O9': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen', 'T-RC-updgen', 'T-SC-thunkgen', 'T-SC-syncrun'],
     'oracle:OT': ['T-BOX-untracked'],
+    'oracle:OS': ['T-SNAP-roundtrip', 'T-SNAP-refire', 'T-SNAP-clean'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
     'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
@@ -190,6 +195,11 @@ export const CHECKS = deepFreeze({
     'sig:O9:stale-dispose': ['T-RC-dispgen'],
     'sig:O9:stale-thunk': ['T-SC-thunkgen', 'T-SC-syncrun'],
     'sig:OT:trace-diff': ['T-BOX-untracked'],
+    // R8 C2a: T-SNAP-clean also prints roundtrip and T-SNAP-refire also prints clean-bit (measured); each sig maps to the
+    // one control whose patch targets it (R8-21: T-SNAP-clean reaches lanes/snapshot.mjs checkOsCleanBit -> x.failF)
+    'sig:OS:roundtrip': ['T-SNAP-roundtrip'],
+    'sig:OS:refire': ['T-SNAP-refire'],
+    'sig:OS:clean-bit': ['T-SNAP-clean'],
     'cause:interrupted': ['L-I1', 'L-I2'],
     // b119 B5 (orphan rule): P-HOOK-TREE-COVOFF (b93) prints `INCONCLUSIVE -- scenario lane=HOOK missing=hook-non-lifo-off`,
     // P-NEST-TRIGGERLESS's shape, and was mapped nowhere
@@ -322,6 +332,8 @@ export const NOT_TEETH = deepFreeze({
     'P-CAP-TREE': 'the CAPACITY pass control on the tree, the revert of every T-cap-* row (' + MF + ' P-CAP-TREE comment)',
     // b151 C2a (PLAN-R7 group C task 5, C-40): the BOX pass control, explained by DIV-F22 only
     'P-BOX-TREE': 'the BOX pass control on the tree, explained by DIV-F22 only, the revert of T-BOX-untracked (' + MF + ' P-BOX-TREE comment)',
+    // R8 C2a (PLAN-R8 GROUP C task 4): the SNAPSHOT pass control
+    'P-SNAP-TREE': 'the SNAPSHOT pass control on the tree, the revert of every T-SNAP-* row (' + MF + ' P-SNAP-TREE comment)',
 });
 
 /** Does control `name` (or prefix pattern `X-*`) name something in `controls`? Returns the matches. */

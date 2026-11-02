@@ -20,6 +20,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
+import v8 from 'node:v8';
+import { createLeakTracker } from '@zakkster/lite-leak';
 import { Model } from '../bench/soak/model.mjs';
 import * as O from '../bench/soak/oracles.mjs';
 import { SoakThrow, normalizeEscape } from '../bench/soak/kinds.mjs';
@@ -241,7 +244,7 @@ test('model: owner rule kills children recursively; a disposed handle reads unde
 /* -- 4. G0 determinism ---------------------------------------------------------------------------------- */
 
 test('G0: the script is a pure function of (lane, seed); distinct seeds differ', () => {
-    assert.deepEqual(ROSTER, ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY', 'BOX']);
+    assert.deepEqual(ROSTER, ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY', 'BOX', 'SNAPSHOT']);
     for (const d of LANES) {
         for (const seed of [1, 0x9e3779b9, 0xdeadbeef]) {
             const a = scriptJson(generateWorld(d, seed, { steps: 120 }));
@@ -367,7 +370,7 @@ const { createHash: qHash } = await import('node:crypto');
 const vm = await import('node:vm');
 const { MAX_DEPTH } = await import('../bench/soak/gen.mjs');
 const qScript = (ops, lane) => ({ genVersion: 1, lane: lane || 'GRAPH', seed: 1, large: false, covOff: null, flushPasses: null, ops });
-const ZERO_CHECKS = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0, OW: 0, O9: 0, OT: 0 };   // R7 C1: OT (per-world twin check) is a CHECK_NAMES member, 0 on a non-twin world
+const ZERO_CHECKS = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0, OW: 0, O9: 0, OT: 0, OS: 0 };   // R7 C1: OT (per-world twin check) is a CHECK_NAMES member, 0 on a non-twin world; R8 C1: OS (per-event snapshot check), 0 on a non-snapshot world
 const ZERO_SKIPS = { O1c: 0, O1e: 0, O2: 0, O4: 0 };
 
 // mutants (kinds.mjs normalizeEscape): `e.errors.length > 0` -> `> 1` (a one-leaf AggregateError stays
@@ -996,4 +999,258 @@ test('F5 closeMark resets between batches: an adapter that skips only its 2nd ba
         assert.equal(r.failure, null, 'after batch ' + k + ': ' + JSON.stringify(r.failure));
         assert.equal(r.checks.OB, want[k - 1], 'cumulative OB after batch ' + k);
     }
+});
+
+/* -- 8. R8 Model#restoreCopy (PLAN-R8 GROUP A task 6, ASSERTION 4) ------------------------------------------ */
+
+// A generic deep view: plain objects and arrays are cloned (holes stay holes), anything else (SoakThrow, a spec
+// value object shared by reference, ...) is kept by reference. Independent of restoreCopy's own copy rules.
+function rcView(x) {
+    if (Array.isArray(x)) {
+        const a = [];
+        a.length = x.length;
+        for (const k of Object.keys(x)) a[k] = rcView(x[k]);
+        return a;
+    }
+    if (x !== null && typeof x === 'object' && Object.getPrototypeOf(x) === Object.prototype) {
+        const o = {};
+        for (const k of Object.keys(x)) o[k] = rcView(x[k]);
+        return o;
+    }
+    return x;
+}
+const rcModelView = (m) => rcView({ childOwned: m.childOwned, fired: m.fired, sentinel: m.sentinel, n: m.n, regs: m.regs });
+
+const RC_OBJ = { big: 1 };            // a signal value held by reference
+const RC_OUT = { out: 2 };            // an effect's last body output, by reference
+const RC_THROW = new SoakThrow('rc', 7);
+
+// signals 0, 1, 2 (RC_OBJ), computed 3 (owner, mode.flip), effects 4 (child of 3, 2 cleanups) and 5 (child of 4,
+// scheduled), hole 6, dead signal 7, effect 8 (links + seen + out + threw, 1 cleanup), sentinel 9, killed owner 10
+// (its cleanup fired: fired 1); regs 0 -> 4, hole 1, 2 -> 8.
+function rcSource() {
+    const m = new Model(CAPS);
+    m.addSignal(0, 1, {});
+    m.addSignal(1, 2, { rank: 1, dis: true });
+    m.addSignal(2, RC_OBJ, {});
+    m.addComputed(3, { k: 'sum', d: [0, 1] });
+    m.n[3].v = 3; m.n[3].links = [0, 1]; m.n[3].seen = [{ r: 0, v: 1, u: false }, { r: 1, v: 2, u: false }]; m.n[3].runs = 1; m.n[3].taint = true;
+    m.setMode(3, 'flip', true);
+    m.addEffect(4, { k: 'sum', d: [3] }, 3);
+    m.addEffect(5, { k: 'sum', d: [2] }, 4, 1);
+    m.addSignal(7, 0, {});
+    m.kill(7);
+    m.addEffect(8, { k: 'sum', d: [0, 3], try: true }, -1);
+    m.n[8].links = [0, 3]; m.n[8].seen = [{ r: 0, v: 1, u: false }, { r: 3, v: RC_THROW, u: true }];
+    m.n[8].out = RC_OUT; m.n[8].threw = RC_THROW; m.n[8].runs = 2;
+    m.addSignal(9, 0, {});
+    m.setSentinel(9);
+    m.addEffect(10, { k: 'sum', d: [0] }, -1);
+    m.addCleanup(10);
+    m.kill(10);
+    m.addCleanup(4); m.addCleanup(4); m.addCleanup(8);
+    m.addReg(0, 4);
+    m.addReg(2, 8);
+    return m;
+}
+
+test('restoreCopy: the source fixture is the shape the rows need (cl, sch, regs live, holes, fired, sentinel)', () => {
+    const m = rcSource();
+    assert.deepEqual([m.n[4].cl, m.n[8].cl, m.n[5].sch, m.fired, m.sentinel, m.n[9].v], [2, 1, 1, 1, 9, 1]);
+    assert.deepEqual([6 in m.n, m.n[7].live, m.n[10].live, m.regs[0].live, 1 in m.regs, m.regs[2].live], [false, false, false, true, false, true]);
+    assert.deepEqual(m.n[3].children, [4]);
+    assert.deepEqual(m.n[4].children, [5]);
+});
+
+test('restoreCopy: fresh Model; cl 0, sch 0, regs off; dead stay dead; holes kept; by-reference values; every container fresh', () => {
+    const src = rcSource();
+    const c = src.restoreCopy();
+    assert.ok(c instanceof Model && c !== src);
+    assert.deepEqual([c.childOwned, c.fired, c.sentinel], [true, 1, 9]);
+    assert.ok(c.n !== src.n && c.regs !== src.regs);
+    assert.equal(c.n.length, src.n.length);
+    assert.equal(c.regs.length, src.regs.length);
+    assert.deepEqual(Object.keys(c.n), Object.keys(src.n));        // holes stay holes (6)
+    assert.deepEqual(Object.keys(c.regs), Object.keys(src.regs));  // hole 1
+    for (const k of Object.keys(src.n)) {
+        const a = src.n[k], b = c.n[k];
+        assert.ok(a !== b, 'entry #' + k + ' fresh');
+        assert.deepEqual(Object.keys(b).sort(), Object.keys(a).sort(), 'entry #' + k + ' keeps every field');
+        assert.equal(b.cl, 0, 'cl #' + k);
+        assert.equal(b.sch, 0, 'sch #' + k);
+        for (const f of ['i', 't', 'live', 'dis', 'rank', 'role', 'parent', 'runs', 'taint', 'dying', 'spec', 'v', 'out', 'threw']) {
+            assert.ok(Object.is(b[f], a[f]), 'entry #' + k + ' field ' + f + ' as-is / by reference');
+        }
+        for (const f of ['mode', 'children', 'links', 'seen']) {
+            if (a[f] === null) { assert.equal(b[f], null, 'entry #' + k + ' ' + f + ' null stays null'); continue; }
+            assert.ok(b[f] !== a[f], 'entry #' + k + ' ' + f + ' fresh');
+            assert.deepEqual(b[f], a[f], 'entry #' + k + ' ' + f + ' equal');
+        }
+        if (a.seen !== null) {
+            for (let j = 0; j < a.seen.length; j++) {
+                assert.ok(b.seen[j] !== a.seen[j], 'seen entry fresh');
+                assert.ok(Object.is(b.seen[j].v, a.seen[j].v), 'seen[' + j + '].v by reference');
+            }
+        }
+    }
+    assert.equal(c.n[2].v, RC_OBJ);
+    assert.equal(c.n[8].out, RC_OUT);
+    assert.equal(c.n[8].seen[1].v, RC_THROW);
+    assert.equal(c.n[7].live, false);    // dead stays dead
+    assert.equal(c.n[10].live, false);
+    for (const k of Object.keys(src.regs)) {
+        assert.ok(c.regs[k] !== src.regs[k], 'reg ' + k + ' fresh');
+        assert.deepEqual(c.regs[k], { r: src.regs[k].r, target: src.regs[k].target, live: false });
+    }
+    assert.equal(c.regMayFire(0), 'registration off');
+    assert.equal(src.regMayFire(0), null);   // the source's registration stays live
+});
+
+test('restoreCopy: copying changes nothing on the source; mutating the copy leaves the source unchanged', () => {
+    const src = rcSource();
+    const pre = rcModelView(src);
+    const c = src.restoreCopy();
+    assert.deepEqual(rcModelView(src), pre, 'restoreCopy() wrote nothing to the source');
+    c.setValue(0, 50); c.setMode(3, 'early', true); c.addCleanup(4); c.addEffect(12, { k: 'sum', d: [0] }, 3);
+    c.kill(3); c.addReg(1, 8); c.addSignal(6, 6, {});
+    assert.deepEqual(rcModelView(src), pre, 'copy mutations leaked into the source');
+});
+
+test('restoreCopy: dying === true on any node -> TypeError, the source untouched', () => {
+    for (const k of [0, 3, 7]) {
+        const src = rcSource();
+        src.n[k].dying = true;
+        const pre = rcModelView(src);
+        assert.throws(() => src.restoreCopy(), (e) => e instanceof TypeError && e.message.includes('#' + k), 'dying #' + k);
+        assert.deepEqual(rcModelView(src), pre);
+    }
+    const ok = rcSource();
+    ok.n[3].dying = false;
+    assert.doesNotThrow(() => ok.restoreCopy());
+});
+
+// Aliasing rows: a mutation of the SOURCE after the copy leaves the copy unchanged (generic deep view taken before).
+const RC_ALIAS_ROWS = [
+    ['setValue', (m) => { m.setValue(0, 99); m.setValue(2, { other: 1 }); }],
+    ['kill', (m) => { m.kill(3); }],                                // cascades 4 and 5, fires cleanups, taints 8
+    ['addSignal', (m) => { m.addSignal(6, 5, {}); m.addSignal(11, 6, {}); }],
+    ['setMode', (m) => { m.setMode(3, 'early', true); m.setMode(4, 'flip', true); }],
+    ['addCleanup', (m) => { m.addCleanup(8); m.addCleanup(3); }],
+    ['offReg', (m) => { m.offReg(0); m.addReg(1, 3); }],
+    ['adopt', (m) => { m.addEffect(12, { k: 'sum', d: [0] }, 3); m.addComputed(13, { k: 'sum', d: [1] }, 4); }],
+];
+
+function rcAliasHolds(mutate, copyOf) {
+    const src = rcSource();
+    const c = copyOf(src);
+    const pre = rcModelView(c);
+    mutate(src);
+    return isDeepStrictEqual(rcModelView(c), pre);
+}
+
+const rcReal = (src) => src.restoreCopy();
+
+for (const [name, mutate] of RC_ALIAS_ROWS) {
+    test('restoreCopy aliasing: ' + name + ' on the source after the copy leaves the copy unchanged', () => {
+        assert.equal(rcAliasHolds(mutate, rcReal), true);
+    });
+}
+
+// Must-fail controls: each mutant breaks one copy rule on top of the real copy (model.mjs untouched); the row it
+// targets must fail. children-not-sliced is the brief's control; the others give every named row its own tooth.
+const RC_MUTANTS = {
+    'children not sliced': (src) => { const c = src.restoreCopy(); for (const k of Object.keys(c.n)) c.n[k].children = src.n[k].children; return c; },
+    'entries shared': (src) => { const c = src.restoreCopy(); for (const k of Object.keys(c.n)) c.n[k] = src.n[k]; return c; },
+    'n shared': (src) => { const c = src.restoreCopy(); c.n = src.n; return c; },
+    'mode not spread': (src) => { const c = src.restoreCopy(); for (const k of Object.keys(c.n)) c.n[k].mode = src.n[k].mode; return c; },
+    'regs shared': (src) => { const c = src.restoreCopy(); c.regs = src.regs; return c; },
+};
+const RC_TEETH = [
+    ['adopt', 'children not sliced'],
+    ['setValue', 'entries shared'],
+    ['kill', 'entries shared'],
+    ['addCleanup', 'entries shared'],
+    ['addSignal', 'n shared'],
+    ['setMode', 'mode not spread'],
+    ['offReg', 'regs shared'],
+];
+
+test('restoreCopy aliasing MUST-FAIL: every row fails on its mutant copy (children not sliced fails adopt)', () => {
+    const rows = new Map(RC_ALIAS_ROWS);
+    const got = RC_TEETH.map(([row, mut]) => row + '/' + mut + '=' + rcAliasHolds(rows.get(row), RC_MUTANTS[mut]));
+    assert.deepEqual(got, RC_TEETH.map(([row, mut]) => row + '/' + mut + '=false'));
+    // the shallow (children-not-sliced) copy fails exactly the adopt row of the seven
+    const shallow = RC_ALIAS_ROWS.filter(([, mutate]) => !rcAliasHolds(mutate, RC_MUTANTS['children not sliced'])).map(([n]) => n);
+    assert.deepEqual(shallow, ['adopt']);
+});
+
+// 1000 nodes: signals 0..299, computeds 300..699 (each owned by the previous computed from 301 on), effects
+// 700..999 (owned by computed 300 + (k % 400), links / seen on two signals, one cleanup each); 40 regs.
+function rcBig() {
+    const m = new Model(CAPS);
+    for (let k = 0; k < 300; k++) m.addSignal(k, k, {});
+    for (let k = 300; k < 700; k++) {
+        m.addComputed(k, { k: 'sum', d: [k - 300, (k - 299) % 300] }, k === 300 ? -1 : k - 1);
+        m.n[k].v = k; m.n[k].links = [k - 300]; m.n[k].seen = [{ r: k - 300, v: k - 300, u: false }];
+    }
+    for (let k = 700; k < 1000; k++) {
+        m.addEffect(k, { k: 'sum', d: [k - 700, k - 699] }, 300 + (k % 400), k & 1);
+        m.n[k].links = [k - 700, k - 699]; m.n[k].seen = [{ r: k - 700, v: k - 700, u: false }, { r: k - 699, v: k - 699, u: false }];
+        m.n[k].runs = 1; m.n[k].out = { k };
+        m.addCleanup(k);
+    }
+    for (let r = 0; r < 40; r++) m.addReg(r, 700 + r);
+    return m;
+}
+
+function rcGc() {
+    if (typeof globalThis.gc === 'function') return globalThis.gc;
+    // node:test runs each test file in its own process, so the flag stays inside this file (as test/35 does)
+    v8.setFlagsFromString('--expose-gc');
+    return vm.runInNewContext('gc');
+}
+
+async function rcSettle(gc, tracker, until) {
+    for (let k = 0; k < 8 && !until(tracker.size()); k++) { gc(); await new Promise((res) => setTimeout(res, 0)); }
+}
+
+test('restoreCopy retention: 50 cycles on a 1000-node model (model := copy); lite-leak tracker.size() === 0 at every cycle close', async () => {
+    const gc = rcGc();
+    const tracker = createLeakTracker({ name: 't43-restoreCopy', onLeak() {}, onWarning() {} });
+    let cur = rcBig();
+    const want = cur.counts();
+    assert.deepEqual(want, { signals: 300, computeds: 400, effects: 300 });
+    for (let i = 0; i < 50; i++) {
+        const next = cur.restoreCopy();
+        // the swapped-out model and the containers a back-reference or a shared entry would pin
+        tracker.track(cur, null, i);
+        tracker.track(cur.n, null, i);
+        tracker.track(cur.n[500], null, i);
+        tracker.track(cur.n[500].children, null, i);
+        tracker.track(cur.n[850].seen, null, i);
+        tracker.track(cur.n[850].mode, null, i);
+        tracker.track(cur.regs[5], null, i);
+        cur = next;
+        await rcSettle(gc, tracker, (s) => s === 0);
+        assert.equal(tracker.size(), 0, 'cycle ' + i + ': tracker size after gc');
+        assert.equal(cur.n.length, 1000);
+        assert.deepEqual(cur.counts(), want);
+        assert.equal(cur.n[850].cl, 0);
+    }
+});
+
+test('restoreCopy retention MUST-FAIL: a copy that keeps the swapped-out model keeps tracker.size() > 0', async () => {
+    const gc = rcGc();
+    const tracker = createLeakTracker({ name: 't43-restoreCopy-ctl', onLeak() {}, onWarning() {} });
+    let cur = rcBig();
+    const next = cur.restoreCopy();
+    tracker.track(cur, null, 0);
+    tracker.track(cur.n[500], null, 0);
+    next.prev = cur;                         // the planted back-reference
+    cur = next;
+    await rcSettle(gc, tracker, (s) => s === 0);
+    assert.equal(tracker.size(), 2, 'the planted back-reference must keep both tracked targets alive');
+    cur.prev = null;
+    await rcSettle(gc, tracker, (s) => s === 0);
+    assert.equal(tracker.size(), 0, 'dropping the back-reference releases them');
 });

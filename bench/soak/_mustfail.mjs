@@ -13,7 +13,7 @@
  *
  * A gate that cannot fail is not a gate. Each control is a scratch kernel DIRECTORY (Signal.js + Watch.js; the
  * seam kernel.mjs requires the pair) copied from a pinned base and optionally mutated by exactly-once anchors,
- * driven through the REAL main.mjs via SOAK_KERNEL (spawnSync, --expose-gc, 30-minute timeout, piped stderr).
+ * driven through the REAL main.mjs via SOAK_KERNEL (spawnSync, --expose-gc, 30-minute timeout + SIGKILL, piped stderr).
  * Nothing here calls a gate module directly.
  *
  * soakPatch (b140 B2b, D-b140-1; optional, run 'main' only): [{file, find, replace}] edits of HARNESS files, each
@@ -115,7 +115,8 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * (b140 B2b: P-REGISTRY-TRIGGERLESS, L-REGISTRY-F10 -- red-explained on DIV-F10 --, T-REG-expectnone / T-REG-destroyall
  * via soakPatch; LANE_KERNELS.REGISTRY = tree) and the CAPACITY rows (b140 B2b: P-CAP-TREE, T-cov-CAPACITY and the four
  * T-cap-* mutants; LANE_KERNELS.CAPACITY = tree) and the BOX rows (b151 C2a: P-BOX-TREE -- red-explained on
- * DIV-F22 -- and T-BOX-untracked via SOAK_MUSTFAIL=box-untracked; LANE_KERNELS.BOX = tree); no other main-run control
+ * DIV-F22 -- and T-BOX-untracked via SOAK_MUSTFAIL=box-untracked; LANE_KERNELS.BOX = tree) and the SNAPSHOT rows (R8 C2a:
+ * P-SNAP-TREE and the three T-SNAP-* kernel mutants; LANE_KERNELS.SNAPSHOT = tree); no other main-run control
  * does until A1-A3 land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
  * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
@@ -294,7 +295,8 @@ const RSS_LEAK_BYTES = 1572864;   // 1.5 MB per registry past RSS_LEAK_AFTER (me
 /**
  * Scratch-kernel tail (test/46 armAt2): rebind the module's createRegistry (a function declaration, a live
  * binding the adapter reads through the namespace) and run `action` on the 2nd registry the run opens, i.e.
- * inside world 1 of cycle 0, after the stream is open; main sees the signal at its next yield (world 63).
+ * inside world 0 of cycle 0 (the 1st registry is adapters/lite.mjs's caps.snapshot probe at import), after the
+ * stream is open; main sees the signal at its next yield (world 63).
  */
 const armAt2 = (action) => '\n;const __mfReg = createRegistry; let __mfN = 0;\n' +
     'createRegistry = function (config) { if (++__mfN === 2) { process.stderr.write("' + ARMED + '\\n"); ' + action + ' } return __mfReg(config); };\n';
@@ -437,6 +439,18 @@ const CAP_COV_ENV = Object.freeze({ SOAK_LANES: 'CAPACITY', SOAK_MUSTFAIL: 'cov-
 const BOX_ENV = Object.freeze({ SOAK_LANES: 'BOX' });
 // T-BOX-untracked: the same lane, the twin adapter built {broken: 'box-untracked'} (main.mjs loadAdapter, by env).
 const BOX_MF_ENV = Object.freeze({ SOAK_LANES: 'BOX', SOAK_MUSTFAIL: 'box-untracked' });
+// The tree SNAPSHOT lane (R8 C2a, PLAN-R8 GROUP C task 4; R8-5 / R8-16 / R8-21): a plain lane (no sub-lane mix, R8-8),
+// oracle OS once per restore event.
+const SNAP_ENV = Object.freeze({ SOAK_LANES: 'SNAPSHOT' });
+// T-SNAP-* anchors in the LIVE Signal.js registry restore() pass 1 (base tree ea0b64d1; the A0 measured kernels
+// .handoff/r8-evidence/A0/kernels/M-OS-{roundtrip,refire,clean}/Signal.js, one hunk each, R8-16; each built kernel is
+// byte-equal to its A0 copy: sha256/8 5900bf33 / bf6c52af / f3c08f86). Each anchor occurs exactly
+// once (the D-M comment tells the CLEAN branch apart from the dirty-seeded one; one restored effect handle site).
+// A clean computed's recorded stamps (T-SNAP-clean: evalVersion 0; T-SNAP-roundtrip: the markEpoch copy dropped).
+const A_SNAP_CLEAN_EV = '                    node.evalVersion = evs[i];   // D-M: the recorded stamps\n';
+const A_SNAP_CLEAN_ME = A_SNAP_CLEAN_EV + '                    node.markEpoch = mes[i];\n';
+// A restored effect's handle (T-SNAP-refire: its body runs inside restore(), once per restored effect).
+const A_SNAP_EFFECT = '                handle = disposeFn;\n';
 
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
@@ -1058,6 +1072,29 @@ export const CONTROLS = deepFreeze([
     M('T-BOX-untracked', 'tree', BOX_MF_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=OT lane=BOX sig=trace-diff known=none'],
     }),
+    // ---- SNAPSHOT (R8 C2a, PLAN-R8 GROUP C task 4 + ASSERTION 3; CURRENT R8-5, R8-16, R8-21) ----
+    // P-SNAP-TREE: the SNAPSHOT pass control on the tree (C0 (d) / C1 measured --smoke exit 0, failingWorlds 0, no BREACH),
+    // P-CAP-TREE's shape; the revert of every T-SNAP-* row (the same env and argv, patches []).
+    M('P-SNAP-TREE', 'tree', SNAP_ENV, ['--smoke'], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { verdict: 'SMOKE' },
+    }),
+    // T-SNAP-* (SHORT battery, C-7): the A0 M-OS-* kernels, each restore() ACCEPTS the state and the OS check flips
+    // (known=none; a spec matches ANY stderr BREACH line). Measured: .handoff/r8-evidence/C2a/README.txt.
+    // roundtrip: a clean computed restores with markEpoch 0 (the copy dropped): S2 != S1 on every clean record whose
+    // recorded markEpoch != 0 (the --smoke default seed holds such records: C2a proof).
+    M('T-SNAP-roundtrip', 'tree', SNAP_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=OS lane=SNAPSHOT sig=roundtrip known=none'],
+    }, { patches: [[A_SNAP_CLEAN_ME, A_SNAP_CLEAN_EV]] }),
+    // refire: every restored effect's body runs once inside restore() (no snapshot-data tamper can do it, R8-16; the run
+    // also prints a clean-bit BREACH in a later world -- not a spec).
+    M('T-SNAP-refire', 'tree', SNAP_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=OS lane=SNAPSHOT sig=refire known=none'],
+    }, { patches: [[A_SNAP_EFFECT, A_SNAP_EFFECT + '                try { fn(); } catch (e) { /* M-OS-refire */ }\n']] }),
+    // clean: a clean computed restores with evalVersion 0 (reads as never evaluated): its first read runs the body,
+    // so the lane's checkOsCleanBit failF fires (R8-21; the run also prints the roundtrip BREACH -- not a spec).
+    M('T-SNAP-clean', 'tree', SNAP_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=OS lane=SNAPSHOT sig=clean-bit known=none'],
+    }, { patches: [[A_SNAP_CLEAN_EV, '                    node.evalVersion = 0;   // M-OS-clean\n']] }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375
@@ -1387,7 +1424,7 @@ export function runControl(c, pinProblems) {
         }
         r = spawnSync(NODE, c.flags.concat([main], c.argv), {
             cwd: ROOT, env: childEnv(keys, repo !== null), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-            maxBuffer: 256 * 1024 * 1024, timeout: RUN_TIMEOUT_MS,
+            maxBuffer: 256 * 1024 * 1024, timeout: RUN_TIMEOUT_MS, killSignal: 'SIGKILL',   // main traps SIGTERM (b153)
         });
         if (r.error) problems.push('spawn: ' + r.error.message);
         const status = r.status === null ? -1 : r.status;

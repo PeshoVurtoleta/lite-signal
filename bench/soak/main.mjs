@@ -52,7 +52,8 @@
  * traces differ, so a world opens 1 + (an OT fail ? 1 : 0) worlds per side: retention is measured only when the
  * primary AND the twin tracked + witnessed exactly that many. SOAK_MUSTFAIL=box-untracked builds the TWIN with
  * {broken: 'box-untracked'} (the primary stays clean); on a run whose selected lanes include no twin lane it is exit 2
- * (mustFailRefusal: "not supported on the selected lanes").
+ * (mustFailRefusal: "not supported on the selected lanes"). A SNAPSHOT world (R8-22) also opens one primary world per
+ * successful restore (opensOf: + its own snap-restore count), so its expected tracked + witnessed count is 1 + that.
  *
  * Signals: SIGINT / SIGTERM finish the current lane-cycle early (its record is marked interrupted, its
  * boundary still runs), then write the summary with reason 'signal' -> INCONCLUSIVE (exit 3), or FAIL when
@@ -186,12 +187,29 @@ export function openTwinTap(tracker, lane, twinAd) {
     return { ad: tapAdapter(twinAd, tap), tap };
 }
 
-/** Worlds a lane world opened per side: 1, plus the twin re-run (twin.mjs) when the result carries an OT fail. */
+/**
+ * Worlds a lane world opened per side (the EXPECTED tracked / witnessed count; never read from the tap): 1, plus the
+ * twin re-run (twin.mjs) when the result carries an OT fail, plus one per SNAPSHOT restore (R8-22, C0 finding): every
+ * successful restore opens one more world through the tapped adapter (lanes/snapshot.mjs opRest x.ad.open({ from })).
+ * The restore count is the lane's own per-world record r.scen['snap-restore'] (scenarios.mjs onSnap 'rest'): it is
+ * counted once per rest whose open() RETURNED, after the swap, and never when open() throws (opRest returns before
+ * onSnap; the tap's onOpen never ran either, tapAdapter calls it after adapter.open returns). An absent key = no rest
+ * ran (D.counts keeps no zero entries; only lanes/snapshot.mjs counts it). A present count that is not a safe integer
+ * >= 1, or a restore on a twin lane (unmodelled: its twin re-run would open restores on the twin side too), returns
+ * NaN: tracked === opens fails -> UNMEASURED -> retention FAIL (fail closed).
+ */
 function opensOf(desc, r) {
-    if (desc.twin !== true || r.failure === null) return 1;
-    const fs = r.failure.fails;
-    for (let i = 0; i < fs.length; i++) if (fs[i].oracle === 'OT') return 2;
-    return 1;
+    let n = 1;
+    if (desc.twin === true && r.failure !== null) {
+        const fs = r.failure.fails;
+        for (let i = 0; i < fs.length; i++) if (fs[i].oracle === 'OT') { n = 2; break; }
+    }
+    const sc = r.scen;
+    if (sc === null || typeof sc !== 'object') return NaN;
+    if (!Object.prototype.hasOwnProperty.call(sc, 'snap-restore')) return n;
+    const k = sc['snap-restore'];
+    if (!(Number.isSafeInteger(k) && k >= 1) || desc.twin === true) return NaN;
+    return n + k;
 }
 
 /* ---- the adapter tap ------------------------------------------------------------------------------ */
@@ -570,7 +588,7 @@ async function main() {
                     },
                 };
                 const ad = tapAdapter(latAdapter, tap);
-                // the shadow registries: same tracker, their OWN witness list and count (tracked === worlds stays the oracle's)
+                // the shadow registries: same tracker, their OWN witness list and count (tracked === opens stays the oracle's)
                 let sWitness = [];
                 const stap = {
                     escape: null,
@@ -650,7 +668,8 @@ async function main() {
                 // tautology); a leaked shadow registry is caught by retention (test/40 row E, 'main: SHADOWLEAK').
                 const worldsRun = ct.get('worlds');
                 const cb = closed.boundary;
-                // opens === worldsRun on every non-twin lane; a twin lane also needs twinTracked === twinWitnessed === opens
+                // opens === worldsRun on every non-twin lane but SNAPSHOT (+ its restore opens, opensOf); a twin lane also needs
+                // twinTracked === twinWitnessed === opens
                 const twinOk = tw === null || (twinTracked === opens && twinWitnessed === opens);
                 const measured = tracked === opens && witnessed === opens && twinOk && Number.isSafeInteger(cb.trackerSize) && Number.isSafeInteger(cb.weakAlive);
                 const boundary = {

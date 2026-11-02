@@ -117,6 +117,9 @@ export const LANE_KERNELS = Object.freeze({
     // BOX (R7 C1, b150; D-b144-6 = C-6): tree only: its NEST / WIE sub-lanes fail-stop or BREACH by design on
     // headpatched + lite-1.5.2 (as LANE_KERNELS.WIE); P-BOX-TREE is the pass control
     BOX: Object.freeze(['tree']),
+    // SNAPSHOT (R8 C1, b156; = BOX's C-6 precedent): tree only: registry snapshot() / restore() is a tree-only engine
+    // surface (headpatched + lite-1.5.2 have no snapshot cap); C0 (d) runs it clean on tree (checks.OS === events)
+    SNAPSHOT: Object.freeze(['tree']),
 });
 /** The kernel ids that cut `lane` (a fresh array). */
 export const kernelsFor = (lane) => (own(LANE_KERNELS, lane) ? LANE_KERNELS[lane].slice() : Object.keys(KERNELS));
@@ -191,6 +194,7 @@ export const LANE_PINS = Object.freeze({
     WIE: 'bench/soak/lanes/wie.mjs', HOOK: 'bench/soak/lanes/hook.mjs', LIFECYCLE: 'bench/soak/lanes/lifecycle.mjs',
     OWNER: 'bench/soak/lanes/owner.mjs', RECYCLE: 'bench/soak/lanes/recycle.mjs', SCHEDULER: 'bench/soak/lanes/scheduler.mjs',
     REGISTRY: 'bench/soak/lanes/registry.mjs', CAPACITY: 'bench/soak/lanes/capacity.mjs', BOX: 'bench/soak/lanes/box.mjs',
+    SNAPSHOT: 'bench/soak/lanes/snapshot.mjs',
 });
 /** PINNED + the pins of the rostered lanes (roster order). */
 export const pinnedFor = (roster) => PINNED.concat(roster.filter((l) => own(LANE_PINS, l)).map((l) => LANE_PINS[l]));

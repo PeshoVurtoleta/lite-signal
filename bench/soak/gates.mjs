@@ -29,7 +29,7 @@
 
 import {
     GATE_N, WARMUP_CYCLES, HEAP_RATIO, HEAP_SLACK_MB, RETAIN_MAX, RETAIN_BAD_BOUNDARIES,
-    SCEN_MIN, SCEN_MIN_SMOKE, CHECK_FLOOR, CHECK_FLOOR_SMOKE, BOX_WORLD_FLOOR, BOX_WORLD_FLOOR_SMOKE, TAINT_SKIP_MAX, VERDICT, EXIT_CODE,
+    SCEN_MIN, SCEN_MIN_SMOKE, CHECK_FLOOR, CHECK_FLOOR_SMOKE, BOX_WORLD_FLOOR, BOX_WORLD_FLOOR_SMOKE, SNAP_FLOOR, SNAP_FLOOR_SMOKE, TAINT_SKIP_MAX, VERDICT, EXIT_CODE,
     RSS_RATIO, RSS_SLACK_MB, RSS_BUF,
 } from './config.mjs';
 import { p95, bandMedian } from './rss.mjs';
@@ -55,9 +55,9 @@ function bad(msg) { throw new GateInputError(msg); }
 /* ---- oracle families ------------------------------------------------------------------------------ */
 
 // O1c/O1e are one family (O1), O7a is the S1 slice of O7, OB (batch-early-run, F5) is its own family, OT (the R7 twin
-// trace-diff, C1 / C-35) is its own family.
+// trace-diff, C1 / C-35) is its own family, OS (the R8 SNAPSHOT restore oracle, C1) is its own family.
 // BREACH dedupe and failureCounts use the family.
-const FAMILY = Object.freeze({ O1c: 'O1', O1e: 'O1', O2: 'O2', O4: 'O4', O5: 'O5', O6: 'O6', O7a: 'O7', O7: 'O7', OB: 'OB', O8: 'O8', OW: 'OW', O9: 'O9', OT: 'OT' });
+const FAMILY = Object.freeze({ O1c: 'O1', O1e: 'O1', O2: 'O2', O4: 'O4', O5: 'O5', O6: 'O6', O7a: 'O7', O7: 'O7', OB: 'OB', O8: 'O8', OW: 'OW', O9: 'O9', OT: 'OT', OS: 'OS' });
 
 /** The reporting family of an oracle id. An unknown id throws (fail closed: never a silent bucket). */
 export function oracleFamily(oracle) {
@@ -259,6 +259,8 @@ export function coverageRule(input) {
 
 /** Oracles counted ONCE PER WORLD, not per op (R7 C-38: twin.mjs counts OT once per twin world). */
 const PER_WORLD = Object.freeze(Object.assign(Object.create(null), { OT: true }));
+/** Oracles counted ONCE PER EVENT (R8-3 / R8-12: lanes/snapshot.mjs counts OS once per restore EVENT). */
+const PER_EVENT = Object.freeze(Object.assign(Object.create(null), { OS: true }));
 
 /**
  * check-floor (kind evidence; amendment 6): the lane PERFORMED at least CHECK_FLOOR checks (smoke:
@@ -268,6 +270,10 @@ const PER_WORLD = Object.freeze(Object.assign(Object.create(null), { OT: true })
  * (the lane's worlds total) is a safe integer > 0, performed[o] === worlds (one check per world, none missed,
  * none extra) and worlds >= BOX_WORLD_FLOOR (smoke: BOX_WORLD_FLOOR_SMOKE). A missing / null / non-integer
  * count or worlds, or worlds 0, is below (null is not zero); that below entry carries worlds and the world floor.
+ * A PER_EVENT oracle (R8-3 / R8-12: OS) has the restore EVENT as its unit: it passes iff input.events (the lane's
+ * restore event total, its scenario count snap-restore) is a safe integer > 0, performed[o] === events (one check per
+ * event, none missed, none extra) and events >= SNAP_FLOOR (smoke: SNAP_FLOOR_SMOKE). A missing / null / non-integer
+ * count or events, or events 0, is below (null is not zero); that below entry carries events and the event floor.
  */
 export function checkFloorRule(input) {
     const smoke = input.smoke === true;
@@ -276,12 +282,18 @@ export function checkFloorRule(input) {
     if (!Array.isArray(input.oracles)) bad('checkFloorRule: oracles must be an array');
     const performed = input.performed || {};
     const worlds = input.worlds;
+    const efloor = smoke ? SNAP_FLOOR_SMOKE : SNAP_FLOOR;
+    const events = input.events;
     const below = [];
     for (const o of input.oracles) {
         const n = own(performed, o) ? performed[o] : undefined;
         if (PER_WORLD[o] === true) {
             if (!(Number.isSafeInteger(worlds) && worlds > 0 && n === worlds && worlds >= wfloor)) {
                 below.push({ oracle: o, performed: n === undefined ? null : n, worlds: worlds === undefined ? null : worlds, floor: wfloor });
+            }
+        } else if (PER_EVENT[o] === true) {
+            if (!(Number.isSafeInteger(events) && events > 0 && n === events && events >= efloor)) {
+                below.push({ oracle: o, performed: n === undefined ? null : n, events: events === undefined ? null : events, floor: efloor });
             }
         } else if (!(n >= floor)) below.push({ oracle: o, performed: n === undefined ? null : n });
     }
@@ -404,7 +416,10 @@ export const GATES = Object.freeze([
             { smoke: true, oracles: ['O1c'], performed: { O1c: CHECK_FLOOR_SMOKE } },
             // R7 C-38: a per-world oracle at exactly its world floor, one check per world
             { smoke: true, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR_SMOKE }, worlds: BOX_WORLD_FLOOR_SMOKE },
-            { smoke: false, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR }, worlds: BOX_WORLD_FLOOR }]),
+            { smoke: false, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR }, worlds: BOX_WORLD_FLOOR },
+            // R8-3 / R8-12: a per-event oracle at exactly its event floor, one check per restore event
+            { smoke: true, oracles: ['OS'], performed: { OS: SNAP_FLOOR_SMOKE }, events: SNAP_FLOOR_SMOKE },
+            { smoke: false, oracles: ['OS'], performed: { OS: SNAP_FLOOR }, events: SNAP_FLOOR }]),
         mustFail: deepFreeze([
             { input: { smoke: false, oracles: ['O1c', 'O5'], performed: { O1c: CHECK_FLOOR, O5: CHECK_FLOOR - 1 } }, expect: I, why: 'one oracle below the floor' },
             { input: { smoke: true, oracles: ['O1c'], performed: { O1c: CHECK_FLOOR_SMOKE - 1 } }, expect: I, why: 'below the smoke floor' },
@@ -419,6 +434,15 @@ export const GATES = Object.freeze([
             { input: { smoke: false, oracles: ['OT'], performed: {}, worlds: BOX_WORLD_FLOOR }, expect: I, why: 'per-world: a missing OT count is not one check per world' },
             { input: { smoke: false, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR + 0.5 }, worlds: BOX_WORLD_FLOOR + 0.5 }, expect: I, why: 'per-world: a non-integer worlds total' },
             { input: { smoke: false, oracles: ['O1c', 'OT'], performed: { O1c: CHECK_FLOOR, OT: BOX_WORLD_FLOOR - 1 }, worlds: BOX_WORLD_FLOOR }, expect: I, why: 'per-world: the per-op oracle meets CHECK_FLOOR, OT misses a world' },
+            { input: { smoke: false, oracles: ['OS'], performed: { OS: SNAP_FLOOR }, events: SNAP_FLOOR + 1 }, expect: I, why: 'per-event: a restore event without its OS check (OS = events - 1)' },
+            { input: { smoke: false, oracles: ['OS'], performed: { OS: SNAP_FLOOR + 1 }, events: SNAP_FLOOR }, expect: I, why: 'per-event: more OS checks than restore events is a miscount (OS = events + 1)' },
+            { input: { smoke: false, oracles: ['OS'], performed: { OS: SNAP_FLOOR - 1 }, events: SNAP_FLOOR - 1 }, expect: I, why: 'per-event: events one below SNAP_FLOOR' },
+            { input: { smoke: true, oracles: ['OS'], performed: { OS: SNAP_FLOOR_SMOKE - 1 }, events: SNAP_FLOOR_SMOKE - 1 }, expect: I, why: 'per-event: events one below SNAP_FLOOR_SMOKE' },
+            { input: { smoke: true, oracles: ['OS'], performed: { OS: 0 }, events: 0 }, expect: I, why: 'per-event: zero restore events is no evidence' },
+            { input: { smoke: false, oracles: ['OS'], performed: { OS: SNAP_FLOOR } }, expect: I, why: 'per-event: a missing events total is not a count' },
+            { input: { smoke: false, oracles: ['OS'], performed: {}, events: SNAP_FLOOR }, expect: I, why: 'per-event: a missing OS count is not one check per event' },
+            { input: { smoke: false, oracles: ['OS'], performed: { OS: SNAP_FLOOR + 0.5 }, events: SNAP_FLOOR + 0.5 }, expect: I, why: 'per-event: a non-integer events total' },
+            { input: { smoke: false, oracles: ['O1c', 'OS'], performed: { O1c: CHECK_FLOOR, OS: SNAP_FLOOR - 1 }, events: SNAP_FLOOR }, expect: I, why: 'per-event: the per-op oracle meets CHECK_FLOOR, OS misses an event' },
         ]),
     }),
     Object.freeze({
@@ -464,7 +488,9 @@ export const INCONCLUSIVE_CAUSES = Object.freeze({
     'post-cycles': (a) => 'lane ' + a.lane + ' ran ' + a.post + ' post-warm-up cycles < ' + a.need,
     'scenario': (a) => 'scenario lane=' + a.lane + ' missing=' + a.scenario,
     // a per-world oracle (R7 C-38) carries worlds: its floor is performed === worlds >= floor
-    'check-floor': (a) => 'checks lane=' + a.lane + ' oracle=' + a.oracle + ' performed=' + a.performed + (own(a, 'worlds') ? ' worlds=' + a.worlds + ' floor=' + a.floor : ' < ' + a.floor),
+    // a per-event oracle (R8-3 / R8-12) carries events: its floor is performed === events >= floor
+    'check-floor': (a) => 'checks lane=' + a.lane + ' oracle=' + a.oracle + ' performed=' + a.performed + (own(a, 'worlds') ? ' worlds=' + a.worlds + ' floor=' + a.floor
+        : own(a, 'events') ? ' events=' + a.events + ' floor=' + a.floor : ' < ' + a.floor),
     'taint-skip': (a) => 'taint-skip lane=' + a.lane + ' oracle=' + a.oracle + ' ratio=' + a.ratio + ' > ' + a.max,
     // guard: a lane whose status is INCONCLUSIVE but that recorded no cause still makes the run INCONCLUSIVE
     'lane-status': (a) => 'lane ' + a.lane + ' status INCONCLUSIVE with no recorded cause',
@@ -626,13 +652,17 @@ export class LaneGates {
         const failureCounts = this.failures.toJSON();
         const performed = this.checks.toJSON();
         const skipped = this.skips.toJSON();
+        const scenCounts = this.scen.toJSON();
+        // the restore EVENT total of a PER_EVENT oracle (OS): the lane's own scenario count snap-restore (scenarios.mjs
+        // onSnap counts it on every 'rest' event); a lane that does not require it passes undefined (OS unapplicable)
+        const events = own(scenCounts, 'snap-restore') ? scenCounts['snap-restore'] : undefined;
         const gates = {
             'oracle': oracleRule({ failingWorlds: this.totals.get('failingWorlds'), failureCounts }),
             'heap': heapRule({ smoke, post: this.post, earlyMedian: this.heap.earlyMedian(), lateMedian: this.heap.lateMedian() }),
             'rss': rssRule(rssWindows(smoke, this.post, this.rss)),
             'retention': retentionRule({ bad: this.bad, unmeasured: this.unmeasured }),
-            'coverage': coverageRule({ smoke, required: this.required, counts: this.scen.toJSON() }),
-            'check-floor': checkFloorRule({ smoke, oracles: this.oracles, performed, worlds: this.totals.get('worlds') }),
+            'coverage': coverageRule({ smoke, required: this.required, counts: scenCounts }),
+            'check-floor': checkFloorRule({ smoke, oracles: this.oracles, performed, worlds: this.totals.get('worlds'), events }),
             'taint-skip': taintSkipRule({ oracles: this.oracles, performed, skipped }),
         };
         const causes = [];
@@ -650,7 +680,9 @@ export class LaneGates {
         for (const b of gates['check-floor'].below) {
             causes.push(own(b, 'worlds')
                 ? { cause: 'check-floor', lane: this.lane, oracle: b.oracle, performed: b.performed, worlds: b.worlds, floor: b.floor }
-                : { cause: 'check-floor', lane: this.lane, oracle: b.oracle, performed: b.performed, floor: gates['check-floor'].floor });
+                : own(b, 'events')
+                    ? { cause: 'check-floor', lane: this.lane, oracle: b.oracle, performed: b.performed, events: b.events, floor: b.floor }
+                    : { cause: 'check-floor', lane: this.lane, oracle: b.oracle, performed: b.performed, floor: gates['check-floor'].floor });
         }
         if (gates['check-floor'].empty) causes.push({ cause: 'check-floor', lane: this.lane, oracle: 'none', performed: 0, floor: gates['check-floor'].floor });
         for (const o of gates['taint-skip'].over) causes.push({ cause: 'taint-skip', lane: this.lane, oracle: o.oracle, ratio: o.ratio, max: TAINT_SKIP_MAX });

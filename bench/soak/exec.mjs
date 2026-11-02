@@ -67,6 +67,15 @@
  *                                        on a world that already failed (fail closed: a dirty ring is never a verdict)
  *                 Every other lane keeps exec.sc null and pays one null test per runBody and one per at-rest pass
  *                 (+ one per live effect on the hoisted local)
+ *   snapshot      (SNAPSHOT lane, exec.sn !== null; R8 B2) lanes/snapshot.mjs sets exec.sn (its SnState) on its first op
+ *                 and runs its snap / rest / snapin ops itself; exec calls exactly two members of it:
+ *                   sn.onBody(i)   at the ENTRY of every runBody (next to sc.onBody); it counts body runs per node
+ *                                  index only while a restore window is armed (OS refire / clean-bit), else returns
+ *                   sn.close()     once, right after W.close() (as rc / sc); it must not throw and must null every
+ *                                  held snapshot / model copy
+ *                 and offers swapWorld(newW, M, H): the restore closes the old world (its own O5 residue check)
+ *                 and swaps in the restored world, the model copy and the restored handles. checks.OS += 1 per
+ *                 restore EVENT (R8-3). Every other lane keeps exec.sn null and pays one null test per runBody
  *   wie writer    (WIE, gen.mjs I2 lifted) a computed whose spec carries w writes w := f(its output) through
  *                 write() after its body returns (spec.wu: under untrack), exactly like an effect writer. D4: a
  *                 target that is not an earlier signal (forward / self / non-integer / non-signal) or is in its
@@ -92,8 +101,9 @@ const END_CHECK_SALT = 0x5bd1e995;
 
 /** Oracles counted when PERFORMED (a skipped check is never counted as one). */
 // OT (R7 C1, C-9) is appended last: exec never performs it (World.checks.OT stays 0); twin.mjs runWorldTwin sets it to 1
-// per world pair (C-35: checks.OT === worlds on a twin lane).
-export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9', 'OT']);
+// per world pair (C-35: checks.OT === worlds on a twin lane). OS (R8 B2, R8-4) is appended after it: the SNAPSHOT lane
+// (lanes/snapshot.mjs) counts one per restore EVENT (R8-3); every other lane keeps checks.OS 0.
+export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9', 'OT', 'OS']);
 /** Oracles that skip tainted nodes; each skip is counted per oracle (S1c gates a taint-skip ratio). */
 export const SKIP_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4']);
 const COUNTER_CAP = 0x3FFFFFFF;   // per-world counters stay Smi (S7: [2^30, 2^31) boxes on pointer-compressed V8)
@@ -196,7 +206,7 @@ class Exec {
         this.regActions = new Map();
         this.ran = new Set();
         this.D = new Detectors(this);
-        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0, OW: 0, O9: 0, OT: 0 };
+        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0, OW: 0, O9: 0, OT: 0, OS: 0 };
         this.skipTainted = { O1c: 0, O1e: 0, O2: 0, O4: 0 };
         this.gateHits = { batchTokenEscaped: 0 };   // guards whose escape carried the throw-in-batch token
         this.effReruns = 0;    // effect re-runs (runs > 0) in this world, capped at COUNTER_CAP (OB evidence)
@@ -218,6 +228,9 @@ class Exec {
         // reads exactly 7 members (the header's contract): calls sc.onBody(i, depth) per runBody, reads sc.pend /
         // sc.st.susp at rest, calls sc.close() after W.close(), then scClosed() reads sc.size / sc.ringT / sc.x
         this.sc = null;
+        // SNAPSHOT lane state (lanes/snapshot.mjs SnState), set by the lane's first op; null on every other lane. exec
+        // calls sn.onBody(i) per runBody (it counts only while a restore window is armed) and sn.close() after W.close()
+        this.sn = null;
         // REGISTRY (S3 R5): the expect[] list (oracles.mjs expectFromThrow) of the NEXT guard only. lanes/registry.mjs sets
         // it right before the guarded in-flight destroy; guard() takes it into g.expect and resets it to null at entry, so
         // no nested guard (a body write) and no later op ever sees it. null = EXPECT_CYCLE / EXPECT_NONE as before
@@ -285,6 +298,7 @@ class Exec {
         try { residue = this.W.close(); } catch (e) { closeErr = e; }
         if (this.rc !== null) this.rc.close();   // RECYCLE: null the retained stale handles (no other lane pays)
         if (this.sc !== null) { this.sc.close(); this.scClosed(); }   // SCHEDULER: null every queued thunk (no other lane pays)
+        if (this.sn !== null) this.sn.close();   // SNAPSHOT: drop the held snapshots / model copies (no other lane pays)
         if (failure === null) {
             this.did('O5');   // the teardown residue check (counted like the at-rest O5: before close()'s outcome is read)
             if (closeErr !== NONE) this.engineError(closeErr, 'close()');
@@ -323,6 +337,25 @@ class Exec {
         const ops = this.laneOps;
         if (ops === null || !Object.hasOwn(ops, op.o)) throw new Error('exec: unknown op ' + op.o);
         ops[op.o](this, op, k);
+    }
+
+    /**
+     * SNAPSHOT world swap (R8-13, D-b154-2): close the current world FIRST and judge its own residue (O5 checkTeardown,
+     * one performed O5; a close() throw is an O6 engine error), then the world, model and handle table become newW / M /
+     * H. Called by lanes/snapshot.mjs only, at an op boundary (no frame, guard or batch open); never throws for an engine
+     * outcome (findings go through failF).
+     */
+    swapWorld(newW, M, H) {
+        const old = this.W;
+        let residue = null;
+        let closeErr = NONE;
+        try { residue = old.close(); } catch (e) { closeErr = e; }
+        this.did('O5');
+        if (closeErr !== NONE) this.engineError(closeErr, 'close() of the swapped-out world');
+        else { const f = O.checkTeardown(residue); if (f !== null) this.failF(f); }
+        this.W = newW;
+        this.M = M;
+        this.H = H;
     }
 
     /* ---- guarded calls (O6) ---------------------------------------------------------------------- */
@@ -649,6 +682,7 @@ class Exec {
         const nd = M.n[i];
         const frames = this.frames;
         if (this.sc !== null) this.sc.onBody(i, frames.length + 1);   // SCHEDULER: O9 stale-thunk (the header's contract)
+        if (this.sn !== null) this.sn.onBody(i);   // SNAPSHOT: per-record body-run counter (the header's contract)
         const parent = frames.length > 0 ? frames[frames.length - 1] : null;
         if (parent !== null && parent.inRead !== -1) parent.nested = true;
         let pre = 0;   // 1: pulled by an effect pre-walk (flush, no body frame); 2: pulled by a computed pre-walk
