@@ -44,6 +44,8 @@ export const SCENARIOS = Object.freeze([
     'destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy',
     // CAPACITY (S3 R5; lanes/capacity.mjs, not rostered until R5 B2)
     'node-cap-throw', 'link-cap-throw', 'link-ceiling-grow', 'grow-past-initial', 'reuse-at-edge',
+    // BOX (R7; lanes/box.mjs, not rostered until C)
+    'box-trace-equal', 'box-interop',
 ]);
 
 const DEEP_PULL_MIN = 16;

@@ -59,11 +59,21 @@ import { createHash } from 'node:crypto';
 import { ORACLES, SIGS } from './oracles.mjs';
 import { SCENARIOS } from './scenarios.mjs';
 import { ROSTER } from './lanes/index.mjs';
+import { BOX } from './lanes/box.mjs';
 import { GEN_RULES } from './gen.mjs';
 
 export const REGISTRY_URL = new URL('./divergences.json', import.meta.url);
 export const KINDS = Object.freeze(['fix', 'contract', 'engine']);
-export const ENGINES = Object.freeze(['lite']);
+export const ENGINES = Object.freeze(['lite', 'lite-box']);
+/**
+ * R7 C-2 (D-b144-2): BOX / lite-box coverage AS DATA. A BOX world replays one of its sub-lanes (lanes/box.mjs mix:
+ * GRAPH, BATCH, ERROR, NEST, WIE) and its failure records carry lane 'BOX', so an OPEN entry (fixedIn null) whose lanes
+ * name a sub-lane must also name BOX (validate: an error otherwise). A FIXED entry explains only with includeFixed (a
+ * named control kernel) and BOX runs on the tree kernel only (C-6), so the rule reads open entries. BOX_LANES is the
+ * lane vocabulary beside ROSTER until group C rosters BOX (DEFAULT_VOCAB.lanes stays ROSTER itself).
+ */
+export const BOX_LANES = Object.freeze([BOX.name]);
+export const BOX_SUBLANES = Object.freeze(Object.keys(BOX.mix));
 /** exec.mjs failure.op values: script ops plus the world-end and teardown pseudo-ops. */
 export const OPS = Object.freeze(['sig', 'comp', 'eff', 'set', 'burst', 'read', 'stop', 'disp', 'batch', 'reg', 'off', 'arm', 'seq', 'end', 'teardown', 'rdestroy']);
 /** Scenarios a step counts at most once (one cycle-bomb guard per op), so prior = count - inStep is exact. */
@@ -164,7 +174,10 @@ export function validate(reg, vocab) {
         if (!Array.isArray(e.shapes)) { out.push(w + ': shapes must be an array'); continue; }
         if (!isStrArr(e.engines) || e.engines.length === 0) out.push(w + ': engines must be non-empty');
         else for (const x of e.engines) if (V.engines.indexOf(x) === -1) out.push(w + ': unknown engine ' + x);
-        if (isStrArr(e.lanes)) for (const x of e.lanes) if (V.lanes.indexOf(x) === -1) out.push(w + ': unknown lane ' + x);
+        if (isStrArr(e.lanes)) for (const x of e.lanes) if (V.lanes.indexOf(x) === -1 && BOX_LANES.indexOf(x) === -1) out.push(w + ': unknown lane ' + x);
+        if (isStrArr(e.lanes) && e.fixedIn === null && e.lanes.indexOf(BOX.name) === -1 && e.lanes.some((x) => BOX_SUBLANES.indexOf(x) !== -1)) {
+            out.push(w + ': lanes ' + e.lanes.join(',') + ' name a BOX sub-lane (' + BOX_SUBLANES.join(', ') + ') but not BOX (an open entry must cover BOX, R7 C-2)');
+        }
         if (isStrArr(e.oracles)) for (const x of e.oracles) if (V.oracles.indexOf(x) === -1) out.push(w + ': unknown oracle ' + x);
         if (isStrArr(e.ops)) for (const x of e.ops) if (V.ops.indexOf(x) === -1) out.push(w + ': unknown op ' + x);
         for (const k of ['scen', 'worldScen', 'priorScen']) if (isStrArr(e[k])) for (const x of e[k]) if (V.scenarios.indexOf(x) === -1) out.push(w + ': unknown ' + k + ' ' + x);

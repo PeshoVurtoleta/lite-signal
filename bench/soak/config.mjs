@@ -140,9 +140,11 @@ const CONSTANTS = Object.freeze({
     EXIT_CODE: Object.freeze({ PASS: 0, FAIL: 1, CONFIG: 2, INCONCLUSIVE: 3, SMOKE: 0, PARTIAL: 0 }),
     // key universes
     ENGINES_KNOWN: Object.freeze(['lite', 'lite-box', 'alien', 'polyfill']),
-    ENGINES_AVAILABLE: Object.freeze(['lite']),   // S1; S3 adds lite-box, S5 alien + polyfill
+    ENGINES_AVAILABLE: Object.freeze(['lite', 'lite-box']),   // S1 lite; R7 lite-box (the box facade); S5 alien + polyfill
     WRAP_CHECKS: Object.freeze(['W1', 'W2', 'W3', 'W4', 'W5']),
-    MUSTFAIL_MODES: Object.freeze(['cov-off']),
+    // cov-off:<scenario> (a generator rule off); box-untracked: a BARE token (no ':'), the lite-box adapter's
+    // {broken: 'box-untracked'} must-fail control (R7 C-7 / C-13), parsed as { mode: 'box-untracked', scenario: null }
+    MUSTFAIL_MODES: Object.freeze(['cov-off', 'box-untracked']),
 });
 
 export const {
@@ -485,20 +487,26 @@ export function parseConfig(env, opts) {
         const raw = env.SOAK_MUSTFAIL;
         const i = raw.indexOf(':');
         const mode = i === -1 ? raw : raw.slice(0, i);
-        if (MUSTFAIL_MODES.indexOf(mode) === -1 || i === -1) {
-            fail("SOAK_MUSTFAIL='" + raw + "' must be cov-off:<scenario>");
+        if (mode === 'box-untracked') {
+            // bare token only; scenario null never names a covOff key (main / replay own(desc.covOff, scenario))
+            if (i !== -1) fail("SOAK_MUSTFAIL='" + raw + "' must be the bare token box-untracked (it takes no scenario)");
+            mustFail = Object.freeze({ mode, scenario: null });
+        } else {
+            if (MUSTFAIL_MODES.indexOf(mode) === -1 || i === -1) {
+                fail("SOAK_MUSTFAIL='" + raw + "' must be cov-off:<scenario>");
+            }
+            const scen = raw.slice(i + 1);
+            if (opts.scenarios.indexOf(scen) === -1) {
+                fail("SOAK_MUSTFAIL: unknown scenario '" + scen + "'" + hintOrList(scen, opts.scenarios, 'scenarios'));
+            }
+            const supported = [];
+            for (const nm of lanes) for (const s of opts.covOffSupported[nm]) if (supported.indexOf(s) === -1) supported.push(s);
+            if (supported.indexOf(scen) === -1) {
+                fail("SOAK_MUSTFAIL: cov-off:" + scen + ' is not supported on the selected lanes ' + lanes.join(',') +
+                    (supported.length === 0 ? ' (none of them implements a cov-off switch)' : ' (supported: ' + supported.join(', ') + ')'));
+            }
+            mustFail = Object.freeze({ mode, scenario: scen });
         }
-        const scen = raw.slice(i + 1);
-        if (opts.scenarios.indexOf(scen) === -1) {
-            fail("SOAK_MUSTFAIL: unknown scenario '" + scen + "'" + hintOrList(scen, opts.scenarios, 'scenarios'));
-        }
-        const supported = [];
-        for (const nm of lanes) for (const s of opts.covOffSupported[nm]) if (supported.indexOf(s) === -1) supported.push(s);
-        if (supported.indexOf(scen) === -1) {
-            fail("SOAK_MUSTFAIL: cov-off:" + scen + ' is not supported on the selected lanes ' + lanes.join(',') +
-                (supported.length === 0 ? ' (none of them implements a cov-off switch)' : ' (supported: ' + supported.join(', ') + ')'));
-        }
-        mustFail = Object.freeze({ mode, scenario: scen });
     }
     put('SOAK_MUSTFAIL', mustFail, has('SOAK_MUSTFAIL'));
     const nearwrap = put('SOAK_NEARWRAP', has('SOAK_NEARWRAP') ? parseNearwrap(env.SOAK_NEARWRAP) : null, has('SOAK_NEARWRAP'));

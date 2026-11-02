@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "task": "SPEC-B-S1cd TASK 11 (burst 8 B6): soak calibration -- DEFAULT_OPS, SCEN_MIN(_SMOKE), CHECK_FLOOR(_SMOKE), TAINT_SKIP_MAX",
- "tool": "node bench/soak/calibration/calibrate.mjs --write .handoff/r7-evidence/A2/soak-calibration.new.json --import-throughput <the earlier timed run>",
+ "tool": "node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --import-throughput <the earlier timed run>",
  "guard": "test/41-soak-config.test.mjs (B6 drift guard): config values == cut, every binding cell clears its constant, live smoke re-measure == kernels.<k>.smoke, live main.mjs probe fold == probe.fold",
  "cut": {
   "seed": 12648430,
@@ -297,18 +297,27 @@
   }
  },
  "provenance": {
-  "date": "2026-11-02T00:56:42.664Z",
-  "gitHead": "919015eac04307153b01f81bfa3fbcbeb2f24ac9",
+  "date": "2026-11-02T03:46:53.508Z",
+  "gitHead": "051f18b9d897b772d72a7fe090a5d82915141295",
   "gitDirty": [
-   " M bench/soak/SoakReport.mjs",
-   " M bench/soak/exec.mjs",
-   " M bench/soak/gates.mjs",
-   " M bench/soak/oracles.mjs",
+   " M bench/soak/adapters/contract.mjs",
+   " M bench/soak/config.mjs",
+   " M bench/soak/divergences.json",
+   " M bench/soak/divergences.mjs",
+   " M bench/soak/main.mjs",
    " M bench/soak/parity.json",
-   " M bench/soak/parity.mjs",
-   " M test/96-soak-box.test.mjs",
+   " M bench/soak/replay.mjs",
+   " M bench/soak/scenarios.mjs",
+   " M bench/soak/shrink.mjs",
+   " M test/41-soak-config.test.mjs",
+   " M test/89-soak-scheduler.test.mjs",
+   " M test/93-soak-capacity.test.mjs",
    "?? BRIEF.md",
-   "?? bench/bench-runs/"
+   "?? bench/bench-runs/",
+   "?? bench/soak/lanes/box.mjs",
+   "?? bench/soak/twin.mjs",
+   "?? test/97-soak-twin.test.mjs",
+   "?? test/fixtures/r7-b0-applicability.json"
   ],
   "engineSha256": "ea0b64d17e6d68b49809f2124a44abf0204e47cd1e48bcefeccd33fcba023fe9",
   "engineNote": "sha256 of <root>/Signal.js (the tree kernel), equal at launch, at the end and in kernels.tree.files (--write dies otherwise): the engine actually cut, also on a dirty tree",
@@ -317,21 +326,21 @@
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   2.77,
-   4,
-   5.22
+   3.31,
+   5.67,
+   6.03
   ],
   "loadavgAfterTimed": null,
   "loadavgAfterTimedNote": "null: untimed run, no timed phase (the imported timed run is throughputRun)",
   "loadavgAfter": [
-   9.33,
-   7.04,
-   5.78
+   8.33,
+   7.24,
+   6.22
   ],
   "busyNodeBefore": [],
   "busyNodeRule": "other node processes (not this process or its node launcher chain, e.g. the quiet-lock wrapper) >= 10% CPU at launch, as pid pcpu command; [] = none, null = ps failed",
-  "seconds": 1181,
-  "cutSeconds": 637,
+  "seconds": 1244,
+  "cutSeconds": 670,
   "secondsClock": "wall clock (Date.now), whole seconds: seconds = --write entry to the evidence write (every step; the origin of the \"(N s)\" log stamps); cutSeconds = step 1, the cut (the only timed phase under --timed)",
   "timing": "PENDING (untimed run; throughput decides no gate)",
   "pinnedSha256": {
@@ -339,7 +348,7 @@
    "bench/soak/exec.mjs": "a60a569c9aadec613837f332ecc98e2fdea3aa8fca6d6906e58f413e47282f14",
    "bench/soak/oracles.mjs": "126b1c45aae02604cea7e45efe983277e688a4fe2bab83870e9bcd1d1b3f0174",
    "bench/soak/model.mjs": "a87052623d3cb7b90af865df146ab1a390555cc9ec1bbe0dcb2de4fd67ebd81f",
-   "bench/soak/scenarios.mjs": "671b9591a32bfc07bb243c07eafc1c9a9c6106b8bf4fc647a4db4e01a0d6fd8d",
+   "bench/soak/scenarios.mjs": "0505b1d5d24cdd1c9bb00abb86f16d420f740b8ad8d35a4652a5a4cc38e80b27",
    "bench/soak/seeds.mjs": "b68b535f7dcc83c2e12582c488fea1299704d41b492420854279e768010e9ff5",
    "bench/soak/lanes/index.mjs": "539d3ed1b436aeb3f1d9b87971586b1c0411a20e988670ac63a006c05e10ae46",
    "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
@@ -347,7 +356,7 @@
    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
    "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
    "bench/soak/adapters/lite.mjs": "b5fdfcc9b614db980b88d57772e4527cceb8b14eb9bbe76da397c121b281c683",
-   "bench/soak/adapters/contract.mjs": "81d9ee4625afd67abf97fb7faae692b1fc8a26ad479db80b9ab8a891afb416a1",
+   "bench/soak/adapters/contract.mjs": "95760589bc3081dcf2cfccd25bc7896e33c995912047f1820a8b755a04286e31",
    "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
    "bench/torture/helpers/index.mjs": "0f58faf5f553716bf5059cdfeae7fe887ea07fe3e853d8cba0e75106e54cb119",
    "bench/soak/adapters/lite-s3.mjs": "4b8814ddc4b9b1d2f63032d442ac6539a7632763eb84e0a583d7f3ffc2929145",

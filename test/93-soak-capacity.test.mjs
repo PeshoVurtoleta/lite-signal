@@ -77,10 +77,11 @@ describe('GEN: G12 capacity cfg, budget, determinism', () => {
         assert.ok(Object.isFrozen(CAPACITY) && Object.isFrozen(CAPACITY.ops));
         for (const s of CAP_SCEN) assert.ok(SCENARIOS.includes(s), s);
     });
-    it('SCENARIOS: the CAPACITY ids come after the REGISTRY ids (appended last)', () => {
+    it('SCENARIOS: the CAPACITY ids come directly after the REGISTRY ids; the BOX pair is the tail', () => {
         const last = SCENARIOS.indexOf('reuse-after-destroy');
         assert.ok(last > 0);
-        assert.deepEqual(SCENARIOS.slice(last + 1), CAP_SCEN);
+        assert.deepEqual(SCENARIOS.slice(last + 1, last + 1 + CAP_SCEN.length), CAP_SCEN);
+        assert.deepEqual(SCENARIOS.slice(last + 1 + CAP_SCEN.length), ['box-trace-equal', 'box-interop']);
     });
     it('G0 determinism: the same seed gives the same script; another seed differs', () => {
         assert.equal(scriptJson(gen(3)), scriptJson(gen(3)));

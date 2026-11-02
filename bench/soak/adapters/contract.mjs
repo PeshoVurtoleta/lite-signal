@@ -8,7 +8,8 @@
  *
  * CAPS is a frozen key list; every adapter declares EVERY key with an allowed value, or validateAdapter
  * reports it (main.mjs exits 2). applicability() decides, per lane, RUN or SKIP, the oracles that are n/a
- * and the scenarios that are n/a. engine=lite must SKIP nothing (a SKIP on lite is a roster bug).
+ * and the scenarios that are n/a. A lite-family engine (lite, lite-box) must SKIP nothing (a SKIP on one is a roster
+ * bug; a twin lane runs on it through TWINS below).
  *
  * COLD module.
  */
@@ -113,14 +114,24 @@ export const ORACLE_CAPS = Object.freeze({
     O8: ['hook'],
     OW: ['owner'],
     O9: ['recycle'],
+    OT: [],
 });
 
 /**
- * Lane applicability on an adapter. desc: a lanes/index.mjs descriptor.
+ * Twin lanes (desc.twin, lanes/box.mjs; R7 C-3 / D-b144-3): engine -> the 'name/mode' adapter spec its worlds are
+ * replayed on for the OT trace oracle (twin.mjs). An engine with no entry cannot run a twin lane.
+ */
+export const TWINS = Object.freeze({ lite: 'lite-box/alt', 'lite-box': 'lite-box/alt' });
+
+/**
+ * Lane applicability on an adapter. desc: a lanes/index.mjs descriptor; engine: the run's engine name (SOAK_ENGINE).
+ * A twin lane (desc.twin === true) on an engine with no own TWINS entry, or with engine undefined, gets 'twin' in
+ * missingCaps (so it skips); engine is not read for any other lane (their result is the 2-argument one).
  * Returns { status: 'run'|'skip', missingCaps[], oraclesNA[], scenariosNA[], requiredApplicable[] }.
  */
-export function applicability(desc, caps) {
+export function applicability(desc, caps, engine) {
     const missingCaps = desc.needsCaps.filter((c) => !hasCap(caps, c));
+    if (desc.twin === true && !(typeof engine === 'string' && Object.hasOwn(TWINS, engine))) missingCaps.push('twin');
     const oraclesNA = Object.keys(ORACLE_CAPS).filter((o) => ORACLE_CAPS[o].some((c) => !hasCap(caps, c)));
     const scenariosNA = [];
     for (const s of desc.required.concat(desc.optional)) {

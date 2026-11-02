@@ -43,6 +43,12 @@
  * Kernel-free on import: the adapter (and through it kernel.mjs and the SOAK_KERNEL seam) loads only inside
  * runReplay / runShrink, so tests import resolveReplay and the helpers without loading any Signal.js.
  *
+ * Engines and twins (R7 B2): loadEngine loads SOAK_ENGINE through main.mjs loadAdapter and, for a TWIN lane
+ * (desc.twin), the engine's contract.mjs TWINS twin through main.mjs loadTwin (SOAK_MUSTFAIL=box-untracked breaks the
+ * twin, as in main; on a key whose lane is no twin lane it is exit 2, main.mjs mustFailRefusal). forwardReach and
+ * playWorld play a twin lane's worlds with twin.mjs runWorldTwin (main.mjs runLaneWorld), each side through its own
+ * replay tap; the ops budget counts the PRIMARY ops only (runWorldTwin's ops are the primary's).
+ *
  * COLD module: no hot body.
  */
 
@@ -50,10 +56,11 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readConfig, configExit, formatReplayKey, ENGINES_AVAILABLE, VERDICT, EXIT_CODE } from './config.mjs';
-import { tapAdapter, failureRecord, familyKeys, BreachLog } from './main.mjs';
+import { tapAdapter, failureRecord, familyKeys, BreachLog, ADAPTERS, loadAdapter, loadTwin, mustFailRefusal, runLaneWorld } from './main.mjs';
 import { seedFor, worldSeed, findWorldIndex } from './seeds.mjs';
 import { generateWorld, scriptJson, GEN_VERSION, GEN_RULES } from './gen.mjs';
 import { runWorld } from './exec.mjs';
+import { runWorldTwin } from './twin.mjs';
 import { ROSTER, ALL_SCENARIOS, COV_OFF_SUPPORTED, laneByName, isLargeWorld } from './lanes/index.mjs';
 import { digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences.mjs';
 import { openStream, writeRecord, writeFatal, protocol, endLine, defaultOutPath } from './jsonl.mjs';
@@ -163,24 +170,33 @@ export function scriptDigest(script) {
 /* ---- the engine (kernel loads here) --------------------------------------------------------------- */
 
 /**
- * Load and check the engine adapter for cfg.engine and the key's lane. Returns {adapter, app, error}; error
- * is a CONFIG message or null. Dynamic import: kernel.mjs reads SOAK_KERNEL here (and exits 2 itself on a
- * bad kernel path, before any record).
+ * Load and check the engine adapter for cfg.engine and the key's lane. Returns {adapter, twin, app, error}; error
+ * is a CONFIG message or null; twin is the TWINS twin adapter for a twin lane (main.mjs loadTwin, cfg.mustFail
+ * applied), else null. Dynamic import: kernel.mjs reads SOAK_KERNEL here (and exits 2 itself on a bad kernel path,
+ * before any record).
  */
 // b103 F-b103-1: the loaded kernel's controls.json name (kernel.mjs KERNEL_KNOWN_AS) or null, set by loadEngine; recordOf
 // passes it to failureRecord, so a replay on a named control kernel classifies with includeFixed exactly as main does.
 let replayKnownAs = null;
 export async function loadEngine(cfg, laneName) {
-    if (cfg.engine !== 'lite' || ENGINES_AVAILABLE.indexOf(cfg.engine) === -1) return { adapter: null, app: null, error: 'SOAK_ENGINE: no adapter for ' + cfg.engine };
-    const adMod = await import('./adapters/lite-s3.mjs');
-    const adapter = adMod.liteS3Adapter;
+    if (!own(ADAPTERS, cfg.engine) || ENGINES_AVAILABLE.indexOf(cfg.engine) === -1) return { adapter: null, twin: null, app: null, error: 'SOAK_ENGINE: no adapter for ' + cfg.engine };
+    const desc = laneByName(laneName);
+    const mf = mustFailRefusal(cfg.mustFail, [desc]);
+    if (mf !== null) return { adapter: null, twin: null, app: null, error: mf };
+    const adapter = await loadAdapter(cfg.engine);
     ({ KERNEL_KNOWN_AS: replayKnownAs } = await import('./kernel.mjs'));   // the adapter loaded it: no new load
     const { validateAdapter, applicability } = await import('./adapters/contract.mjs');
     const probs = validateAdapter(adapter);
-    if (probs.length > 0) return { adapter: null, app: null, error: 'adapter ' + cfg.engine + ' is invalid: ' + probs.join('; ') };
-    const app = applicability(laneByName(laneName), adapter.caps);
-    if (app.status === 'skip') return { adapter: null, app, error: 'lane ' + laneName + ' needs cap ' + (app.missingCaps[0] || 'hardOracles') + ', absent on engine ' + cfg.engine };
-    return { adapter, app, error: null };
+    if (probs.length > 0) return { adapter: null, twin: null, app: null, error: 'adapter ' + cfg.engine + ' is invalid: ' + probs.join('; ') };
+    const app = applicability(desc, adapter.caps, cfg.engine);
+    if (app.status === 'skip') return { adapter: null, twin: null, app, error: 'lane ' + laneName + ' needs cap ' + (app.missingCaps[0] || 'hardOracles') + ', absent on engine ' + cfg.engine };
+    let twin = null;
+    if (desc.twin === true) {
+        twin = await loadTwin(cfg.engine, cfg.mustFail);
+        const tprobs = validateAdapter(twin);
+        if (tprobs.length > 0) return { adapter: null, twin: null, app: null, error: 'twin adapter of ' + cfg.engine + ' is invalid: ' + tprobs.join('; ') };
+    }
+    return { adapter, twin, app, error: null };
 }
 
 /** A tapped adapter (main.mjs tapAdapter): main's onOpen registry check, no leak tracking (no retention). */
@@ -196,12 +212,23 @@ export function replayTap(adapter) {
     return { tap, ad: tapAdapter(adapter, tap) };
 }
 
+/** The twin side's tapped adapter for a twin lane (replayTap), null on a lane that is no twin lane. */
+function twinTapped(res, twin) {
+    const desc = laneByName(res.lane);
+    if (desc === null || desc.twin !== true) return null;
+    if (twin === null || twin === undefined) throw new TypeError('replay: twin lane ' + res.lane + ' needs its twin adapter (loadEngine)');
+    return replayTap(twin).ad;
+}
+
 /**
  * The ops-budget half of reachability (see the module header). Plays worlds 0..res.world-1 exactly as main
- * does and returns {reachable, worldsBefore, opsBefore, reason}.
+ * does and returns {reachable, worldsBefore, opsBefore, reason}. twin: the twin adapter of a twin lane (loadEngine);
+ * a twin lane without one throws TypeError; ignored on any other lane.
  */
-export function forwardReach(adapter, cfg, res) {
+export function forwardReach(adapter, cfg, res, twin) {
     const { tap, ad } = replayTap(adapter);
+    const tad = twinTapped(res, twin);
+    const desc = laneByName(res.lane);
     let ops = 0;
     for (let w = 0; w < res.world; w++) {
         if (!(ops < cfg.ops)) {
@@ -211,7 +238,7 @@ export function forwardReach(adapter, cfg, res) {
         try {
             const script = scriptFor(res, w);
             tap.escape = null;
-            r = runWorld(ad, script);
+            r = tad === null ? runWorld(ad, script) : runLaneWorld(desc, ad, tad, script);
         } catch (e) {
             return { reachable: false, worldsBefore: w, opsBefore: ops, reason: 'world ' + w + ' throws in the forward play (the burn-in crashes there): ' + String(e && e.message ? e.message : e).split('\n')[0] };
         }
@@ -226,12 +253,13 @@ export function forwardReach(adapter, cfg, res) {
     return { reachable: true, worldsBefore: res.world, opsBefore: ops, reason: null };
 }
 
-/** Play the resolved world once, through the tap, as main does. Returns {script, r, escape}. */
-export function playWorld(adapter, res, opts) {
+/** Play the resolved world once, through the tap, as main does (twin: as forwardReach). Returns {script, r, escape}. */
+export function playWorld(adapter, res, opts, twin) {
     const { tap, ad } = replayTap(adapter);
+    const tad = twinTapped(res, twin);
     const script = scriptFor(res, res.world);
     tap.escape = null;
-    const r = runWorld(ad, script, opts);
+    const r = tad === null ? runWorld(ad, script, opts) : runWorldTwin(laneByName(res.lane), ad, tad, script, opts);
     return { script, r, escape: tap.escape };
 }
 
@@ -266,7 +294,7 @@ export async function headerFor(cfg, adapter, app, laneName) {
 
 /**
  * Resolve, load the engine, check reachability and play the world. Shared by runReplay and runShrink.
- * Returns {code} (2: a CONFIG line was written) or {code: null, res, adapter, app, reach, played, rec}.
+ * Returns {code} (2: a CONFIG line was written) or {code: null, res, adapter, twin, app, reach, played, rec}.
  */
 export async function locateAndPlay(cfg, opts) {
     const p = cfgProblem(cfg);
@@ -276,11 +304,11 @@ export async function locateAndPlay(cfg, opts) {
     if (res.unreachable) return { code: configCode('SOAK_REPLAY=' + keyText(cfg) + ' is unreachable: ' + res.reason) };
     const eng = await loadEngine(cfg, res.lane);
     if (eng.error !== null) return { code: configCode(eng.error) };
-    const reach = forwardReach(eng.adapter, cfg, res);
+    const reach = forwardReach(eng.adapter, cfg, res, eng.twin);
     if (!reach.reachable) return { code: configCode('SOAK_REPLAY=' + res.key + ' is unreachable: ' + reach.reason) };
-    const played = playWorld(eng.adapter, res, opts);
+    const played = playWorld(eng.adapter, res, opts, eng.twin);
     const rec = recordOf(eng.adapter, res, played);
-    return { code: null, res, adapter: eng.adapter, app: eng.app, reach, played, rec };
+    return { code: null, res, adapter: eng.adapter, twin: eng.twin, app: eng.app, reach, played, rec };
 }
 
 function keyText(cfg) {

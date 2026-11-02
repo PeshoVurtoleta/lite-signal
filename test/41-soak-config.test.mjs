@@ -49,13 +49,14 @@ const SCENARIOS = [
     'thunk-after-dispose', 'thunk-recycled', 'pending-write', 'partial-drain', 'drain-all', 'hold-retry', 'fifo-delivery', 'lifo-delivery',
     'destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy',
     'node-cap-throw', 'link-cap-throw', 'link-ceiling-grow', 'grow-past-initial', 'reuse-at-edge',
+    'box-trace-equal', 'box-interop',
 ];
 // unit 0s B2 (PLAN-0s-wie ADDENDUM 2 item 6): the two literals above are pinned to the code they stand in for
 import { SCENARIOS as LIT_SCENARIOS_CODE } from '../bench/soak/scenarios.mjs';
 import { ROSTER as LIT_ROSTER_CODE } from '../bench/soak/lanes/index.mjs';
-test('the ROSTER (12 lanes, CAPACITY 12th) and SCENARIOS (77 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
+test('the ROSTER (12 lanes, CAPACITY 12th) and SCENARIOS (79 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
     assert.equal(ROSTER.length, 12);
-    assert.equal(SCENARIOS.length, 77);
+    assert.equal(SCENARIOS.length, 79);
     assert.deepEqual(ROSTER, LIT_ROSTER_CODE.slice());
     assert.deepEqual(SCENARIOS, LIT_SCENARIOS_CODE.slice());
 });
@@ -201,7 +202,7 @@ test('T-cfg SOAK_KERNEL missing / wrong basename / no sibling Watch.js / no crea
 
 test('T-cfg SOAK_ENGINE=alein -> did you mean alien; SOAK_ENGINE=alien is not available in S1', () => {
     assertConfigExit(run({ SOAK_ENGINE: 'alein' }), ["unknown engine 'alein'", '(did you mean alien?)']);
-    assertConfigExit(run({ SOAK_ENGINE: 'alien' }), ["engine 'alien' is not available in this build (available: lite)"]);
+    assertConfigExit(run({ SOAK_ENGINE: 'alien' }), ["engine 'alien' is not available in this build (available: lite, lite-box)"]);
 });
 
 test('T-cfg SOAK_KERNEL with a non-lite SOAK_ENGINE (config, and kernel.mjs on its own)', () => {

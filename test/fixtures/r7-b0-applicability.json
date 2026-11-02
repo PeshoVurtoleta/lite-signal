@@ -1,0 +1,229 @@
+{
+ "caps": {
+  "effects": "sync",
+  "batch": "native",
+  "untrack": true,
+  "disposeSignal": true,
+  "disposeComputed": true,
+  "stopEffect": true,
+  "childEffects": "parent-run",
+  "effectErrors": "aggregate",
+  "equality": "is",
+  "links": "stats",
+  "lifecycle": "register",
+  "hook": true,
+  "scheduler": true,
+  "owner": true,
+  "destroy": true,
+  "recycle": true,
+  "counters32": true,
+  "capacity": true,
+  "box": false,
+  "snapshot": false
+ },
+ "lanes": [
+  {
+   "lane": "GRAPH",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "diamond-write",
+     "dep-set-flip",
+     "deep-pull",
+     "second-invalidation",
+     "equality-cutoff",
+     "adversarial-equality"
+    ]
+   }
+  },
+  {
+   "lane": "BATCH",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "revert-after-mid-read",
+     "revert-no-read",
+     "nested-close",
+     "throw-in-batch",
+     "effect-created-mid-batch",
+     "multi-write-same-signal"
+    ]
+   }
+  },
+  {
+   "lane": "ERROR",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "throw-dep-effect-prewalk",
+     "throw-dep-computed-prewalk",
+     "recovery-after-throw",
+     "aggregate",
+     "throwing-equals"
+    ]
+   }
+  },
+  {
+   "lane": "NEST",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "saved-cursor-hazard",
+     "live-cursor-hazard",
+     "child-first-run-dispose",
+     "nested-computed-dispose",
+     "untrack-dispose",
+     "outer-computed",
+     "early-exit-after-dispose",
+     "lifecycle-callback-dispose",
+     "lifecycle-dispose-recycle"
+    ]
+   }
+  },
+  {
+   "lane": "WIE",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "wie-stale-effect",
+     "wie-stale-computed",
+     "wie-prewalk",
+     "wie-untrack",
+     "wie-write-before-read"
+    ]
+   }
+  },
+  {
+   "lane": "HOOK",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "hook-multi",
+     "hook-non-lifo-off",
+     "hook-mirror-dispose",
+     "hook-recompute"
+    ]
+   }
+  },
+  {
+   "lane": "LIFECYCLE",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "lc-two-regs",
+     "lc-off-sibling",
+     "lc-late-off-recycle",
+     "lc-callback-dispose",
+     "lc-callback-register"
+    ]
+   }
+  },
+  {
+   "lane": "OWNER",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "own-cascade",
+     "own-rerun",
+     "own-computed",
+     "cleanup-fifo",
+     "run-with-owner",
+     "run-with-dead-owner"
+    ]
+   }
+  },
+  {
+   "lane": "RECYCLE",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "stale-write-recycled",
+     "stale-peek-recycled",
+     "stale-read-recycled",
+     "stale-dispose-recycled",
+     "stale-dead-unrecycled",
+     "multi-gen"
+    ]
+   }
+  },
+  {
+   "lane": "SCHEDULER",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "thunk-after-dispose",
+     "thunk-recycled",
+     "pending-write",
+     "partial-drain",
+     "drain-all",
+     "hold-retry",
+     "fifo-delivery",
+     "lifo-delivery"
+    ]
+   }
+  },
+  {
+   "lane": "REGISTRY",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "destroy-top",
+     "destroy-in-flight",
+     "destroy-in-batch",
+     "destroy-in-body",
+     "destroy-in-computed",
+     "reuse-after-destroy"
+    ]
+   }
+  },
+  {
+   "lane": "CAPACITY",
+   "res": {
+    "status": "run",
+    "missingCaps": [],
+    "oraclesNA": [],
+    "scenariosNA": [],
+    "requiredApplicable": [
+     "node-cap-throw",
+     "link-cap-throw",
+     "link-ceiling-grow",
+     "grow-past-initial",
+     "reuse-at-edge"
+    ]
+   }
+  }
+ ]
+}

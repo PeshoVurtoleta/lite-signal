@@ -41,8 +41,18 @@
  * stderr protocol (fs.writeSync): BREACH (deduplicated by (family, lane, sig, known): an UNCLASSIFIED
  * failure with the same sig as a known one gets its own line), REPLAY (first per distinct (lane, family,
  * sig)), INCONCLUSIVE, SKIP, NOTE, CONFIG (exit 2), CRASH. stdout: HEARTBEAT lines, then the END sentinel
- * `soak: END verdict=<V> exit=<N> records=<R>` as the LAST line. A config error (and a SKIP on lite) is
- * verdict null: exit 2 with one `soak: CONFIG --` line, no record, no END line.
+ * `soak: END verdict=<V> exit=<N> records=<R>` as the LAST line. A config error (and a SKIP on a lite-family engine:
+ * lite, lite-box) is verdict null: exit 2 with one `soak: CONFIG --` line, no record, no END line.
+ *
+ * Engines (R7 B2): loadAdapter('name[/mode]') maps an engine spec onto its adapter (ADAPTERS); SOAK_ENGINE picks the
+ * primary. A TWIN lane (desc.twin, lanes/box.mjs) plays every world on the primary AND its contract.mjs TWINS twin
+ * (twin.mjs runWorldTwin, the OT trace oracle). The twin's registries go into the same tracker under <lane>/twin with
+ * their OWN witness list and count (twinTracked); no latency wrapper and no anatomy shape on a twin lane (C-11: the
+ * anatomy lane stays lite-only). A pair run opens one world per side and runWorldTwin re-runs the pair once when the
+ * traces differ, so a world opens 1 + (an OT fail ? 1 : 0) worlds per side: retention is measured only when the
+ * primary AND the twin tracked + witnessed exactly that many. SOAK_MUSTFAIL=box-untracked builds the TWIN with
+ * {broken: 'box-untracked'} (the primary stays clean); on a run whose selected lanes include no twin lane it is exit 2
+ * (mustFailRefusal: "not supported on the selected lanes").
  *
  * Signals: SIGINT / SIGTERM finish the current lane-cycle early (its record is marked interrupted, its
  * boundary still runs), then write the summary with reason 'signal' -> INCONCLUSIVE (exit 3), or FAIL when
@@ -69,6 +79,7 @@ import {
 import { RssSampler } from './rss.mjs';
 import { classify, digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences.mjs';
 import { CHECK_NAMES, SKIP_NAMES, runWorld } from './exec.mjs';
+import { runWorldTwin } from './twin.mjs';
 import { generateWorld, GEN_RULES } from './gen.mjs';
 import { seedFor, worldSeed, selfCheckSeeds } from './seeds.mjs';
 import { ROSTER, ALL_SCENARIOS, COV_OFF_SUPPORTED, laneByName, isLargeWorld, laneSpan } from './lanes/index.mjs';
@@ -78,7 +89,110 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const YIELD_MASK = 63;            // yield one macrotask every 64 worlds
 const HEARTBEAT_MS = 5000;        // in-cycle heartbeat period (a heartbeat also closes every lane-cycle)
 const SEED_SELF_CHECK_SPAN = 1024;
-const ADAPTERS = Object.freeze({ lite: './adapters/lite-s3.mjs' });
+/** Engine name -> its adapter module (SOAK_ENGINE, and the name half of a contract.mjs TWINS spec). */
+export const ADAPTERS = Object.freeze({ lite: './adapters/lite-s3.mjs', 'lite-box': './adapters/lite-box.mjs' });
+
+/* ---- engines and twins ---------------------------------------------------------------------------- */
+
+/**
+ * Load the adapter of an engine spec 'name[/mode]' (kernel.mjs, the SOAK_KERNEL seam, loads here):
+ *   'lite'                   adapters/lite-s3.mjs liteS3Adapter (no mode, no opts)
+ *   'lite-box[/<mode>]'      adapters/lite-box.mjs liteBoxAdapterFor(K, mode, opts); a bare 'lite-box' is the
+ *                            liteBoxAdapter itself (mode 'all', the SOAK_ENGINE=lite-box primary)
+ * opts: undefined, or { broken: 'box-untracked' } (lite-box only; liteBoxAdapterFor validates it and the mode).
+ * Throws TypeError on anything else -- a non-string spec, an empty name or mode, a second '/', a name with no adapter,
+ * a mode or opts on lite, an unknown lite-box mode: fail closed, never a default engine.
+ */
+export async function loadAdapter(spec, opts) {
+    if (typeof spec !== 'string') throw new TypeError('loadAdapter: spec must be a string name[/mode], got ' + typeof spec);
+    const parts = spec.split('/');
+    if (parts.length > 2 || parts[0] === '' || parts[parts.length - 1] === '') throw new TypeError("loadAdapter: malformed engine spec '" + spec + "' (expected name[/mode])");
+    const name = parts[0];
+    if (!own(ADAPTERS, name)) throw new TypeError("loadAdapter: no adapter for engine '" + name + "' (have: " + Object.keys(ADAPTERS).join(', ') + ')');
+    if (name === 'lite') {
+        if (parts.length === 2) throw new TypeError("loadAdapter: engine lite takes no mode (got '" + spec + "')");
+        if (opts !== undefined) throw new TypeError('loadAdapter: engine lite takes no opts (the {broken} control is lite-box only)');
+        return (await import(ADAPTERS.lite)).liteS3Adapter;
+    }
+    // ADAPTERS is frozen with exactly two names: this is lite-box
+    const mod = await import(ADAPTERS[name]);
+    const { K } = await import('./kernel.mjs');
+    return mod.liteBoxAdapterFor(K, parts.length === 2 ? parts[1] : 'all', opts);
+}
+
+/**
+ * The twin adapter opts for a config mustFail (config.mjs parseConfig): { broken: 'box-untracked' } for
+ * SOAK_MUSTFAIL=box-untracked, undefined for none or cov-off (a generator switch, not an adapter option).
+ * TypeError on a mustFail that is not null / undefined / an object with a known mode (fail closed).
+ */
+export function twinOptsFor(mustFail) {
+    if (mustFail === null || mustFail === undefined) return undefined;
+    if (typeof mustFail !== 'object') throw new TypeError('twinOptsFor: mustFail must be null or a parseConfig() mustFail object');
+    if (mustFail.mode === 'box-untracked') return { broken: 'box-untracked' };
+    if (mustFail.mode === 'cov-off') return undefined;
+    throw new TypeError('twinOptsFor: unknown mustFail mode ' + JSON.stringify(String(mustFail.mode)));
+}
+
+/**
+ * Load the twin of engine (contract.mjs TWINS[engine]), built with twinOptsFor(mustFail): the box-untracked control
+ * breaks the TWIN, never the primary. TypeError when engine has no own TWINS entry.
+ */
+export async function loadTwin(engine, mustFail) {
+    const { TWINS } = await import('./adapters/contract.mjs');
+    if (typeof engine !== 'string' || !own(TWINS, engine)) throw new TypeError('loadTwin: engine ' + String(engine) + ' has no twin (contract.mjs TWINS)');
+    return loadAdapter(TWINS[engine], twinOptsFor(mustFail));
+}
+
+/**
+ * SOAK_MUSTFAIL=box-untracked breaks the twin, so it needs a twin lane: the CONFIG message (config.mjs cov-off
+ * wording) when no descriptor in descs has twin === true, else null. Any other mustFail -> null.
+ */
+export function mustFailRefusal(mustFail, descs) {
+    if (mustFail === null || mustFail === undefined || mustFail.mode !== 'box-untracked') return null;
+    for (const d of descs) if (d !== null && typeof d === 'object' && d.twin === true) return null;
+    return 'SOAK_MUSTFAIL: box-untracked is not supported on the selected lanes ' + descs.map((d) => (d !== null && typeof d === 'object' ? d.name : String(d))).join(',') +
+        ' (none of them is a twin lane)';
+}
+
+/**
+ * One world of lane desc: exec.mjs runWorld on ad, or (desc.twin) twin.mjs runWorldTwin on ad + tad. TypeError on a
+ * twin lane with no twin adapter (tad null): a twin lane never runs single-sided.
+ */
+export function runLaneWorld(desc, ad, tad, script) {
+    if (desc === null || typeof desc !== 'object') throw new TypeError('runLaneWorld: desc must be a lane descriptor');
+    if (desc.twin !== true) return runWorld(ad, script);
+    if (tad === null || tad === undefined) throw new TypeError('runLaneWorld: twin lane ' + desc.name + ' has no twin adapter');
+    return runWorldTwin(desc, ad, tad, script);
+}
+
+/**
+ * The twin's tap for one lane-cycle: { ad, tap }. ad = tapAdapter(twinAd, tap); every twin world it opens is tracked
+ * in tracker under <lane>/twin and witnessed in tap.witness (its OWN list; main concatenates it into closeBoundary),
+ * tap.tracked counts them. A twin world with no registry throws TypeError (as the primary tap).
+ */
+export function openTwinTap(tracker, lane, twinAd) {
+    const tap = {
+        escape: null,
+        witness: [],
+        tracked: 0,
+        onOpen(tw) {
+            const reg = tw.registry;
+            if (reg === null || (typeof reg !== 'object' && typeof reg !== 'function')) throw new TypeError('main: the twin world has no registry to track');
+            tracker.track(reg, null, lane + '/twin');
+            tap.witness.push(new WeakRef(reg));
+            tap.tracked++;
+        },
+    };
+    return { ad: tapAdapter(twinAd, tap), tap };
+}
+
+/** Worlds a lane world opened per side: 1, plus the twin re-run (twin.mjs) when the result carries an OT fail. */
+function opensOf(desc, r) {
+    if (desc.twin !== true || r.failure === null) return 1;
+    const fs = r.failure.fails;
+    for (let i = 0; i < fs.length; i++) if (fs[i].oracle === 'OT') return 2;
+    return 1;
+}
 
 /* ---- the adapter tap ------------------------------------------------------------------------------ */
 
@@ -260,6 +374,8 @@ async function main() {
     // S2 keys: wrap.mjs owns them. Set on the burn-in, they would be silently ignored -> exit 2.
     if (cfg.record.SOAK_WRAP.source !== 'default') configExit('SOAK_WRAP is read by wrap.mjs (S2), not by the burn-in; unset it');
     if (cfg.repr) configExit('SOAK_REPR is an S2 (wrap.mjs) lane, not built yet; unset it');
+    const mfRefusal = mustFailRefusal(cfg.mustFail, cfg.lanes.map(laneByName));
+    if (mfRefusal !== null) configExit(mfRefusal);
 
     // startup gates (kind 'startup', gates.mjs) and self-checks: red -> exit 2 before any record
     for (const g of GATES) {
@@ -276,8 +392,7 @@ async function main() {
 
     // the engine (the kernel loads HERE, through the SOAK_KERNEL seam)
     if (!own(ADAPTERS, cfg.engine)) configExit('SOAK_ENGINE: no adapter for ' + cfg.engine);
-    const adMod = await import(ADAPTERS[cfg.engine]);
-    const adapter = adMod.liteS3Adapter;
+    const adapter = await loadAdapter(cfg.engine);
     const { validateAdapter, applicability } = await import('./adapters/contract.mjs');
     const probs = validateAdapter(adapter);
     if (probs.length > 0) configExit('adapter ' + cfg.engine + ' is invalid: ' + probs.join('; '));
@@ -305,7 +420,7 @@ async function main() {
     const lanesHdr = [], scenHdr = {}, naHdr = {}, skipped = [], run = [];
     for (const name of cfg.lanes) {
         const desc = laneByName(name);
-        const app = applicability(desc, adapter.caps);
+        const app = applicability(desc, adapter.caps, cfg.engine);
         lanesHdr.push({ name, status: app.status, missingCaps: app.missingCaps, engine: cfg.engine });
         scenHdr[name] = { required: app.requiredApplicable, optional: desc.optional.slice(), na: app.scenariosNA };
         naHdr[name] = app.oraclesNA;
@@ -316,6 +431,14 @@ async function main() {
         }
         const oracles = desc.hardOracles.filter((o) => app.oraclesNA.indexOf(o) === -1);
         run.push({ name, desc, gates: new LaneGates({ lane: name, oracles, required: app.requiredApplicable }) });
+    }
+    // the twin (R7 C-3): loaded only when a lane that runs is a twin lane (applicability skipped every twin lane of an
+    // engine with no TWINS entry); SOAK_MUSTFAIL=box-untracked breaks it (twinOptsFor), never the primary
+    let twinAd = null;
+    if (run.some((L) => L.desc.twin === true)) {
+        twinAd = await loadTwin(cfg.engine, cfg.mustFail);
+        const tprobs = validateAdapter(twinAd);
+        if (tprobs.length > 0) configExit('twin adapter of ' + cfg.engine + ' is invalid: ' + tprobs.join('; '));
     }
     if (skipped.length > 0) {
         const pre = runVerdict({ configError: null, engine: cfg.engine, skipped, sawFail: false, fatal: false, reason: 'end', forever: cfg.forever, smoke: cfg.smoke, lanesRun: run.length, inconclusive: [] });
@@ -459,6 +582,9 @@ async function main() {
                     },
                 };
                 const sad = anat === null ? null : tapAdapter(anat.adapter, stap);
+                // the twin registries (twin lanes only): same tracker, their OWN witness list and count (openTwinTap)
+                const tw = desc.twin === true ? openTwinTap(tracker, L.name, twinAd) : null;
+                let opens = 0;   // worlds opened per side (opensOf): the tracked / witnessed / twinTracked target
                 ctx.lane = L.name; ctx.cycle = cycle;
                 const tc = performance.now();
                 let w = 0;
@@ -481,7 +607,8 @@ async function main() {
                     script = generateWorld(desc, ws, { large, covOff });
                     tap.escape = null;
                     lat.armed = (w & 15) === 8;
-                    r = runWorld(ad, script);
+                    r = runLaneWorld(desc, ad, tw === null ? null : tw.ad, script);
+                    opens += opensOf(desc, r);
                     ct.add('worlds', 1);
                     if (large) ct.add('largeWorlds', 1);
                     ct.add('ops', r.ops);
@@ -498,7 +625,7 @@ async function main() {
                         breaches.noteWorld(rec, L.name, adapter.name);
                     }
                     rssSampler.push(process.memoryUsage.rss() / MB);
-                    if (sad !== null && w % SHAPE_EVERY === 0) anat.shape(sad, generateWorld(desc, ws, { large, covOff }), r);
+                    if (sad !== null && tw === null && w % SHAPE_EVERY === 0) anat.shape(sad, generateWorld(desc, ws, { large, covOff }), r);
                     w++;
                 }
                 lat.armed = false;
@@ -507,11 +634,14 @@ async function main() {
                 ctx.world = null; ctx.worldSeed = null;
                 const witnessed = witness.length;
                 const closed = await closeBoundary({
-                    tracker, witness: witness.concat(sWitness), profiler,
+                    tracker, witness: tw === null ? witness.concat(sWitness) : witness.concat(sWitness, tw.tap.witness), profiler,
                     dropRefs: () => { script = null; r = null; },
                 });
                 witness = null;
                 sWitness = null;
+                const twinTracked = tw === null ? null : tw.tap.tracked;
+                const twinWitnessed = tw === null ? null : tw.tap.witness.length;
+                if (tw !== null) tw.tap.witness = null;
                 const ops = ct.get('ops');
                 // A FRESH boundary object per lane-cycle, bound to it (lane, cycle). Retention is measured only
                 // when every world of the cycle was tracked AND witnessed; otherwise trackerSize / weakAlive
@@ -520,13 +650,16 @@ async function main() {
                 // tautology); a leaked shadow registry is caught by retention (test/40 row E, 'main: SHADOWLEAK').
                 const worldsRun = ct.get('worlds');
                 const cb = closed.boundary;
-                const measured = tracked === worldsRun && witnessed === worldsRun && Number.isSafeInteger(cb.trackerSize) && Number.isSafeInteger(cb.weakAlive);
+                // opens === worldsRun on every non-twin lane; a twin lane also needs twinTracked === twinWitnessed === opens
+                const twinOk = tw === null || (twinTracked === opens && twinWitnessed === opens);
+                const measured = tracked === opens && witnessed === opens && twinOk && Number.isSafeInteger(cb.trackerSize) && Number.isSafeInteger(cb.weakAlive);
                 const boundary = {
                     lane: L.name, cycle, worlds: worldsRun, tracked, witnessed,
                     trackerSize: measured ? cb.trackerSize : null, weakAlive: measured ? cb.weakAlive : null,
                     forcedGcTries: cb.forcedGcTries, drainMs: cb.drainMs, heapSampledAfterGc: cb.heapSampledAfterGc,
                 };
-                if (!measured) protocol('soak: NOTE -- boundary lane=' + L.name + ' cycle=' + cycle + ' UNMEASURED: worlds=' + worldsRun + ' tracked=' + tracked + ' witnessed=' + witnessed);
+                if (!measured) protocol('soak: NOTE -- boundary lane=' + L.name + ' cycle=' + cycle + ' UNMEASURED: worlds=' + worldsRun + ' tracked=' + tracked + ' witnessed=' + witnessed +
+                    (tw === null ? '' : ' opens=' + opens + ' twinTracked=' + twinTracked + ' twinWitnessed=' + twinWitnessed));
                 const checks = {}, skipTainted = {};
                 for (const o of CHECK_NAMES) checks[o] = ct.get('c.' + o);
                 for (const o of SKIP_NAMES) skipTainted[o] = ct.get('s.' + o);

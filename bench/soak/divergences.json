@@ -23,7 +23,7 @@
     {
       "id": "DIV-F1-band", "kind": "fix", "finding": "F1", "since": "1.5.2", "fixedIn": null, "fixBy": "A4-V2",
       "decision": "fix: the 2^31 dormancy band closes; wraparound-torture's band pins flip deliberately in the same change",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "S2 W1 (wrap.mjs); not reachable by the S1 randomized lanes",
       "conformanceCases": ["bench/torture/wraparound-torture.mjs"], "expectedThrow": null,
       "description": "An effect or lazy computed idle across >= 2^31 - 1 writes elsewhere ignores the next real change (FINDINGS F1)."
@@ -31,7 +31,7 @@
     {
       "id": "DIV-F5", "kind": "fix", "finding": "F5", "since": "1.5.2", "fixedIn": "A3-FIX-R", "fixBy": "A3",
       "decision": "fixed (b109, PLAN-A3-soak TASK 1): fixedIn A3-FIX-R (74ea021, Signal.js 0f75866f, FIX-R: a batch revert after a mid-batch read restores the computed and its effects, a batch revert no longer outlives a body that ran; LEDGER #47). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. preb33 or rev152); on the tree an F5 shape is a regression (known=none)",
-      "engines": ["lite"], "lanes": ["BATCH", "ERROR"], "oracles": ["O1c", "O1e", "O2"], "sigs": ["computed-mismatch", "computed-err-mismatch", "effect-stale", "glitch"],
+      "engines": ["lite", "lite-box"], "lanes": ["BATCH", "ERROR"], "oracles": ["O1c", "O1e", "O2"], "sigs": ["computed-mismatch", "computed-err-mismatch", "effect-stale", "glitch"],
       "ops": [], "scen": [], "worldScen": ["revert-after-mid-read"], "priorScen": [],
       "shapes": [
         { "pair": "O1c:computed-mismatch", "detail": "^node#\\d+ \\(\\w+\\) engine=.* model=.*$" },
@@ -45,7 +45,7 @@
     {
       "id": "DIV-F6", "kind": "fix", "finding": "F6", "since": "1.5.2", "fixedIn": "A2-FIX-T", "fixBy": "A2",
       "decision": "fixed (b103 B5, PLAN-0s-fixt TASK 12): fixedIn A2-FIX-T (0878c6b, FIX-T: a refresh / dependency pre-walk never throws a dependency's cached error, D-H; leaving an error is always a change, equals not called, D-K). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. preb33 or rev152); on the tree an F6 shape is a regression (known=none)",
-      "engines": ["lite"], "lanes": ["ERROR"], "oracles": ["O1c", "O2", "O4", "O6"], "sigs": ["computed-err-mismatch", "effect-dead", "escape-computed", "glitch"],
+      "engines": ["lite", "lite-box"], "lanes": ["ERROR"], "oracles": ["O1c", "O2", "O4", "O6"], "sigs": ["computed-err-mismatch", "effect-dead", "escape-computed", "glitch"],
       "ops": [], "scen": [], "worldScen": [], "priorScen": [],
       "shapes": [
         { "pair": "O6:escape-computed", "detail": "^unpredicted escape computed:\\d+$" },
@@ -60,7 +60,7 @@
     {
       "id": "DIV-F7", "kind": "fix", "finding": "F7", "since": "1.5.2", "fixedIn": "0v-#40", "fixBy": "0v",
       "decision": "fix (FIX-O) and contract D3 (DIV-D3-independent-registrations). fixed: fixedIn 0v-#40 (73d6a90, burst 62 unit 0v: disposeNode drops observeObservers hooks via dropLifecycleHooks; LEDGER #40)",
-      "engines": ["lite"], "lanes": ["NEST", "LIFECYCLE"], "oracles": ["O7a", "O7"], "sigs": ["dead-registration-fire", "stale-off"],
+      "engines": ["lite", "lite-box"], "lanes": ["NEST", "LIFECYCLE"], "oracles": ["O7a", "O7"], "sigs": ["dead-registration-fire", "stale-off"],
       "ops": [], "scen": [], "worldScen": [], "priorScen": [],
       "shapes": [
         { "pair": "O7a:dead-registration-fire", "detail": "^on(?:Connect|Disconnect) fired for registration r\\d+ on #(\\d+): target #\\1 disposed$" },
@@ -72,7 +72,7 @@
     {
       "id": "DIV-F8", "kind": "fix", "finding": "F8", "since": "1.5.2", "fixedIn": "A1.4", "fixBy": "A1",
       "decision": "fix: subsumed by the F15 cursor repair (VERIFICATION section 4, FIX-Q). fixed: fixedIn A1.4 (fc1f826, A1 cursor safety: severTail pop-front, Signal.js:1131 'A1.4, F8'); LIFECYCLE reaches it on rev152 via L7a and L7c (b111 B2d / B2e)",
-      "engines": ["lite"], "lanes": ["LIFECYCLE"], "oracles": ["O6", "O5", "O7"], "sigs": ["escape-TypeError", "link-count", "node-count", "missed-disconnect"],
+      "engines": ["lite", "lite-box"], "lanes": ["LIFECYCLE"], "oracles": ["O6", "O5", "O7"], "sigs": ["escape-TypeError", "link-count", "node-count", "missed-disconnect"],
       "ops": [], "scen": [], "worldScen": [], "priorScen": [],
       "shapes": [
         { "pair": "O6:escape-TypeError", "detail": "^engine error escaped: TypeError: Cannot set properties of null \\(setting 'headSub'\\)$" },
@@ -87,7 +87,7 @@
     {
       "id": "DIV-F9", "kind": "fix", "finding": "F9", "since": "1.5.2", "fixedIn": "A5b", "fixBy": "A5",
       "decision": "fix (FIX-H): live-entry stack for onGraphMutation listeners. fixed: fixedIn A5b (no commit yet: Signal.js 2f7974f3, burst 116 A5b: onGraphMutation live-entry stack, an off in any order removes only its own listener)",
-      "engines": ["lite"], "lanes": ["HOOK"], "oracles": ["O8"], "sigs": ["ghost-listener"], "ops": [], "scen": [], "worldScen": ["hook-non-lifo-off"], "priorScen": [],
+      "engines": ["lite", "lite-box"], "lanes": ["HOOK"], "oracles": ["O8"], "sigs": ["ghost-listener"], "ops": [], "scen": [], "worldScen": ["hook-non-lifo-off"], "priorScen": [],
       "shapes": [
         { "pair": "O8:ghost-listener", "detail": "^L\\d+ received op[1-5] after off at step \\d+ \\(expected L\\d+\\)$" }
       ],
@@ -98,7 +98,7 @@
     {
       "id": "DIV-F10", "kind": "fix", "finding": "F10", "since": "1.5.2", "fixedIn": null, "fixBy": "A6",
       "decision": "contract D2 (DIV-D2-destroy-throws) replaces FIX-D's clamp; A6 fills DIV-D2-destroy-throws.expectedThrow (lanes/registry.mjs predicts it through oracles.mjs expectFromThrow; null = the O6 (v) never entry)",
-      "engines": ["lite"], "lanes": ["REGISTRY"], "oracles": ["O6"], "sigs": ["expected-escape-missing", "escape-TypeError"], "ops": ["rdestroy"], "scen": ["destroy-in-flight"], "worldScen": [], "priorScen": [],
+      "engines": ["lite", "lite-box"], "lanes": ["REGISTRY"], "oracles": ["O6"], "sigs": ["expected-escape-missing", "escape-TypeError"], "ops": ["rdestroy"], "scen": ["destroy-in-flight"], "worldScen": [], "priorScen": [],
       "shapes": [
         { "pair": "O6:expected-escape-missing", "detail": "^predicted expectedThrow did not happen$" },
         { "pair": "O6:escape-TypeError", "detail": "^engine error escaped: TypeError: Cannot read properties of undefined \\(reading 'flags'\\)$", "with": ["O6:expected-escape-missing"], "scen": ["destroy-in-body"] },
@@ -111,7 +111,7 @@
     {
       "id": "DIV-F11", "kind": "fix", "finding": "F11", "since": "1.5.2", "fixedIn": null, "fixBy": "A10/A7",
       "decision": "fix (FIX-G): Smi gen plus slot retirement",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "S2 W3 (wrap.mjs, test/wrap/w3-gen): the gen-wrap ABA; the S3 O9 stale-handle ops landed (R4a RECYCLE, b130)",
       "conformanceCases": [], "expectedThrow": null,
       "description": "gen wraps after 2^32 recycles of one slot; a stale handle's set() writes into an unrelated live signal."
@@ -119,7 +119,7 @@
     {
       "id": "DIV-F12", "kind": "fix", "finding": "F12", "since": "1.5.2", "fixedIn": null, "fixBy": "A3",
       "decision": "fix: sweep revertEpoch when batchEpoch wraps",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "S2 W2 (wrap.mjs, test/wrap/w2-epoch)",
       "conformanceCases": [], "expectedThrow": null,
       "description": "batchEpoch equality alias: after 2^32 top-level batches a stale pre-batch capture is reused and a real change is swallowed."
@@ -127,7 +127,7 @@
     {
       "id": "DIV-F13", "kind": "fix", "finding": "F13", "since": "1.5.2", "fixedIn": null, "fixBy": "A1",
       "decision": "fix: subsumed by the F15 cursor repair",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "the severTail variant of F8; S1 NEST classifies it DIV-F15 (same TypeError class)",
       "conformanceCases": [], "expectedThrow": null,
       "description": "The severTail variant of F8."
@@ -135,7 +135,7 @@
     {
       "id": "DIV-F14", "kind": "fix", "finding": "F14", "since": "1.5.2", "fixedIn": null, "fixBy": "A10/A7",
       "decision": "contract D4 (DIV-D4-id-window)",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "S2 W4 (test/wrap/w4-ids) and S3 O8 id uniqueness",
       "conformanceCases": [], "expectedThrow": null,
       "description": "nodeSeq is |0: ids go negative after 2^31 allocations and repeat after 2^32."
@@ -143,7 +143,7 @@
     {
       "id": "DIV-F15", "kind": "fix", "finding": "F15", "since": "1.5.2", "fixedIn": null, "fixBy": "A1",
       "decision": "fix: repair every suspended cursor, not only the live one (F8, F13 and F15 are one class)",
-      "engines": ["lite"], "lanes": ["NEST"], "oracles": ["O5", "O6", "O1e"], "sigs": ["escape-TypeError", "link-count", "effect-stale"],
+      "engines": ["lite", "lite-box"], "lanes": ["NEST", "BOX"], "oracles": ["O5", "O6", "O1e"], "sigs": ["escape-TypeError", "link-count", "effect-stale"],
       "ops": [], "scen": ["saved-cursor-hazard"], "worldScen": [], "priorScen": [],
       "shapes": [
         { "pair": "O6:escape-TypeError", "detail": "^(?:body#\\d+ read #\\d+|top-level read of #\\d+|engine error escaped): TypeError: Cannot set properties of null \\(setting 'headSub'\\)$" },
@@ -156,7 +156,7 @@
     {
       "id": "DIV-F16", "kind": "fix", "finding": "F16", "since": "1.5.2+audit-patch", "fixedIn": null, "fixBy": "A3",
       "decision": "fix: Smi evalCount compared by equality (VERIFICATION section 4, FIX-R)",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "S2 W5, L-REV-AUDIT-W5 on headpatched (gate=wrap check=W5); the published 1.5.2 does not carry it",
       "conformanceCases": [], "expectedThrow": null,
       "description": "The audit patch's float64 evalCount closure counter allocates on every body run after 2^31 runs."
@@ -164,7 +164,7 @@
     {
       "id": "DIV-F21", "kind": "engine", "finding": "F21", "since": "1.5.2", "fixedIn": "A2-F21", "fixBy": "A2",
       "decision": "fixed (amendment 5; maintainer ruling D2, 2026-10-14): fixedIn A2-F21 (c2f123c, qskip2: flushEffects runs an entry only while its node is QUEUED). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, pre- or post-fix); P-INTERIM-ERROR-clean is now an active _mustfail control",
-      "engines": ["lite"], "lanes": ["ERROR"], "oracles": ["O6"], "sigs": ["escape-CycleError"],
+      "engines": ["lite", "lite-box"], "lanes": ["ERROR"], "oracles": ["O6"], "sigs": ["escape-CycleError"],
       "ops": ["seq"], "scen": ["cycle-error-surfaces"], "worldScen": ["cycle-error-surfaces"], "priorScen": ["cycle-error-surfaces"],
       "shapes": [
         { "pair": "O6:escape-CycleError", "detail": "^engine error escaped: Error: CycleError: Infinite effect loop detected\\.$" }
@@ -175,7 +175,7 @@
     {
       "id": "DIV-F22", "kind": "engine", "finding": "F22", "since": "1.5.2", "fixedIn": null, "fixBy": "A2",
       "decision": "temporary (amendment 8): flips to fixedIn A2 (batch error and flush errors arrive as one AggregateError)",
-      "engines": ["lite"], "lanes": ["ERROR"], "oracles": ["O6"], "sigs": ["expected-escape-missing"],
+      "engines": ["lite", "lite-box"], "lanes": ["ERROR", "BOX"], "oracles": ["O6"], "sigs": ["expected-escape-missing"],
       "ops": ["batch"], "scen": ["throw-in-batch"], "worldScen": ["throw-in-batch"], "priorScen": [],
       "shapes": [
         { "pair": "O6:expected-escape-missing", "detail": "^predicted escape batch:\\d+ x1 did not happen$" }
@@ -186,7 +186,7 @@
     {
       "id": "DIV-D2-destroy-throws", "kind": "contract", "finding": "F10", "since": "1.6.0", "fixedIn": null, "fixBy": "A6",
       "decision": "D2: destroy() inside batch, flush or any body throws (fail closed); expectedThrow is filled in by the A6 coder",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "A6 fills expectedThrow (the S3 REGISTRY lane reads it once: lanes/registry.mjs REG_EXPECT = expectFromThrow(expectedThrow); null = the O6 (v) never entry, explained by DIV-F10)",
       "conformanceCases": [], "expectedThrow": null,
       "description": "Flips llms.txt 'Safe to call mid-flight' and test/12-coverage's mid-flush destroy pin (PLAN-1.6.0 D2)."
@@ -194,7 +194,7 @@
     {
       "id": "DIV-D3-independent-registrations", "kind": "contract", "finding": "F7", "since": "1.6.0", "fixedIn": "A5a", "fixBy": "A5",
       "decision": "D3: every observeObservers registration is independent; replaces the merge-into-one-entry behaviour. fixed: fixedIn A5a (no commit yet: Signal.js aa51b2f5, bursts 114-115 A5a: observeObservers keeps one independent registration per call; off() removes only its own)",
-      "engines": ["lite"], "lanes": ["LIFECYCLE"], "oracles": ["O7"], "sigs": ["missed-connect", "missed-disconnect", "stale-off"],
+      "engines": ["lite", "lite-box"], "lanes": ["LIFECYCLE"], "oracles": ["O7"], "sigs": ["missed-connect", "missed-disconnect", "stale-off"],
       "ops": [], "scen": [], "worldScen": [], "priorScen": [],
       "shapes": [
         { "pair": "O7:missed-connect", "detail": "^r\\d+ on #\\d+: disconnected at rest, sinks [1-9]\\d* \\(co-registered r\\d+\\)$" },
@@ -208,7 +208,7 @@
     {
       "id": "DIV-D4-id-window", "kind": "contract", "finding": "F14", "since": "1.6.0", "fixedIn": null, "fixBy": "A10/A7",
       "decision": "D4: ids in [1, 2^31-1]; uniqueness window of 2^31-1 allocations",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "S3 O8 (DIV-D4 collisions are its only allowance) and S2 W4",
       "conformanceCases": [], "expectedThrow": null,
       "description": "Node ids are unique only within the documented window."
@@ -216,7 +216,7 @@
     {
       "id": "DIV-I3-op2", "kind": "contract", "finding": "I3", "since": "1.5.2", "fixedIn": null, "fixBy": null,
       "decision": "by design: disposing a source emits op 2 but no per-edge op 4 for its subscriber edges",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "S3 HOOK lane: generator rule I3 (the op 1-5 mirror applies the op-2 rule)",
       "conformanceCases": [], "expectedThrow": null,
       "description": "Doc entry (FINDINGS I3)."
@@ -224,49 +224,49 @@
     {
       "id": "DIV-I1-effect-self-write", "kind": "contract", "finding": "I1", "since": "1.5.2", "fixedIn": null, "fixBy": null,
       "decision": "by design: an effect that writes its own already-read dependency is not re-run (self-protection)",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": null, "conformanceCases": ["test/17-reactivity.test.mjs"], "expectedThrow": null,
       "description": "Generator rule I1 keeps cascades acyclic, so the soak never asks for a self-write re-run (FINDINGS I1)."
     },
     {
       "id": "DIV-I2-computed-write", "kind": "contract", "finding": "I2", "since": "1.5.2", "fixedIn": null, "fixBy": null,
       "decision": "by design: a computed that writes its own dependency caches an inconsistent value",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": null, "conformanceCases": [], "expectedThrow": null,
       "description": "Generator rule I2: computed bodies never write, except lane WIE (unit 0s: computed writers, gen.mjs Gen.writer; their lost update is DIV-B33) (FINDINGS I2)."
     },
     {
       "id": "DIV-G4-duplicate-read-links", "kind": "contract", "finding": "G4", "since": "1.5.2", "fixedIn": null, "fixBy": null,
       "decision": "by design: a body that reads the same source twice can hold more than one link (Signal.js EDGE NOTE)",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": null, "conformanceCases": [], "expectedThrow": null,
       "description": "Generator rule G4 (no duplicate reads per body) keeps O5 exact with slack 0."
     },
     {
       "id": "DIV-G5-deep-chain", "kind": "contract", "finding": "G5", "since": "1.5.2", "fixedIn": null, "fixBy": null,
       "decision": "by design: a very deep computed chain can hit the JS stack (RangeError); deep-chain-torture owns it",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": null, "conformanceCases": ["bench/torture/deep-chain-torture.mjs"], "expectedThrow": null,
       "description": "Generator rule G5: chain depth <= 200."
     },
     {
       "id": "DIV-G7-cycle-error", "kind": "contract", "finding": "G7", "since": "1.5.2", "fixedIn": null, "fixBy": null,
       "decision": "contract: a flush that exceeds maxFlushPasses throws 'CycleError: flush passes exceeded'; O6 (iii) predicts it",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": null, "conformanceCases": [], "expectedThrow": null,
       "description": "Generator rule G7: the cycle-bomb appears only in ERROR (maxFlushPasses 8) and its effects are stopped in the same op. Where the CycleError surfaces depends on the kernel (exec.mjs creationAbort, from the lite adapter knownAs()): on a lite kernel that is no controls.json control (the tree, a scratch copy) it surfaces at the creation of e2, the effect that closes the write cycle; on a control (rev152, headpatched, preb33) it surfaces at the cyc:1 set. A world without the same-op stops (e.g. a shrink that dropped them) is outside G7: the aborted flush can leave a bomb effect queued, and its post-abort O1e is not a finding."
     },
     {
       "id": "DIV-taint-disposed-source", "kind": "contract", "finding": "4.1-taint", "since": "1.5.2", "fixedIn": null, "fixBy": null,
       "decision": "model rule: a node whose last run read a since-disposed source is skipped by O1c/O1e/O2 (O4 still checks its live inputs) until its body re-runs; the skip ratio is gated per oracle (S1cd amendment 6)",
-      "engines": ["lite"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
+      "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": null, "conformanceCases": ["bench/soak/calibration/probes/p5-disposed-read.mjs", "bench/soak/calibration/probes/p8-dispose-taint.mjs"], "expectedThrow": null,
       "description": "SPEC-B 4.1 taint: the oracle allowance for reads through a disposed source."
     },
     {
       "id": "DIV-B33", "kind": "fix", "finding": "B33", "since": "1.5.2", "fixedIn": "F-b33-1", "fixBy": "F-b33-1",
       "decision": "fixed (unit 0s, maintainer ruling D2, 2026-10-18): fixedIn F-b33-1 (markDownstreamInEval: a write from inside a running body flags a reader that already read the target and re-runs it). Explains only when classify includeFixed is true (a named controls.json kernel, e.g. preb33 or rev152); on the tree a WIE lost update is a regression (known=none)",
-      "engines": ["lite"], "lanes": ["WIE"], "oracles": ["O1c", "O1e", "O2", "O4"], "sigs": ["computed-mismatch", "effect-stale", "glitch", "effect-dead"],
+      "engines": ["lite", "lite-box"], "lanes": ["WIE"], "oracles": ["O1c", "O1e", "O2", "O4"], "sigs": ["computed-mismatch", "effect-stale", "glitch", "effect-dead"],
       "ops": [], "scen": [], "worldScen": [], "priorScen": [],
       "shapes": [
         { "pair": "O1e:effect-stale", "detail": "^effect#\\d+ saw \\[.*\\] model \\[.*\\]$", "worldScen": ["wie-stale-effect"], "notWorldScen": ["effect-created-mid-batch", "recovery-after-throw"] },
@@ -284,7 +284,7 @@
     {
       "id": "DIV-48", "kind": "fix", "finding": "#48", "since": "1.5.2", "fixedIn": "b120-#48", "fixBy": "b120",
       "decision": "fix (LEDGER #48, maintainer D-b124-1 / R3 Q1 = A): every onCleanup function runs with this === undefined. fixed: fixedIn b120-#48 (699b9ef, Signal.js 2f7974f3 -> ec6d7156, bursts 120-121 rung #48: runOwnCleanup calls through a local, const fn = cleanup[i]; fn();). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. headpatched or rev152); on the tree a callback-this shape is a regression (known=none)",
-      "engines": ["lite"], "lanes": ["OWNER"], "oracles": ["OW"], "sigs": ["callback-this"], "ops": [], "scen": [], "worldScen": ["cleanup-fifo"], "priorScen": [],
+      "engines": ["lite", "lite-box"], "lanes": ["OWNER"], "oracles": ["OW"], "sigs": ["callback-this"], "ops": [], "scen": [], "worldScen": ["cleanup-fifo"], "priorScen": [],
       "shapes": [
         { "pair": "OW:callback-this", "detail": "^cleanup #\\d+ k=\\d+ this=array\\((?:[2-9]|[1-9]\\d+)\\)$" }
       ],
@@ -295,7 +295,7 @@
     {
       "id": "DIV-51", "kind": "fix", "finding": "#51", "since": "1.5.2", "fixedIn": "b136-#51", "fixBy": "b136",
       "decision": "fix (LEDGER #51 = F-b129-1, maintainer D-b135-1): a STALE signal handle's update(fn) returns undefined WITHOUT calling fn. fixed: fixedIn b136-#51 (Signal.js ec6d7156 -> ea0b64d1, burst 136: sharedUpdate checks this[NODE_GEN] !== node.gen and returns undefined before fn). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. headpatched or rev152); on the tree an rsupd fn call is a regression (known=none)",
-      "engines": ["lite"], "lanes": ["RECYCLE"], "oracles": ["O9"], "sigs": ["stale-write"], "ops": [], "scen": [], "worldScen": [], "priorScen": [],
+      "engines": ["lite", "lite-box"], "lanes": ["RECYCLE"], "oracles": ["O9"], "sigs": ["stale-write"], "ops": [], "scen": [], "worldScen": [], "priorScen": [],
       "shapes": [
         { "pair": "O9:stale-write", "detail": "^rsupd ring \\d+ \\(stale s handle, slot \\d+\\): fn called [1-9]\\d* time\\(s\\), returned undefined \\(want 0 calls, undefined\\)$" }
       ],

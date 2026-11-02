@@ -176,7 +176,7 @@ test('DIV-F21 is fixed in A2-F21 (ruling D2); DIV-F22 stays a temporary engine e
     for (const [id, fixedIn] of [['DIV-F21', 'A2-F21'], ['DIV-F22', null]]) {
         const e = by.get(id);
         assert.equal(e.kind, 'engine');
-        assert.deepEqual(e.lanes, ['ERROR']);
+        assert.deepEqual(e.lanes, id === 'DIV-F22' ? ['ERROR', 'BOX'] : ['ERROR']);
         assert.equal(e.fixedIn, fixedIn, id);
         assert.equal(e.fixBy, 'A2');
     }
@@ -356,7 +356,7 @@ test('a fixed entry explains only with a named control kernel (includeFixed)', (
     assert.equal(known(rec('F21'), { registry: r, includeFixed: true }), 'DIV-F21');
     // an unfixed copy (fixedIn null, the pre-A2-F21 registry) explains without includeFixed
     const u = fresh();
-    for (const e of u.entries) if (e.id === 'DIV-F21') e.fixedIn = null;
+    for (const e of u.entries) if (e.id === 'DIV-F21') { e.fixedIn = null; e.lanes.push('BOX'); }
     assert.equal(known(rec('F21'), { registry: u }), 'DIV-F21');
     // the REGISTRY side of the rule, on the REAL registry file (fixedIn A2-F21): these rows restate the rule
     // includeFixed = (controls.name !== null) themselves; a tree / scratch kernel (name null) -> null (a fixed finding
@@ -452,7 +452,7 @@ test('the registry is append-friendly: a valid appended entry validates and clas
     const r = fresh();
     r.entries.push({
         id: 'DIV-X1', kind: 'engine', finding: 'X1', since: '1.6.0', fixedIn: null, fixBy: 'A9', decision: 'd', engines: ['lite'],
-        lanes: ['NEST'], oracles: ['O5'], sigs: ['node-count'], ops: [], scen: [], worldScen: [], priorScen: [],
+        lanes: ['NEST', 'BOX'], oracles: ['O5'], sigs: ['node-count'], ops: [], scen: [], worldScen: [], priorScen: [],
         shapes: [{ pair: 'O5:node-count', detail: '^activeNodes engine=\\d+ model=\\d+$' }], attribution: null,
         pending: null, conformanceCases: [], expectedThrow: null, description: 'appended by a rung',
     });
@@ -771,7 +771,7 @@ test('DIV-F6 is fixed in A2-FIX-T (b103): the tree classifies every F6 shape nul
     assert.equal(classify(rec('F6F22')), null);
     assert.equal(classifyFx(rec('F6F22')).tag, 'F6+F22');
     // an unfixed copy (fixedIn null: the pre-b103 registry) explains without includeFixed
-    const u = fresh(); for (const x of u.entries) if (x.id === 'DIV-F6') x.fixedIn = null;
+    const u = fresh(); for (const x of u.entries) if (x.id === 'DIV-F6') { x.fixedIn = null; x.lanes.push('BOX'); }
     assert.equal(known(rec('F6'), { registry: u }), 'DIV-F6');
 });
 
@@ -810,7 +810,7 @@ test('b109 A3: DIV-F5 is fixed in A3-FIX-R: the tree classifies every F5 shape n
         assert.equal(known(clone(recs[k]), FX()), 'DIV-F5', k + ': a named control kernel (preb33, rev152)');
     }
     // an unfixed copy (fixedIn null: the pre-b109 registry) explains without includeFixed
-    const u = fresh(); for (const x of u.entries) if (x.id === 'DIV-F5') x.fixedIn = null;
+    const u = fresh(); for (const x of u.entries) if (x.id === 'DIV-F5') { x.fixedIn = null; x.lanes.push('BOX'); }
     for (const k of Object.keys(recs)) assert.equal(known(clone(recs[k]), { registry: u }), 'DIV-F5', k + ': unfixed copy');
     // a copy without DIV-F5 explains nothing (control for the registry copy)
     const gone = fresh(); gone.entries = gone.entries.filter((x) => x.id !== 'DIV-F5');
@@ -993,7 +993,7 @@ test('b112 B4: DIV-F8 (fixed A1.4): the rev152 L7a / L7c co-fail sets explain on
 
 test('b112 B4: a fixed F7 / F8 with fixedIn back to null would explain on the tree (the includeFixed rule is what keeps it a regression)', () => {
     const r = fresh();
-    for (const e of r.entries) if (e.id === 'DIV-F7' || e.id === 'DIV-F8') e.fixedIn = null;
+    for (const e of r.entries) if (e.id === 'DIV-F7' || e.id === 'DIV-F8') { e.fixedIn = null; e.lanes.push('BOX'); }
     assert.deepEqual(validate(r), []);
     assert.equal(known(lcRec([lcf('O7', 'stale-off', LC_D.SD)]), { registry: r }), 'DIV-F7');
     assert.equal(known(lcRec([lcf('O6', 'escape-TypeError', LC_D.TE)]), { registry: r }), 'DIV-F8');
@@ -1006,8 +1006,8 @@ test('b112 B4: a fixed F7 / F8 with fixedIn back to null would explain on the tr
 test('b117: DIV-F9 fixedIn A5b, DIV-D3 fixedIn A5a; the tree classifies their heads null, a named control explains them', () => {
     const by = new Map(fresh().entries.map((e) => [e.id, e]));
     // the FULL entries (every key, in file order): a flipped decision / worldScen / shape / description is red
-    assert.deepEqual(by.get('DIV-F9'), {"id":"DIV-F9","kind":"fix","finding":"F9","since":"1.5.2","fixedIn":"A5b","fixBy":"A5","decision":"fix (FIX-H): live-entry stack for onGraphMutation listeners. fixed: fixedIn A5b (no commit yet: Signal.js 2f7974f3, burst 116 A5b: onGraphMutation live-entry stack, an off in any order removes only its own listener)","engines":["lite"],"lanes":["HOOK"],"oracles":["O8"],"sigs":["ghost-listener"],"ops":[],"scen":[],"worldScen":["hook-non-lifo-off"],"priorScen":[],"shapes":[{"pair":"O8:ghost-listener","detail":"^L\\d+ received op[1-5] after off at step \\d+ \\(expected L\\d+\\)$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"onGraphMutation unsubscribe only works in LIFO order; an out-of-order unsubscribe resurrects a dead listener. S3 HOOK lane (R1): O8 ghost-listener with an off'd receiver, in a world that carries hook-non-lifo-off. Still NOT matched: a live listener that is not the top live one, a receiver that is not a subscribed listener, an off'd receiver when no listener is live ('expected none'), and any O8 mirror-links fail."});
-    assert.deepEqual(by.get(D3), {"id":"DIV-D3-independent-registrations","kind":"contract","finding":"F7","since":"1.6.0","fixedIn":"A5a","fixBy":"A5","decision":"D3: every observeObservers registration is independent; replaces the merge-into-one-entry behaviour. fixed: fixedIn A5a (no commit yet: Signal.js aa51b2f5, bursts 114-115 A5a: observeObservers keeps one independent registration per call; off() removes only its own)","engines":["lite"],"lanes":["LIFECYCLE"],"oracles":["O7"],"sigs":["missed-connect","missed-disconnect","stale-off"],"ops":[],"scen":[],"worldScen":[],"priorScen":[],"shapes":[{"pair":"O7:missed-connect","detail":"^r\\d+ on #\\d+: disconnected at rest, sinks [1-9]\\d* \\(co-registered r\\d+\\)$"},{"pair":"O7:missed-disconnect","detail":"^r\\d+ on #\\d+: connected at rest, sinks 0 \\(co-registered r\\d+\\)$"},{"pair":"O7:stale-off","detail":"^r\\d+ on #(\\d+): (?:connected at rest, sinks 0|disconnected at rest, sinks [1-9]\\d*) after off of r\\d+ on #\\1 \\(sibling\\) at step \\d+$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"A second registration no longer overwrites the first; an unsubscribe removes only its own registration. LIFECYCLE O7 (b112 B4): the tree's merge behaviour reads missed-connect / missed-disconnect with a ' (co-registered rM)' attribution and stale-off after an off of a SIBLING registration on the same target (#N twice); a stale-off after an off on a dead target is DIV-F7, a plain (unattributed) missed-* is not matched. Structural allowance A1 Q3 (generator rule of lanes/lifecycle.mjs, not a gen.mjs GEN_RULES id, so it has no allowances.structural slot): no lifecycle callback throws in R2; follow-up R2b (L11 probe: throwing lifecycle callbacks; O6 predicts the escape). Still open: the conformance per-test diff; spurious-connect is not matched."});
+    assert.deepEqual(by.get('DIV-F9'), {"id":"DIV-F9","kind":"fix","finding":"F9","since":"1.5.2","fixedIn":"A5b","fixBy":"A5","decision":"fix (FIX-H): live-entry stack for onGraphMutation listeners. fixed: fixedIn A5b (no commit yet: Signal.js 2f7974f3, burst 116 A5b: onGraphMutation live-entry stack, an off in any order removes only its own listener)","engines":["lite","lite-box"],"lanes":["HOOK"],"oracles":["O8"],"sigs":["ghost-listener"],"ops":[],"scen":[],"worldScen":["hook-non-lifo-off"],"priorScen":[],"shapes":[{"pair":"O8:ghost-listener","detail":"^L\\d+ received op[1-5] after off at step \\d+ \\(expected L\\d+\\)$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"onGraphMutation unsubscribe only works in LIFO order; an out-of-order unsubscribe resurrects a dead listener. S3 HOOK lane (R1): O8 ghost-listener with an off'd receiver, in a world that carries hook-non-lifo-off. Still NOT matched: a live listener that is not the top live one, a receiver that is not a subscribed listener, an off'd receiver when no listener is live ('expected none'), and any O8 mirror-links fail."});
+    assert.deepEqual(by.get(D3), {"id":"DIV-D3-independent-registrations","kind":"contract","finding":"F7","since":"1.6.0","fixedIn":"A5a","fixBy":"A5","decision":"D3: every observeObservers registration is independent; replaces the merge-into-one-entry behaviour. fixed: fixedIn A5a (no commit yet: Signal.js aa51b2f5, bursts 114-115 A5a: observeObservers keeps one independent registration per call; off() removes only its own)","engines":["lite","lite-box"],"lanes":["LIFECYCLE"],"oracles":["O7"],"sigs":["missed-connect","missed-disconnect","stale-off"],"ops":[],"scen":[],"worldScen":[],"priorScen":[],"shapes":[{"pair":"O7:missed-connect","detail":"^r\\d+ on #\\d+: disconnected at rest, sinks [1-9]\\d* \\(co-registered r\\d+\\)$"},{"pair":"O7:missed-disconnect","detail":"^r\\d+ on #\\d+: connected at rest, sinks 0 \\(co-registered r\\d+\\)$"},{"pair":"O7:stale-off","detail":"^r\\d+ on #(\\d+): (?:connected at rest, sinks 0|disconnected at rest, sinks [1-9]\\d*) after off of r\\d+ on #\\1 \\(sibling\\) at step \\d+$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"A second registration no longer overwrites the first; an unsubscribe removes only its own registration. LIFECYCLE O7 (b112 B4): the tree's merge behaviour reads missed-connect / missed-disconnect with a ' (co-registered rM)' attribution and stale-off after an off of a SIBLING registration on the same target (#N twice); a stale-off after an off on a dead target is DIV-F7, a plain (unattributed) missed-* is not matched. Structural allowance A1 Q3 (generator rule of lanes/lifecycle.mjs, not a gen.mjs GEN_RULES id, so it has no allowances.structural slot): no lifecycle callback throws in R2; follow-up R2b (L11 probe: throwing lifecycle callbacks; O6 predicts the escape). Still open: the conformance per-test diff; spurious-connect is not matched."});
     assert.deepEqual([by.get('DIV-F9').fixedIn, by.get(D3).fixedIn], ['A5b', 'A5a']);
     const ghost = { engine: 'lite', lane: 'HOOK', step: 40, op: 'sig', fails: [lcf('O8', 'ghost-listener', 'L2 received op1 after off at step 7 (expected L1)')], scen: [], worldScen: ['hook-non-lifo-off', 'hook-multi'] };
     assert.deepEqual([known(ghost), known(ghost, FX())], [null, 'DIV-F9']);
@@ -1056,7 +1056,7 @@ test('b126 B4: DIV-48 entry (every key, file order): fix #48, fixedIn b120-#48 (
     // DIV-51 without editing this row
     assert.equal(r.entries[r.entries.findIndex((x) => x.id === D48) + 1].id, 'DIV-51',
         'DIV-51 (the next engine rung) follows DIV-48');
-    assert.deepEqual(e, {"id":"DIV-48","kind":"fix","finding":"#48","since":"1.5.2","fixedIn":"b120-#48","fixBy":"b120","decision":"fix (LEDGER #48, maintainer D-b124-1 / R3 Q1 = A): every onCleanup function runs with this === undefined. fixed: fixedIn b120-#48 (699b9ef, Signal.js 2f7974f3 -> ec6d7156, bursts 120-121 rung #48: runOwnCleanup calls through a local, const fn = cleanup[i]; fn();). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. headpatched or rev152); on the tree a callback-this shape is a regression (known=none)","engines":["lite"],"lanes":["OWNER"],"oracles":["OW"],"sigs":["callback-this"],"ops":[],"scen":[],"worldScen":["cleanup-fifo"],"priorScen":[],"shapes":[{"pair":"OW:callback-this","detail":"^cleanup #\\d+ k=\\d+ this=array\\((?:[2-9]|[1-9]\\d+)\\)$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"Before #48, an owner that registered 2+ cleanups in one run called each of them (the first included) as a method of the internal cleanup array: this = the FULL array, length = the number of cleanups, on dispose AND on re-run; a single cleanup ran with this === undefined (b125 R3 kernel truth, controls headpatched fa2871f0 and rev152 f8dd50f8). S3 OWNER lane (R3): OW callback-this on a cleanup callback with this=array(N), N >= 2, in a world that carries cleanup-fifo (b126 B4 census: every failing OWNER world on both controls). Still NOT matched: this=array(0) or array(1), a this that is an object, a number or any other typeof, a createRoot or runWithOwner callback, any OW cleanup-order fail, and the shape in a world without cleanup-fifo."});
+    assert.deepEqual(e, {"id":"DIV-48","kind":"fix","finding":"#48","since":"1.5.2","fixedIn":"b120-#48","fixBy":"b120","decision":"fix (LEDGER #48, maintainer D-b124-1 / R3 Q1 = A): every onCleanup function runs with this === undefined. fixed: fixedIn b120-#48 (699b9ef, Signal.js 2f7974f3 -> ec6d7156, bursts 120-121 rung #48: runOwnCleanup calls through a local, const fn = cleanup[i]; fn();). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. headpatched or rev152); on the tree a callback-this shape is a regression (known=none)","engines":["lite","lite-box"],"lanes":["OWNER"],"oracles":["OW"],"sigs":["callback-this"],"ops":[],"scen":[],"worldScen":["cleanup-fifo"],"priorScen":[],"shapes":[{"pair":"OW:callback-this","detail":"^cleanup #\\d+ k=\\d+ this=array\\((?:[2-9]|[1-9]\\d+)\\)$"}],"attribution":null,"pending":null,"conformanceCases":[],"expectedThrow":null,"description":"Before #48, an owner that registered 2+ cleanups in one run called each of them (the first included) as a method of the internal cleanup array: this = the FULL array, length = the number of cleanups, on dispose AND on re-run; a single cleanup ran with this === undefined (b125 R3 kernel truth, controls headpatched fa2871f0 and rev152 f8dd50f8). S3 OWNER lane (R3): OW callback-this on a cleanup callback with this=array(N), N >= 2, in a world that carries cleanup-fifo (b126 B4 census: every failing OWNER world on both controls). Still NOT matched: this=array(0) or array(1), a this that is an object, a number or any other typeof, a createRoot or runWithOwner callback, any OW cleanup-order fail, and the shape in a world without cleanup-fifo."});
     assert.match(e.decision, /fixedIn b120-#48 \(699b9ef, Signal\.js 2f7974f3 -> ec6d7156,/);
     assert.ok(ROSTER.indexOf('OWNER') !== -1, 'OWNER is rostered');
 });
@@ -1068,7 +1068,7 @@ test('b137 B4: DIV-51 entry (every key, file order): fix #51, fixedIn b136-#51, 
     const e = r.entries.find((x) => x.id === 'DIV-51');
     assert.ok(e !== undefined, 'DIV-51 exists');
     assert.equal(r.entries[r.entries.length - 1].id, 'DIV-51', 'an engine rung APPENDS its entry at the end');
-    assert.deepEqual(e, {"id":"DIV-51","kind":"fix","finding":"#51","since":"1.5.2","fixedIn":"b136-#51","fixBy":"b136","decision":"fix (LEDGER #51 = F-b129-1, maintainer D-b135-1): a STALE signal handle's update(fn) returns undefined WITHOUT calling fn. fixed: fixedIn b136-#51 (Signal.js ec6d7156 -> ea0b64d1, burst 136: sharedUpdate checks this[NODE_GEN] !== node.gen and returns undefined before fn). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. headpatched or rev152); on the tree an rsupd fn call is a regression (known=none)","engines":["lite"],"lanes":["RECYCLE"],"oracles":["O9"],"sigs":["stale-write"],"ops":[],"scen":[],"worldScen":[],"priorScen":[],"shapes":[{"pair":"O9:stale-write","detail":"^rsupd ring \\d+ \\(stale s handle, slot \\d+\\): fn called [1-9]\\d* time\\(s\\), returned undefined \\(want 0 calls, undefined\\)$"}],"attribution":null,"pending":null,"conformanceCases":["test/91-l51-stale-update.test.mjs"],"expectedThrow":null,"description":"Before #51, sharedUpdate had no gen guard: update(fn) through a stale signal handle called fn with the value of the node its slot hosts now (undefined on a dead slot or an effect resident) and only then had the write dropped by set's own gen guard, so update returned undefined and no resident moved (b137 B0 3b kernel truth: controls headpatched fa2871f0 and rev152 f8dd50f8, and HEAD ec6d7156, call fn once on recycled s / c / e and dead slots). S3 RECYCLE lane (b137 rsupd op): O9 stale-write from checkO9Update with fn called N >= 1 times and update returning undefined. Still NOT matched: fn called 0 times with any return, a return that is not undefined, the checkO9Write form (a live signal or clean computed off the model, an effect body run), and any rsset / rsread / rsdisp detail."});
+    assert.deepEqual(e, {"id":"DIV-51","kind":"fix","finding":"#51","since":"1.5.2","fixedIn":"b136-#51","fixBy":"b136","decision":"fix (LEDGER #51 = F-b129-1, maintainer D-b135-1): a STALE signal handle's update(fn) returns undefined WITHOUT calling fn. fixed: fixedIn b136-#51 (Signal.js ec6d7156 -> ea0b64d1, burst 136: sharedUpdate checks this[NODE_GEN] !== node.gen and returns undefined before fn). Explains only when classify includeFixed is true (main / SoakReport set it = controls.name !== null: any named controls.json kernel, e.g. headpatched or rev152); on the tree an rsupd fn call is a regression (known=none)","engines":["lite","lite-box"],"lanes":["RECYCLE"],"oracles":["O9"],"sigs":["stale-write"],"ops":[],"scen":[],"worldScen":[],"priorScen":[],"shapes":[{"pair":"O9:stale-write","detail":"^rsupd ring \\d+ \\(stale s handle, slot \\d+\\): fn called [1-9]\\d* time\\(s\\), returned undefined \\(want 0 calls, undefined\\)$"}],"attribution":null,"pending":null,"conformanceCases":["test/91-l51-stale-update.test.mjs"],"expectedThrow":null,"description":"Before #51, sharedUpdate had no gen guard: update(fn) through a stale signal handle called fn with the value of the node its slot hosts now (undefined on a dead slot or an effect resident) and only then had the write dropped by set's own gen guard, so update returned undefined and no resident moved (b137 B0 3b kernel truth: controls headpatched fa2871f0 and rev152 f8dd50f8, and HEAD ec6d7156, call fn once on recycled s / c / e and dead slots). S3 RECYCLE lane (b137 rsupd op): O9 stale-write from checkO9Update with fn called N >= 1 times and update returning undefined. Still NOT matched: fn called 0 times with any return, a return that is not undefined, the checkO9Write form (a live signal or clean computed off the model, an effect body run), and any rsset / rsread / rsdisp detail."});
     assert.match(e.decision, /fixedIn b136-#51 \(Signal\.js ec6d7156 -> ea0b64d1, /);
     assert.ok(ROSTER.indexOf('RECYCLE') !== -1, 'RECYCLE is rostered');
 });
@@ -1165,4 +1165,51 @@ test('DIV-F10: the b1a census shapes -> DIV-F10; near-misses -> null', () => {
         const r = classify(rec);
         assert.deepEqual(r === null ? null : r.ids, want ? ['DIV-F10'] : null, n);
     }
+});
+
+// R7 B2 (C-33, maintainer D-b149-1): an OPEN entry naming a BOX sub-lane must carry BOX; fixed entries are exempt.
+// Expected text is the rule's wording (R7 C-2 / C-33), not copied from a run: "lanes <list> name a BOX sub-lane (...) but not BOX".
+const SUB = 'GRAPH, BATCH, ERROR, NEST, WIE';
+test('R7 C-33: reopening a sub-lane entry without BOX is a validator error with the exact message', () => {
+    const r = fresh();
+    const e = r.entries.find((x) => x.id === 'DIV-F22');
+    assert.equal(e.fixedIn, null);
+    assert.deepEqual(e.lanes, ['ERROR', 'BOX']);
+    e.lanes = ['ERROR'];
+    assert.deepEqual(validate(r), ['entry[' + r.entries.indexOf(e) + '] DIV-F22: lanes ERROR name a BOX sub-lane (' + SUB + ') but not BOX (an open entry must cover BOX, R7 C-2)']);
+    // reopening the FIXED DIV-F21 (fixedIn null) without BOX is the same error
+    const q = fresh();
+    q.entries.find((x) => x.id === 'DIV-F21').fixedIn = null;
+    assert.ok(has(validate(q), /^entry\[\d+\] DIV-F21: lanes ERROR name a BOX sub-lane/), validate(q).join('\n'));
+});
+test('R7 C-33: a FIXED entry naming a sub-lane without BOX is valid (open-only scope)', () => {
+    const r = fresh();
+    const e = r.entries.find((x) => x.id === 'DIV-F21');
+    assert.notEqual(e.fixedIn, null);
+    assert.deepEqual(e.lanes, ['ERROR']);
+    assert.deepEqual(validate(r), []);
+});
+test('R7 C-33: an open entry naming only non-sub-lane lanes (HOOK) without BOX is valid; BOX alone is a valid lane', () => {
+    const r = fresh();
+    const e = r.entries.find((x) => x.id === 'DIV-F9');
+    e.fixedIn = null; e.lanes = ['HOOK'];
+    assert.deepEqual(validate(r), []);
+    e.lanes = ['BOX'];
+    assert.deepEqual(validate(r), []);
+});
+test('R7 C-33: lite-box is an accepted engine; an unknown engine and an unknown lane are still refused', () => {
+    assert.deepEqual(DEFAULT_VOCAB.engines, ['lite', 'lite-box']);
+    const r = fresh();
+    const e = r.entries.find((x) => x.id === 'DIV-F9');
+    e.engines = ['lite-box'];
+    assert.deepEqual(validate(r), []);
+    e.engines = ['lite', 'lite-boxx'];
+    assert.deepEqual(validate(r), ['entry[' + r.entries.indexOf(e) + '] DIV-F9: unknown engine lite-boxx']);
+    e.engines = ['lite']; e.lanes = ['HOOK', 'NOPE'];
+    assert.deepEqual(validate(r), ['entry[' + r.entries.indexOf(e) + '] DIV-F9: unknown lane NOPE']);
+});
+
+test('R7 C-33 / B-5: every entry lists engines lite + lite-box; a lite-box F22 record on ERROR and BOX classifies DIV-F22', () => {
+    for (const e of fresh().entries) assert.deepEqual(e.engines, ['lite', 'lite-box'], e.id);
+    for (const lane of ['ERROR', 'BOX']) assert.equal(known(Object.assign(rec('F22'), { engine: 'lite-box', lane })), 'DIV-F22', lane);
 });

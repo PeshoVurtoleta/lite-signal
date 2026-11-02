@@ -12,7 +12,8 @@
  * about the failure the key once carried), and the artifacts below still record that (target []).
  *
  * PREDICATE. A candidate script reproduces iff runWorld() on a FRESH world (a new registry through the same
- * main.mjs tap) returns a failure whose familyKeys set EQUALS the target set. A throw (exec, model, kernel,
+ * main.mjs tap; a TWIN lane: twin.mjs runWorldTwin on a FRESH pair of worlds, each side through its own tap)
+ * returns a failure whose familyKeys set EQUALS the target set. A throw (exec, model, kernel,
  * an invalid candidate), a clean run, a superset or a different sig is NOT a hit. Every run is counted; at
  * SHRINK_MAX_RUNS the budget is exhausted and every further test answers "no" (never a hit), so the result
  * is still a reproducing script, only possibly not minimal (budgetExhausted: true in the json).
@@ -45,6 +46,10 @@
  *                                     Signal.js), a soak module that fails to load (every import is dynamic,
  *                                     inside its try), an exec throw. Target [] = a world that was clean when
  *                                     shrunk: any failure is 1.
+ *                                     R7 B2: a TWIN lane's test (desc.twin) loads the engine (main.mjs
+ *                                     loadAdapter(ENGINE)) and its twin (main.mjs loadTwin(ENGINE, MUSTFAIL))
+ *                                     and runs twin.mjs runWorldTwin; a non-lite engine's test loads it through
+ *                                     loadAdapter(ENGINE). A lite non-twin test is the text above, unchanged.
  *   <seed> is the key's seed exactly as the key prints it (0x + lower-case hex, no padding).
  *   Directory: bench/soak/out/ (git-ignored) by default; with SOAK_OUT=<path> both files go into
  *   dirname(<path>) and <path> itself is NOT created (a shrink writes no JSONL stream). Existing artifacts
@@ -74,8 +79,9 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXIT_CODE, VERDICT, GEN_VERSION } from './config.mjs';
-import { familyKeys } from './main.mjs';
+import { familyKeys, runLaneWorld } from './main.mjs';
 import { runWorld } from './exec.mjs';
+import { laneByName } from './lanes/index.mjs';
 import { emittable, emitStandalone } from './emit.mjs';
 import { protocol, stdoutLine, endLine } from './jsonl.mjs';
 import { locateAndPlay, replayTap, writeBreaches, scriptDigest, asExitCode, cfgProblem, configCode, isEntryUrl, entry } from './replay.mjs';
@@ -296,13 +302,19 @@ export function countSubOps(ops) {
 
 const sameSet = (a, b) => a.length === b.length && a.every((x) => b.indexOf(x) !== -1);
 
-/** One run of script on a FRESH world through the main.mjs tap: the runWorld() result, or null on a throw. */
-export function makeRunner(adapter) {
+/**
+ * One run of script on a FRESH world through the main.mjs tap: the runWorld() result, or null on a throw. A TWIN
+ * lane's script (laneByName(script.lane).twin) runs on a FRESH pair: twin.mjs runWorldTwin on adapter and twin, each
+ * through its own tap (main.mjs runLaneWorld); without a twin adapter that run throws, so it is null (never a hit).
+ */
+export function makeRunner(adapter, twin) {
     return (script) => {
         try {
             const { tap, ad } = replayTap(adapter);
             tap.escape = null;
-            return runWorld(ad, script);
+            const desc = laneByName(script.lane);
+            if (desc === null || desc.twin !== true) return runWorld(ad, script);
+            return runLaneWorld(desc, ad, twin === null || twin === undefined ? null : replayTap(twin).ad, script);
         } catch (e) {
             return null;
         }
@@ -317,12 +329,12 @@ function reproduces(r, t) {
 }
 
 /**
- * The reproduction predicate for target (a familyKeys set): a FRESH world per run through the main.mjs tap.
- * A throw, a clean run or a different (family, sig) set is false; never a hit.
+ * The reproduction predicate for target (a familyKeys set): a FRESH world per run through the main.mjs tap (a
+ * twin lane: a fresh pair, makeRunner). A throw, a clean run or a different (family, sig) set is false; never a hit.
  */
-export function makePredicate(adapter, target) {
+export function makePredicate(adapter, target, twin) {
     const t = target.slice();
-    const run = makeRunner(adapter);
+    const run = makeRunner(adapter, twin);
     return (script) => reproduces(run(script), t);
 }
 
@@ -337,9 +349,34 @@ export function artifactPaths(lane, seed, cfgOut) {
 
 const asciiJson = (x) => JSON.stringify(x).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
 
-/** The emitted .test.mjs source (pure). Imports the bench/soak modules by absolute file URL. */
-export function emitTest(info) {
+/** The emitted .test.mjs source (pure). Imports the bench/soak modules by absolute file URL. opts: optional { mustFail }. */
+export function emitTest(info, opts) {
     const u = (f) => JSON.stringify(new URL('./' + f, import.meta.url).href);
+    // opts.mustFail: the run's parseConfig() mustFail (a twin test rebuilds the same twin), null when absent
+    const mustFail = opts !== undefined && opts !== null && opts.mustFail !== undefined ? opts.mustFail : null;
+    const desc = laneByName(info.lane);
+    const twinLane = desc !== null && desc.twin === true;
+    // a lite non-twin test keeps its pre-R7 text byte for byte; a twin lane or a non-lite engine loads via main.mjs
+    const runLines = twinLane ? [
+        '    const tw = await import(' + u('twin.mjs') + ');',
+        '    const lanes = await import(' + u('lanes/index.mjs') + ');',
+        '    liteAdapter = await mn.loadAdapter(ENGINE);',
+        '    const twinAdapter = await mn.loadTwin(ENGINE, MUSTFAIL);',
+        '    familyKeys = mn.familyKeys;',
+        '    const tap = { escape: null, onOpen() {} };',
+        '    const ttap = { escape: null, onOpen() {} };',
+        '    r = tw.runWorldTwin(lanes.laneByName(SCRIPT.lane), mn.tapAdapter(liteAdapter, tap), mn.tapAdapter(twinAdapter, ttap), SCRIPT);',
+    ] : [
+        info.engine === 'lite'
+            ? '    liteAdapter = (await import(' + u('adapters/lite-s3.mjs') + ')).liteS3Adapter;'
+            : '    liteAdapter = await mn.loadAdapter(ENGINE);',
+        '    familyKeys = mn.familyKeys;',
+        '    const tap = { escape: null, onOpen() {} };',
+        '    r = ex.runWorld(mn.tapAdapter(liteAdapter, tap), SCRIPT);',
+    ];
+    const consts = twinLane || info.engine !== 'lite'
+        ? ['const ENGINE = ' + JSON.stringify(info.engine) + ';'].concat(twinLane ? ['const MUSTFAIL = ' + JSON.stringify(mustFail) + ';'] : [])
+        : [];
     return [
         '// GENERATED by bench/soak/shrink.mjs (lite-signal soak, S1c TASK 8). Do not edit: re-run the shrink.',
         '// key ' + info.key + '  target ' + (info.target.length ? info.target.join(',') : '(none: clean when shrunk)') + '  ops ' + info.ops + ' (from ' + info.opsOriginal + ')',
@@ -353,6 +390,7 @@ export function emitTest(info) {
         'const KEY = ' + JSON.stringify(info.key) + ';',
         'const TARGET = ' + asciiJson(info.target) + ';',
         'const SCRIPT = ' + asciiJson(info.script) + ';',
+        ...consts,
         "const say = (fd, s) => writeSync(fd, 'shrink-test: ' + s + '\\n');",
         'if (process.argv.length > 2) { say(2, \'CONFIG -- this test takes no arguments (set SOAK_KERNEL instead)\'); process.exit(2); }',
         'const K = process.env.SOAK_KERNEL;',
@@ -362,10 +400,7 @@ export function emitTest(info) {
         'try {',
         '    const ex = await import(' + u('exec.mjs') + ');',
         '    const mn = await import(' + u('main.mjs') + ');',
-        '    liteAdapter = (await import(' + u('adapters/lite-s3.mjs') + ')).liteS3Adapter;',
-        '    familyKeys = mn.familyKeys;',
-        '    const tap = { escape: null, onOpen() {} };',
-        '    r = ex.runWorld(mn.tapAdapter(liteAdapter, tap), SCRIPT);',
+        ...runLines,
         '} catch (e) {',
         "    say(2, 'CRASH -- ' + (e && e.stack ? e.stack : String(e)));",
         '    process.exit(2);',
@@ -390,16 +425,16 @@ export async function runShrink(cfg) {
         if (cfg.shrink !== true) return configCode('runShrink: SOAK_SHRINK=1 is required');
         const L = await locateAndPlay(cfg);
         if (L.code !== null) return L.code;
-        const { res, adapter, played, rec } = L;
+        const { res, adapter, twin, played, rec } = L;
         const original = played.script;
         const target = rec === null ? [] : familyKeys(rec.fails);
         const budget = new Budget(SHRINK_MAX_RUNS);
         let minimal = original, passes = 0, confirmed = false, confirmRun = null;
         if (rec !== null) {
             writeBreaches(rec, res.lane, adapter.name);
-            const run = makeRunner(adapter);
+            const run = makeRunner(adapter, twin);
             const t = target.slice();
-            const pred = (script) => reproduces(run(script), t);   // makePredicate(adapter, target)
+            const pred = (script) => reproduces(run(script), t);   // makePredicate(adapter, target, twin)
             const out = shrinkScript(original, pred, budget, played.r.failure.step);
             minimal = out.script;
             passes = out.passes;
@@ -436,7 +471,7 @@ export async function runShrink(cfg) {
         info.createdAt = new Date().toISOString();
         mkdirSync(paths.dir, { recursive: true });
         writeFileSync(paths.json, JSON.stringify(info, null, 2) + '\n');
-        writeFileSync(paths.test, emitTest(info));
+        writeFileSync(paths.test, emitTest(info, { mustFail: cfg.mustFail }));
         if (cfg.emitTest === true) {
             if (stdSrc !== null) writeFileSync(stdPath, stdSrc);
             else rmSync(stdPath, { force: true });   // a key that does not emit leaves no stale standalone
