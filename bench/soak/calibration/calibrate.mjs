@@ -58,6 +58,13 @@
  * passes HOOK and stays first (covOff).
  * lanes/hook.mjs joins the pinned list through LANE_PINS; mirror.mjs (the O8 link mirror hook.mjs imports) is in
  * PINNED, like kinds.mjs and the torture helpers.
+ * BOX -> tree (R7 C1, b150; C-6): NEST / WIE fail-stop or BREACH by design on headpatched + 1.5.2, so the twin lane cuts
+ * on tree only; ERROR stays in its mix (DIV-F22, C-4). lanes/box.mjs joins through LANE_PINS; twin.mjs, trace.mjs and
+ * adapters/lite-box.mjs (the twin runner, its sinks and the twin facade) are in PINNED (C-12, the mirror.mjs precedent).
+ * The child judges applicability with the engine name 'lite' (main.mjs's 3-argument call), and a twin lane
+ * (desc.twin) runs each world through twin.mjs runWorldTwin on the lite adapter AND its twin (main.mjs loadTwin('lite')
+ * = contract.mjs TWINS.lite 'lite-box/alt', C-3; loaded once per child, on the same SOAK_KERNEL), never single-sided;
+ * the result folds exactly like a runWorld one (checks.OT = 1 per twin world, 0 on every other lane, C-35).
  */
 
 import { spawnSync } from 'node:child_process';
@@ -107,6 +114,9 @@ export const LANE_KERNELS = Object.freeze({
     // CAPACITY (R5, b139 B2; D-b139-2 = RECYCLE's precedent): tree only: B0-9 shows the same throw point and 0 pinned
     // slots at rest on all 3 kernels, so more kernels lengthen the recut without changing a verdict; P-CAP-TREE passes
     CAPACITY: Object.freeze(['tree']),
+    // BOX (R7 C1, b150; D-b144-6 = C-6): tree only: its NEST / WIE sub-lanes fail-stop or BREACH by design on
+    // headpatched + lite-1.5.2 (as LANE_KERNELS.WIE); P-BOX-TREE is the pass control
+    BOX: Object.freeze(['tree']),
 });
 /** The kernel ids that cut `lane` (a fresh array). */
 export const kernelsFor = (lane) => (own(LANE_KERNELS, lane) ? LANE_KERNELS[lane].slice() : Object.keys(KERNELS));
@@ -171,6 +181,8 @@ const PINNED = Object.freeze([
     'bench/soak/kinds.mjs', 'bench/torture/helpers/index.mjs', 'bench/soak/adapters/lite-s3.mjs',
     // S3 R1 (b93): the O8 link mirror lanes/hook.mjs drives (decides the HOOK checks)
     'bench/soak/mirror.mjs',
+    // R7 C1 (b150, C-12): the twin runner, its trace sinks and the twin facade (decide the BOX checks, OT)
+    'bench/soak/twin.mjs', 'bench/soak/trace.mjs', 'bench/soak/adapters/lite-box.mjs',
 ]);
 export { PINNED };
 // A lane's own descriptor file is pinned only while the lane is rostered (b67 B2a Q2): pinning lanes/wie.mjs before
@@ -178,7 +190,7 @@ export { PINNED };
 export const LANE_PINS = Object.freeze({
     WIE: 'bench/soak/lanes/wie.mjs', HOOK: 'bench/soak/lanes/hook.mjs', LIFECYCLE: 'bench/soak/lanes/lifecycle.mjs',
     OWNER: 'bench/soak/lanes/owner.mjs', RECYCLE: 'bench/soak/lanes/recycle.mjs', SCHEDULER: 'bench/soak/lanes/scheduler.mjs',
-    REGISTRY: 'bench/soak/lanes/registry.mjs', CAPACITY: 'bench/soak/lanes/capacity.mjs',
+    REGISTRY: 'bench/soak/lanes/registry.mjs', CAPACITY: 'bench/soak/lanes/capacity.mjs', BOX: 'bench/soak/lanes/box.mjs',
 });
 /** PINNED + the pins of the rostered lanes (roster order). */
 export const pinnedFor = (roster) => PINNED.concat(roster.filter((l) => own(LANE_PINS, l)).map((l) => LANE_PINS[l]));
@@ -222,6 +234,7 @@ async function child(opts) {
     const { runWorld, CHECK_NAMES, SKIP_NAMES } = await import('../exec.mjs');
     const { seedFor, worldSeed } = await import('../seeds.mjs');
     const { KERNEL_FILES, KERNEL_KNOWN_AS } = await import('../kernel.mjs');
+    const { runWorldTwin } = await import('../twin.mjs');
 
     const probs = validateAdapter(liteAdapter);
     if (probs.length) die('adapter invalid: ' + probs.join('; '));
@@ -233,6 +246,7 @@ async function child(opts) {
     const covOff = opts['cov-off'] === undefined ? null : opts['cov-off'];
     const timed = opts.timed === true;
     const zero = (names) => { const o = {}; for (const n of names) o[n] = 0; return o; };
+    let twinAd = null;
 
     const out = {
         kernel: relative(ROOT, kpath), knownAs: KERNEL_KNOWN_AS, files: KERNEL_FILES.map((f) => ({ path: relative(ROOT, f.path), sha256: f.sha256 })),
@@ -241,8 +255,15 @@ async function child(opts) {
     for (const name of lanes) {
         const desc = laneByName(name);
         if (desc === null) die('unknown lane ' + name);
-        const app = applicability(desc, liteAdapter.caps);
+        const app = applicability(desc, liteAdapter.caps, 'lite');
         if (app.status !== 'run') die('lane ' + name + ' SKIPs on lite');
+        if (desc.twin === true && twinAd === null) {
+            // the twin (C-3): main.mjs loadTwin('lite'), once per child; validated like main.mjs (fail closed)
+            const { loadTwin } = await import('../main.mjs');
+            twinAd = await loadTwin('lite');
+            const tprobs = validateAdapter(twinAd);
+            if (tprobs.length) die('twin adapter of lite is invalid: ' + tprobs.join('; '));
+        }
         const laneCovOff = covOff !== null && own(desc.covOff, covOff) ? covOff : null;
         const perCycle = [];
         for (let cycle = 0; cycle < cycles; cycle++) {
@@ -258,7 +279,8 @@ async function child(opts) {
                 const script = generateWorld(desc, ws, { large, covOff: laneCovOff });
                 let r;
                 try {
-                    r = runWorld(liteAdapter, script);
+                    // a twin lane never runs single-sided (main.mjs runLaneWorld)
+                    r = desc.twin === true ? runWorldTwin(desc, liteAdapter, twinAd, script) : runWorld(liteAdapter, script);
                 } catch (e) {
                     // main.mjs does not catch here either: a crash is a fatal run, never evidence (fail closed).
                     // `crashes` stays in the record so the drift guard (d) also rejects a doc that carries one.

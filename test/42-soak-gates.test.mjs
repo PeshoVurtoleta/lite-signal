@@ -190,6 +190,31 @@ test('LaneGates evidence: coverage, performed-only check floor and per-oracle ta
     assert.equal(laneRun(11, () => ({ checks: Object.assign(rec('GRAPH', 0).checks, { O7a: 0 }) })).status, 'PASS');
 });
 
+// b151 C1 r2 review NIT 1 (C-38): OT is a PER-WORLD oracle (counted once per twin world; gates.mjs PER_WORLD). Smoke cycle
+// records, 7 cycles x 10 worlds = 70 = BOX_WORLD_FLOOR_SMOKE worlds. Expected values are from the spec (C-38), not a gate run:
+// the cause line is `checks lane=<L> oracle=OT performed=<n> worlds=<w> floor=<F>` and OT = worlds - 1 is one world short.
+function boxRun(otPerCycle, worldsPerCycle, n) {   // both are functions of the cycle index
+    const L = new G.LaneGates({ lane: 'BOX', oracles: ['OT'], required: ['a', 'b'] });
+    for (let c = 0; c < n; c++) L.push(rec('BOX', c, { worlds: worldsPerCycle(c), checks: Object.assign(rec('BOX', 0).checks, { OT: otPerCycle(c) }) }));
+    return L.compute({ smoke: true });
+}
+test('LaneGates OT (C-38): smoke OT === worlds === BOX_WORLD_FLOOR_SMOKE passes; OT = worlds - 1 is INCONCLUSIVE with the exact per-world cause line', () => {
+    assert.equal(CFG.BOX_WORLD_FLOOR_SMOKE, 70, 'precondition: the smoke world floor');
+    const pass = boxRun(() => 10, () => 10, 7);
+    assert.equal(pass.gates['check-floor'].verdict, 'PASS', JSON.stringify(pass.causes));
+    assert.equal(pass.status, 'PASS', JSON.stringify(pass.causes));
+    // one world without its OT check: performed 69 of 70 worlds (cycle 6 books 9 OT for its 10 worlds)
+    const short = boxRun((c) => (c === 6 ? 9 : 10), () => 10, 7);
+    assert.equal(short.status, 'INCONCLUSIVE');
+    assert.deepEqual(short.causes.filter((c) => c.cause === 'check-floor').map((c) => c.line),
+        ['soak: INCONCLUSIVE -- checks lane=BOX oracle=OT performed=69 worlds=70 floor=' + CFG.BOX_WORLD_FLOOR_SMOKE], JSON.stringify(short.causes));
+    // worlds also one short of the floor (6 x 10 + 9 = 69 worlds, OT === worlds): INCONCLUSIVE, worlds=69 in the line
+    const lowW = boxRun((c) => (c === 6 ? 9 : 10), (c) => (c === 6 ? 9 : 10), 7);
+    assert.equal(lowW.status, 'INCONCLUSIVE');
+    assert.deepEqual(lowW.causes.filter((c) => c.cause === 'check-floor').map((c) => c.line),
+        ['soak: INCONCLUSIVE -- checks lane=BOX oracle=OT performed=69 worlds=69 floor=' + CFG.BOX_WORLD_FLOOR_SMOKE], JSON.stringify(lowW.causes));
+});
+
 test('LaneGates oracle gate and failure totals; malformed records throw (fail closed), with no partial fold', () => {
     const r = laneRun(11, (c) => (c === 2 ? { failingWorlds: 1, failureCounts: { 'O6:escape-computed': 1 } } : {}));
     assert.equal(r.gates.oracle.verdict, 'FAIL');
@@ -302,7 +327,7 @@ test('oracleFamily: O1c/O1e -> O1, O7a -> O7, every S1 oracle maps, an unknown o
     assert.equal(G.oracleFamily('O1c'), 'O1');
     assert.equal(G.oracleFamily('O1e'), 'O1');
     assert.equal(G.oracleFamily('O7a'), 'O7');
-    for (const o of ORACLES) assert.match(G.oracleFamily(o), /^O(?:[0-9]|B|W)$/, o);
+    for (const o of ORACLES) assert.match(G.oracleFamily(o), /^O(?:[0-9]|B|W|T)$/, o);
     assert.equal(G.oracleFamily('OB'), 'OB');
     for (const o of CHECK_NAMES) G.oracleFamily(o);
     assert.throws(() => G.oracleFamily('OX'), TypeError);

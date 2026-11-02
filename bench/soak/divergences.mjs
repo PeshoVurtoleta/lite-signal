@@ -69,8 +69,8 @@ export const ENGINES = Object.freeze(['lite', 'lite-box']);
  * R7 C-2 (D-b144-2): BOX / lite-box coverage AS DATA. A BOX world replays one of its sub-lanes (lanes/box.mjs mix:
  * GRAPH, BATCH, ERROR, NEST, WIE) and its failure records carry lane 'BOX', so an OPEN entry (fixedIn null) whose lanes
  * name a sub-lane must also name BOX (validate: an error otherwise). A FIXED entry explains only with includeFixed (a
- * named control kernel) and BOX runs on the tree kernel only (C-6), so the rule reads open entries. BOX_LANES is the
- * lane vocabulary beside ROSTER until group C rosters BOX (DEFAULT_VOCAB.lanes stays ROSTER itself).
+ * named control kernel) and BOX runs on the tree kernel only (C-6), so the rule reads open entries. BOX_LANES: lane
+ * names validate accepts even under a caller vocab that omits them (DEFAULT_VOCAB.lanes = ROSTER, which has BOX).
  */
 export const BOX_LANES = Object.freeze([BOX.name]);
 export const BOX_SUBLANES = Object.freeze(Object.keys(BOX.mix));

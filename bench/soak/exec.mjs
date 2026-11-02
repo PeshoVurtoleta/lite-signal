@@ -91,7 +91,9 @@ const NONE = Symbol('none');
 const END_CHECK_SALT = 0x5bd1e995;
 
 /** Oracles counted when PERFORMED (a skipped check is never counted as one). */
-export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9']);
+// OT (R7 C1, C-9) is appended last: exec never performs it (World.checks.OT stays 0); twin.mjs runWorldTwin sets it to 1
+// per world pair (C-35: checks.OT === worlds on a twin lane).
+export const CHECK_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9', 'OT']);
 /** Oracles that skip tainted nodes; each skip is counted per oracle (S1c gates a taint-skip ratio). */
 export const SKIP_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4']);
 const COUNTER_CAP = 0x3FFFFFFF;   // per-world counters stay Smi (S7: [2^30, 2^31) boxes on pointer-compressed V8)
@@ -194,7 +196,7 @@ class Exec {
         this.regActions = new Map();
         this.ran = new Set();
         this.D = new Detectors(this);
-        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0, OW: 0, O9: 0 };
+        this.checks = { O1c: 0, O1e: 0, O2: 0, O4: 0, O5: 0, O6: 0, O7a: 0, O7: 0, OB: 0, O8: 0, OW: 0, O9: 0, OT: 0 };
         this.skipTainted = { O1c: 0, O1e: 0, O2: 0, O4: 0 };
         this.gateHits = { batchTokenEscaped: 0 };   // guards whose escape carried the throw-in-batch token
         this.effReruns = 0;    // effect re-runs (runs > 0) in this world, capped at COUNTER_CAP (OB evidence)

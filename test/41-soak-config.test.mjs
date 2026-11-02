@@ -33,7 +33,7 @@ const MAIN = join(SOAK, 'main.mjs');
 const SOAK_URL = pathToFileURL(SOAK).href + '/';
 
 // SPEC-B v2 section 5.1 (S1 roster + S3 R1 HOOK + S3 R2 LIFECYCLE + R3 OWNER + R4a RECYCLE + R4c SCHEDULER + R5 REGISTRY + CAPACITY, scenario ids). Used only by the inline entry; main.mjs brings its own.
-const ROSTER = ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY'];
+const ROSTER = ['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY', 'BOX'];
 const SCENARIOS = [
     'diamond-write', 'dep-set-flip', 'deep-pull', 'second-invalidation', 'equality-cutoff', 'adversarial-equality', 'wide-mark',
     'revert-after-mid-read', 'revert-no-read', 'nested-close', 'throw-in-batch', 'effect-created-mid-batch', 'multi-write-same-signal',
@@ -54,8 +54,8 @@ const SCENARIOS = [
 // unit 0s B2 (PLAN-0s-wie ADDENDUM 2 item 6): the two literals above are pinned to the code they stand in for
 import { SCENARIOS as LIT_SCENARIOS_CODE } from '../bench/soak/scenarios.mjs';
 import { ROSTER as LIT_ROSTER_CODE } from '../bench/soak/lanes/index.mjs';
-test('the ROSTER (12 lanes, CAPACITY 12th) and SCENARIOS (79 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
-    assert.equal(ROSTER.length, 12);
+test('the ROSTER (13 lanes, BOX 13th) and SCENARIOS (79 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
+    assert.equal(ROSTER.length, 13);
     assert.equal(SCENARIOS.length, 79);
     assert.deepEqual(ROSTER, LIT_ROSTER_CODE.slice());
     assert.deepEqual(SCENARIOS, LIT_SCENARIOS_CODE.slice());
@@ -391,7 +391,7 @@ test('the SOAK_ prefix is case-insensitive: a non-upper-case known key is an err
     rejects({ soak_lanes: 'grpah' }, "env key 'soak_lanes' must be upper-case (did you mean SOAK_LANES?)");
     rejects({ Soak_Require_Provenance: '1' }, 'did you mean SOAK_REQUIRE_PROVENANCE?');
     rejects({ soak_nope: '1' }, "unknown env key 'soak_nope'");
-    assert.equal(P({ SOAKY: '1', MY_SOAK_LANES: 'x' }).lanes.length, 12, 'only the SOAK_ prefix is reserved');
+    assert.equal(P({ SOAKY: '1', MY_SOAK_LANES: 'x' }).lanes.length, 13, 'only the SOAK_ prefix is reserved');
 });
 
 test('did-you-mean is computed on the suffix: SOAK_X, SOAK_FOO and SOAK_TIME no longer "mean" SOAK_OPS', () => {
@@ -439,7 +439,9 @@ function provenanceCopy() {
     // the copy cannot go stale when PARITY_FILES grows. b93: provenance.mjs imports lanes/index.mjs, whose kinds.mjs
     // reaches the torture value pool (bench/torture/helpers/index.mjs, not a parity file).
     const runtime = ['config.mjs', 'kernel.mjs', 'nearwrap.mjs', 'provenance.mjs', 'parity.mjs', 'seeds.mjs', 'jsonl.mjs', 'controls.json']
-        .map((x) => 'bench/soak/' + x).concat(['bench/torture/helpers/index.mjs']);
+        .map((x) => 'bench/soak/' + x).concat(['bench/torture/helpers/index.mjs',
+        // R7 C2b: lanes/index.mjs now imports lanes/box.mjs (twin.mjs, trace.mjs, adapters/lite-box.mjs); not parity files until the C3 re-pin
+        'bench/soak/lanes/box.mjs', 'bench/soak/twin.mjs', 'bench/soak/trace.mjs', 'bench/soak/adapters/lite-box.mjs']);
     for (const rel of new Set(runtime.concat(PARITY_FILES))) {
         mkdirSync(dirname(join(dir, rel)), { recursive: true });
         copyFileSync(join(ROOT, rel), join(dir, rel));
@@ -746,7 +748,7 @@ const b6FullLength = (f) => f !== null && typeof f === 'object' && b6Count(f.fai
 // the ONE (f) exemption the maintainer ruled (b74): ERROR, while one of these divergences is open
 // b103 R13.3: DIV-F6 dropped (fixed, A2-FIX-T); b109: DIV-F5 dropped (fixed, A3-FIX-R); b111 A1 Q1: + LIFECYCLE while DIV-D3 is open;
 // b117: LIFECYCLE dropped (DIV-D3 fixed, A5a); b139 D-b139-1: + REGISTRY while DIV-F10 is open
-const B6_F_EXEMPT_RULED = '{"ERROR":["DIV-F22"],"REGISTRY":["DIV-F10"]}';
+const B6_F_EXEMPT_RULED = '{"ERROR":["DIV-F22"],"REGISTRY":["DIV-F10"],"BOX":["DIV-F22"]}';
 const B6_F_EXEMPT = Object.freeze(JSON.parse(B6_F_EXEMPT_RULED));
 const B6_DIVS = JSON.parse(readFileSync(join(SOAK, 'divergences.json'), 'utf8'));
 // the ids of `ids` still open in a divergences doc: an entry with fixedIn === null (absent = closed: fail closed)
@@ -838,7 +840,10 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
                 }
                 for (const o of d.hardOracles) {
                     const n = b6Has(f.performed, o) ? f.performed[o] : null;
-                    if (!(n >= floor)) p.push('(c) ' + at + ' ' + o + ' performed=' + n + ' < ' + floor);
+                    // b152: OT is PER-WORLD (gates.mjs PER_WORLD, R7 C-38): its unit is BOX_WORLD_FLOOR, never CHECK_FLOOR
+                    const fl = o === 'OT' ? (sh === 'full' ? C.BOX_WORLD_FLOOR : C.BOX_WORLD_FLOOR_SMOKE) : floor;
+                    if (!(n >= fl)) p.push('(c) ' + at + ' ' + o + ' performed=' + n + ' < ' + fl);
+                    if (o === 'OT' && !(Number.isSafeInteger(f.worlds) && f.worlds > 0 && n === f.worlds)) p.push('(c) ' + at + ' OT performed=' + n + ' != worlds=' + f.worlds + ' (PER-WORLD, C-38)');
                     if (B6_SKIP_NAMES.indexOf(o) === -1) continue;
                     const k2 = b6Has(f.skipTainted, o) ? f.skipTainted[o] : NaN;
                     const r = k2 / (n + k2);   // exact, as gates.mjs taintSkipRule
@@ -856,6 +861,13 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
         }
         const clean = ((doc.seedSweep || {}).cells || {});
         for (const d of lanes) if (bound.indexOf(d.name) !== -1) for (const c of clean[k + ':' + d.name] || []) {
+            // b152: null maxTaint is honest ONLY on a lane with no taint-skip oracle (calibrate.mjs worstCells: BOX = ['OT']); null is not 0
+            const mt = c.maxTaint, hasSkip = d.hardOracles.some((o) => B6_SKIP_NAMES.indexOf(o) !== -1);
+            if (mt === null && !hasSkip) continue;
+            if (mt === null || mt === undefined || typeof mt !== 'object') {
+                p.push('(e) ' + k + ' clean sweep ' + d.name + ' seed ' + c.seed + ' taint ' + (mt === null ? 'null on a lane with a taint-skip oracle' : 'missing'));
+                continue;
+            }
             if (!(c.maxTaint.ratio <= C.TAINT_SKIP_MAX)) p.push('(e) ' + k + ' clean sweep ' + d.name + ' seed ' + c.seed + ' taint ' + c.maxTaint.ratio + ' > ' + C.TAINT_SKIP_MAX);
         }
     }
@@ -889,7 +901,7 @@ function calibrationProblems(doc, C, shaOf = b6ShaOf, probe = B6_PROBE, lanes = 
     const exK = exempt !== null && typeof exempt === 'object' ? Reflect.ownKeys(exempt) : null;
     // b109: DIV-F5 closed in A3-FIX-R; b117: LIFECYCLE (tied to DIV-D3 since b111 A1 Q1) left with DIV-D3 fixed in A5a
     // b139 D-b139-1: + REGISTRY, tied to DIV-F10 while open
-    const exRuled = { ERROR: ['DIV-F22'], REGISTRY: ['DIV-F10'] };
+    const exRuled = { ERROR: ['DIV-F22'], REGISTRY: ['DIV-F10'], BOX: ['DIV-F22'] };
     const exElt = (v) => (typeof v === 'string' ? '"' + v + '"'
         : v !== null && (typeof v === 'object' || typeof v === 'function') ? '<' + typeof v + '>' : String(v));
     let exOk = true, exS = '', exR = '';
@@ -983,8 +995,9 @@ function b6Min(sh, pick) {
 }
 const B6_SCEN_FULL = b6Min('full', (d, f) => d.required.map((s) => [s, f.scenarios[s]]));
 const B6_SCEN_SMOKE = b6Min('smoke', (d, f) => d.required.map((s) => [s, f.scenarios[s]]));
-const B6_PERF_FULL = b6Min('full', (d, f) => d.hardOracles.map((o) => [o, f.performed[o]]));
-const B6_PERF_SMOKE = b6Min('smoke', (d, f) => d.hardOracles.map((o) => [o, f.performed[o]]));
+// b152: OT is PER-WORLD (BOX_WORLD_FLOOR), not a CHECK_FLOOR cell
+const B6_PERF_FULL = b6Min('full', (d, f) => d.hardOracles.filter((o) => o !== 'OT').map((o) => [o, f.performed[o]]));
+const B6_PERF_SMOKE = b6Min('smoke', (d, f) => d.hardOracles.filter((o) => o !== 'OT').map((o) => [o, f.performed[o]]));
 let B6_TAINT_MAX = 0;
 for (const k of b6KernelsOf(B6_ROSTER)) for (const d of B6_LANES) for (const sh of ['full', 'smoke']) {
     if (b6LanesFor(k, B6_ROSTER).indexOf(d.name) === -1) continue;
@@ -1083,6 +1096,12 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     red(B6_DOC, b6With({ SCEN_MIN_SMOKE: B6_SCEN_SMOKE.n + 1 }), '(b)', 'SCEN_MIN_SMOKE above the rarest smoke cell');
     red(B6_DOC, b6With({ CHECK_FLOOR: B6_PERF_FULL.n + 1 }), '(c)', 'CHECK_FLOOR above the least-performed full cell ' + B6_PERF_FULL.lane + ' ' + B6_PERF_FULL.name);
     red(B6_DOC, b6With({ CHECK_FLOOR_SMOKE: B6_PERF_SMOKE.n + 1 }), '(c)', 'CHECK_FLOOR_SMOKE above the least-performed smoke cell');
+    for (const bk of b6KernelsFor('BOX')) {
+        red(B6_DOC, b6With({ BOX_WORLD_FLOOR: B6_DOC.kernels[bk].full.BOX.performed.OT + 1 }), '(c) ' + bk + ' full BOX OT performed=', 'BOX_WORLD_FLOOR above the full BOX OT count');
+        red(B6_DOC, b6With({ BOX_WORLD_FLOOR_SMOKE: B6_DOC.kernels[bk].smoke.BOX.performed.OT + 1 }), '(c) ' + bk + ' smoke BOX OT performed=', 'BOX_WORLD_FLOOR_SMOKE above the smoke BOX OT count');
+        const ne = b6Copy(B6_DOC); ne.kernels[bk].full.BOX.performed.OT = ne.kernels[bk].full.BOX.worlds + 1;
+        red(ne, B6_C, '(c) ' + bk + ' full BOX OT performed=' + (ne.kernels[bk].full.BOX.worlds + 1) + ' != worlds=', 'OT !== worlds is not PER-WORLD evidence (C-38)');
+    }
     red(B6_DOC, b6With({ TAINT_SKIP_MAX: B6_TAINT_MAX - 1e-9 }), '(d)', 'TAINT_SKIP_MAX below the clean max ratio');
     // the taint-skip teeth are live (test/67 P-NEST-TAINT-HALF, ADDENDUM 1 item 2); statically, a moved value is stale
     red(B6_DOC, b6With({ TAINT_SKIP_MAX: 0.5 }), '(a)', 'TAINT_SKIP_MAX moved off the D3 0.35 without a recut');
@@ -1127,6 +1146,21 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
         const sw = b6Copy(B6_DOC);
         sw.covOffSweep.cells[k + ':BATCH:revert-after-mid-read'][3].hits = CFG.SCEN_MIN_SMOKE;
         red(sw, B6_C, '(e)', k + ' BATCH covOffSweep cell with hits >= SCEN_MIN_SMOKE');
+    }
+    // b152 taint teeth: null maxTaint only where the lane has no taint-skip oracle (BOX); missing key never ok
+    {
+        const skipLane = B6_LANES.find((d) => d.hardOracles.some((o) => B6_SKIP_NAMES.indexOf(o) !== -1) && b6Has(B6_DOC.seedSweep.cells, 'tree:' + d.name)).name;
+        const tk = 'tree:' + skipLane;
+        const tn = b6Copy(B6_DOC);
+        tn.seedSweep.cells[tk][0].maxTaint = null;
+        const want = '(e) tree clean sweep ' + skipLane + ' seed ' + tn.seedSweep.cells[tk][0].seed + ' taint null on a lane with a taint-skip oracle';
+        assert.ok(calibrationProblems(tn, B6_C).indexOf(want) !== -1, 'null maxTaint on ' + tk + ' must be reported');
+        const bk = 'tree:BOX';
+        assert.ok(B6_DOC.seedSweep.cells[bk].every((c) => c.maxTaint === null), 'precondition: live BOX cells carry null maxTaint');
+        assert.equal(calibrationProblems(B6_DOC, B6_C).filter((x) => x.indexOf('(e) tree clean sweep BOX') === 0).length, 0, 'live BOX null maxTaint is honest');
+        const bd = b6Copy(B6_DOC);
+        delete bd.seedSweep.cells[bk][0].maxTaint;
+        assert.ok(calibrationProblems(bd, B6_C).some((x) => x.indexOf('(e) tree clean sweep BOX seed ' + bd.seedSweep.cells[bk][0].seed + ' taint missing') === 0), 'deleted maxTaint on ' + bk + ' must be reported');
     }
     const nul = b6Copy(B6_DOC);
     nul.covOff['NEST:saved-cursor-hazard'].hits = null;
@@ -1205,7 +1239,7 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     const F_IDS = ['DIV-F5', 'DIV-F22'];
     const EX_IDS = ['DIV-F22'];
     const REG_IDS = ['DIV-F10'];   // b139 D-b139-1: the REGISTRY exemption (open until A6 gates D2)
-    const EXR = () => ({ ERROR: EX_IDS.slice(), REGISTRY: REG_IDS.slice() });   // a fresh copy of the ruled set
+    const EXR = () => ({ ERROR: EX_IDS.slice(), REGISTRY: REG_IDS.slice(), BOX: EX_IDS.slice() });   // a fresh copy of the ruled set
     const D3_IDS = ['DIV-D3-independent-registrations'];   // b117: the ENDED LIFECYCLE exemption (b111 A1 Q1; DIV-D3 fixed A5a)
     const closeDivs = (ids) => { const d = b6Copy(B6_DIVS); for (const e of d.entries) if (ids.indexOf(e.id) !== -1) e.fixedIn = 'A2'; return d; };
     red(B6_DOC, B6_C, '(f) ERROR: the exemption expired', 'DIV-F5 / F22 both closed (the exemption expired: recut ERROR)', b6ShaOf, B6_PROBE, closeDivs(F_IDS));
@@ -1222,9 +1256,12 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     assert.deepEqual(b6DivOpen(B6_F_EXEMPT.ERROR, B6_DIVS), B6_F_EXEMPT.ERROR, 'b103 (f): ruled set == open set');
     // b117 (PLAN-b117-soak TASK 3, A5a): DIV-D3 is CLOSED (fixedIn A5a), so LIFECYCLE left the exemption set: the ruled
     // set is ERROR only, a fail-stopped LIFECYCLE cell is red like any lane's, and re-adding {LIFECYCLE: [DIV-D3]} is red
-    assert.deepEqual(Reflect.ownKeys(B6_F_EXEMPT), ['ERROR', 'REGISTRY'], 'b117 (f): the ruled set has no LIFECYCLE; b139: + REGISTRY');
+    assert.deepEqual(Reflect.ownKeys(B6_F_EXEMPT), ['ERROR', 'REGISTRY', 'BOX'], 'b117 (f): the ruled set has no LIFECYCLE; b139: + REGISTRY; R7 C-5: + BOX');
     assert.deepEqual(B6_F_EXEMPT.REGISTRY, REG_IDS, 'b139 D-b139-1 (f): REGISTRY tied to DIV-F10');
     assert.deepEqual(b6DivOpen(B6_F_EXEMPT.REGISTRY, B6_DIVS), REG_IDS, 'b139 (f): DIV-F10 is open (ruled set == open set)');
+    // R7 C-5 expiry row: BOX is tied to DIV-F22 like ERROR; once DIV-F22 has a fixedIn the open set is empty and this row goes red
+    assert.deepEqual(B6_F_EXEMPT.BOX, ['DIV-F22'], 'C-5 (f): BOX tied to DIV-F22');
+    assert.deepEqual(b6DivOpen(B6_F_EXEMPT.BOX, B6_DIVS), B6_F_EXEMPT.BOX, 'C-5 (f): DIV-F22 is open (BOX ruled set == open set; expires with fixedIn)');
     assert.equal(B6_DIVS.entries.find((e) => e.id === D3_IDS[0]).fixedIn, 'A5a', 'b117: DIV-D3 fixed in A5a');
     assert.deepEqual(b6DivOpen(D3_IDS, B6_DIVS), [], 'b117 (f): DIV-D3 is not open');
     assert.equal(b6FExempt('LIFECYCLE'), false, 'b117 (f): LIFECYCLE is not exempt');
@@ -1238,7 +1275,7 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     // re-adding the ended exemption is red twice: not the ruled set, and DIV-D3 is closed (or absent): it expired
     for (const [why, divs] of [['DIV-D3 closed (A5a)', B6_DIVS], ['DIV-D3 absent', Object.assign(b6Copy(B6_DIVS), { entries: B6_DIVS.entries.filter((e) => e.id !== D3_IDS[0]) })]]) {
         const readd = fOf(lcFull, divs, Object.assign(EXR(), { LIFECYCLE: D3_IDS.slice() }));
-        assert.ok(readd.some((x) => x.indexOf('(f) the exemption set ["ERROR","REGISTRY","LIFECYCLE"] ERROR=["DIV-F22"] REGISTRY=["DIV-F10"] != ["ERROR","REGISTRY"] ERROR=["DIV-F22"] REGISTRY=["DIV-F10"] ') === 0), 'b117 re-added {LIFECYCLE: [DIV-D3]}, ' + why + ': ' + JSON.stringify(readd));
+        assert.ok(readd.some((x) => x.indexOf('(f) the exemption set ["ERROR","REGISTRY","BOX","LIFECYCLE"] ERROR=["DIV-F22"] REGISTRY=["DIV-F10"] BOX=["DIV-F22"] != ["ERROR","REGISTRY","BOX"] ERROR=["DIV-F22"] REGISTRY=["DIV-F10"] BOX=["DIV-F22"] ') === 0), 'b117 re-added {LIFECYCLE: [DIV-D3]}, ' + why + ': ' + JSON.stringify(readd));
         assert.ok(readd.some((x) => x.indexOf('(f) LIFECYCLE: the exemption expired (["DIV-D3-independent-registrations"] ') === 0), 'b117 re-added exemption expired, ' + why + ': ' + JSON.stringify(readd));
     }
     red(B6_DOC, B6_C, '(f) the exemption set ', 'b111 shape: LIFECYCLE tied to another divergence', b6ShaOf, B6_PROBE, B6_DIVS, Object.assign(EXR(), { LIFECYCLE: ['DIV-F7'] }));
@@ -1250,16 +1287,19 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
     const d3Open = b6Copy(B6_DIVS);
     for (const e of d3Open.entries) if (e.id === D3_IDS[0]) e.fixedIn = null;
     assert.ok(!fOf(lcStop, d3Open, Object.assign(EXR(), { LIFECYCLE: D3_IDS.slice() })).some((x) => x.indexOf(NOFL) === 0), 'control: the b111 exemption (DIV-D3 open) skipped the fail-stopped cell');
-    red(B6_DOC, B6_C, '(f) the exemption set ', 'b103: the pre-R13.3 set {ERROR: [DIV-F5, DIV-F6, DIV-F22]}', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F5', 'DIV-F6', 'DIV-F22'], REGISTRY: REG_IDS.slice() });
+    red(B6_DOC, B6_C, '(f) the exemption set ', 'b103: the pre-R13.3 set {ERROR: [DIV-F5, DIV-F6, DIV-F22]}', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F5', 'DIV-F6', 'DIV-F22'], REGISTRY: REG_IDS.slice(), BOX: EX_IDS.slice() });
     // b109 A4: the pre-A3-FIX-R set {ERROR: [DIV-F5, DIV-F22]} is red (DIV-F5 is closed; ruled set == open set)
-    red(B6_DOC, B6_C, '(f) the exemption set ["ERROR","REGISTRY"] ERROR=["DIV-F5","DIV-F22"] REGISTRY=["DIV-F10"] != ', 'b109: the pre-A3-FIX-R set {ERROR: [DIV-F5, DIV-F22]}', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: F_IDS.slice(), REGISTRY: REG_IDS.slice() });
+    red(B6_DOC, B6_C, '(f) the exemption set ["ERROR","REGISTRY","BOX"] ERROR=["DIV-F5","DIV-F22"] REGISTRY=["DIV-F10"] BOX=["DIV-F22"] != ', 'b109: the pre-A3-FIX-R set {ERROR: [DIV-F5, DIV-F22]}', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: F_IDS.slice(), REGISTRY: REG_IDS.slice(), BOX: EX_IDS.slice() });
     // b140 A-R7 (D-b139-1), both ways: dropping the REGISTRY exemption while DIV-F10 is open is red, and so is keeping it once
     // DIV-F10 is closed (fixedIn set) or absent (the expiry row); control: the shipped registry + the ruled set has no REGISTRY line
     assert.equal(B6_DIVS.entries.find((e) => e.id === 'DIV-F10').fixedIn, null, 'A-R7: DIV-F10 is open in the shipped registry');
     assert.deepEqual(fOf(B6_DOC, B6_DIVS, EXR()).filter((x) => x.indexOf('(f) REGISTRY') === 0 || x.indexOf('(f) the exemption set ') === 0), [], 'A-R7 control: ruled set, DIV-F10 open');
-    red(B6_DOC, B6_C, '(f) the exemption set ["ERROR"] ERROR=["DIV-F22"] REGISTRY=undefined != ["ERROR","REGISTRY"] ', 'A-R7: the REGISTRY exemption dropped while DIV-F10 is open', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: EX_IDS.slice() });
+    red(B6_DOC, B6_C, '(f) the exemption set ["ERROR","BOX"] ERROR=["DIV-F22"] REGISTRY=undefined BOX=["DIV-F22"] != ["ERROR","REGISTRY","BOX"] ', 'A-R7: the REGISTRY exemption dropped while DIV-F10 is open', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: EX_IDS.slice(), BOX: EX_IDS.slice() });
     red(B6_DOC, B6_C, '(f) REGISTRY: the exemption expired (["DIV-F10"] ', 'A-R7 expiry: DIV-F10 fixedIn set while the exemption stays', b6ShaOf, B6_PROBE, closeDivs(REG_IDS), EXR());
     red(B6_DOC, B6_C, '(f) REGISTRY: the exemption expired (["DIV-F10"] ', 'A-R7 expiry: DIV-F10 absent while the exemption stays', b6ShaOf, B6_PROBE, Object.assign(b6Copy(B6_DIVS), { entries: B6_DIVS.entries.filter((e) => e.id !== 'DIV-F10') }), EXR());
+    // R7 C-5 expiry row: BOX is tied to DIV-F22; the day DIV-F22 gets a fixedIn (or vanishes) while the exemption stays, red
+    red(B6_DOC, B6_C, '(f) BOX: the exemption expired (["DIV-F22"] ', 'C-5 expiry: DIV-F22 fixedIn set while the BOX exemption stays', b6ShaOf, B6_PROBE, closeDivs(EX_IDS), EXR());
+    red(B6_DOC, B6_C, '(f) BOX: the exemption expired (["DIV-F22"] ', 'C-5 expiry: DIV-F22 absent while the BOX exemption stays', b6ShaOf, B6_PROBE, Object.assign(b6Copy(B6_DIVS), { entries: B6_DIVS.entries.filter((e) => e.id !== 'DIV-F22') }), EXR());
     // (f) b6DivOpen: only fixedIn === null is open; a missing fixedIn key or '' is closed, so the exemption expires
     // (a `== null` or `!e.fixedIn` open test would keep ERROR exempt on a malformed registry: fail open)
     const noKey = b6Copy(B6_DIVS);
@@ -1278,36 +1318,40 @@ test('B6 drift guard must-fail: each constant one step past its evidence, a move
         b6ShaOf, B6_PROBE, B6_DIVS, null);
     // (f) the exemption set must be exactly the ruled one: a second lane, or another divergence id -> red
     red(B6_DOC, B6_C, '(f)', 'NEST added to the exemption', b6ShaOf, B6_PROBE, B6_DIVS, Object.assign(EXR(), { NEST: ['DIV-F15'] }));
-    red(B6_DOC, B6_C, '(f)', 'the ERROR exemption tied to a never-closing divergence', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F7'], REGISTRY: REG_IDS.slice() });
+    red(B6_DOC, B6_C, '(f)', 'the ERROR exemption tied to a never-closing divergence', b6ShaOf, B6_PROBE, B6_DIVS, { ERROR: ['DIV-F7'], REGISTRY: REG_IDS.slice(), BOX: EX_IDS.slice() });
     const hidden = EXR();   // a non-enumerable own key is still an exemption (b6Has is hasOwnProperty)
     Object.defineProperty(hidden, 'GRAPH', { value: ['DIV-F7'] });
     red(B6_DOC, B6_C, '(f) the exemption set ', 'a non-enumerable GRAPH key on the exemption set',
         b6ShaOf, B6_PROBE, B6_DIVS, hidden);
     const hiddenP = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, B6_DIVS, hidden);
-    assert.ok(hiddenP.some((x) => x.indexOf('(f) the exemption set ["ERROR","REGISTRY","GRAPH"]') === 0),
+    assert.ok(hiddenP.some((x) => x.indexOf('(f) the exemption set ["ERROR","REGISTRY","BOX","GRAPH"]') === 0),
         'the (f) line names the hidden key (not the JSON of its enumerable keys): ' + JSON.stringify(hiddenP));
     // b79 C1: ERROR compared element by element: a toJSON serialising the ruled ids does not hide ['DIV-F7'], and
     // the line prints the real elements; a trailing 4th slot (undefined), or an array-like with the ruled ids -> red
-    const spoof = { ERROR: Object.assign(['DIV-F7'], { toJSON: () => EX_IDS.slice() }), REGISTRY: REG_IDS.slice() };
+    const spoof = { ERROR: Object.assign(['DIV-F7'], { toJSON: () => EX_IDS.slice() }), REGISTRY: REG_IDS.slice(), BOX: EX_IDS.slice() };
     red(B6_DOC, B6_C, '(f) the exemption set ', 'a toJSON-spoofed ERROR list', b6ShaOf, B6_PROBE, B6_DIVS, spoof);
     const spoofP = calibrationProblems(B6_DOC, B6_C, b6ShaOf, B6_PROBE, undefined, undefined, B6_DIVS, spoof);
-    assert.ok(spoofP.some((x) => x.indexOf('(f) the exemption set ["ERROR","REGISTRY"] ERROR=["DIV-F7"] REGISTRY=["DIV-F10"] != ') === 0),
+    assert.ok(spoofP.some((x) => x.indexOf('(f) the exemption set ["ERROR","REGISTRY","BOX"] ERROR=["DIV-F7"] REGISTRY=["DIV-F10"] BOX=["DIV-F22"] != ') === 0),
         'the (f) line shows the real elements, not the toJSON: ' + JSON.stringify(spoofP));
     red(B6_DOC, B6_C, '(f) the exemption set ', 'a trailing undefined 2nd slot on ERROR', b6ShaOf, B6_PROBE, B6_DIVS,
-        { ERROR: EX_IDS.concat([undefined]), REGISTRY: REG_IDS.slice() });
+        { ERROR: EX_IDS.concat([undefined]), REGISTRY: REG_IDS.slice(), BOX: EX_IDS.slice() });
     red(B6_DOC, B6_C, '(f) the exemption set ', 'an array-like (not an Array) ERROR', b6ShaOf, B6_PROBE, B6_DIVS,
-        { ERROR: { 0: 'DIV-F22', length: 1 }, REGISTRY: REG_IDS.slice() });
+        { ERROR: { 0: 'DIV-F22', length: 1 }, REGISTRY: REG_IDS.slice(), BOX: EX_IDS.slice() });
     // (e) b74 D4: a hollowVolume row counts only when full-length; every row failing -> the floor reads hollow
     const hvFail = b6Copy(B6_DOC);
     for (const k of Object.keys(hvFail.hollowVolume)) for (const l of Object.keys(hvFail.hollowVolume[k])) hvFail.hollowVolume[k][l].failingWorlds = 1;
     red(hvFail, B6_C, '(e)', 'every hollowVolume row failing (no full-length row below CHECK_FLOOR)');
 });
 
+test('B6 LANE_KERNELS: BOX runs on the tree kernel only (R7 C1 b150 C-6; mutant m5: a lane-kernel map edit must be red)', () => {
+    assert.deepEqual(b6KernelsFor('BOX'), ['tree']);
+});
+
 test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing or off-parity lane-only kernel -> red', () => {
     // the map (calibrate.mjs): an unlisted lane runs on every binding kernel; a lane's pin joins only when rostered
     // after the roster flip (b68 B2b): roster4 = the pre-flip roster (the 4 S1 lanes), roster5 = the live one
     const roster4 = B6_ROSTER.filter((l) => l !== 'WIE' && l !== 'HOOK' && l !== 'LIFECYCLE' && l !== 'OWNER' && l !== 'RECYCLE' && l !== 'SCHEDULER'
-        && l !== 'REGISTRY' && l !== 'CAPACITY');
+        && l !== 'REGISTRY' && l !== 'CAPACITY' && l !== 'BOX');
     const roster5 = B6_ROSTER.slice();
     assert.deepEqual(b6KernelsFor('WIE'), ['tree']);
     // S3 R1 (b93): HOOK was cut on headpatched only (DIV-F9 ghost-listener reddened lite-1.5.2 and tree); b117: DIV-F9
@@ -1334,17 +1378,17 @@ test('B6 per-lane kernel map: WIE cut on tree only (D7); a stray cell, a missing
     assert.deepEqual(b6KernelsOf(['GRAPH', 'BATCH', 'ERROR']), Object.keys(B6_KERNELS));
     assert.deepEqual(b6KernelsOf(roster4), Object.keys(B6_KERNELS).concat(['tree']));
     assert.deepEqual(b6KernelsOf(roster5), Object.keys(B6_KERNELS).concat(['tree']));
-    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY']);
+    assert.deepEqual(b6LanesFor('tree', roster5), ['NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY', 'BOX']);
     assert.deepEqual(b6LanesFor('lite-1.5.2', roster5), roster4.concat(['SCHEDULER']));
     assert.equal(b6KernelPath('tree'), 'Signal.js');
     assert.throws(() => b6KernelPath('nope'), /unknown kernel nope/);
     assert.deepEqual(b6PinnedFor(roster4), B6_PINNED);
-    assert.equal(b6PinnedFor(roster4).length, 17);   // S3 R0: + adapters/lite-s3.mjs; S3 R1 (b93): + mirror.mjs
+    assert.equal(b6PinnedFor(roster4).length, 20);   // S3 R0: + adapters/lite-s3.mjs; S3 R1 (b93): + mirror.mjs; R7 C1 (b150): + twin.mjs, trace.mjs, adapters/lite-box.mjs (17 + 3)
     // b137 76b: every lane pin is parity-pinned too (an edited lane file must move parity.json, not only the cut);
     // LANE_PINS only: PINNED's bench/torture/helpers/index.mjs is deliberately not a parity file (:437)
     for (const f of Object.values(B6_LANE_PINS)) assert.ok(PARITY_FILES.includes(f), f);
-    assert.deepEqual(b6PinnedFor(roster5).slice(17), ['bench/soak/lanes/wie.mjs', 'bench/soak/lanes/hook.mjs', 'bench/soak/lanes/lifecycle.mjs', 'bench/soak/lanes/owner.mjs', 'bench/soak/lanes/recycle.mjs', 'bench/soak/lanes/scheduler.mjs',
-        'bench/soak/lanes/registry.mjs', 'bench/soak/lanes/capacity.mjs']);
+    assert.deepEqual(b6PinnedFor(roster5).slice(20), ['bench/soak/lanes/wie.mjs', 'bench/soak/lanes/hook.mjs', 'bench/soak/lanes/lifecycle.mjs', 'bench/soak/lanes/owner.mjs', 'bench/soak/lanes/recycle.mjs', 'bench/soak/lanes/scheduler.mjs',
+        'bench/soak/lanes/registry.mjs', 'bench/soak/lanes/capacity.mjs', 'bench/soak/lanes/box.mjs']);
     // A2 (the real roster): a WIE cell on lite-1.5.2 is a cell no binding cuts -> exactly one new problem
     const base = calibrationProblems(B6_DOC, B6_C);
     const a2 = b6Copy(B6_DOC);
@@ -1474,6 +1518,46 @@ test('B6 TAINT_SKIP_MAX: every clean cell at or below it; the NEST cov-off (ever
     for (const k of b6KernelsFor('NEST')) {
         for (const c of B6_DOC.covOffSweep.cells[k + ':NEST:saved-cursor-hazard']) assert.ok(c.hits < CFG.SCEN_MIN_SMOKE, k + ' ' + JSON.stringify(c));
     }
+});
+
+// (e)-style margin for the PER-WORLD floors (R7 C-39, b151 Review r2 NIT 3): BOX_WORLD_FLOOR(_SMOKE) is about HALF the
+// measured minimum, so the calibrated BOX world count of every BOX kernel's smoke cell must clear 2 x
+// BOX_WORLD_FLOOR_SMOKE and its full (DEFAULT_CYCLES x DEFAULT_OPS) cell 2 x BOX_WORLD_FLOOR. Fail closed: a missing
+// cell, a missing or non-integer worlds count (null is not 0) is red, never a skip. Synthetic must-fail rows first,
+// so a live red names only the live cause.
+test('B6 BOX world floors (C-39): calibrated BOX worlds >= 2 x BOX_WORLD_FLOOR_SMOKE (smoke) and >= 2 x BOX_WORLD_FLOOR (full); a missing cell is red', () => {
+    const SHAPES = [['smoke', 'BOX_WORLD_FLOOR_SMOKE'], ['full', 'BOX_WORLD_FLOOR']];
+    const problems = (doc) => {
+        const p = [];
+        const ks = b6KernelsFor('BOX');
+        if (ks.length === 0) p.push('no BOX kernel in calibrate.mjs LANE_KERNELS');
+        for (const k of ks) for (const [shape, name] of SHAPES) {
+            const c = ((((doc || {}).kernels || {})[k] || {})[shape] || {}).BOX;
+            if (c === null || typeof c !== 'object') { p.push(k + '.' + shape + '.BOX: no calibrated cell; ' + B6_RECUT); continue; }
+            if (!(Number.isInteger(c.worlds) && c.worlds > 0)) { p.push(k + '.' + shape + '.BOX.worlds ' + c.worlds + ' is not a positive integer'); continue; }
+            if (!(c.worlds >= 2 * CFG[name])) p.push(k + '.' + shape + '.BOX.worlds ' + c.worlds + ' < 2 x ' + name + ' ' + CFG[name] + ' (C-39 margin)');
+        }
+        return p;
+    };
+    // must-fail: a synthetic doc at exactly 2 x floor passes; one world below, null, a string, a missing cell -> red
+    const synth = (smokeW, fullW) => {
+        const kernels = {};
+        for (const k of b6KernelsFor('BOX')) {
+            kernels[k] = {};
+            if (smokeW !== undefined) kernels[k].smoke = { BOX: { worlds: smokeW } };
+            if (fullW !== undefined) kernels[k].full = { BOX: { worlds: fullW } };
+        }
+        return { kernels };
+    };
+    const S2 = 2 * CFG.BOX_WORLD_FLOOR_SMOKE, F2 = 2 * CFG.BOX_WORLD_FLOOR;
+    assert.deepEqual(problems(synth(S2, F2)), [], 'control: exactly 2 x floor passes');
+    for (const [why, doc] of [['smoke one below', synth(S2 - 1, F2)], ['full one below', synth(S2, F2 - 1)],
+        ['smoke null', synth(null, F2)], ['full string', synth(S2, String(F2))], ['smoke 0', synth(0, F2)],
+        ['smoke missing', synth(undefined, F2)], ['full missing', synth(S2, undefined)], ['no kernels', {}]]) {
+        assert.ok(problems(doc).length > 0, 'must-fail: ' + why);
+    }
+    // the live calibration (RED until the R7 C3 recut writes the BOX cells)
+    assert.deepEqual(problems(B6_DOC), []);
 });
 
 /* ---- S2 A-B2p (DELTA 1 task 9 / 10, assertions D3 + D4): SCHEMA_VERSION 2, SOAK_NEARWRAP, header.nearwrap ---- */

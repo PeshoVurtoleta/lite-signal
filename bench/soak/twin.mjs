@@ -19,12 +19,13 @@
  * the failure detail shows the differing lines (C-27 format); a re-run that does not reproduce the same `at` keeps
  * the hash-only failure and says so in its detail (fail closed: the diff stands).
  *
- * Result: ops / opsByClass / gateHits / skipTainted / trace from the PRIMARY; checks = primary checks + OT: 1 (C-9:
- * OT joins exec CHECK_NAMES only in C1); failure = the primary failure, with the OT failure appended to its fails[]
- * when the traces differ; a clean primary -> the OT failure ({step, op, fails: [OT], scen: []}, step = the step
- * column of the first differing line, op = that script op's name or 'end') or null. scen = the primary counts plus
- * 'box-trace-equal' 1 (traces equal) and 'box-interop' = cross-kind reads (world.boxCounts().crossRead, lite-box
- * only) summed over both sides; a key is present only when its count is > 0 (Detectors.counts convention).
+ * Result: ops / opsByClass / gateHits / skipTainted / trace from the PRIMARY; checks = primary checks + OT: 1 (OT is
+ * in exec CHECK_NAMES, PER-WORLD: gates.mjs PER_WORLD, C-38); failure = the primary failure, with the OT failure
+ * appended to its fails[] when the traces differ; a clean primary -> the OT failure ({step, op, fails: [OT], scen:
+ * []}, step = the step column of the first differing line, op = that script op's name or 'end') or null. scen = the
+ * primary counts plus 'box-trace-equal' 1 (traces equal) and 'box-interop' = cross-kind reads
+ * (world.boxCounts().crossRead, lite-box only) summed over both sides; a key is present only when its count is > 0
+ * (Detectors.counts convention).
  *
  * Retention: nothing outlives the call -- the sinks, the worlds and the tap holders are locals; the result holds
  * numbers, strings and the primary's own result objects only. COLD module: never on a measured path.

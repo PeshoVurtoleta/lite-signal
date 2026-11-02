@@ -62,9 +62,9 @@ const GAP_COVERED = [
 // 53 at burst 127 B5: lane:OWNER, oracle:OW, sig:OW:cleanup-order, sig:OW:callback-this, and (A6) sig:O5:node-count,
 // sig:O5:kind-count; 58 at burst 130 B5: lane:RECYCLE, oracle:O9, sig:O9:stale-write, sig:O9:stale-read,
 // sig:O9:stale-dispose; 60 at burst 134 B5: lane:SCHEDULER, sig:O9:stale-thunk; 62 at burst 140 B2b: lane:REGISTRY,
-// lane:CAPACITY).
+// lane:CAPACITY; 65 at burst 151 C2a: lane:BOX, oracle:OT, sig:OT:trace-diff).
 // A dropped id is a lost tooth; raise it when one lands.
-const CHECKS_MIN = 62;
+const CHECKS_MIN = 65;
 
 const copy = (x) => structuredClone(x);
 const live = (over) => audit(Object.assign({ controls: CONTROL_NAMES.slice(), ceiling: GAPS_CEILING.slice(), max: GAPS_MAX }, over || {}));
@@ -83,7 +83,7 @@ test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 22-n
     assert.deepEqual(live(), []);
 });
 
-test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 62 ids (a tooth never quietly becomes a gap)', () => {
+test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 65 ids (a tooth never quietly becomes a gap)', () => {
     assert.equal(GAP_COVERED.length, 9);
     assert.deepEqual(coveredBy(GAPS), GAP_COVERED.slice().sort());
     assert.ok(Object.keys(CHECKS).length >= CHECKS_MIN, 'CHECKS ids ' + Object.keys(CHECKS).length + ' < ' + CHECKS_MIN);
@@ -697,7 +697,7 @@ test('teeth j: B5 -- validSpec: extra.pass is wrap-only, a non-empty list of dis
 });
 
 test('teeth j: B5 -- audit(): every _mustfail control is under some CHECKS id or in NOT_TEETH (orphan control: <name>)', () => {
-    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP', 'P-CAP-TREE']);
+    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP', 'P-CAP-TREE', 'P-BOX-TREE']);
     assert.ok(CHECKS['cause:scenario'].includes('P-HOOK-TREE-COVOFF'), 'the b93 HOOK cov-off scenario control is a cause:scenario tooth');
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']) }), ['orphan control: X-orphan']);
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']), notTeeth: Object.assign({}, NOT_TEETH, { 'X-orphan': 'a reason' }) }), []);
@@ -1432,4 +1432,59 @@ test('teeth t: soakPatch runs -- a 0-match / 2-match find is INVALID (never spaw
     // and pass: the live row (the copy carries the edit) is KILLED
     const real = runControl(CONTROLS.find((x) => x.name === 'T-REG-destroyall'));
     assert.deepEqual([real.ok, real.invalid, real.status, real.problems], [true, false, 1, []]);
+});
+
+/* ---- u. the BOX teeth (b151 C2a, PLAN-R7 group C task 5 + ASSERTION C-A3; CURRENT C-7, C-13, C-40) ---- */
+
+// The universe before the BOX lane (b140 B2b .. b150) held 72 ids; C1 adds exactly lane:BOX, oracle:OT, sig:OT:trace-diff.
+const UNIVERSE_PRE_BOX = 72;
+const BOX_IDS = ['lane:BOX', 'oracle:OT', 'sig:OT:trace-diff'];
+const BOX_ENV = { SOAK_LANES: 'BOX' };
+const BOX_MF_ENV = { SOAK_LANES: 'BOX', SOAK_MUSTFAIL: 'box-untracked' };
+const BOX_SPEC = 'oracle=OT lane=BOX sig=trace-diff known=none';
+
+test('teeth u: the BOX ids have teeth -- T-BOX-untracked (SHORT, OT trace-diff known=none), P-BOX-TREE explained by DIV-F22 (C-40)', () => {
+    // C-A3: the universe gains exactly the three BOX ids; GAPS ceiling + max unchanged (teeth a pins both literals)
+    const u = universe();
+    assert.equal(u.length, UNIVERSE_PRE_BOX + BOX_IDS.length);
+    for (const id of BOX_IDS) assert.equal(u.filter((x) => x === id).length, 1, id + ' is a judged id, once');
+    assert.deepEqual(u.filter((x) => /^(lane:BOX|oracle:OT|sig:OT:)/.test(x)), BOX_IDS);
+    assert.equal(Object.keys(GAPS).length, GAPS_MAX);
+    assert.deepEqual(Object.keys(GAPS), GAPS_CEILING);
+    for (const id of BOX_IDS) assert.deepEqual(CHECKS[id], ['T-BOX-untracked'], id + ' -> T-BOX-untracked');
+    for (const g of Object.keys(GAPS)) for (const id of BOX_IDS) assert.ok(!GAPS[g].covers.includes(id), g + ' never covers ' + id);
+    assert.equal(typeof NOT_TEETH['P-BOX-TREE'], 'string');
+    const get = (n) => { const c = CONTROLS.find((x) => x.name === n); assert.ok(c, n + ' exists'); assert.deepEqual(validSpec(c), [], n); return c; };
+    // C-40: the pass control is exit 1 'explained' by DIV-F22 only (L-P-INTERIM-ERROR's shape), NOT exit 0 nobreach
+    const pb = get('P-BOX-TREE');
+    assert.ok(SHORT_RE.test(pb.name) && !own(pb, 'soakPatch'));
+    assert.deepEqual(shape(pb).concat([pb.expect.known, pb.expect.extra]), ['main', 'tree', BOX_ENV, ['--smoke'], [], null, 1, 'explained', [], [], ['DIV-F22'], undefined]);
+    // C-7 / C-13: the must-fail row in the SHORT battery; no kernel patch and no soakPatch (the mode is the env token)
+    const tb = get('T-BOX-untracked');
+    assert.ok(SHORT_RE.test(tb.name) && !LONG_RE.test(tb.name) && !own(tb, 'soakPatch'));
+    assert.deepEqual(shape(tb).concat([tb.expect.known]), ['main', 'tree', BOX_MF_ENV, ['--smoke'], [], null, 1, 'match', [], [BOX_SPEC], undefined]);
+    assert.equal(buildKernel(tb).src, rowsBase(), 'the kernel is the unpatched tree');
+    assert.equal(buildKernel(pb).src, rowsBase(), 'the kernel is the unpatched tree');
+    assert.deepEqual(CONTROLS.filter((x) => /BOX/.test(x.name)).map((x) => x.name), ['P-BOX-TREE', 'T-BOX-untracked']);
+    assert.deepEqual(pairing(CHECKS, CONTROLS), []);
+    // must-fail: a spec on another lane does not back lane:BOX; another oracle does not back oracle:OT; another sig not sig:OT:trace-diff
+    const ctl = copy(CONTROLS);
+    ctl.find((x) => x.name === 'T-BOX-untracked').expect.specs = ['oracle=OT lane=GRAPH sig=trace-diff known=none'];
+    assert.deepEqual(pairing(CHECKS, ctl), ['lane:BOX: T-BOX-untracked -- no BREACH spec naming lane=BOX']);
+    const ctl2 = copy(CONTROLS);
+    ctl2.find((x) => x.name === 'T-BOX-untracked').expect.specs = ['oracle=O6 lane=BOX sig=expected-escape-missing known=none'];
+    const p2 = pairing(CHECKS, ctl2);
+    assert.equal(p2.length, 2, JSON.stringify(p2));
+    assert.ok(p2[0].indexOf('oracle:OT: T-BOX-untracked -- ') === 0 && p2[1].indexOf('sig:OT:trace-diff: T-BOX-untracked -- ') === 0, JSON.stringify(p2));
+    // must-fail: T-BOX-untracked dropped from CHECKS is an orphan; P-BOX-TREE out of NOT_TEETH is an orphan; the BOX ids uncovered
+    const c1 = copy(CHECKS);
+    for (const id of Object.keys(c1)) c1[id] = c1[id].filter((n) => n !== 'T-BOX-untracked');
+    hasProblem(live({ checks: c1 }), 'orphan control: T-BOX-untracked');
+    const nt = Object.assign({}, NOT_TEETH);
+    delete nt['P-BOX-TREE'];
+    hasProblem(live({ notTeeth: nt }), 'orphan control: P-BOX-TREE');
+    const c2 = copy(CHECKS);
+    for (const id of BOX_IDS) delete c2[id];
+    const probs = live({ checks: c2 });
+    for (const id of BOX_IDS) hasProblem(probs, 'uncovered: ' + id + ' has no CHECKS control, no GAP and no UNREACHABLE proof');
 });

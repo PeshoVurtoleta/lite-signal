@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "task": "SPEC-B-S1cd TASK 11 (burst 8 B6): soak calibration -- DEFAULT_OPS, SCEN_MIN(_SMOKE), CHECK_FLOOR(_SMOKE), TAINT_SKIP_MAX",
- "tool": "node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --import-throughput <the earlier timed run>",
+ "tool": "node bench/soak/calibration/calibrate.mjs --write bench/soak/calibration/soak-calibration.json --timed",
  "guard": "test/41-soak-config.test.mjs (B6 drift guard): config values == cut, every binding cell clears its constant, live smoke re-measure == kernels.<k>.smoke, live main.mjs probe fold == probe.fold",
  "cut": {
   "seed": 12648430,
@@ -294,30 +294,90 @@
     "O5",
     "O6"
    ]
+  },
+  "BOX": {
+   "index": 9,
+   "required": [
+    "box-trace-equal",
+    "box-interop"
+   ],
+   "optional": [
+    "diamond-write",
+    "dep-set-flip",
+    "deep-pull",
+    "second-invalidation",
+    "equality-cutoff",
+    "adversarial-equality",
+    "wide-mark",
+    "revert-after-mid-read",
+    "revert-no-read",
+    "nested-close",
+    "throw-in-batch",
+    "effect-created-mid-batch",
+    "multi-write-same-signal",
+    "throw-dep-effect-prewalk",
+    "throw-dep-computed-prewalk",
+    "recovery-after-throw",
+    "aggregate",
+    "throwing-equals",
+    "cycle-error-surfaces",
+    "saved-cursor-hazard",
+    "live-cursor-hazard",
+    "child-first-run-dispose",
+    "nested-computed-dispose",
+    "untrack-dispose",
+    "outer-computed",
+    "early-exit-after-dispose",
+    "lifecycle-callback-dispose",
+    "lifecycle-dispose-recycle",
+    "dispose-outer-observer",
+    "wie-stale-effect",
+    "wie-stale-computed",
+    "wie-prewalk",
+    "wie-untrack",
+    "wie-write-before-read"
+   ],
+   "oracles": [
+    "OT"
+   ]
   }
  },
  "provenance": {
-  "date": "2026-11-02T03:46:53.508Z",
-  "gitHead": "051f18b9d897b772d72a7fe090a5d82915141295",
+  "date": "2026-11-02T07:00:19.231Z",
+  "gitHead": "527cd7298f3b616440668bb6fd510e89a8afbb64",
   "gitDirty": [
-   " M bench/soak/adapters/contract.mjs",
+   " M .github/workflows/soak-nightly.yml",
+   " M bench/soak/SoakReport.mjs",
+   " M bench/soak/_dev-run.mjs",
+   " M bench/soak/_mustfail.mjs",
+   " M bench/soak/adapters/lite.mjs",
+   " M bench/soak/calibration/calibrate.mjs",
+   " M bench/soak/calibration/golden/scripts-1000.json",
    " M bench/soak/config.mjs",
-   " M bench/soak/divergences.json",
    " M bench/soak/divergences.mjs",
-   " M bench/soak/main.mjs",
+   " M bench/soak/exec.mjs",
+   " M bench/soak/gates.mjs",
+   " M bench/soak/lanes/box.mjs",
+   " M bench/soak/lanes/index.mjs",
+   " M bench/soak/oracles.mjs",
    " M bench/soak/parity.json",
-   " M bench/soak/replay.mjs",
-   " M bench/soak/scenarios.mjs",
-   " M bench/soak/shrink.mjs",
+   " M bench/soak/parity.mjs",
+   " M bench/soak/teeth.mjs",
+   " M bench/soak/twin.mjs",
    " M test/41-soak-config.test.mjs",
-   " M test/89-soak-scheduler.test.mjs",
-   " M test/93-soak-capacity.test.mjs",
+   " M test/42-soak-gates.test.mjs",
+   " M test/43-soak-model.test.mjs",
+   " M test/44-soak-divergences.test.mjs",
+   " M test/45-soak-teeth.test.mjs",
+   " M test/46-soak-report.test.mjs",
+   " M test/74-soak-s3-seam.test.mjs",
+   " M test/75-soak-hook.test.mjs",
+   " M test/92-soak-registry.test.mjs",
+   " M test/96-soak-box.test.mjs",
+   " M test/97-soak-twin.test.mjs",
    "?? BRIEF.md",
    "?? bench/bench-runs/",
-   "?? bench/soak/lanes/box.mjs",
-   "?? bench/soak/twin.mjs",
-   "?? test/97-soak-twin.test.mjs",
-   "?? test/fixtures/r7-b0-applicability.json"
+   "?? test/98-soak-box-roster.test.mjs"
   ],
   "engineSha256": "ea0b64d17e6d68b49809f2124a44abf0204e47cd1e48bcefeccd33fcba023fe9",
   "engineNote": "sha256 of <root>/Signal.js (the tree kernel), equal at launch, at the end and in kernels.tree.files (--write dies otherwise): the engine actually cut, also on a dirty tree",
@@ -326,41 +386,47 @@
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   3.31,
-   5.67,
-   6.03
+   3.21,
+   3.89,
+   3.36
   ],
-  "loadavgAfterTimed": null,
-  "loadavgAfterTimedNote": "null: untimed run, no timed phase (the imported timed run is throughputRun)",
+  "loadavgAfterTimed": [
+   1.89,
+   2.24,
+   2.72
+  ],
   "loadavgAfter": [
-   8.33,
-   7.24,
-   6.22
+   8.86,
+   5.42,
+   3.98
   ],
   "busyNodeBefore": [],
   "busyNodeRule": "other node processes (not this process or its node launcher chain, e.g. the quiet-lock wrapper) >= 10% CPU at launch, as pid pcpu command; [] = none, null = ps failed",
-  "seconds": 1244,
-  "cutSeconds": 670,
+  "seconds": 1421,
+  "cutSeconds": 756,
   "secondsClock": "wall clock (Date.now), whole seconds: seconds = --write entry to the evidence write (every step; the origin of the \"(N s)\" log stamps); cutSeconds = step 1, the cut (the only timed phase under --timed)",
-  "timing": "PENDING (untimed run; throughput decides no gate)",
+  "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "9ce4d2a7eb9294a899a867938dfbefc4a6c10b4704605cc407391a8806b3315a",
-   "bench/soak/exec.mjs": "a60a569c9aadec613837f332ecc98e2fdea3aa8fca6d6906e58f413e47282f14",
-   "bench/soak/oracles.mjs": "126b1c45aae02604cea7e45efe983277e688a4fe2bab83870e9bcd1d1b3f0174",
+   "bench/soak/exec.mjs": "705ca3ac933b4af83b69d5a8e43696493e6e8fa24109fd3702a305518180f977",
+   "bench/soak/oracles.mjs": "37c8a4dce866686283dd0713b366f07aac223aa86aa88f71618a7dd6237a1520",
    "bench/soak/model.mjs": "a87052623d3cb7b90af865df146ab1a390555cc9ec1bbe0dcb2de4fd67ebd81f",
    "bench/soak/scenarios.mjs": "0505b1d5d24cdd1c9bb00abb86f16d420f740b8ad8d35a4652a5a4cc38e80b27",
    "bench/soak/seeds.mjs": "b68b535f7dcc83c2e12582c488fea1299704d41b492420854279e768010e9ff5",
-   "bench/soak/lanes/index.mjs": "539d3ed1b436aeb3f1d9b87971586b1c0411a20e988670ac63a006c05e10ae46",
+   "bench/soak/lanes/index.mjs": "1f3acee62dada247756965bc548dc05e0db3a19cb43ef946ca3bf75f96f89639",
    "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
    "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
    "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
-   "bench/soak/adapters/lite.mjs": "b5fdfcc9b614db980b88d57772e4527cceb8b14eb9bbe76da397c121b281c683",
+   "bench/soak/adapters/lite.mjs": "f869f3b7a4a1181fe927187edb0a3c0e932948c5db5379204afb79999967eaa8",
    "bench/soak/adapters/contract.mjs": "95760589bc3081dcf2cfccd25bc7896e33c995912047f1820a8b755a04286e31",
    "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
    "bench/torture/helpers/index.mjs": "0f58faf5f553716bf5059cdfeae7fe887ea07fe3e853d8cba0e75106e54cb119",
    "bench/soak/adapters/lite-s3.mjs": "4b8814ddc4b9b1d2f63032d442ac6539a7632763eb84e0a583d7f3ffc2929145",
    "bench/soak/mirror.mjs": "11998b7aebdd0e2003e10e68a146720d943598f6c71575dcddcffa0634935be7",
+   "bench/soak/twin.mjs": "4ba2d244ccc035e569433c98ee11857fe5a4323fde7148f7287875139c7bedb2",
+   "bench/soak/trace.mjs": "77b81f000cf729f20992e68e2ece0d56b0c4f09cc58ccadde12d35546afd8890",
+   "bench/soak/adapters/lite-box.mjs": "3a914744fc2c5f935347490f0294933b70eaa43f278b6d1d58091108d969beca",
    "bench/soak/lanes/wie.mjs": "67aebd356665312b11c0f323e756485caf8cf50f8bec277322937bbf067a0e34",
    "bench/soak/lanes/hook.mjs": "9108a30a1a5a17fdecec2ad221d886a6c2540f29dc6fdf476c7ec9fcdc8cb5f3",
    "bench/soak/lanes/lifecycle.mjs": "1be1721a7f04caa993ed6e16ea18490602322c2452befbb9f80efc8544c43a4c",
@@ -368,7 +434,8 @@
    "bench/soak/lanes/recycle.mjs": "2f7e0d56a3e9e4e6dd94220a0b1af424b08defdc0908a46df39eb197a59aa7b8",
    "bench/soak/lanes/scheduler.mjs": "e03f0fc102fb076d7055493c0795d29eef99a1ddc77a242082a4c243206930b0",
    "bench/soak/lanes/registry.mjs": "ddf650bb0665e2633f4b7082d85ccb5182cbfddc81665aef8d3ba58b40755732",
-   "bench/soak/lanes/capacity.mjs": "f94162ff661918b01a0809a1daa762bfcdaeeb167eb0577909e5c378eb2f4f9e"
+   "bench/soak/lanes/capacity.mjs": "f94162ff661918b01a0809a1daa762bfcdaeeb167eb0577909e5c378eb2f4f9e",
+   "bench/soak/lanes/box.mjs": "348c64fb19a4a68c88a621f48b5de381f5ee66dba519b6743a021257fa56d661"
   }
  },
  "worst": {
@@ -819,6 +886,17 @@
       "oracle": "O1c",
       "ratio": 0
      }
+    },
+    "BOX": {
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 2793
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 2793
+     },
+     "maxTaint": null
     }
    },
    "smoke": {
@@ -947,6 +1025,17 @@
       "oracle": "O1c",
       "ratio": 0
      }
+    },
+    "BOX": {
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 150
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 150
+     },
+     "maxTaint": null
     }
    }
   }
@@ -993,7 +1082,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1043,7 +1133,8 @@
       "OB": 664375,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1092,7 +1183,8 @@
       "OB": 193019,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1145,7 +1237,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 47793,
@@ -1196,7 +1289,8 @@
       "OB": 0,
       "O8": 1103332,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1245,7 +1339,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 1089099
+      "O9": 1089099,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1299,7 +1394,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1349,7 +1445,8 @@
       "OB": 36722,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1398,7 +1495,8 @@
       "OB": 10542,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1451,7 +1549,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 2694,
@@ -1502,7 +1601,8 @@
       "OB": 0,
       "O8": 60717,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1551,7 +1651,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 60087
+      "O9": 60087,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1578,12 +1679,114 @@
     }
    },
    "throughput": {
-    "GRAPH": "PENDING",
-    "BATCH": "PENDING",
-    "ERROR": "PENDING",
-    "NEST": "PENDING",
-    "HOOK": "PENDING",
-    "SCHEDULER": "PENDING"
+    "GRAPH": {
+     "opsPerSecPerCycle": [
+      13110,
+      13091,
+      13400,
+      13805,
+      13197,
+      13332,
+      13664,
+      13564,
+      13521,
+      13234,
+      13156
+     ],
+     "min": 13091,
+     "median": 13332,
+     "max": 13805
+    },
+    "BATCH": {
+     "opsPerSecPerCycle": [
+      45685,
+      45884,
+      46535,
+      45604,
+      45416,
+      45562,
+      46107,
+      46116,
+      45980,
+      45789,
+      45875
+     ],
+     "min": 45416,
+     "median": 45875,
+     "max": 46535
+    },
+    "ERROR": {
+     "opsPerSecPerCycle": [
+      44246,
+      45518,
+      44344,
+      44424,
+      45314,
+      44588,
+      44620,
+      45966,
+      45523,
+      46133,
+      45628
+     ],
+     "min": 44246,
+     "median": 45314,
+     "max": 46133
+    },
+    "NEST": {
+     "opsPerSecPerCycle": [
+      28591,
+      34549,
+      34880,
+      34680,
+      33912,
+      34784,
+      33637,
+      33693,
+      34003,
+      33563,
+      33562
+     ],
+     "min": 28591,
+     "median": 33912,
+     "max": 34880
+    },
+    "HOOK": {
+     "opsPerSecPerCycle": [
+      36069,
+      36607,
+      36890,
+      35682,
+      35298,
+      35297,
+      36191,
+      34676,
+      36539,
+      35231,
+      34862
+     ],
+     "min": 34676,
+     "median": 35682,
+     "max": 36890
+    },
+    "SCHEDULER": {
+     "opsPerSecPerCycle": [
+      181313,
+      212421,
+      210239,
+      213780,
+      215340,
+      214879,
+      213962,
+      216269,
+      215340,
+      214008,
+      214053
+     ],
+     "min": 181313,
+     "median": 214008,
+     "max": 216269
+    }
    }
   },
   "lite-1.5.2": {
@@ -1627,7 +1830,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1677,7 +1881,8 @@
       "OB": 171053,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1726,7 +1931,8 @@
       "OB": 115043,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1779,7 +1985,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 22674,
@@ -1834,7 +2041,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 1089099
+      "O9": 1089099,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1888,7 +2096,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1938,7 +2147,8 @@
       "OB": 9280,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -1987,7 +2197,8 @@
       "OB": 6333,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2040,7 +2251,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 1262,
@@ -2095,7 +2307,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 60087
+      "O9": 60087,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2122,11 +2335,96 @@
     }
    },
    "throughput": {
-    "GRAPH": "PENDING",
-    "BATCH": "PENDING",
-    "ERROR": "PENDING",
-    "NEST": "PENDING",
-    "SCHEDULER": "PENDING"
+    "GRAPH": {
+     "opsPerSecPerCycle": [
+      12467,
+      12889,
+      13141,
+      13654,
+      12798,
+      12772,
+      12959,
+      12854,
+      13172,
+      13104,
+      13510
+     ],
+     "min": 12467,
+     "median": 12959,
+     "max": 13654
+    },
+    "BATCH": {
+     "opsPerSecPerCycle": [
+      20391,
+      20431,
+      20736,
+      20379,
+      20374,
+      20706,
+      20148,
+      19548,
+      19482,
+      19655,
+      19676
+     ],
+     "min": 19482,
+     "median": 20374,
+     "max": 20736
+    },
+    "ERROR": {
+     "opsPerSecPerCycle": [
+      46749,
+      62299,
+      62366,
+      62948,
+      62506,
+      61145,
+      62342,
+      62698,
+      62336,
+      63382,
+      63733
+     ],
+     "min": 46749,
+     "median": 62366,
+     "max": 63733
+    },
+    "NEST": {
+     "opsPerSecPerCycle": [
+      28642,
+      32093,
+      31618,
+      32277,
+      32541,
+      32756,
+      32417,
+      33434,
+      32550,
+      33136,
+      32577
+     ],
+     "min": 28642,
+     "median": 32541,
+     "max": 33434
+    },
+    "SCHEDULER": {
+     "opsPerSecPerCycle": [
+      187412,
+      219776,
+      218341,
+      222606,
+      221182,
+      220308,
+      220308,
+      219969,
+      221377,
+      220647,
+      219680
+     ],
+     "min": 187412,
+     "median": 220308,
+     "max": 222606
+    }
    }
   },
   "tree": {
@@ -2173,7 +2471,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 2282309,
@@ -2225,7 +2524,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2271,7 +2571,8 @@
       "OB": 0,
       "O8": 1103332,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2318,7 +2619,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2369,7 +2671,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 912338,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2420,7 +2723,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 1077600
+      "O9": 1077600,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2471,7 +2775,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 1089099
+      "O9": 1089099,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2522,7 +2827,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2570,7 +2876,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2590,6 +2897,116 @@
       "link-ceiling-grow": 1920,
       "grow-past-initial": 1861,
       "reuse-at-edge": 4081
+     }
+    },
+    "BOX": {
+     "cycles": 11,
+     "worlds": 2793,
+     "ops": 1102646,
+     "failingWorlds": 481,
+     "crashes": 0,
+     "scenarios": {
+      "box-trace-equal": 2793,
+      "box-interop": 10024588,
+      "diamond-write": 206490,
+      "dep-set-flip": 505521,
+      "deep-pull": 527,
+      "second-invalidation": 687352,
+      "equality-cutoff": 306784,
+      "adversarial-equality": 8548,
+      "wide-mark": 0,
+      "revert-after-mid-read": 52246,
+      "revert-no-read": 81374,
+      "nested-close": 49023,
+      "throw-in-batch": 20593,
+      "effect-created-mid-batch": 17205,
+      "multi-write-same-signal": 209144,
+      "throw-dep-effect-prewalk": 22391,
+      "throw-dep-computed-prewalk": 5962,
+      "recovery-after-throw": 39900,
+      "aggregate": 907,
+      "throwing-equals": 7345,
+      "cycle-error-surfaces": 1517,
+      "saved-cursor-hazard": 19009,
+      "live-cursor-hazard": 6922,
+      "child-first-run-dispose": 20067,
+      "nested-computed-dispose": 42764,
+      "untrack-dispose": 9359,
+      "outer-computed": 4605,
+      "early-exit-after-dispose": 7739,
+      "lifecycle-callback-dispose": 2491,
+      "lifecycle-dispose-recycle": 13640,
+      "dispose-outer-observer": 14674,
+      "wie-stale-effect": 40631,
+      "wie-stale-computed": 20948,
+      "wie-prewalk": 818097,
+      "wie-untrack": 15267,
+      "wie-write-before-read": 3093
+     },
+     "performed": {
+      "O1c": 16913987,
+      "O1e": 18415200,
+      "O2": 20077385,
+      "O4": 15857412,
+      "O5": 1104958,
+      "O6": 2832795,
+      "O7a": 11022,
+      "O7": 0,
+      "OB": 165062,
+      "O8": 0,
+      "OW": 0,
+      "O9": 0,
+      "OT": 2793
+     },
+     "skipTainted": {
+      "O1c": 487438,
+      "O1e": 1286341,
+      "O2": 656,
+      "O4": 447415
+     },
+     "taintRatio": {
+      "O1c": 0.02801138412515067,
+      "O1e": 0.06529139015064862,
+      "O2": 0.00003267251023145136,
+      "O4": 0.027440646871015557
+     },
+     "scenarioMinPerCycle": {
+      "box-trace-equal": 252,
+      "box-interop": 871179,
+      "diamond-write": 18144,
+      "dep-set-flip": 43692,
+      "deep-pull": 30,
+      "second-invalidation": 55366,
+      "equality-cutoff": 25983,
+      "adversarial-equality": 730,
+      "wide-mark": 0,
+      "revert-after-mid-read": 3438,
+      "revert-no-read": 5729,
+      "nested-close": 3421,
+      "throw-in-batch": 1630,
+      "effect-created-mid-batch": 1190,
+      "multi-write-same-signal": 14506,
+      "throw-dep-effect-prewalk": 1520,
+      "throw-dep-computed-prewalk": 332,
+      "recovery-after-throw": 2533,
+      "aggregate": 50,
+      "throwing-equals": 518,
+      "cycle-error-surfaces": 88,
+      "saved-cursor-hazard": 1112,
+      "live-cursor-hazard": 465,
+      "child-first-run-dispose": 1212,
+      "nested-computed-dispose": 2533,
+      "untrack-dispose": 518,
+      "outer-computed": 256,
+      "early-exit-after-dispose": 441,
+      "lifecycle-callback-dispose": 172,
+      "lifecycle-dispose-recycle": 874,
+      "dispose-outer-observer": 887,
+      "wie-stale-effect": 3106,
+      "wie-stale-computed": 1357,
+      "wie-prewalk": 61468,
+      "wie-untrack": 857,
+      "wie-write-before-read": 217
      }
     }
    },
@@ -2624,7 +3041,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 127274,
@@ -2676,7 +3094,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2722,7 +3141,8 @@
       "OB": 0,
       "O8": 60717,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2769,7 +3189,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2820,7 +3241,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 50587,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2871,7 +3293,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 59267
+      "O9": 59267,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2922,7 +3345,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 60087
+      "O9": 60087,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -2973,7 +3397,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -3021,7 +3446,8 @@
       "OB": 0,
       "O8": 0,
       "OW": 0,
-      "O9": 0
+      "O9": 0,
+      "OT": 0
      },
      "skipTainted": {
       "O1c": 0,
@@ -3042,18 +3468,299 @@
       "grow-past-initial": 394,
       "reuse-at-edge": 799
      }
+    },
+    "BOX": {
+     "cycles": 3,
+     "worlds": 150,
+     "ops": 60583,
+     "failingWorlds": 20,
+     "crashes": 0,
+     "scenarios": {
+      "box-trace-equal": 150,
+      "box-interop": 581408,
+      "diamond-write": 11099,
+      "dep-set-flip": 28343,
+      "deep-pull": 32,
+      "second-invalidation": 36362,
+      "equality-cutoff": 18942,
+      "adversarial-equality": 514,
+      "wide-mark": 0,
+      "revert-after-mid-read": 4054,
+      "revert-no-read": 6081,
+      "nested-close": 3779,
+      "throw-in-batch": 1279,
+      "effect-created-mid-batch": 1285,
+      "multi-write-same-signal": 15832,
+      "throw-dep-effect-prewalk": 902,
+      "throw-dep-computed-prewalk": 206,
+      "recovery-after-throw": 1495,
+      "aggregate": 51,
+      "throwing-equals": 290,
+      "cycle-error-surfaces": 53,
+      "saved-cursor-hazard": 1040,
+      "live-cursor-hazard": 367,
+      "child-first-run-dispose": 990,
+      "nested-computed-dispose": 2346,
+      "untrack-dispose": 489,
+      "outer-computed": 280,
+      "early-exit-after-dispose": 424,
+      "lifecycle-callback-dispose": 142,
+      "lifecycle-dispose-recycle": 702,
+      "dispose-outer-observer": 834,
+      "wie-stale-effect": 2251,
+      "wie-stale-computed": 1365,
+      "wie-prewalk": 45782,
+      "wie-untrack": 750,
+      "wie-write-before-read": 168
+     },
+     "performed": {
+      "O1c": 916213,
+      "O1e": 1046517,
+      "O2": 1164422,
+      "O4": 877668,
+      "O5": 60713,
+      "O6": 153468,
+      "O7a": 603,
+      "O7": 0,
+      "OB": 11611,
+      "O8": 0,
+      "OW": 0,
+      "O9": 0,
+      "OT": 150
+     },
+     "skipTainted": {
+      "O1c": 25305,
+      "O1e": 70502,
+      "O2": 38,
+      "O4": 24501
+     },
+     "taintRatio": {
+      "O1c": 0.026876809577724484,
+      "O1e": 0.0631162048273127,
+      "O2": 0.000032633151847208145,
+      "O4": 0.0271578828356993
+     },
+     "scenarioMinPerCycle": {
+      "box-trace-equal": 49,
+      "box-interop": 161013,
+      "diamond-write": 3218,
+      "dep-set-flip": 9113,
+      "deep-pull": 3,
+      "second-invalidation": 9846,
+      "equality-cutoff": 5015,
+      "adversarial-equality": 156,
+      "wide-mark": 0,
+      "revert-after-mid-read": 1336,
+      "revert-no-read": 1803,
+      "nested-close": 1153,
+      "throw-in-batch": 393,
+      "effect-created-mid-batch": 415,
+      "multi-write-same-signal": 4981,
+      "throw-dep-effect-prewalk": 244,
+      "throw-dep-computed-prewalk": 54,
+      "recovery-after-throw": 384,
+      "aggregate": 9,
+      "throwing-equals": 63,
+      "cycle-error-surfaces": 12,
+      "saved-cursor-hazard": 236,
+      "live-cursor-hazard": 59,
+      "child-first-run-dispose": 222,
+      "nested-computed-dispose": 503,
+      "untrack-dispose": 105,
+      "outer-computed": 64,
+      "early-exit-after-dispose": 90,
+      "lifecycle-callback-dispose": 31,
+      "lifecycle-dispose-recycle": 150,
+      "dispose-outer-observer": 180,
+      "wie-stale-effect": 470,
+      "wie-stale-computed": 195,
+      "wie-prewalk": 8918,
+      "wie-untrack": 115,
+      "wie-write-before-read": 37
+     }
     }
    },
    "throughput": {
-    "NEST": "PENDING",
-    "WIE": "PENDING",
-    "HOOK": "PENDING",
-    "LIFECYCLE": "PENDING",
-    "OWNER": "PENDING",
-    "RECYCLE": "PENDING",
-    "SCHEDULER": "PENDING",
-    "REGISTRY": "PENDING",
-    "CAPACITY": "PENDING"
+    "NEST": {
+     "opsPerSecPerCycle": [
+      45616,
+      46634,
+      47430,
+      46649,
+      46448,
+      47340,
+      48288,
+      47807,
+      48286,
+      49338,
+      48987
+     ],
+     "min": 45616,
+     "median": 47430,
+     "max": 49338
+    },
+    "WIE": {
+     "opsPerSecPerCycle": [
+      10523,
+      9777,
+      9963,
+      10245,
+      10617,
+      10059,
+      10131,
+      10162,
+      10608,
+      9988,
+      10195
+     ],
+     "min": 9777,
+     "median": 10162,
+     "max": 10617
+    },
+    "HOOK": {
+     "opsPerSecPerCycle": [
+      37748,
+      37648,
+      37126,
+      37348,
+      38070,
+      37994,
+      38540,
+      36770,
+      38618,
+      37382,
+      37079
+     ],
+     "min": 36770,
+     "median": 37648,
+     "max": 38618
+    },
+    "LIFECYCLE": {
+     "opsPerSecPerCycle": [
+      28916,
+      29738,
+      29478,
+      29874,
+      29943,
+      30183,
+      29705,
+      28867,
+      29441,
+      29189,
+      29517
+     ],
+     "min": 28867,
+     "median": 29517,
+     "max": 30183
+    },
+    "OWNER": {
+     "opsPerSecPerCycle": [
+      70217,
+      71891,
+      71292,
+      71383,
+      71388,
+      71054,
+      71034,
+      70813,
+      71393,
+      70878,
+      71317
+     ],
+     "min": 70217,
+     "median": 71292,
+     "max": 71891
+    },
+    "RECYCLE": {
+     "opsPerSecPerCycle": [
+      271392,
+      279662,
+      284676,
+      281392,
+      284676,
+      276340,
+      271687,
+      280289,
+      281313,
+      281630,
+      284190
+     ],
+     "min": 271392,
+     "median": 281313,
+     "max": 284676
+    },
+    "SCHEDULER": {
+     "opsPerSecPerCycle": [
+      181905,
+      192558,
+      193711,
+      192965,
+      196059,
+      192078,
+      195219,
+      193337,
+      194387,
+      194161,
+      194274
+     ],
+     "min": 181905,
+     "median": 193711,
+     "max": 196059
+    },
+    "REGISTRY": {
+     "opsPerSecPerCycle": [
+      52974,
+      52240,
+      52573,
+      55099,
+      54263,
+      53956,
+      55451,
+      55493,
+      54827,
+      54145,
+      53597
+     ],
+     "min": 52240,
+     "median": 54145,
+     "max": 55493
+    },
+    "CAPACITY": {
+     "opsPerSecPerCycle": [
+      122771,
+      129050,
+      126601,
+      126050,
+      124422,
+      122571,
+      126825,
+      124104,
+      127744,
+      124954,
+      130504
+     ],
+     "min": 122571,
+     "median": 126050,
+     "max": 130504
+    },
+    "BOX": {
+     "opsPerSecPerCycle": [
+      9656,
+      10943,
+      10999,
+      10346,
+      10512,
+      11049,
+      10771,
+      10090,
+      10615,
+      9865,
+      9347
+     ],
+     "min": 9347,
+     "median": 10512,
+     "max": 11049
+    }
    }
   }
  },
@@ -3092,7 +3799,8 @@
      "RECYCLE",
      "SCHEDULER",
      "REGISTRY",
-     "CAPACITY"
+     "CAPACITY",
+     "BOX"
     ]
    }
   },
@@ -3129,7 +3837,8 @@
      "RECYCLE",
      "SCHEDULER",
      "REGISTRY",
-     "CAPACITY"
+     "CAPACITY",
+     "BOX"
     ]
    }
   }
@@ -3179,7 +3888,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -3223,7 +3933,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3257,7 +3968,8 @@
      "OB": 8295,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3291,7 +4003,8 @@
      "OB": 2152,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3325,7 +4038,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3359,7 +4073,8 @@
      "OB": 0,
      "O8": 14833,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3393,7 +4108,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 13215
+     "O9": 13215,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3429,7 +4145,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3463,7 +4180,8 @@
      "OB": 1789,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3497,7 +4215,8 @@
      "OB": 1227,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3531,7 +4250,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3565,7 +4285,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 13215
+     "O9": 13215,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3601,7 +4322,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3635,7 +4357,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3669,7 +4392,8 @@
      "OB": 0,
      "O8": 14833,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3703,7 +4427,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3737,7 +4462,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 11212,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3771,7 +4497,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 12826
+     "O9": 12826,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3805,7 +4532,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 13215
+     "O9": 13215,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3839,7 +4567,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3873,7 +4602,8 @@
      "OB": 0,
      "O8": 0,
      "OW": 0,
-     "O9": 0
+     "O9": 0,
+     "OT": 0
     },
     "worst": {
      "rarestRequired": {
@@ -3888,6 +4618,38 @@
       "oracle": "O1c",
       "ratio": 0
      }
+    }
+   },
+   "BOX": {
+    "cycles": 11,
+    "ops": 13030,
+    "worlds": 35,
+    "failingWorlds": 9,
+    "performed": {
+     "O1c": 165343,
+     "O1e": 205272,
+     "O2": 191099,
+     "O4": 179651,
+     "O5": 13056,
+     "O6": 27347,
+     "O7a": 167,
+     "O7": 0,
+     "OB": 2412,
+     "O8": 0,
+     "OW": 0,
+     "O9": 0,
+     "OT": 35
+    },
+    "worst": {
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 35
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 35
+     },
+     "maxTaint": null
     }
    }
   }
@@ -3912,7 +4674,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -3960,7 +4723,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -4008,7 +4772,8 @@
     "OB": 37339,
     "O8": 0,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -4056,7 +4821,8 @@
     "OB": 10687,
     "O8": 0,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -4104,7 +4870,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 77841,
@@ -4152,7 +4919,8 @@
     "OB": 0,
     "O8": 60717,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -4200,7 +4968,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -4248,7 +5017,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 50601,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -4296,7 +5066,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 0,
-    "O9": 55782
+    "O9": 55782,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -4344,7 +5115,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 0,
-    "O9": 49863
+    "O9": 49863,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -4392,7 +5164,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -4440,7 +5213,8 @@
     "OB": 0,
     "O8": 0,
     "OW": 0,
-    "O9": 0
+    "O9": 0,
+    "OT": 0
    },
    "skipTainted": {
     "O1c": 0,
@@ -6921,6 +7695,104 @@
       "oracle": "O1c",
       "ratio": 0
      }
+    }
+   ],
+   "tree:BOX": [
+    {
+     "seed": 2654435769,
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 149
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 149
+     },
+     "maxTaint": null
+    },
+    {
+     "seed": 1013904242,
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 152
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 152
+     },
+     "maxTaint": null
+    },
+    {
+     "seed": 3668340011,
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 152
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 152
+     },
+     "maxTaint": null
+    },
+    {
+     "seed": 2027808484,
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 151
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 151
+     },
+     "maxTaint": null
+    },
+    {
+     "seed": 387276957,
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 159
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 159
+     },
+     "maxTaint": null
+    },
+    {
+     "seed": 3041712726,
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 151
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 151
+     },
+     "maxTaint": null
+    },
+    {
+     "seed": 1401181199,
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 148
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 148
+     },
+     "maxTaint": null
+    },
+    {
+     "seed": 4055616968,
+     "rarestRequired": {
+      "scenario": "box-trace-equal",
+      "hits": 155
+     },
+     "leastPerformed": {
+      "oracle": "OT",
+      "performed": 155
+     },
+     "maxTaint": null
     }
    ]
   }
@@ -9846,395 +10718,6 @@
      }
     }
    ]
-  }
- },
- "throughputRun": {
-  "note": "REPORTED tier, decides no gate: an earlier timed run of the same child loop (same seed / cycles / ops), held under quiet-lock; its counts were identical to kernels.*",
-  "date": "2026-10-29T06:09:20.564Z",
-  "gitHead": "5ce2fc42018184da3a46f2a7d708e3f88cd1baf0",
-  "engineSha256": "ea0b64d17e6d68b49809f2124a44abf0204e47cd1e48bcefeccd33fcba023fe9",
-  "node": "v26.8.2",
-  "cpu": "Apple M4 Pro",
-  "loadavgBefore": [
-   2.85,
-   5.02,
-   4.74
-  ],
-  "loadavgAfter": [
-   6.55,
-   4.86,
-   4.05
-  ],
-  "busyNodeBefore": [],
-  "seconds": 1163,
-  "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
-  "perKernel": {
-   "headpatched": {
-    "GRAPH": {
-     "opsPerSecPerCycle": [
-      13759,
-      13755,
-      13822,
-      14061,
-      13370,
-      13508,
-      13804,
-      13803,
-      13832,
-      13512,
-      13668
-     ],
-     "min": 13370,
-     "median": 13759,
-     "max": 14061
-    },
-    "BATCH": {
-     "opsPerSecPerCycle": [
-      47603,
-      49864,
-      51355,
-      49133,
-      49196,
-      49849,
-      50344,
-      49916,
-      49996,
-      49782,
-      49213
-     ],
-     "min": 47603,
-     "median": 49849,
-     "max": 51355
-    },
-    "ERROR": {
-     "opsPerSecPerCycle": [
-      46695,
-      47433,
-      47001,
-      48271,
-      50122,
-      49568,
-      49066,
-      50650,
-      49129,
-      49962,
-      48923
-     ],
-     "min": 46695,
-     "median": 49066,
-     "max": 50650
-    },
-    "NEST": {
-     "opsPerSecPerCycle": [
-      32085,
-      35258,
-      35218,
-      35400,
-      35422,
-      35436,
-      35102,
-      35221,
-      35226,
-      35276,
-      35226
-     ],
-     "min": 32085,
-     "median": 35226,
-     "max": 35436
-    },
-    "HOOK": {
-     "opsPerSecPerCycle": [
-      38100,
-      38542,
-      37663,
-      38181,
-      38826,
-      38494,
-      39056,
-      37330,
-      39198,
-      37975,
-      37700
-     ],
-     "min": 37330,
-     "median": 38181,
-     "max": 39198
-    },
-    "SCHEDULER": {
-     "opsPerSecPerCycle": [
-      195181,
-      227195,
-      224751,
-      229116,
-      229798,
-      228594,
-      229168,
-      228646,
-      229221,
-      229221,
-      226784
-     ],
-     "min": 195181,
-     "median": 228646,
-     "max": 229798
-    }
-   },
-   "lite-1.5.2": {
-    "GRAPH": {
-     "opsPerSecPerCycle": [
-      13469,
-      13725,
-      13579,
-      13970,
-      13256,
-      13486,
-      13807,
-      13821,
-      13788,
-      13472,
-      13742
-     ],
-     "min": 13256,
-     "median": 13725,
-     "max": 13970
-    },
-    "BATCH": {
-     "opsPerSecPerCycle": [
-      20072,
-      19955,
-      20157,
-      20021,
-      19885,
-      20003,
-      19982,
-      20115,
-      19863,
-      20034,
-      19889
-     ],
-     "min": 19863,
-     "median": 20003,
-     "max": 20157
-    },
-    "ERROR": {
-     "opsPerSecPerCycle": [
-      48196,
-      64335,
-      64910,
-      65180,
-      65407,
-      64884,
-      65516,
-      65541,
-      65001,
-      65245,
-      65194
-     ],
-     "min": 48196,
-     "median": 65180,
-     "max": 65541
-    },
-    "NEST": {
-     "opsPerSecPerCycle": [
-      30612,
-      32855,
-      33198,
-      33401,
-      33307,
-      33334,
-      33098,
-      33441,
-      33313,
-      33412,
-      33369
-     ],
-     "min": 30612,
-     "median": 33313,
-     "max": 33441
-    },
-    "SCHEDULER": {
-     "opsPerSecPerCycle": [
-      193225,
-      226784,
-      225408,
-      228698,
-      226938,
-      224148,
-      228437,
-      227401,
-      224550,
-      228854,
-      227401
-     ],
-     "min": 193225,
-     "median": 226938,
-     "max": 228854
-    }
-   },
-   "tree": {
-    "NEST": {
-     "opsPerSecPerCycle": [
-      47599,
-      48607,
-      50329,
-      49467,
-      49414,
-      49307,
-      49599,
-      49353,
-      49609,
-      49883,
-      49582
-     ],
-     "min": 47599,
-     "median": 49467,
-     "max": 50329
-    },
-    "WIE": {
-     "opsPerSecPerCycle": [
-      10588,
-      10239,
-      10153,
-      10309,
-      10671,
-      10102,
-      10290,
-      10174,
-      10612,
-      10364,
-      10406
-     ],
-     "min": 10102,
-     "median": 10309,
-     "max": 10671
-    },
-    "HOOK": {
-     "opsPerSecPerCycle": [
-      37803,
-      38023,
-      37360,
-      37644,
-      38152,
-      38204,
-      38743,
-      36994,
-      38720,
-      37512,
-      37116
-     ],
-     "min": 36994,
-     "median": 37803,
-     "max": 38743
-    },
-    "LIFECYCLE": {
-     "opsPerSecPerCycle": [
-      28955,
-      29485,
-      29436,
-      29838,
-      29773,
-      30172,
-      29109,
-      28714,
-      29148,
-      28985,
-      29338
-     ],
-     "min": 28714,
-     "median": 29338,
-     "max": 30172
-    },
-    "OWNER": {
-     "opsPerSecPerCycle": [
-      69708,
-      71322,
-      71135,
-      70988,
-      71271,
-      70858,
-      71079,
-      70873,
-      71221,
-      70878,
-      71327
-     ],
-     "min": 69708,
-     "median": 71079,
-     "max": 71327
-    },
-    "RECYCLE": {
-     "opsPerSecPerCycle": [
-      270731,
-      277721,
-      279349,
-      279505,
-      278960,
-      278727,
-      283065,
-      267402,
-      279271,
-      276493,
-      278029
-     ],
-     "min": 267402,
-     "median": 278727,
-     "max": 283065
-    },
-    "SCHEDULER": {
-     "opsPerSecPerCycle": [
-      183234,
-      192410,
-      194311,
-      193561,
-      193673,
-      192780,
-      193524,
-      192965,
-      193412,
-      192262,
-      193412
-     ],
-     "min": 183234,
-     "median": 193412,
-     "max": 194311
-    },
-    "REGISTRY": {
-     "opsPerSecPerCycle": [
-      52346,
-      52583,
-      52895,
-      53668,
-      53477,
-      51189,
-      52870,
-      52289,
-      53169,
-      52883,
-      52605
-     ],
-     "min": 51189,
-     "median": 52870,
-     "max": 53668
-    },
-    "CAPACITY": {
-     "opsPerSecPerCycle": [
-      123253,
-      129952,
-      127389,
-      126176,
-      125543,
-      123764,
-      127631,
-      123584,
-      129325,
-      125141,
-      132032
-     ],
-     "min": 123253,
-     "median": 126176,
-     "max": 132032
-    }
-   }
   }
  }
 }

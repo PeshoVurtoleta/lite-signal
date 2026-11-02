@@ -120,6 +120,10 @@ export const CHECKS = deepFreeze({
     // b140 B2b (PLAN-R5 CAPACITY TASK 5): the four T-cap-* tree mutants (b1b mkmut.mjs hunks, CAP_ENV --smoke), each spec
     // known=none; P-CAP-TREE is their pass control / revert.
     'lane:CAPACITY': ['T-cap-node', 'T-cap-link', 'T-cap-ceiling', 'T-cap-residue'],
+    // b151 C2a (PLAN-R7 group C task 5, C-7 / C-13): T-BOX-untracked (tree, SOAK_MUSTFAIL=box-untracked --smoke) heads
+    // `oracle=OT lane=BOX sig=trace-diff known=none` (.handoff/r7-evidence/C2a/probe-box-untracked.txt); P-BOX-TREE is its
+    // pass control / revert.
+    'lane:BOX': ['T-BOX-untracked'],
     'gate:oracle': ['L-REV-152'],
     // B-B3b (burst 82): a second heap tooth of another kind -- L-T-leak retains foreign arrays per createNode,
     // L-T-graveyard the engine's own released ReactiveLinks (freeLink never refills the free list)
@@ -161,6 +165,7 @@ export const CHECKS = deepFreeze({
     // syncrun (the first run bypasses the scheduler) head stale-thunk
     // b137 B4 (D-b136-1): updgen (a stale signal handle's update calls fn) breaches the EXISTING stale-write
     'oracle:O9': ['T-RC-setgen', 'T-RC-readgen', 'T-RC-dispgen', 'T-RC-updgen', 'T-SC-thunkgen', 'T-SC-syncrun'],
+    'oracle:OT': ['T-BOX-untracked'],
     'sig:O1c:computed-mismatch': ['L-REV-152'],
     'sig:O1e:effect-stale': ['L-REV-152', 'T-flushdrop'],
     'sig:O2:glitch': ['L-REV-152'],
@@ -184,6 +189,7 @@ export const CHECKS = deepFreeze({
     'sig:O9:stale-read': ['T-RC-readgen'],
     'sig:O9:stale-dispose': ['T-RC-dispgen'],
     'sig:O9:stale-thunk': ['T-SC-thunkgen', 'T-SC-syncrun'],
+    'sig:OT:trace-diff': ['T-BOX-untracked'],
     'cause:interrupted': ['L-I1', 'L-I2'],
     // b119 B5 (orphan rule): P-HOOK-TREE-COVOFF (b93) prints `INCONCLUSIVE -- scenario lane=HOOK missing=hook-non-lifo-off`,
     // P-NEST-TRIGGERLESS's shape, and was mapped nowhere
@@ -241,7 +247,7 @@ export const GAPS = deepFreeze({
     'T-A7b': fixMinusOne(523, 'A7 + S2 wrap.mjs', NEARWRAP_WHY),
     'T-d8pc-head': { why: 'the d8-pc engine lane is placed in S2 (' + S1CD + ':7, amendment 4)', until: 'S2', covers: [] },
     'T-OB-lying-adapter': {
-        why: 'OB fired in 0/6000 census worlds on headpatched, tree and 1.5.2 (bench/soak/calibration/ob-census.json); the red case is an adapter whose batch is fn => fn(), and main.mjs:276 loads only liteS3Adapter (adapters/lite-s3.mjs, the S3 decorator over the lite adapter; no second adapter seam)',
+        why: 'OB fired in 0/6000 census worlds on headpatched, tree and 1.5.2 (bench/soak/calibration/ob-census.json); the red case is an adapter whose batch is fn => fn(), and main.mjs ADAPTERS holds only lite (adapters/lite-s3.mjs) and lite-box (adapters/lite-box.mjs, a facade over the same lite-s3 world, so its batch is the kernel batch): no adapter with an fn => fn() batch',
         until: 'S5 adapters', covers: ['oracle:OB', 'sig:OB:batch-early-run'],
     },
     'T-OB-nested-close': {
@@ -314,6 +320,8 @@ export const NOT_TEETH = deepFreeze({
     'P-SC-HP': 'the SCHEDULER pass control on headpatched (' + MF + ' P-SC-HP comment)',
     // b140 B2b (PLAN-R5 CAPACITY TASK 5): the CAPACITY pass control
     'P-CAP-TREE': 'the CAPACITY pass control on the tree, the revert of every T-cap-* row (' + MF + ' P-CAP-TREE comment)',
+    // b151 C2a (PLAN-R7 group C task 5, C-40): the BOX pass control, explained by DIV-F22 only
+    'P-BOX-TREE': 'the BOX pass control on the tree, explained by DIV-F22 only, the revert of T-BOX-untracked (' + MF + ' P-BOX-TREE comment)',
 });
 
 /** Does control `name` (or prefix pattern `X-*`) name something in `controls`? Returns the matches. */

@@ -60,7 +60,8 @@ const CONSTANTS = Object.freeze({
     FAIL_CAP: 16,
     DETAIL_MAX: 240,
     // evidence floors (gates.mjs; S1c amendment 6), calibrated in S1d B6 (soak-calibration.json):
-    //   CHECK_FLOOR      a lane's run must PERFORM at least this many checks of each applicable hard oracle
+    //   CHECK_FLOOR      a PER-OP floor: a lane's run must PERFORM at least this many checks of each applicable
+    //                    per-op hard oracle (OT is PER-WORLD: BOX_WORLD_FLOOR(_SMOKE) below)
     //                    (taint skips never count); below it the lane is INCONCLUSIVE, never PASS. The least-
     //                    performed FULL-LENGTH cell (b74 D4: NEST cut on tree, 425.0 ops/world, 0 failing worlds;
     //                    b74 TASK 0b) is tree NEST O7a: 50367 at 11 x DEFAULT_OPS (5.0x the floor) and 2704 in
@@ -84,6 +85,13 @@ const CONSTANTS = Object.freeze({
     //                    late/early world-bucket ratio is REPORTED only.
     CHECK_FLOOR: 10000,
     CHECK_FLOOR_SMOKE: 500,
+    //   BOX_WORLD_FLOOR(_SMOKE)  the floor of a PER-WORLD oracle (gates.mjs PER_WORLD: OT, counted once per twin
+    //                    world): the lane must run at least this many worlds AND perform exactly one check per
+    //                    world (R7 C-38). b151 (2026-11-02) BOX world counts, SOAK_LANES=BOX main.mjs on tree:
+    //                    --smoke 8 seeds 148..158, default 11 x 100000 3 seeds 2765..2793; floor = about half
+    //                    the measured minimum (PLAN-R7-box C-39).
+    BOX_WORLD_FLOOR: 1300,
+    BOX_WORLD_FLOOR_SMOKE: 70,
     TAINT_SKIP_MAX: 0.35,
     // memory (HEAP_* applies to residentBytes = heapUsed + arrayBuffers)
     HEAP_RATIO: 1.10,
@@ -151,7 +159,7 @@ export const {
     GATE_N, WARMUP_CYCLES, MIN_ACTIVE_CYCLES, DEFAULT_CYCLES, CYCLES_MAX,
     DEFAULT_OPS, OPS_MIN, OPS_MAX, SMOKE_CYCLES, SMOKE_OPS, DEFAULT_SEED,
     CHECK_P, WORLD_STEPS, LARGE_WORLD_EVERY, SHAPE_EVERY, MARK_DEDUPE_NOTE, MAX_DEPTH,
-    SCEN_MIN, SCEN_MIN_SMOKE, FAIL_CAP, DETAIL_MAX, CHECK_FLOOR, CHECK_FLOOR_SMOKE, TAINT_SKIP_MAX,
+    SCEN_MIN, SCEN_MIN_SMOKE, FAIL_CAP, DETAIL_MAX, CHECK_FLOOR, CHECK_FLOOR_SMOKE, BOX_WORLD_FLOOR, BOX_WORLD_FLOOR_SMOKE, TAINT_SKIP_MAX,
     HEAP_RATIO, HEAP_SLACK_MB, RSS_RATIO, RSS_SLACK_MB, RSS_BUF, SKETCH_ALPHA, LATENCY_METHODS, LATENCY_UNTIMED,
     DRAIN_MS, DRAIN_TRIES, RETAIN_MAX, RETAIN_BAD_BOUNDARIES,
     W5_BOP_FAIL, W5_ITER, W5_BATCHES, W5_WARMUP,

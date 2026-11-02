@@ -114,8 +114,9 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * B5: P-SC-TREE, P-SC-HP, T-cov-SCHEDULER and the four T-SC-* mutants, PLAN-R4 R4c TASKS 6 + 7), and the REGISTRY rows
  * (b140 B2b: P-REGISTRY-TRIGGERLESS, L-REGISTRY-F10 -- red-explained on DIV-F10 --, T-REG-expectnone / T-REG-destroyall
  * via soakPatch; LANE_KERNELS.REGISTRY = tree) and the CAPACITY rows (b140 B2b: P-CAP-TREE, T-cov-CAPACITY and the four
- * T-cap-* mutants; LANE_KERNELS.CAPACITY = tree); no other main-run control does until A1-A3
- * land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
+ * T-cap-* mutants; LANE_KERNELS.CAPACITY = tree) and the BOX rows (b151 C2a: P-BOX-TREE -- red-explained on
+ * DIV-F22 -- and T-BOX-untracked via SOAK_MUSTFAIL=box-untracked; LANE_KERNELS.BOX = tree); no other main-run control
+ * does until A1-A3 land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
  * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
  * DIV-F6 since the burst 53 triage, PLAN-F-b33-1 N19); P-INTERIM-ERROR-clean runs on preb33 because it is the
@@ -432,6 +433,10 @@ const A_CAP_CEIL = 'const maxLinkLimit = currentLinkCapacity * 16;';
 const CAP_ENV = Object.freeze({ SOAK_LANES: 'CAPACITY' });
 // T-cov-CAPACITY: no ceil op is generated (lanes/capacity.mjs covOff link-ceiling-grow -> rule no-ceiling).
 const CAP_COV_ENV = Object.freeze({ SOAK_LANES: 'CAPACITY', SOAK_MUSTFAIL: 'cov-off:link-ceiling-grow' });
+// The tree BOX twin lane (R7 group C task 5; CURRENT C-7 / C-13 / C-40): lite vs lite-box, oracle OT once per world.
+const BOX_ENV = Object.freeze({ SOAK_LANES: 'BOX' });
+// T-BOX-untracked: the same lane, the twin adapter built {broken: 'box-untracked'} (main.mjs loadAdapter, by env).
+const BOX_MF_ENV = Object.freeze({ SOAK_LANES: 'BOX', SOAK_MUSTFAIL: 'box-untracked' });
 
 // T-mark anchors in the LIVE Signal.js markDownstream (base tree; each matches exactly once there -- the InEval twin
 // has a different shape and is not patched). An engine edit at either anchor re-anchors T-mark in the same diff.
@@ -1038,6 +1043,21 @@ export const CONTROLS = deepFreeze([
     M('T-cap-residue', 'tree', CAP_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O5 lane=CAPACITY sig=link-count known=none'],
     }, { patches: [[A_FREE_LINK, '        // MUTANT T-cap-residue: link not freed (not pooled, activeLinks not decremented)\n']] }),
+    // ---- BOX (R7 group C task 5; CURRENT C-7, C-13, C-40) ----
+    // P-BOX-TREE: the BOX pass control on the tree, explained by DIV-F22 only (C-40, L-P-INTERIM-ERROR's shape): the one
+    // open BOX --smoke BREACH is `oracle=O6 lane=BOX sig=expected-escape-missing known=DIV-F22` (b151, 8/8 seeds). It
+    // becomes nobreach exit 0 when DIV-F22 gets fixedIn. The revert of T-BOX-untracked (the same lane, no SOAK_MUSTFAIL).
+    M('P-BOX-TREE', 'tree', BOX_ENV, ['--smoke'], {
+        exit: 1, kind: 'explained', lines: [], specs: [], known: ['DIV-F22'],
+    }),
+    // T-BOX-untracked (C-7, SHORT battery): a box read() goes through peek() (untracked), so the twin trace differs:
+    // OT trace-diff known=none. No patch field: SOAK_MUSTFAIL=box-untracked picks the mutant through main.mjs
+    // loadAdapter. Measured b151 C2a (.handoff/r7-evidence/C2a/probe-box-untracked.txt): exit 1; the run also prints
+    // an O6 expected-escape-missing known=none BREACH and `INCONCLUSIVE -- scenario lane=BOX missing=box-trace-equal`
+    // (neither is a spec: a spec matches ANY stderr BREACH line).
+    M('T-BOX-untracked', 'tree', BOX_MF_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=OT lane=BOX sig=trace-diff known=none'],
+    }),
 
     // T-cfg x16 (SPEC-B 9 row; the S5 row SOAK_ENGINE=polyfill + SOAK_KERNEL is not in S1). Lines cite their source.
     C('lanes-typo', { SOAK_LANES: 'grpah' }, "SOAK_LANES: unknown lane 'grpah' (did you mean GRAPH?)"),                 // config.mjs:375

@@ -41,7 +41,7 @@ concurrency:
 jobs:
   burn-in:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
       SOAK_CYCLES: ${{ inputs.cycles || '33' }}
       SOAK_OPS: ${{ inputs.ops || '200000' }}

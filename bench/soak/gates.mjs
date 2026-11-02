@@ -29,7 +29,7 @@
 
 import {
     GATE_N, WARMUP_CYCLES, HEAP_RATIO, HEAP_SLACK_MB, RETAIN_MAX, RETAIN_BAD_BOUNDARIES,
-    SCEN_MIN, SCEN_MIN_SMOKE, CHECK_FLOOR, CHECK_FLOOR_SMOKE, TAINT_SKIP_MAX, VERDICT, EXIT_CODE,
+    SCEN_MIN, SCEN_MIN_SMOKE, CHECK_FLOOR, CHECK_FLOOR_SMOKE, BOX_WORLD_FLOOR, BOX_WORLD_FLOOR_SMOKE, TAINT_SKIP_MAX, VERDICT, EXIT_CODE,
     RSS_RATIO, RSS_SLACK_MB, RSS_BUF,
 } from './config.mjs';
 import { p95, bandMedian } from './rss.mjs';
@@ -54,9 +54,10 @@ function bad(msg) { throw new GateInputError(msg); }
 
 /* ---- oracle families ------------------------------------------------------------------------------ */
 
-// O1c/O1e are one family (O1), O7a is the S1 slice of O7, OB (batch-early-run, F5) is its own family.
+// O1c/O1e are one family (O1), O7a is the S1 slice of O7, OB (batch-early-run, F5) is its own family, OT (the R7 twin
+// trace-diff, C1 / C-35) is its own family.
 // BREACH dedupe and failureCounts use the family.
-const FAMILY = Object.freeze({ O1c: 'O1', O1e: 'O1', O2: 'O2', O4: 'O4', O5: 'O5', O6: 'O6', O7a: 'O7', O7: 'O7', OB: 'OB', O8: 'O8', OW: 'OW', O9: 'O9' });
+const FAMILY = Object.freeze({ O1c: 'O1', O1e: 'O1', O2: 'O2', O4: 'O4', O5: 'O5', O6: 'O6', O7a: 'O7', O7: 'O7', OB: 'OB', O8: 'O8', OW: 'OW', O9: 'O9', OT: 'OT' });
 
 /** The reporting family of an oracle id. An unknown id throws (fail closed: never a silent bucket). */
 export function oracleFamily(oracle) {
@@ -256,19 +257,33 @@ export function coverageRule(input) {
     return { verdict: missing.length === 0 ? P : I, min, missing };
 }
 
+/** Oracles counted ONCE PER WORLD, not per op (R7 C-38: twin.mjs counts OT once per twin world). */
+const PER_WORLD = Object.freeze(Object.assign(Object.create(null), { OT: true }));
+
 /**
  * check-floor (kind evidence; amendment 6): the lane PERFORMED at least CHECK_FLOOR checks (smoke:
  * CHECK_FLOOR_SMOKE) of every applicable hard oracle. Taint skips are never counted as checks. An empty
  * oracle list is no evidence at all -> INCONCLUSIVE.
+ * A PER_WORLD oracle (R7 C-38: OT) has the WORLD as its unit, never CHECK_FLOOR: it passes iff input.worlds
+ * (the lane's worlds total) is a safe integer > 0, performed[o] === worlds (one check per world, none missed,
+ * none extra) and worlds >= BOX_WORLD_FLOOR (smoke: BOX_WORLD_FLOOR_SMOKE). A missing / null / non-integer
+ * count or worlds, or worlds 0, is below (null is not zero); that below entry carries worlds and the world floor.
  */
 export function checkFloorRule(input) {
-    const floor = input.smoke === true ? CHECK_FLOOR_SMOKE : CHECK_FLOOR;
+    const smoke = input.smoke === true;
+    const floor = smoke ? CHECK_FLOOR_SMOKE : CHECK_FLOOR;
+    const wfloor = smoke ? BOX_WORLD_FLOOR_SMOKE : BOX_WORLD_FLOOR;
     if (!Array.isArray(input.oracles)) bad('checkFloorRule: oracles must be an array');
     const performed = input.performed || {};
+    const worlds = input.worlds;
     const below = [];
     for (const o of input.oracles) {
         const n = own(performed, o) ? performed[o] : undefined;
-        if (!(n >= floor)) below.push({ oracle: o, performed: n === undefined ? null : n });
+        if (PER_WORLD[o] === true) {
+            if (!(Number.isSafeInteger(worlds) && worlds > 0 && n === worlds && worlds >= wfloor)) {
+                below.push({ oracle: o, performed: n === undefined ? null : n, worlds: worlds === undefined ? null : worlds, floor: wfloor });
+            }
+        } else if (!(n >= floor)) below.push({ oracle: o, performed: n === undefined ? null : n });
     }
     const empty = input.oracles.length === 0;
     return { verdict: below.length === 0 && !empty ? P : I, floor, below, empty };
@@ -386,12 +401,24 @@ export const GATES = Object.freeze([
     Object.freeze({
         id: 'check-floor', kind: 'evidence', check: checkFloorRule, teeth: null,
         pass: deepFreeze([{ smoke: false, oracles: ['O1c', 'O5'], performed: { O1c: CHECK_FLOOR, O5: CHECK_FLOOR } },
-            { smoke: true, oracles: ['O1c'], performed: { O1c: CHECK_FLOOR_SMOKE } }]),
+            { smoke: true, oracles: ['O1c'], performed: { O1c: CHECK_FLOOR_SMOKE } },
+            // R7 C-38: a per-world oracle at exactly its world floor, one check per world
+            { smoke: true, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR_SMOKE }, worlds: BOX_WORLD_FLOOR_SMOKE },
+            { smoke: false, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR }, worlds: BOX_WORLD_FLOOR }]),
         mustFail: deepFreeze([
             { input: { smoke: false, oracles: ['O1c', 'O5'], performed: { O1c: CHECK_FLOOR, O5: CHECK_FLOOR - 1 } }, expect: I, why: 'one oracle below the floor' },
             { input: { smoke: true, oracles: ['O1c'], performed: { O1c: CHECK_FLOOR_SMOKE - 1 } }, expect: I, why: 'below the smoke floor' },
             { input: { smoke: false, oracles: ['O7a'], performed: {} }, expect: I, why: 'a missing count is not zero checks passed' },
             { input: { smoke: false, oracles: [], performed: {} }, expect: I, why: 'no applicable oracle is no evidence' },
+            { input: { smoke: false, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR }, worlds: BOX_WORLD_FLOOR + 1 }, expect: I, why: 'per-world: a world without its OT check (OT = worlds - 1)' },
+            { input: { smoke: false, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR + 1 }, worlds: BOX_WORLD_FLOOR }, expect: I, why: 'per-world: more OT checks than worlds is a miscount (OT = worlds + 1)' },
+            { input: { smoke: false, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR - 1 }, worlds: BOX_WORLD_FLOOR - 1 }, expect: I, why: 'per-world: worlds one below BOX_WORLD_FLOOR' },
+            { input: { smoke: true, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR_SMOKE - 1 }, worlds: BOX_WORLD_FLOOR_SMOKE - 1 }, expect: I, why: 'per-world: worlds one below BOX_WORLD_FLOOR_SMOKE' },
+            { input: { smoke: true, oracles: ['OT'], performed: { OT: 0 }, worlds: 0 }, expect: I, why: 'per-world: zero worlds is no evidence' },
+            { input: { smoke: false, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR } }, expect: I, why: 'per-world: a missing worlds total is not a count' },
+            { input: { smoke: false, oracles: ['OT'], performed: {}, worlds: BOX_WORLD_FLOOR }, expect: I, why: 'per-world: a missing OT count is not one check per world' },
+            { input: { smoke: false, oracles: ['OT'], performed: { OT: BOX_WORLD_FLOOR + 0.5 }, worlds: BOX_WORLD_FLOOR + 0.5 }, expect: I, why: 'per-world: a non-integer worlds total' },
+            { input: { smoke: false, oracles: ['O1c', 'OT'], performed: { O1c: CHECK_FLOOR, OT: BOX_WORLD_FLOOR - 1 }, worlds: BOX_WORLD_FLOOR }, expect: I, why: 'per-world: the per-op oracle meets CHECK_FLOOR, OT misses a world' },
         ]),
     }),
     Object.freeze({
@@ -436,7 +463,8 @@ export const INCONCLUSIVE_CAUSES = Object.freeze({
     'no-lane': () => 'no lane ran (all skipped)',
     'post-cycles': (a) => 'lane ' + a.lane + ' ran ' + a.post + ' post-warm-up cycles < ' + a.need,
     'scenario': (a) => 'scenario lane=' + a.lane + ' missing=' + a.scenario,
-    'check-floor': (a) => 'checks lane=' + a.lane + ' oracle=' + a.oracle + ' performed=' + a.performed + ' < ' + a.floor,
+    // a per-world oracle (R7 C-38) carries worlds: its floor is performed === worlds >= floor
+    'check-floor': (a) => 'checks lane=' + a.lane + ' oracle=' + a.oracle + ' performed=' + a.performed + (own(a, 'worlds') ? ' worlds=' + a.worlds + ' floor=' + a.floor : ' < ' + a.floor),
     'taint-skip': (a) => 'taint-skip lane=' + a.lane + ' oracle=' + a.oracle + ' ratio=' + a.ratio + ' > ' + a.max,
     // guard: a lane whose status is INCONCLUSIVE but that recorded no cause still makes the run INCONCLUSIVE
     'lane-status': (a) => 'lane ' + a.lane + ' status INCONCLUSIVE with no recorded cause',
@@ -604,7 +632,7 @@ export class LaneGates {
             'rss': rssRule(rssWindows(smoke, this.post, this.rss)),
             'retention': retentionRule({ bad: this.bad, unmeasured: this.unmeasured }),
             'coverage': coverageRule({ smoke, required: this.required, counts: this.scen.toJSON() }),
-            'check-floor': checkFloorRule({ smoke, oracles: this.oracles, performed }),
+            'check-floor': checkFloorRule({ smoke, oracles: this.oracles, performed, worlds: this.totals.get('worlds') }),
             'taint-skip': taintSkipRule({ oracles: this.oracles, performed, skipped }),
         };
         const causes = [];
@@ -619,7 +647,11 @@ export class LaneGates {
         }
         if (gates.heap.verdict === I || gates.rss.verdict === I) causes.push({ cause: 'post-cycles', lane: this.lane, post: this.post, need: gates.heap.need });
         for (const m of gates.coverage.missing) causes.push({ cause: 'scenario', lane: this.lane, scenario: m.scenario });
-        for (const b of gates['check-floor'].below) causes.push({ cause: 'check-floor', lane: this.lane, oracle: b.oracle, performed: b.performed, floor: gates['check-floor'].floor });
+        for (const b of gates['check-floor'].below) {
+            causes.push(own(b, 'worlds')
+                ? { cause: 'check-floor', lane: this.lane, oracle: b.oracle, performed: b.performed, worlds: b.worlds, floor: b.floor }
+                : { cause: 'check-floor', lane: this.lane, oracle: b.oracle, performed: b.performed, floor: gates['check-floor'].floor });
+        }
         if (gates['check-floor'].empty) causes.push({ cause: 'check-floor', lane: this.lane, oracle: 'none', performed: 0, floor: gates['check-floor'].floor });
         for (const o of gates['taint-skip'].over) causes.push({ cause: 'taint-skip', lane: this.lane, oracle: o.oracle, ratio: o.ratio, max: TAINT_SKIP_MAX });
         for (const c of causes) c.line = inconclusiveLine(c.cause, c);

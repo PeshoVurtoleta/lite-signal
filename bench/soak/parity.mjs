@@ -87,6 +87,8 @@ export const PARITY_FILES = Object.freeze([
     // b145 R7 A3 (C-18): the lite-box facade adapter maps the model onto the kernel's box handles; the trace sink /
     // tracer decides the OT oracle's lines (oracles.mjs checkTrace imports it)
     'bench/soak/adapters/lite-box.mjs', 'bench/soak/trace.mjs',
+    // b152 R7 C3 (C-18): the twin runner decides the OT world pair and its checks; the BOX lane its scripts / coverage
+    'bench/soak/twin.mjs', 'bench/soak/lanes/box.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

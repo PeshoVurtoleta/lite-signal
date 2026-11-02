@@ -78,8 +78,8 @@ for (const name of SUBN) {
             assert.deepEqual(t.gateHits, plain.gateHits);
             assert.deepEqual(t.skipTainted, plain.skipTainted);
             assert.equal(t.trace, plain.trace);
-            const { OT, ...rest } = t.checks;
-            assert.deepEqual(rest, plain.checks);
+                        const { OT, ...rest } = t.checks;
+                        { const { OT: _p, ...plainRest } = plain.checks; assert.equal(_p, 0, 'a non-twin world books OT 0'); assert.deepEqual(rest, plainRest); }
             assert.deepEqual(t.failure, plain.failure);   // clean + equal -> null; dirty + equal -> the primary failure untouched
             for (const k of Object.keys(plain.scen)) assert.equal(t.scen[k], plain.scen[k], k);
         }
@@ -224,8 +224,8 @@ test('applicability engine arg fail-closed: non-string / inherited-key engines n
         assert.deepEqual(a.missingCaps, ['twin'], String(e));
     }
 });
-test('B-3 the 12 ROSTER lanes deepEqual the B0 golden, with and without the engine arg (engine is not read for non-twin lanes)', () => {
-    assert.deepEqual(GOLD.lanes.map((l) => l.lane), ROSTER.slice());
+test('B-3 the 12 pre-BOX ROSTER lanes (ROSTER minus BOX) deepEqual the B0 golden, with and without the engine arg (engine is not read for non-twin lanes)', () => {
+    assert.deepEqual(GOLD.lanes.map((l) => l.lane), ROSTER.slice(0, 12));
     assert.equal(GOLD.lanes.length, 12);
     for (const { lane, res } of GOLD.lanes) {
         const d = laneByName(lane);
@@ -255,8 +255,8 @@ test('BOX descriptor: name, twin, hardOracles ["OT"], required pair, covOff {}, 
     assert.equal(b.needsCaps.length, 4);
     for (const s of ['box-trace-equal', 'box-interop']) assert.equal(b.optional.includes(s), false, 'required names are not repeated in optional');
 });
-test('BOX is NOT rostered and has LANE_INDEX 9 (group C owns ROSTER)', () => {
-    assert.equal(ROSTER.includes('BOX'), false);
+test('BOX is rostered last (ROSTER[12]) and has LANE_INDEX 9', () => {
+    assert.equal(ROSTER.indexOf('BOX'), 12, 'R7 C1: BOX is ROSTER[12], rostered last');
     assert.equal(LANE_INDEX.BOX, 9);
 });
 test('scenarios.mjs lists box-trace-equal and box-interop as the last two ids', () => {
@@ -507,10 +507,7 @@ test('B-4 / C-35: an OT-failing world (twin {broken: box-untracked}) opens 2 wor
     assert.equal(row.before, 2 * row.opens);
 });
 
-const BOX_ROSTERED = laneByName('BOX') !== null;
-// BOX is not in the ROSTER until group C: replay / shrink / emitTest resolve lanes with laneByName (null -> the non-twin path).
-// The twin-lane rows below therefore wait for the roster (skip, not todo: they cannot be written red before C lands).
-const NOT_YET = BOX_ROSTERED ? false : 'BOX not rostered until group C (laneByName("BOX") === null)';
+// R7 C2b: BOX is rostered (C1), so the twin-lane replay / shrink / emitTest rows below run (the NOT_YET skip guards are gone).
 test('B2 replay: a non-twin lane ignores the twin arg (forwardReach GRAPH world 1, reachable)', () => {
     const g = { lane: 'GRAPH', world: 1, cycleSeed: seedFor(BASE, LANE_INDEX.GRAPH, 0), covOff: null };
     const r = RP.forwardReach(liteS3Adapter, { ops: 1000000 }, g, null);
@@ -518,13 +515,13 @@ test('B2 replay: a non-twin lane ignores the twin arg (forwardReach GRAPH world 
     assert.equal(r.worldsBefore, 1);
     assert.equal(r.reason, null);
 });
-test('B2 replay: a twin lane played without its twin -> TypeError (exact)', { skip: NOT_YET }, () => {
+test('B2 replay: a twin lane played without its twin -> TypeError (exact)', () => {
     const res = { lane: 'BOX', world: 1, cycleSeed: seedFor(BASE, LANE_INDEX.BOX, 0), covOff: null };
     const msg = 'replay: twin lane BOX needs its twin adapter (loadEngine)';
     throwsTE(() => RP.playWorld(liteS3Adapter, res, undefined, null), msg);
     throwsTE(() => RP.forwardReach(liteS3Adapter, { ops: 1000000 }, res, undefined), msg);
 });
-test('B2 shrink: makePredicate on a twin lane without a twin is never a hit; with a twin the failing target hits', { skip: NOT_YET }, async () => {
+test('B2 shrink: makePredicate on a twin lane without a twin is never a hit; with a twin the failing target hits', async () => {
     const BOXD = BOX();
     const twinAd = await MN.loadTwin('lite', null);
     let hit = null;
@@ -546,7 +543,7 @@ test('B-5 emitTest: a lite non-twin lane has no runWorldTwin / loadTwin and keep
     assert.equal(g.includes('loadTwin'), false);
     assert.ok(g.includes('ex.runWorld(mn.tapAdapter(liteAdapter, tap), SCRIPT)'));
 });
-test('B-5 emitTest: a twin lane emits a runWorldTwin call + loadTwin + MUSTFAIL', { skip: NOT_YET }, () => {
+test('B-5 emitTest: a twin lane emits a runWorldTwin call + loadTwin + MUSTFAIL', () => {
     const t = SH.emitTest(einfo('BOX', 'lite'), { mustFail: null });
     assert.ok(t.includes('tw.runWorldTwin(lanes.laneByName(SCRIPT.lane)'), 'twin call');
     assert.ok(t.includes('await mn.loadTwin(ENGINE, MUSTFAIL)'));

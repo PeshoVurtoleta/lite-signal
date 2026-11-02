@@ -14,7 +14,7 @@
  * required + optional scenario (counted, never required); scenCaps = the sub-lanes' merged; needsCaps = the union of
  * the sub-lanes'; mix = the sub-lane weights; worldShape.largeEvery 0 (no LARGE world: trace memory, PLAN RISK);
  * flushPasses null (per sub-lane, set by its init); covOff {} (no cov-off switch: the must-fail control is the
- * adapter's {broken: 'box-untracked'}, C-7 / C-13). NOT rostered until group C (lanes/index.mjs ROSTER, LANE_INDEX 9).
+ * adapter's {broken: 'box-untracked'}, C-7 / C-13). Rostered: lanes/index.mjs ROSTER[12], LANE_INDEX.BOX 9.
  */
 
 import { GRAPH } from './graph.mjs';

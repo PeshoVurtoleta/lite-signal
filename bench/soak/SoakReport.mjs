@@ -429,7 +429,7 @@ function checkHeader(h, cfg, registryText) {
     if (!(Array.isArray(h.lanes) && h.lanes.length === cfg.lanes.length)) bad('header-lanes', 'header.lanes does not list exactly the SOAK_LANES lanes');
     const run = [], skipped = [];
     for (let i = 0; i < cfg.lanes.length; i++) {
-        const name = cfg.lanes[i], desc = laneByName(name), app = applicability(desc, h.engine.caps);
+        const name = cfg.lanes[i], desc = laneByName(name), app = applicability(desc, h.engine.caps, cfg.engine);
         if (!isDeepStrictEqual(h.lanes[i], { name, status: app.status, missingCaps: app.missingCaps, engine: cfg.engine })) bad('header-lanes', 'header.lanes[' + i + '] differs from applicability(' + name + ')');
         if (!isDeepStrictEqual(own(h.scenarios, name) ? h.scenarios[name] : null, { required: app.requiredApplicable, optional: desc.optional.slice(), na: app.scenariosNA })) bad('header-lanes', 'header.scenarios.' + name + ' differs from the lane descriptor');
         if (!isDeepStrictEqual(own(h.oraclesNA, name) ? h.oraclesNA[name] : null, app.oraclesNA)) bad('header-lanes', 'header.oraclesNA.' + name + ' differs');

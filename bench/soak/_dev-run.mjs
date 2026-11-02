@@ -10,6 +10,9 @@
  *        runs one world with a trace and prints the failure, the scenario tags and the last ops
  *
  * World seeds: seeds.mjs seedFor(seed, laneIndex, cycle 0), then worldSeed(cycleSeed, w).
+ * A twin lane (desc.twin, R7 BOX) is judged as engine 'lite' and, in run / replay mode, runs each world through
+ * twin.mjs runWorldTwin on main's lite engine (adapters/lite-s3.mjs) AND its twin (main.mjs loadTwin('lite'), C-3),
+ * never single-sided; every other lane keeps adapters/lite.mjs and runWorld. --hash loads no twin.
  */
 
 import { createHash } from 'node:crypto';
@@ -33,24 +36,37 @@ const { validateAdapter, applicability } = await import('./adapters/contract.mjs
 const { laneByName, isLargeWorld } = await import('./lanes/index.mjs');
 const { generateWorld, scriptJson } = await import('./gen.mjs');
 const { runWorld } = await import('./exec.mjs');
+const { runWorldTwin } = await import('./twin.mjs');
+const { liteS3Adapter } = await import('./adapters/lite-s3.mjs');
 const { seedFor, worldSeed } = await import('./seeds.mjs');
 const { KERNEL_FILES, KERNEL_KNOWN_AS } = await import('./kernel.mjs');
 
 const desc = laneByName(laneName);
 if (desc === null) { process.stderr.write('unknown lane ' + laneName + '\n'); process.exit(2); }
-const problems = validateAdapter(liteAdapter);
+const twinLane = desc.twin === true;
+const primary = twinLane ? liteS3Adapter : liteAdapter;
+const problems = validateAdapter(primary);
 if (problems.length) { process.stderr.write('adapter invalid: ' + problems.join('; ') + '\n'); process.exit(2); }
-const app = applicability(desc, liteAdapter.caps);
+const app = applicability(desc, primary.caps, 'lite');
 if (app.status !== 'run') { process.stderr.write('lane ' + laneName + ' SKIPs on lite: ' + JSON.stringify(app) + '\n'); process.exit(2); }
 
 const kernelTag = (KERNEL_KNOWN_AS || 'unknown') + ' ' + KERNEL_FILES[0].sha256.slice(0, 8);
 const hex = (n) => '0x' + (n >>> 0).toString(16);
 const SEED_CAP = Number(process.env.DEV_SEEDS || 3);   // world seeds printed per sig
 
+let twinAd = null;
+if (twinLane && mode !== 'hash') {
+    const { loadTwin } = await import('./main.mjs');
+    twinAd = await loadTwin('lite');
+    const tprobs = validateAdapter(twinAd);
+    if (tprobs.length) { process.stderr.write('twin adapter of lite is invalid: ' + tprobs.join('; ') + '\n'); process.exit(2); }
+}
+const runOne = (script, opts) => (twinLane ? runWorldTwin(desc, primary, twinAd, script, opts) : runWorld(liteAdapter, script, opts));
+
 if (mode === 'replay') {
     const ws = Number(nArg) >>> 0;
     const script = generateWorld(desc, ws, { large: seedArg === 'large' });
-    const r = runWorld(liteAdapter, script, { trace: true });
+    const r = runOne(script, { trace: true });
     console.log('replay ' + laneName + ' world ' + hex(ws) + ' kernel ' + kernelTag + ' ops=' + r.ops);
     console.log(JSON.stringify(r.failure, null, 1));
     if (r.trace) for (const line of r.trace.slice(-6)) console.log('  ' + line.slice(0, 600));
@@ -90,7 +106,7 @@ for (let w = 0; w < N; w++) {
     const script = generateWorld(desc, ws, { large: isLarge, covOff });
     let r;
     try {
-        r = runWorld(liteAdapter, script);
+        r = runOne(script);
     } catch (e) {
         crashes++;
         const k = 'CRASH ' + String(e && e.message ? e.message : e).slice(0, 80);

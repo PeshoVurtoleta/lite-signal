@@ -209,7 +209,7 @@ export function parseYaml(text) {
 
 const EXPECTED_FILES = ['ci.yml', 'soak-nightly.yml'];
 const EXPECTED_JOBS = { 'ci.yml': ['gates', 'test'], 'soak-nightly.yml': ['burn-in', 'teeth', 'teeth-long'] };
-const BUDGET = { 'ci.yml': { test: 30, gates: 30 }, 'soak-nightly.yml': { 'burn-in': 90, teeth: 60, 'teeth-long': 120 } };
+const BUDGET = { 'ci.yml': { test: 30, gates: 30 }, 'soak-nightly.yml': { 'burn-in': 150, teeth: 60, 'teeth-long': 120 } };
 const DECLARED_CELLS = ['macos-latest|24', 'ubuntu|22', 'ubuntu|24', 'ubuntu|26'];
 const DECLARED_NODE = '26.8.2';
 const KEYED = "${{ steps.ptree.outputs.gap == 'true' }}";
@@ -255,7 +255,7 @@ const WARN_RE = /^echo "::warning::[^"$`\\\n]*"$/;
 // re-pins these (same policy as SCRIPT_PINS); the semantic checks C1-C18 then judge the new content.
 const WORKFLOW_PINS = {
     'ci.yml': '6af9960dc998b89c9ac0ef16c38c5fc68919da14d2633b976f2e856885e55c12',
-    'soak-nightly.yml': '007658a6d11a8a876017a577b43fddcc5ab780da327b188e3df4228a02b6381a',
+    'soak-nightly.yml': 'c849e5c472136ea10ca1903b6f23b5176e0e58a301d822f44867764ac2c675b4',
 };
 const sha256 = (t) => createHash('sha256').update(t, 'utf8').digest('hex');
 const SOAK_OUT_PIN = { 'ci.yml': '${{ runner.temp }}/soak-out/smoke.jsonl', 'soak-nightly.yml': '${{ runner.temp }}/soak-out/burn-in.jsonl' };
@@ -1090,6 +1090,7 @@ const CASES = [
     ['C2', 'ci gates job dropped to a different name', (f) => withFile(f, CI, (t) => rep(t, '  gates:\n', '  gate:\n'))],
     ['C3', 'ci test timeout 31', (f) => withFile(f, CI, (t) => rep(t, '    runs-on: ${{ matrix.os }}\n    timeout-minutes: 30\n', '    runs-on: ${{ matrix.os }}\n    timeout-minutes: 31\n'))],
     ['C3', 'burn-in timeout removed', (f) => withFile(f, NT, (t) => rep(t, '    timeout-minutes: 90\n', ''))],
+    ['C3', 'burn-in timeout 151 (C-36 budget 150)', (f) => withFile(f, NT, (t) => rep(t, '    timeout-minutes: 90\n', '    timeout-minutes: 151\n'))],
     ['C3', 'teeth-long timeout 121', (f) => withFile(f, NT, (t) => rep(t, '    timeout-minutes: 120\n', '    timeout-minutes: 121\n'))],
     ['C3', 'npm ci step timeout 11 (gates)', (f) => withFile(f, CI, (t) => rep(t, '        timeout-minutes: 10\n', '        timeout-minutes: 11\n', 2))],
     ['C4', 'fetch-depth 1', (f) => withFile(f, CI, (t) => rep(t, 'fetch-depth: 0', 'fetch-depth: 1', 2))],

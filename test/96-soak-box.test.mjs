@@ -483,7 +483,7 @@ test('A-1 checkTrace: equal 5/5 -> null; differ at 3 -> at 3; lengths 5 vs 4 -> 
             assert.throws(() => ORC.checkTrace(x, y), (err) => err instanceof TypeError &&
                 /^oracles: checkTrace\(a, b\) needs two sinks from trace\.mjs makeTraceSink\(\)/.test(err.message));
         }
-        assert.equal(ORC.ORACLES.indexOf('OT'), -1, 'C-9: OT joins ORACLES in C1');
+        assert.equal(ORC.ORACLES.indexOf('OT'), 12, 'C-9: OT joined ORACLES in C1 (last of 13, after O9; oracles.mjs:57)');
     });
 
 test('A-3 teeth: W* (ERROR world 3, seed 0x5075c290) under lite-box -> failure null; verdict equals lite',

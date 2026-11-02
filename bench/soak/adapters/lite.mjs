@@ -8,9 +8,9 @@
  *
  * liteAdapterFor(kernel) builds the same adapter over ANOTHER kernel module (anatomy.mjs: the counter-
  * instrumented shadow engine). It keeps name 'lite' and shares version / files / knownAs / caps with liteAdapter:
- * exec.mjs keys the O6 creation prediction on name === 'lite' + knownAs(), so a shadow under any other name (or
- * with its own identity) would predict differently and diverge from the oracle world. openWorld(kernel, opts) is
- * the one world factory both use (liteAdapter = liteAdapterFor(K)).
+ * exec.mjs keys the O6 creation prediction on the lite family (isLiteFamily: lite, lite-box) + knownAs(), so a
+ * shadow under a name outside that family (or with its own identity) would predict differently and diverge from
+ * the oracle world. openWorld(kernel, opts) is the one world factory both use (liteAdapter = liteAdapterFor(K)).
  *
  * COLD module: never on a measured path (zero-box law: the adapter is not a hot body).
  */

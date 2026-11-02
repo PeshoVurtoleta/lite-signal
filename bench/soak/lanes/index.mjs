@@ -20,6 +20,7 @@ import { RECYCLE } from './recycle.mjs';
 import { SCHEDULER } from './scheduler.mjs';
 import { REGISTRY } from './registry.mjs';
 import { CAPACITY } from './capacity.mjs';
+import { BOX } from './box.mjs';
 import { SCENARIOS } from '../scenarios.mjs';
 import { LANE_LIMIT, remapCollision } from '../seeds.mjs';
 
@@ -50,9 +51,12 @@ export function checkLaneIndex(table, roster) {
 // HOOK (index 6) landed S3 R1; LIFECYCLE (index 5) S3 R2 (b111), OWNER (index 7) R3 (b126), RECYCLE (index 11)
 // R4a (b130) and SCHEDULER (index 8) R4c (b134) are appended last; the span stays 12 (laneSpan: max LANE_INDEX + 1,
 // SCHEDULER 8 < RECYCLE 11). R5 (b139): REGISTRY (index 10) then CAPACITY (index 12) are appended last; CAPACITY raises
-// the span to 13 (A-R8: the remap result equals the 10-lane one on every calibrate seed base)
-export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY']);
-const BY_NAME = { GRAPH, BATCH, ERROR, NEST, WIE, HOOK, LIFECYCLE, OWNER, RECYCLE, SCHEDULER, REGISTRY, CAPACITY };
+// the span to 13 (A-R8: the remap result equals the 10-lane one on every calibrate seed base). R7 C1 (b150): BOX (index 9,
+// the lite-box twin lane) is appended last; the span stays 13 (BOX 9 < CAPACITY 12); the remap result equals the 12-lane
+// one on every calibrate base at the calibrate cycle counts 3 and 11 (C-31 / C-37; at cycles 0 three base entries
+// collide only with BOX, recorded as the run header's seedRemapCollision)
+export const ROSTER = Object.freeze(['GRAPH', 'BATCH', 'ERROR', 'NEST', 'WIE', 'HOOK', 'LIFECYCLE', 'OWNER', 'RECYCLE', 'SCHEDULER', 'REGISTRY', 'CAPACITY', 'BOX']);
+const BY_NAME = { GRAPH, BATCH, ERROR, NEST, WIE, HOOK, LIFECYCLE, OWNER, RECYCLE, SCHEDULER, REGISTRY, CAPACITY, BOX };
 checkLaneIndex(LANE_INDEX, ROSTER);
 
 /**

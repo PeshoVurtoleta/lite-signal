@@ -44,6 +44,8 @@
  *        checkScheduledBody (S3 R4c M7, the SCHEDULER lane only) a scheduled effect ran its outermost body while no
  *                        scheduler delivery was in progress (the engine ran it synchronously instead of through its
  *                        thunk); same sig stale-thunk (O9 keeps its 4 sigs), called from exec.sc.onBody
+ *   OT   checkTrace      (R7, twin lanes only: twin.mjs runWorldTwin) the primary and twin trace sinks differ at a
+ *                        line (sig trace-diff, C-10 / C-27)
  *
  * COLD module.
  */
@@ -52,7 +54,7 @@ import { Model } from './model.mjs';
 import { SoakThrow, sameValue, showValue, specRefs } from './kinds.mjs';
 import { firstTraceDiff, traceLine } from './trace.mjs';
 
-export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9']);
+export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9', 'OT']);
 
 /** The sig vocabulary (SPEC-B section 6; escape-<origin> / escape-<Ctor> are open families). */
 export const SIGS = Object.freeze({
@@ -68,13 +70,14 @@ export const SIGS = Object.freeze({
     O8: ['ghost-listener', 'mirror-links'],
     OW: ['cleanup-order', 'callback-this'],
     O9: ['stale-write', 'stale-read', 'stale-dispose', 'stale-thunk'],
+    OT: ['trace-diff'],
 });
 
 const DETAIL_MAX = 240;
 const cut = (s) => (s.length > DETAIL_MAX ? s.slice(0, DETAIL_MAX - 3) + '...' : s);
 
-/* ---- OT: trace comparator (R7 A2, C-10 / C-14). Pure and uncalled by production code until group B; 'OT' is not
- * in ORACLES / SIGS until C1 (C-9). ------------------------------------------------------------------------- */
+/* ---- OT: trace comparator (R7 A2, C-10 / C-14). Called by twin.mjs runWorldTwin (group B); 'OT' joined ORACLES /
+ * SIGS in C1 (C-9). --------------------------------------------------------------------------------------- */
 
 const hex8 = (x) => (x >>> 0).toString(16).padStart(8, '0');
 /** One side of an OT detail: the kept text (JSON-quoted), else h:<h1 hex8><h2 hex8>, or 'end' past the sink's n. */
