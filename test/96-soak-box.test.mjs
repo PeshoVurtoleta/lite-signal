@@ -16,7 +16,10 @@
  *   - the box counters are read as world.boxCounts() -> { box, callable, crossRead } (C-16: the coder names it).
  *   - the sink byte size is the sum of byteLength over the typed arrays it owns (names not assumed).
  *   - adapter.mode is the echoed mode string.
- *   - A2's rows (checkTrace, W* teeth) are { todo: 'R7-A2' }; A2 removes the todo when exec / oracles land.
+ *
+ * Burst 145 (R7-A2): exec isLiteFamily / LITE_FAMILY, oracles checkTrace, gates.verdict and SoakReport lite family
+ * landed; the three { todo: 'R7-A2' } rows are live and section 9 pins the A2 surface with exact probed values (each
+ * row fails on the b145-before copies, .handoff/r7-evidence/A2/README.txt).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,6 +33,9 @@ import { liteS3Adapter } from '../bench/soak/adapters/lite-s3.mjs';
 import { CAPS_LITE } from '../bench/soak/adapters/lite.mjs';
 import { validateAdapter, validateWorld } from '../bench/soak/adapters/contract.mjs';
 import { runWorld } from '../bench/soak/exec.mjs';
+import * as EX from '../bench/soak/exec.mjs';   // namespace: an A2 export missing on an old exec fails its row, not the file
+import * as G from '../bench/soak/gates.mjs';
+import { EXIT_CODE } from '../bench/soak/config.mjs';
 import * as ORC from '../bench/soak/oracles.mjs';
 import { generateWorld } from '../bench/soak/gen.mjs';
 import { seedFor, worldSeed } from '../bench/soak/seeds.mjs';
@@ -293,9 +299,8 @@ const REPLAY = [
 ];
 
 for (const [lane, s0, n0, s1, n1, failing] of REPLAY) {
-    // ERROR: HEAD exec throws 'unmodelled cycle set' for an adapter named lite-box (C-20) until A2's isLiteFamily
-    const opt = lane === 'ERROR' ? { todo: 'R7-A2' } : {};
-    test('A-2 replay ' + lane + ': lite-s3 vs lite-box all / alt -> identical lines and verdict', opt, () => {
+    // ERROR: the b144 exec threw 'unmodelled cycle set' for an adapter named lite-box (C-20); A2's isLiteFamily fixed it
+    test('A-2 replay ' + lane + ': lite-s3 vs lite-box all / alt -> identical lines and verdict', () => {
         const want = [[s0, n0], [s1, n1]];
         let fails = 0;
         for (let w = 0; w < 2; w++) {
@@ -431,7 +436,7 @@ test('X6 parity via parity.json: Signal.js, adapters/lite.mjs, adapters/lite-s3.
     }
 });
 
-/* ---- 7. batch A2 rows (todo until exec / oracles land) -------------------------------------------- */
+/* ---- 7. batch A2 rows ------------------------------------------------------------------------------ */
 
 const LIT = (n) => {
     const s = tr().makeTraceSink({ keep: 'all' });
@@ -440,40 +445,56 @@ const LIT = (n) => {
 };
 
 test('A-1 checkTrace: equal 5/5 -> null; differ at 3 -> at 3; lengths 5 vs 4 -> at 4; hash-only same verdicts',
-    { todo: 'R7-A2' }, () => {
+    () => {
+        const OT = (at, detail) => ({ oracle: 'OT', sig: 'trace-diff', at, detail });
         assert.equal(ORC.checkTrace(LIT(5), LIT(5)), null);
         const d = LIT(5);
         const e = tr().makeTraceSink({ keep: 'all' });
         for (let i = 0; i < 5; i++) tr().appendTraceLine(e, i === 3 ? 'DIFF' : 'L' + i);
-        const f = ORC.checkTrace(d, e);
-        assert.equal(f.oracle, 'OT');
-        assert.equal(f.sig, 'trace-diff');
-        assert.equal(f.at, 3);
-        assert.equal(typeof f.detail, 'string');
-        const g = ORC.checkTrace(LIT(5), LIT(4));
-        assert.equal(g.at, 4);
-        assert.equal(g.sig, 'trace-diff');
-        // hash-only sinks give the same verdicts
-        const h = (n, bad) => {
-            const s = tr().makeTraceSink();
+        // kept-line form: JSON-quoted text on both sides
+        assert.deepEqual(ORC.checkTrace(d, e), OT(3, 'line 3 (n 5 / 5): a="L3" b="DIFF"'));
+        // length mismatch: at = the shorter n, the short side says end (both orders)
+        assert.deepEqual(ORC.checkTrace(LIT(5), LIT(4)), OT(4, 'line 4 (n 5 / 4): a="L4" b=end'));
+        assert.deepEqual(ORC.checkTrace(LIT(4), LIT(5)), OT(4, 'line 4 (n 4 / 5): a=end b="L4"'));
+        // hash-only sinks give the same verdicts; detail = h:<h1 hex8><h2 hex8> (probed b145)
+        const h = (n, bad, keep) => {
+            const s = tr().makeTraceSink(keep);
             for (let i = 0; i < n; i++) tr().appendTraceLine(s, i === bad ? 'DIFF' : 'L' + i);
             return s;
         };
         assert.equal(ORC.checkTrace(h(5, -1), h(5, -1)), null);
-        assert.equal(ORC.checkTrace(h(5, -1), h(5, 3)).at, 3);
-        assert.equal(ORC.checkTrace(h(5, -1), h(4, -1)).at, 4);
-        assert.throws(() => ORC.checkTrace([], []), TypeError, 'non-sink');
+        const ha = h(5, -1), hb = h(5, 3);
+        assert.deepEqual(ORC.checkTrace(ha, hb), OT(3, 'line 3 (n 5 / 5): a=h:15e1c948c6815812 b=h:5461185a34c1e0f2'));
+        const hx = (s, i) => 'h:' + (s.h1[i] >>> 0).toString(16).padStart(8, '0') + (s.h2[i] >>> 0).toString(16).padStart(8, '0');
+        assert.deepEqual([hx(ha, 3), hx(hb, 3)], ['h:15e1c948c6815812', 'h:5461185a34c1e0f2'], 'the hex is the sink columns, unsigned');
+        assert.deepEqual(ORC.checkTrace(h(5, -1), h(4, -1)), OT(4, 'line 4 (n 5 / 4): a=h:1ce1d44d72d30b2d b=end'));
+        // mixed: a kept side shows text, a hash-only side its hashes; a [lo, hi) window counts as kept inside it
+        assert.deepEqual(ORC.checkTrace(LIT(5), h(5, 3)), OT(3, 'line 3 (n 5 / 5): a="L3" b=h:5461185a34c1e0f2'));
+        assert.deepEqual(ORC.checkTrace(h(5, -1, { keep: [3, 4] }), h(5, 3, { keep: [0, 3] })),
+            OT(3, 'line 3 (n 5 / 5): a="L3" b=h:5461185a34c1e0f2'));
+        // cut(): a long line is truncated to DETAIL_MAX 240 with '...'
+        const la = tr().makeTraceSink({ keep: 'all' }), lb2 = tr().makeTraceSink({ keep: 'all' });
+        tr().appendTraceLine(la, 'x'.repeat(300)); tr().appendTraceLine(lb2, 'y');
+        const c = ORC.checkTrace(la, lb2);
+        assert.equal(c.detail, ('line 0 (n 1 / 1): a="' + 'x'.repeat(300)).slice(0, 237) + '...');
+        assert.equal(c.detail.length, 240);
+        // non-sink -> TypeError naming checkTrace; OT is not an ORACLES entry until C1 (C-9)
+        for (const [x, y] of [[[], []], [LIT(1), {}], [null, LIT(1)], [LIT(1), undefined]]) {
+            assert.throws(() => ORC.checkTrace(x, y), (err) => err instanceof TypeError &&
+                /^oracles: checkTrace\(a, b\) needs two sinks from trace\.mjs makeTraceSink\(\)/.test(err.message));
+        }
+        assert.equal(ORC.ORACLES.indexOf('OT'), -1, 'C-9: OT joins ORACLES in C1');
     });
 
 test('A-3 teeth: W* (ERROR world 3, seed 0x5075c290) under lite-box -> failure null; verdict equals lite',
-    { todo: 'R7-A2' }, () => {
+    () => {
         const desc = laneByName('ERROR');
         const ws = worldSeed(seedFor(BASE, desc.index, 0), 3);
         assert.equal(ws, 0x5075c290, 'C-20 seed');
         const script = generateWorld(desc, ws, { large: isLargeWorld(desc, 3), covOff: null });
         const lite = runWorld(liteS3Adapter, script);
         for (const mode of ['all', 'alt']) {
-            // HEAD exec THROWS 'unmodelled cycle set' here (C-20)
+            // the b144 exec THREW 'unmodelled cycle set' here (C-20)
             const box = runWorld(lb().liteBoxAdapterFor(K, mode), script);
             assert.equal(box.failure, null, mode);
             assert.equal(verdictOf(box), verdictOf(lite), mode + ' verdict equals lite');
@@ -543,4 +564,44 @@ test('X5 opts matrix: unknown key, {}, null, [], prototype-borne broken -> TypeE
         assert.throws(() => lb().liteBoxAdapterFor(K, 'all', o), TypeError, JSON.stringify(o));
     }
     assert.throws(() => lb().liteBoxAdapterFor(K, 'all', { broken: 'box-untracked', x: 1 }), /did you mean broken/);
+});
+
+/* ---- 9. batch A2 surface (b145): exec lite family, gates.verdict, exec creationAbortOf ------------- */
+
+test('A2-1 isLiteFamily truth table (exact strings only); LITE_FAMILY frozen [lite, lite-box]', () => {
+    assert.deepEqual(EX.LITE_FAMILY, ['lite', 'lite-box']);
+    assert.equal(Object.isFrozen(EX.LITE_FAMILY), true);
+    assert.equal(typeof EX.isLiteFamily, 'function');
+    const want = [['lite', true], ['lite-box', true], ['lite-s3', false], ['LITE', false], ['lite-box/alt', false],
+        ['Lite-box', false], [' lite', false], ['', false], [undefined, false], [null, false], [{}, false],
+        [['lite'], false], [new String('lite'), false]];
+    assert.deepEqual(want.map(([v]) => EX.isLiteFamily(v)), want.map(([, r]) => r));
+    for (const n of EX.LITE_FAMILY) assert.equal(EX.isLiteFamily(n), true, n);
+});
+
+test('A2-2 gates.verdict: a SKIP on engine lite-box -> CONFIG 2 (roster bug), lite wording kept; others PARTIAL', () => {
+    const green = { configError: null, engine: 'lite', skipped: [], sawFail: false, fatal: false, reason: 'end',
+        forever: false, smoke: false, lanesRun: 3, inconclusive: [] };
+    const V = (over) => G.verdict(Object.assign({}, green, over));
+    const sk = [{ lane: 'NEST', missingCaps: ['disposeSignal'] }];
+    assert.deepEqual(V({ engine: 'lite-box', skipped: sk }),
+        { verdict: null, exitCode: EXIT_CODE.CONFIG, why: 'engine lite-box must SKIP nothing (roster bug): NEST', causes: [] });
+    assert.deepEqual(V({ engine: 'lite', skipped: sk }),
+        { verdict: null, exitCode: EXIT_CODE.CONFIG, why: 'engine lite must SKIP nothing (roster bug): NEST', causes: [] });
+    for (const engine of ['lite-s3', 'polyfill', 'alien', 'lite-box/alt']) {
+        const r = V({ engine, skipped: sk });
+        assert.deepEqual([r.verdict, r.exitCode, r.why], ['PARTIAL', EXIT_CODE.PARTIAL, 'skipped lanes on engine ' + engine], engine);
+    }
+    assert.deepEqual([V({ engine: 'lite-box' }).verdict, V({ engine: 'lite-box' }).exitCode], ['PASS', EXIT_CODE.PASS]);
+});
+
+test('A2-3 exec creationAbortOf: a lite-box adapter without knownAs() fails closed (kernel identity unverified)', () => {
+    const { script } = scriptFor('GRAPH', 0);
+    const ad = lb().liteBoxAdapterFor(K, 'all');
+    const bare = Object.freeze(Object.assign({}, ad, { knownAs: undefined }));
+    assert.throws(() => runWorld(bare, script), (e) => e instanceof TypeError &&
+        e.message === 'exec: lite adapter has no knownAs() (kernel identity unverified)');
+    const bad = Object.freeze(Object.assign({}, ad, { knownAs: () => 7 }));
+    assert.throws(() => runWorld(bad, script), (e) => e instanceof TypeError &&
+        e.message === 'exec: lite adapter knownAs() must return null or a control name, got number');
 });

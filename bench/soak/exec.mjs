@@ -97,6 +97,17 @@ export const SKIP_NAMES = Object.freeze(['O1c', 'O1e', 'O2', 'O4']);
 const COUNTER_CAP = 0x3FFFFFFF;   // per-world counters stay Smi (S7: [2^30, 2^31) boxes on pointer-compressed V8)
 
 /**
+ * The lite family (R7, C-3 / C-17): adapters that drive the in-tree lite kernel. 'lite-box' is a facade over the
+ * same kernel files (adapters/lite-box.mjs), so it shares lite's identity rules: creationAbortOf below, the
+ * no-SKIP rule in gates.verdict, and SoakReport's engine.files == kernel.files check.
+ */
+export const LITE_FAMILY = Object.freeze(['lite', 'lite-box']);
+/** true only for the exact strings in LITE_FAMILY (no case folding, no prefix match; a non-string is false). */
+export function isLiteFamily(name) {
+    return name === 'lite' || name === 'lite-box';
+}
+
+/**
  * Run one world. adapter: adapters/lite.mjs (or any contract-valid adapter). script: gen.mjs output.
  * Returns { failure: null | {step, op, fails[], scen[]}, scen: {name: n}, checks: {...}, ops, opsByClass }.
  */
@@ -107,8 +118,9 @@ export function runWorld(adapter, script, opts) {
 
 /**
  * O6 (iii) creation prediction (DELTA 4b-v2 T3): true when a write-cycle creation must abort in effect()
- * (a lite kernel that matches no controls.json control). Fails closed BEFORE any state: a lite adapter
- * without knownAs(), a knownAs() that throws (controls.json unreadable) or returns neither null nor a name.
+ * (a lite kernel that matches no controls.json control). Applies to every lite-family adapter (LITE_FAMILY:
+ * 'lite', 'lite-box'). Fails closed BEFORE any state: a lite-family adapter without knownAs(), a knownAs()
+ * that throws (controls.json unreadable) or returns neither null nor a name.
  * opts.creationAbort: test-only override (test/57); it must be a boolean, and the identity is still verified.
  */
 function creationAbortOf(ad, opts) {
@@ -117,7 +129,7 @@ function creationAbortOf(ad, opts) {
         throw new TypeError('exec: opts.creationAbort must be a boolean, got ' + (o === null ? 'null' : typeof o));
     }
     let lite = false;
-    if (ad.name === 'lite') {
+    if (isLiteFamily(ad.name)) {
         if (typeof ad.knownAs !== 'function') throw new TypeError('exec: lite adapter has no knownAs() (kernel identity unverified)');
         const k = ad.knownAs();
         if (k !== null && !(typeof k === 'string' && k.length > 0)) {

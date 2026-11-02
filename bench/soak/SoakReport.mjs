@@ -149,7 +149,7 @@ import {
 } from './config.mjs';
 import { LaneGates, judgeRun, oracleFamily, GateInputError, REASONS } from './gates.mjs';
 import { classify, digest, REGISTRY_URL, REGISTRY_PROBLEMS } from './divergences.mjs';
-import { CHECK_NAMES, SKIP_NAMES } from './exec.mjs';
+import { CHECK_NAMES, SKIP_NAMES, isLiteFamily } from './exec.mjs';
 import { GEN_RULES } from './gen.mjs';
 import { seedFor, worldSeed } from './seeds.mjs';
 import { ROSTER, laneByName } from './lanes/index.mjs';
@@ -421,7 +421,8 @@ function checkHeader(h, cfg, registryText) {
     const match = ctl.filter((c) => c.sha256['Signal.js'] === sh[0] && c.sha256['Watch.js'] === sh[1]);
     if (h.controls.name !== null && !match.some((c) => c.name === h.controls.name)) bad('control', 'controls.name ' + String(h.controls.name) + ' does not match the kernel sha256 pins in controls.json');
     if (h.controls.name === null && match.length > 0) bad('control', 'the kernel is control ' + match[0].name + ' but controls.name is null');
-    if (h.engine.name === 'lite' && !isDeepStrictEqual(h.engine.files, k.files.map((f) => ({ path: f.path, sha256: f.sha256 })))) bad('control', 'engine.files differ from kernel.files');
+    // a lite-family engine (lite, lite-box) runs the kernel's own files (lite-box is a facade over them)
+    if (isLiteFamily(h.engine.name) && !isDeepStrictEqual(h.engine.files, k.files.map((f) => ({ path: f.path, sha256: f.sha256 })))) bad('control', 'engine.files differ from kernel.files');
     // lanes: re-derive applicability from the recorded caps (lanes/index.mjs + adapters/contract.mjs)
     if (!isDeepStrictEqual(h.laneRoster, ROSTER.slice())) bad('header-lanes', 'laneRoster ' + JSON.stringify(h.laneRoster) + ' != ' + JSON.stringify(ROSTER));
     if (!isDeepStrictEqual(cfg.lanes, ROSTER.filter((n) => cfg.lanes.indexOf(n) !== -1))) bad('header-lanes', 'SOAK_LANES value is not a roster-ordered subset');

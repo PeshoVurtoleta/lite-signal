@@ -50,6 +50,7 @@
 
 import { Model } from './model.mjs';
 import { SoakThrow, sameValue, showValue, specRefs } from './kinds.mjs';
+import { firstTraceDiff, traceLine } from './trace.mjs';
 
 export const ORACLES = Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O7a', 'O7', 'OB', 'O8', 'OW', 'O9']);
 
@@ -71,6 +72,41 @@ export const SIGS = Object.freeze({
 
 const DETAIL_MAX = 240;
 const cut = (s) => (s.length > DETAIL_MAX ? s.slice(0, DETAIL_MAX - 3) + '...' : s);
+
+/* ---- OT: trace comparator (R7 A2, C-10 / C-14). Pure and uncalled by production code until group B; 'OT' is not
+ * in ORACLES / SIGS until C1 (C-9). ------------------------------------------------------------------------- */
+
+const hex8 = (x) => (x >>> 0).toString(16).padStart(8, '0');
+/** One side of an OT detail: the kept text (JSON-quoted), else h:<h1 hex8><h2 hex8>, or 'end' past the sink's n. */
+function traceSide(sink, at) {
+    if (at >= sink.n) return 'end';
+    const s = traceLine(sink, at);
+    return s !== null ? JSON.stringify(s) : 'h:' + hex8(sink.h1[at]) + hex8(sink.h2[at]);
+}
+
+/**
+ * OT: compare two trace sinks (trace.mjs makeTraceSink; C-14). null when every line hash matches and the line counts
+ * are equal; else { oracle: 'OT', sig: 'trace-diff', at, detail } with at = the 0-based first differing line (the
+ * shorter count when one trace is a prefix of the other). detail (cut() to DETAIL_MAX) is EXACTLY
+ *   'line <at> (n <a.n> / <b.n>): a=<side> b=<side>'
+ * where <side> is the line's kept text as JSON.stringify(text), else 'h:' + the line's two 32-bit hashes as 8
+ * lower-case hex digits each (h1 then h2, unsigned), else 'end' when at >= that sink's n.
+ * Either argument not a sink -> TypeError (before any read).
+ */
+export function checkTrace(a, b) {
+    let at;
+    try {
+        at = firstTraceDiff(a, b);
+    } catch (e) {
+        if (e instanceof TypeError) throw new TypeError('oracles: checkTrace(a, b) needs two sinks from trace.mjs makeTraceSink() (' + e.message + ')');
+        throw e;
+    }
+    if (at === -1) return null;
+    return {
+        oracle: 'OT', sig: 'trace-diff', at,
+        detail: cut('line ' + at + ' (n ' + a.n + ' / ' + b.n + '): a=' + traceSide(a, at) + ' b=' + traceSide(b, at)),
+    };
+}
 
 /** O1c: engine value `got` (a returned value, or the thrown SoakThrow) of computed i vs the model. */
 export function checkComputed(model, i, got, memo) {

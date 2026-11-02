@@ -603,6 +603,7 @@ const TAMPERS = [
     ['a forged control name (headpatched claims rev152)', 'hp', (r) => { r[0].controls.name = 'rev152'; }, I('control', /controls\.name rev152 does not match/)],
     ['rev152 relabelled as a tree run (review repro)', 'rev', (r) => { r[0].controls.name = null; asTree(r); }, I('control', /is control rev152 but controls\.name is null/)],
     ['engine.files differ from kernel.files', 'rev', (r) => { r[0].engine.files[0].sha256 = '0'.repeat(64); }, I('control', /engine\.files differ/)],
+    ['lite-box: engine.files differ from kernel.files', 'rev', (r) => { r[0].config.SOAK_ENGINE.value = 'lite-box'; r[0].engine.name = 'lite-box'; r[0].engine.files[0].sha256 = '0'.repeat(64); }, I('control', /engine\.files differ/)],
     // D-B9 (a) N1-N5: the honest nwscratch stream, one field forged per row (engine.files mirrored where moved)
     ['M1: nearwrap baseSha256 forged', 'nwscratch', (r) => { r[0].nearwrap.baseSha256 = 'a'.repeat(64); },
         I('control',

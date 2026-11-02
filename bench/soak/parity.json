@@ -4,8 +4,8 @@
     "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
     "bench/soak/model.mjs": "a87052623d3cb7b90af865df146ab1a390555cc9ec1bbe0dcb2de4fd67ebd81f",
-    "bench/soak/oracles.mjs": "a85e261fcb680fc4d73733ee8a9913faaf357807c65e144d76ea2c665e4bae96",
-    "bench/soak/exec.mjs": "29149e85f674561c66b11fd5e360f9a3ae2397a264df3a3fe7fe95a87af8bcc9",
+    "bench/soak/oracles.mjs": "126b1c45aae02604cea7e45efe983277e688a4fe2bab83870e9bcd1d1b3f0174",
+    "bench/soak/exec.mjs": "a60a569c9aadec613837f332ecc98e2fdea3aa8fca6d6906e58f413e47282f14",
     "bench/soak/gen.mjs": "9ce4d2a7eb9294a899a867938dfbefc4a6c10b4704605cc407391a8806b3315a",
     "bench/soak/scenarios.mjs": "671b9591a32bfc07bb243c07eafc1c9a9c6106b8bf4fc647a4db4e01a0d6fd8d",
     "bench/soak/lanes/index.mjs": "539d3ed1b436aeb3f1d9b87971586b1c0411a20e988670ac63a006c05e10ae46",
@@ -13,7 +13,7 @@
     "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
     "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
     "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
-    "bench/soak/gates.mjs": "2386f264932fb55b19e762440747a44382b5b1212664ce72f9fddaa754258aea",
+    "bench/soak/gates.mjs": "c06f828defbf02f6a41e7fb4e7f439fa771a1f93b43641a6217c45e4c169dbed",
     "bench/soak/boundary.mjs": "a9b1b75ca945b31f7454e5243cf1ed5ac1c12a625299c5a34d2413d02373eec7",
     "bench/soak/divergences.mjs": "307c6b604e6d6658bbd1d1a2f0d5205ef7f5dd8aff4c8358c73f0a452a9d9dd0",
     "bench/soak/divergences.json": "0445e2e9c514f40b62befad70e274f8971ceb6401e52615fceaa7d52bd0b82d8",
@@ -23,7 +23,7 @@
     "bench/soak/shrink.mjs": "85fa5b06558833b949fe2ede7d3b1044a68e5a8fc5e35c22735f0b5960cb5243",
     "bench/soak/emit.mjs": "ced1b520142e8e314791713da65fb506f4f973d5c9438d80cf3d88378d554f0f",
     "bench/soak/config.mjs": "05cabbff7641e94719e9d4e1108dbdf7d5a71254e81fef648da3fa61a37fd96f",
-    "bench/soak/SoakReport.mjs": "a2048364d0ca5fc05bab8f99b1f0908fbed483dac059627b9ce4700b1718c3b1",
+    "bench/soak/SoakReport.mjs": "d4bff424b3663a6ce6ff5c8d94ffc3cb74073f89fffc60e17862dab865dbe1ff",
     "bench/soak/wrap.mjs": "7279a0e5d2d58afa5c63558fe261747624b22a4e15488d6938626ff77adaf1d9",
     "bench/soak/wrap-repr.mjs": "6e21bc5be94ef62100e5d6c021e0d2d1e10365c22b35647968623249ee9e72e6",
     "bench/soak/wraprules.mjs": "de8293528e6535a628ef18d3ee41848b82a41562a23b2d7bf21871709c124275",
@@ -54,6 +54,8 @@
     "bench/soak/lanes/recycle.mjs": "2f7e0d56a3e9e4e6dd94220a0b1af424b08defdc0908a46df39eb197a59aa7b8",
     "bench/soak/lanes/scheduler.mjs": "e03f0fc102fb076d7055493c0795d29eef99a1ddc77a242082a4c243206930b0",
     "bench/soak/lanes/registry.mjs": "ddf650bb0665e2633f4b7082d85ccb5182cbfddc81665aef8d3ba58b40755732",
-    "bench/soak/lanes/capacity.mjs": "f94162ff661918b01a0809a1daa762bfcdaeeb167eb0577909e5c378eb2f4f9e"
+    "bench/soak/lanes/capacity.mjs": "f94162ff661918b01a0809a1daa762bfcdaeeb167eb0577909e5c378eb2f4f9e",
+    "bench/soak/adapters/lite-box.mjs": "3a914744fc2c5f935347490f0294933b70eaa43f278b6d1d58091108d969beca",
+    "bench/soak/trace.mjs": "77b81f000cf729f20992e68e2ece0d56b0c4f09cc58ccadde12d35546afd8890"
   }
 }

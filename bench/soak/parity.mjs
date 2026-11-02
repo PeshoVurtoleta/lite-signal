@@ -84,6 +84,9 @@ export const PARITY_FILES = Object.freeze([
     // R5 (b139 B2): the REGISTRY lane decides its rdestroy scripts, O6 (v) predictions and coverage; the CAPACITY lane
     // its cedge scripts, per-world capacity cfg, O6 cap-edge predictions and coverage
     'bench/soak/lanes/registry.mjs', 'bench/soak/lanes/capacity.mjs',
+    // b145 R7 A3 (C-18): the lite-box facade adapter maps the model onto the kernel's box handles; the trace sink /
+    // tracer decides the OT oracle's lines (oracles.mjs checkTrace imports it)
+    'bench/soak/adapters/lite-box.mjs', 'bench/soak/trace.mjs',
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

@@ -33,7 +33,7 @@ import {
     RSS_RATIO, RSS_SLACK_MB, RSS_BUF,
 } from './config.mjs';
 import { p95, bandMedian } from './rss.mjs';
-import { CHECK_NAMES, SKIP_NAMES } from './exec.mjs';
+import { CHECK_NAMES, SKIP_NAMES, isLiteFamily } from './exec.mjs';
 import { WRAP_GATE } from './wraprules.mjs';
 
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -647,12 +647,12 @@ export const REASONS = Object.freeze(['end', 'signal', 'fatal']);
 /**
  * The run verdict (SPEC-B section 8, first match wins):
  *   config / expose-gc / provenance error            -> exit 2 (no verdict string)
- *   engine 'lite' with any SKIP (a roster bug)       -> exit 2
+ *   a lite-family engine (exec LITE_FAMILY: 'lite', 'lite-box') with any SKIP (a roster bug) -> exit 2
  *   sawFail (any FAIL gate or BREACH), fatal, or reason 'fatal' -> FAIL 1 (a crash is never PASS/INCONCLUSIVE)
  *   inconclusive causes, an interrupted run (reason != 'end', except a signal on a forever run), or no
  *   lane ran                                          -> INCONCLUSIVE 3
  *   smoke                                             -> SMOKE 0
- *   any SKIP (non-lite)                               -> PARTIAL 0 (never the string PASS)
+ *   any SKIP (not lite-family)                        -> PARTIAL 0 (never the string PASS)
  *   otherwise                                         -> PASS 0
  * input { configError: string|null, engine, skipped: [], sawFail, fatal, reason, forever, smoke, lanesRun,
  *         inconclusive: [cause objects] }. Returns { verdict, exitCode, why, causes }.
@@ -671,8 +671,10 @@ export function verdict(input) {
     if (REASONS.indexOf(reason) === -1) throw new TypeError('verdict: reason must be one of ' + REASONS.join('|') + ', got ' + String(reason));
     if (!(Number.isSafeInteger(lanesRun) && lanesRun >= 0)) throw new TypeError('verdict: lanesRun must be a non-negative integer');
 
-    if (engine === 'lite' && skipped.length > 0) {
-        return { verdict: null, exitCode: EXIT_CODE.CONFIG, why: 'engine lite must SKIP nothing (roster bug): ' + skipped.map((s) => (s && s.lane) || String(s)).join(','), causes: [] };
+    // lite-box SKIPs nothing either: its caps are a superset of lite's (CAPS_LITE + box) and both lite and lite-box
+    // twin against lite-box/alt (TWINS, C-3 / C-17), so a SKIP on either is a roster bug, never a PARTIAL.
+    if (isLiteFamily(engine) && skipped.length > 0) {
+        return { verdict: null, exitCode: EXIT_CODE.CONFIG, why: 'engine ' + engine + ' must SKIP nothing (roster bug): ' + skipped.map((s) => (s && s.lane) || String(s)).join(','), causes: [] };
     }
     const causes = inconclusive.map((c) => (c.line === undefined ? Object.assign({}, c, { line: inconclusiveLine(c.cause, c) }) : c));
     if (reason !== 'end' && !(reason === 'signal' && forever)) causes.push({ cause: 'interrupted', line: inconclusiveLine('interrupted') });
