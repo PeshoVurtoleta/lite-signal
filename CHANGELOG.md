@@ -97,6 +97,52 @@ D-b143-2, 2026-10-30). `--self-test` grows from 31 to 43 checks and the `test/94
 mutants are still killed. A real run on an identical Signal.js (2221b93 vs e9f8e6a, node v26.8.2) gave VERDICT SAME
 on both tiers.
 
+### Tests / Docs -- soak: BOX lane (lite-box facade + trace twin, R7, b144-b152)
+
+Dev-only (`bench/soak/`, not shipped). No engine change in this unit: Signal.js (sha256/8 ea0b64d1) is untouched, no
+version bump. The roster is now 13 lanes, in ROSTER order: GRAPH, BATCH, ERROR, NEST, WIE, HOOK, LIFECYCLE, OWNER,
+RECYCLE, SCHEDULER, REGISTRY, CAPACITY, BOX. BOX is a TWIN lane: each world runs on lite and again on the box-handle
+facade `lite-box`, and the two call traces must be identical.
+- A (commits 919015e, d04c743). `adapters/lite-box.mjs` (new): `liteBoxAdapterFor(kernel, mode, opts?)`, a facade over
+  `lite-s3` (its registry maps signal / computed to signalBox / computedBox); mode `all` or `alt` (box on odd creation
+  ordinal); `opts` is undefined or exactly `{broken: 'box-untracked'}`, anything else is a TypeError;
+  `world.boxCounts()` -> `{box, callable, crossRead}`. `trace.mjs` (new): `makeTraceSink` keeps a 64-bit hash per
+  line (h1 + h2) plus an optional kept-text window and a per-line step column, `appendTraceLine`, `setTraceStep`,
+  `firstTraceDiff`, `MAX_LINES` (1 << 24); worst case 14.96 B/line (measured, b144). `oracles.mjs` `checkTrace(a, b)`
+  -> null or the OT failure `{oracle: 'OT', sig: 'trace-diff', at, detail}` with detail `line <at> (n <a.n> / <b.n>):
+  a=<side> b=<side>` cut to 240. `exec.mjs` `isLiteFamily` (lite and lite-box): the O6 creation prediction, the no-SKIP
+  verdict rule and SoakReport's engine.files check cover the family. The A2 golden (266 worlds, 8 seeds x 2 cycles x 5
+  lanes) is byte-identical to the pre-A2 one (9ae51c82). parity 57 files. Evidence (b144): box / callable census 0
+  diffs in 200 comparisons, null control 0 / 100, box-untracked must-fail 20 / 20 GRAPH worlds. Tests: `test/96`.
+- B (commit 527cd72). `twin.mjs` (new) `runWorldTwin(desc, ad, twinAd, script)`: each world runs on the primary and the
+  twin through hash-only sinks, a `V <json {failure, checks}>` line is appended to each, the traces are compared with
+  `checkTrace`; `checks.OT` = 1 per world; on a diff the pair is re-run once with a kept window [at - 3, at + 1) and the
+  OT failure is appended to the primary's failures (or is the standalone failure when the primary passed). `lanes/box.mjs`
+  (new): seed % 5 picks GRAPH / BATCH / ERROR / NEST / WIE, `twin: true`, `hardOracles ['OT']`. `contract.mjs` `TWINS`
+  = {lite: 'lite-box/alt', 'lite-box': 'lite-box/alt'}; `applicability` skips a twin lane with `missingCaps ['twin']`
+  when the engine has no twin. `main.mjs` `loadAdapter('name[/mode]')` and a twin tap; replay / shrink run twin lanes
+  with `runWorldTwin`. `divergences.json`: engines += lite-box on all 28 entries, lanes += BOX on DIV-F15 and DIV-F22;
+  the validator rule binds OPEN entries only (D-b149-1). Tests: `test/97` (61 rows), fixture
+  `test/fixtures/r7-b0-applicability.json`.
+- C (commit 65d5c95). BOX is rostered (13th lane, ROSTER[12], `LANE_INDEX.BOX` 9, laneSpan 13). Oracle OT joins
+  ORACLES / SIGS / CHECK_NAMES / FAMILY. OT is the first PER-WORLD floor (D-b150-1): `gates.mjs` `PER_WORLD {OT}` passes
+  iff OT === worlds and worlds >= `BOX_WORLD_FLOOR` 1300 (smoke `BOX_WORLD_FLOOR_SMOKE` 70), about half the measured
+  minimum (b151: smoke 8 seeds 148..158 worlds, default 3 seeds 2765..2793); the per-op oracles keep `CHECK_FLOOR`.
+  `LANE_KERNELS.BOX = ['tree']`. Must-fail pair: P-BOX-TREE (exit 1, explained by DIV-F22 only) and T-BOX-untracked
+  (`SOAK_MUSTFAIL=box-untracked`, OT trace-diff, known=none); `teeth.mjs` CHECKS lane:BOX / oracle:OT /
+  sig:OT:trace-diff -> T-BOX-untracked. Tests: `test/98` (14 rows). parity 59 files; golden `scripts-1000.json` gains
+  the BOX digest, the 12 old digests are byte-identical. TIMED recut (quiet lock, `run --strict` exit 0, 1421 s, load1
+  3.21 before and 8.86 after): BOX tree full 2793 worlds, smoke 150, OT === worlds; with the OT keys removed all 40
+  old-lane cells equal the previous document. `soak-nightly.yml` burn-in `timeout-minutes` 90 -> 150 (D-b149-2; the last
+  ten burn-ins ran 60.10..88.10 min) with `test/47` re-pinned.
+- Gates (b152, 2026-11-02, Node v26.8.2, quiet lock): `npm run verify` exit 0 -- `npm test` 2940 tests / 2927 pass / 0
+  fail / 12 skip / 1 todo; `soak:parity` OK (59 files); `soak:teeth` 72 OK / 0 MISS; torture 0 B/op. Reviews: A1, A2 + A3, B1
+  and B2 were each r1 REJECTED test-only (hash and step columns, exact counters, opts fail-open, the SoakReport
+  lite-family revert, twin mutants, DIV-F22 teeth), fixed with a literal change, r2 APPROVED. Group C: C1 r1 REJECTED
+  (the OT check-floor unit; settled by D-b150-1, the per-world floor), r2 APPROVED; C2a r1 REJECTED (a stale comment),
+  literal r2 APPROVED; C2b + H r1 REJECTED, fix round r2 APPROVED; C3 r1 REJECTED test-only (OT === worlds unchecked in
+  the test/41 evidence check), literal r2 APPROVED; the test/47 budget re-pin APPROVED.
+
 ### Tests / Docs -- soak: shrink --emit-test standalone repro (R6, b143)
 
 Dev-only (`bench/soak/`, not shipped). No engine change in this unit: Signal.js is untouched, no version bump.
@@ -1283,7 +1329,7 @@ last measured fail's report), never INCONCLUSIVE; only a later pass clears it. A
 retried; a missing or non-integer batch count fails closed. Previously one CI run failed the `semantic
 torture` step on churn-box: 2.9944 B/call vs floor 1, 7 of 8 batches inverted, so the min rested on one batch
 (ubuntu node 22, gh run 41369296785; CI class 11). Gates: test/55 (11 new tests, 28 total: under-sampled retry,
-last-attempt fail, the 4-of-8 boundary, fail-closed fields, sticky fail ([U, INV, INV] / [U, U, INV] /
+last-attempt fail, the 4-of-8 boundary, fail-closed fields, the LAST measured fail reported on every non-pass end, sticky fail ([U, INV, INV] / [U, U, INV] /
 [INV, U, INV] -> fail, [U, INV, PASS] -> pass), a real `checkAllocs` on the under-sampled shape);
 zerogc-torture with `ZEROGC_BREAK=1` still FAILs on attempt 1/3.
 

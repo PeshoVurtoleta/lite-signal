@@ -61,12 +61,14 @@ Gates are data: `GATES = [{id, kind, check, pass, mustFail[], teeth}]` (gates.mj
 gate and its must-fail control land in one edit. Kinds: fail (oracle, heap, rss, retention), evidence (coverage,
 check-floor, taint-skip), startup (totals), wrap (the S2 wrap job's gate, WRAP_GATE from wraprules.mjs, judged by wrap.mjs). Verdict ladder (gates.mjs:660-687, first match wins): config/expose-gc/
 provenance error -> 2; any FAIL gate, BREACH or fatal -> FAIL 1 (a crash is never PASS or INCONCLUSIVE); any
-INCONCLUSIVE cause -> 3; smoke -> SMOKE 0; a skip on a non-lite engine -> PARTIAL 0 (never the string PASS); else
-PASS 0. lite must SKIP nothing (a roster bug exits 2).
+INCONCLUSIVE cause -> 3; smoke -> SMOKE 0; a skip on a non-lite-family engine -> PARTIAL 0 (never the string PASS); else
+PASS 0. The lite family (lite and lite-box) must SKIP nothing (a roster bug exits 2, CONFIG, never PARTIAL).
 
 Evidence gates exist so thin evidence cannot pass (the S1b review reported a NEST cov-off run skipping 53% of its effect checks
 while green; not reproduced, section 8). They turn a run INCONCLUSIVE, never PASS and never FAIL:
-- check-floor (gates.mjs:264): every applicable hard oracle PERFORMED >= CHECK_FLOOR checks; taint skips never count.
+- check-floor (gates.mjs:264): every applicable per-op hard oracle PERFORMED >= CHECK_FLOOR checks; taint skips never count.
+  CHECK_FLOOR is per-op for every per-op oracle; OT is per-world (performed.OT === worlds and worlds >= BOX_WORLD_FLOOR,
+  smoke BOX_WORLD_FLOOR_SMOKE; section 19).
 - taint-skip (:284): per skipping oracle, skipped / (performed + skipped) <= TAINT_SKIP_MAX; 0/0 is NaN and fails closed.
 - coverage (:247): every required scenario >= SCEN_MIN hits (smoke: SCEN_MIN_SMOKE).
 Causes (gates.mjs:434): interrupted, no-lane, post-cycles, scenario, check-floor, taint-skip, lane-status. Retention
@@ -133,7 +135,7 @@ b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer t
   second ping-pong effect when that effect closes a write-cycle (the intended X2 abort), where the naive model expected
   it at the later cyc:1 set (world ERROR:0:0x53c41559, escape-CycleError + expected-escape-missing). RULED model it, no
   DIV (D2 by reasoning, D1 = byte-frozen preb33 control). exec predicts the O6 CycleError at effect creation when
-  creationAbort holds (the lite adapter's knownAs() === null: the kernel is not a controls.json control), else at
+  creationAbort holds (the lite FAMILY, exec isLiteFamily: the adapter's knownAs() === null, the kernel is not a controls.json control), else at
   the cyc:1 set; an unmodelled creation cycle inside a batch or frame fails closed. A creation CycleError with no
   write-cycle is never predicted, so a D-R3-class abort stays a BREACH known=none. Tests: test/57 (14 rows: A1p-a live
   predicts the abort; A1p-c live with creationAbort false throws "unmodelled cycle set"; A1p-d preb33 with creationAbort
@@ -263,6 +265,7 @@ scenarios, seeds, lanes, adapters, kinds.mjs and the torture helpers; it does NO
 | SCEN_MIN / SCEN_MIN_SMOKE | 8 / 1 (kept) | smoke minimum 156 (GRAPH deep-pull, both kernels); 1.5.2 smoke ERROR aggregate reads 2 (seed-dependent, masked because 1.5.2 always FAILs) |
 | CHECK_FLOOR | 10000 (was 1000) | least performed full-length clean cell tree NEST O7a 50367 (5.0x; b74 D4; was headpatched NEST O7a 41184, fail-stopped worlds); at 11 x OPS_MIN tree NEST O7a 672, BATCH OB 8295 and ERROR OB 2152 -> INCONCLUSIVE |
 | CHECK_FLOOR_SMOKE | 500 (was 250) | least full-length clean smoke cell tree NEST O7a 2704 (5.4x; b74 D4; was headpatched NEST O7a 2170, fail-stopped worlds) |
+| BOX_WORLD_FLOOR / _SMOKE | 1300 / 70 (R7 C, b151) | per-world floor of OT only (section 19): about half the measured BOX minimum, smoke 8 seeds 148..158 worlds, default 3 seeds 2765..2793; CHECK_FLOOR above is per-op |
 | TAINT_SKIP_MAX | 0.35 (was 0.5; kept b70 D3) | S1d: clean max 0.2585 over 8 seeds; headpatched NEST cov-off O1c 0.4314-0.4434 over 17 seeds (VOID design case under V1, b70 D6; b71 recut: clean max 0.0579 binding, sweep 0.0663 (superseded b74 D4: full-length max tree NEST O1e 0.2222, smoke 0.2202, tree NEST sweep 0.2321); headpatched cov-off maxTaint O1e 0.147-0.162 over 17 seeds) |
 TAINT_SKIP_MAX was an ORCHESTRATOR decision on the reviewer's ruling: at 0.5 the gate did not trip its own design case,
 and the S1b "0.53" figure was not reproducible. On 1.5.2 the same cov-off reads 0.2425-0.2612, which taint-skip cannot
@@ -628,6 +631,46 @@ maintainer's (D-b143-1, "Split"). Where this text and the code differ, the code 
   differential plus a cond mutant, refusal matrix, `END_CHECK_SALT` drift gate) and 2 `test/41` rows. Measured (b143
   qa, node v26.8.2, untimed): `npm test` 2811 / 2798 pass / 0 fail / 12 skip / 1 todo; torture 0 B/op. Review r1
   REJECTED (2 test-only blockers), r2 APPROVED; qa PASS.
+
+### 19. Amendment 2026-11-02 (b144-b152): BOX lane (R7)
+
+Harness only; Signal.js (ea0b64d1) unchanged. Commits 919015e (A1), d04c743 (A2 + A3), 527cd72 (B1 + B2), 65d5c95 (C).
+Rulings are maintainer's (D-b144-1..8, D-b149-1, D-b149-2, D-b150-1). The roster is now 13 lanes in ROSTER order: GRAPH,
+BATCH, ERROR, NEST, WIE, HOOK, LIFECYCLE, OWNER, RECYCLE, SCHEDULER, REGISTRY, CAPACITY, BOX (BOX: `LANE_INDEX` 9,
+ROSTER[12], laneSpan 13). Where this text and the code differ, the code is the record.
+
+- Why a twin lane. The box handles (`signalBox` / `computedBox`) are a second calling convention over the same graph.
+  The model oracles O1-O9 cannot see a handle that is not tracked (a cross-kind read that fails to subscribe still
+  leaves a plausible value), so BOX compares the engine with itself: one script runs on lite and on the facade
+  `adapters/lite-box.mjs` (over lite-s3; mode `alt` boxes every odd creation ordinal), through `trace.mjs` sinks, and
+  oracle OT diffs the two call traces. `lanes/box.mjs` reuses five sub-lanes by `seed % 5` (GRAPH / BATCH / ERROR /
+  NEST / WIE); R7 adds no new op vocabulary (D-b144-4; a later rung BOX-2 may add twin RECYCLE / OWNER / SCHEDULER /
+  REGISTRY / CAPACITY and a HOOK FLAG_BOX normalizer).
+- Why OT is per-world. A twin world yields one trace comparison, not a count of per-op checks, so `CHECK_FLOOR` (a
+  per-op count) is the wrong unit: `gates.mjs` `PER_WORLD {OT}` passes iff OT === worlds and worlds >= `BOX_WORLD_FLOOR`
+  1300 (smoke 70), about half the measured minimum (b151: smoke 8 seeds 148..158 worlds, default 3 seeds 2765..2793;
+  D-b150-1). This is the first per-world floor; every per-op oracle keeps the scalar `CHECK_FLOOR`, so decision (e)
+  ("per-oracle CHECK_FLOOR deferred", section 12) still holds for the per-op oracles.
+- Why TWINS maps both engines to lite-box/alt. {lite: 'lite-box/alt', 'lite-box': 'lite-box/alt'} (D-b144-3): s3c's
+  plain `lite` twin can never count `box-interop` (cross-kind reads, counted only on a lite-box world; `alt` mixes both handle kinds in one world), so the
+  twin is `lite-box/alt`, for the lite-box primary too. An engine with no twin gets `missingCaps ['twin']` from `applicability`.
+  The no-SKIP verdict rule covers the lite family (lite and lite-box): a SKIP there is a config error (exit 2), never
+  PARTIAL (caps superset + TWINS).
+- Why BOX is tree-only. `LANE_KERNELS.BOX = ['tree']` (D-b144-6): NEST and WIE fail-stop or BREACH by design on
+  headpatched and 1.5.2 (PLAN-R7 C-6), so the other kernels are not cut for BOX.
+- The must-fail pair (D-b144-7). T-BOX-untracked (`SOAK_MUSTFAIL=box-untracked`; the twin is built `{broken}` so a box
+  `read()` goes through `peek()`, untracked) heads `oracle=OT lane=BOX sig=trace-diff known=none` and sits in the SHORT
+  battery; P-BOX-TREE is its revert, red-explained by DIV-F22 only until DIV-F22 gets `fixedIn`. soak:teeth: 72 OK /
+  0 MISS. Divergences: engines += lite-box on all 28 entries, lanes += BOX on DIV-F15 and DIV-F22; the validator binds
+  OPEN entries only (D-b149-1; a fixed divergence that reappears on BOX classifies known=none, loudly).
+- Burn-in budget (D-b149-2). `soak-nightly.yml` burn-in `timeout-minutes` 90 -> 150: the last ten burn-ins ran
+  60.10..88.10 min and one already hit 90; +20% nominal on the worst is 105.7 min (70% of 150).
+- Calibration (b151, TIMED recut under the quiet lock, `run --strict` exit 0, 1421 s, load1 3.21 before / 8.86 after):
+  BOX tree full 2793 worlds, smoke 150, OT === worlds; the 40 old-lane cells are unchanged once the OT keys are
+  stripped. parity 59 files; golden scripts-1000 gains the BOX digest, the 12 old digests are identical.
+- Tests and gates: `test/96-soak-box` (31 rows), `test/97-soak-twin` (61), `test/98-soak-box-roster` (14), fixture
+  `test/fixtures/r7-b0-applicability.json`; the closing `npm test` 2940 tests / 2927 pass / 0 fail / 12 skip / 1 todo,
+  torture 0 B/op (Node v26.8.2). Detail: CHANGELOG [Unreleased] and SPEC-B Addendum 17.
 
 ## Consequences
 
