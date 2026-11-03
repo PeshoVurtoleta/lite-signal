@@ -332,6 +332,8 @@ export const NOT_TEETH = deepFreeze({
     'P-CAP-TREE': 'the CAPACITY pass control on the tree, the revert of every T-cap-* row (' + MF + ' P-CAP-TREE comment)',
     // b151 C2a (PLAN-R7 group C task 5, C-40): the BOX pass control, explained by DIV-F22 only
     'P-BOX-TREE': 'the BOX pass control on the tree, explained by DIV-F22 only, the revert of T-BOX-untracked (' + MF + ' P-BOX-TREE comment)',
+    // b158 B1 (PLAN-146 TASK 4, D-b156-1): main on the lite-box engine, a live-kernel pass control (no SOAK_KERNEL)
+    'P-LITEBOX-TREE': 'the lite-box engine pass control on the live tree, every lane --smoke, explained by DIV-F10 + DIV-F22 only; its F144 must-fail is test/45 section w (' + MF + ' P-LITEBOX-TREE comment)',
     // R8 C2a (PLAN-R8 GROUP C task 4): the SNAPSHOT pass control
     'P-SNAP-TREE': 'the SNAPSHOT pass control on the tree, the revert of every T-SNAP-* row (' + MF + ' P-SNAP-TREE comment)',
 });

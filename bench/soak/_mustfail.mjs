@@ -16,6 +16,13 @@
  * driven through the REAL main.mjs via SOAK_KERNEL (spawnSync, --expose-gc, 30-minute timeout + SIGKILL, piped stderr).
  * Nothing here calls a gate module directly.
  *
+ * Live-kernel controls (b158 B1, D-b156-1, PLAN-146 TASKS 1-2): a run 'main' control whose env.SOAK_ENGINE is set and is
+ * not 'lite' gets NO scratch kernel directory and NO SOAK_KERNEL (config.mjs refuses SOAK_KERNEL with any engine but
+ * lite, exit 2): it drives the checkout's live Signal.js + Watch.js through that engine's adapter, after the same tree
+ * pin check every tree control gets (verifyControls(['tree']), first). validSpec holds its shape: the engine is in
+ * config.mjs ENGINES_AVAILABLE, base 'tree', patches [] and arm null (a soakPatch is allowed: its zero-commit copy
+ * carries the same pinned Signal.js + Watch.js). P-LITEBOX-TREE is the one such control (SOAK_ENGINE=lite-box).
+ *
  * soakPatch (b140 B2b, D-b140-1; optional, run 'main' only): [{file, find, replace}] edits of HARNESS files, each
  * `file` a relative path inside bench/soak (no '..', no absolute path, not out/). The run copies bench/soak (and
  * the files main.mjs reaches outside it) into a zero-commit scratch repository under bench/soak/out (the
@@ -76,7 +83,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, sep, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB, GATE_N, WARMUP_CYCLES, MARK_DEDUPE_NOTE, VERDICT } from './config.mjs';
+import { MIN_ACTIVE_CYCLES, DEFAULT_OPS, OPS_MIN, OPS_MAX, SEMI_SPACE_MB, GATE_N, WARMUP_CYCLES, MARK_DEDUPE_NOTE, VERDICT, ENGINES_AVAILABLE } from './config.mjs';
 import { wrapRule, wrapStreamProblems } from './wraprules.mjs';
 import { inconclusiveLine } from './gates.mjs';
 
@@ -116,7 +123,9 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * via soakPatch; LANE_KERNELS.REGISTRY = tree) and the CAPACITY rows (b140 B2b: P-CAP-TREE, T-cov-CAPACITY and the four
  * T-cap-* mutants; LANE_KERNELS.CAPACITY = tree) and the BOX rows (b151 C2a: P-BOX-TREE -- red-explained on
  * DIV-F22 -- and T-BOX-untracked via SOAK_MUSTFAIL=box-untracked; LANE_KERNELS.BOX = tree) and the SNAPSHOT rows (R8 C2a:
- * P-SNAP-TREE and the three T-SNAP-* kernel mutants; LANE_KERNELS.SNAPSHOT = tree); no other main-run control
+ * P-SNAP-TREE and the three T-SNAP-* kernel mutants; LANE_KERNELS.SNAPSHOT = tree) and the live-kernel row (b158 B1,
+ * D-b156-1: P-LITEBOX-TREE, every lane under SOAK_ENGINE=lite-box, no SOAK_KERNEL -- red-explained on DIV-F10 +
+ * DIV-F22; tree is its only valid base, validSpec); no other main-run control
  * does until A1-A3 land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
  * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
@@ -439,6 +448,8 @@ const CAP_COV_ENV = Object.freeze({ SOAK_LANES: 'CAPACITY', SOAK_MUSTFAIL: 'cov-
 const BOX_ENV = Object.freeze({ SOAK_LANES: 'BOX' });
 // T-BOX-untracked: the same lane, the twin adapter built {broken: 'box-untracked'} (main.mjs loadAdapter, by env).
 const BOX_MF_ENV = Object.freeze({ SOAK_LANES: 'BOX', SOAK_MUSTFAIL: 'box-untracked' });
+// P-LITEBOX-TREE (b158 B1, D-b156-1): every lane on the lite-box engine, the live tree (no SOAK_KERNEL, liveKernel()).
+const LITEBOX_ENV = Object.freeze({ SOAK_ENGINE: 'lite-box' });
 // The tree SNAPSHOT lane (R8 C2a, PLAN-R8 GROUP C task 4; R8-5 / R8-16 / R8-21): a plain lane (no sub-lane mix, R8-8),
 // oracle OS once per restore event.
 const SNAP_ENV = Object.freeze({ SOAK_LANES: 'SNAPSHOT' });
@@ -1072,6 +1083,22 @@ export const CONTROLS = deepFreeze([
     M('T-BOX-untracked', 'tree', BOX_MF_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=OT lane=BOX sig=trace-diff known=none'],
     }),
+    // ---- LITE-BOX ENGINE (b158 B1, D-b156-1, PLAN-146 TASK 3) ----
+    // P-LITEBOX-TREE: main --smoke on every lane under SOAK_ENGINE=lite-box (the box facade), a LIVE-KERNEL control (no
+    // SOAK_KERNEL: validSpec / runControl above), so the nightly teeth job runs main on the lite-box engine. F144 (acb9c5b):
+    // config.mjs LATENCY_UNTIMED lacked 'boxCounts', so every lite-box main run CRASHed; with it back out (test/45 section
+    // w, soakPatch) this row MISSes on its CRASH line. Measured b158 B1 (HEAD 1e4b6e6, node v26.8.2;
+    // .handoff/b158-evidence/litebox-smoke/): exit 1, END verdict=FAIL records=44 (header + 42 cycle records, 3 per lane x
+    // 14 lanes, every boundary trackerSize 0 / weakAlive 0, + summary), exactly these 4 BREACH heads, all explained by
+    // the two open divergences DIV-F10 / DIV-F22. Closing either one in the engine moves this row in the same diff.
+    M('P-LITEBOX-TREE', 'tree', LITEBOX_ENV, ['--smoke'], {
+        exit: 1, kind: 'explained', lines: [], specs: [
+            'oracle=O6 lane=ERROR sig=expected-escape-missing known=DIV-F22',
+            'oracle=O6 lane=REGISTRY sig=escape-TypeError known=DIV-F10',
+            'oracle=O6 lane=REGISTRY sig=expected-escape-missing known=DIV-F10',
+            'oracle=O6 lane=BOX sig=expected-escape-missing known=DIV-F22',
+        ], known: ['DIV-F10', 'DIV-F22'], extra: { verdict: 'FAIL', boundaries: 42 },
+    }),
     // ---- SNAPSHOT (R8 C2a, PLAN-R8 GROUP C task 4 + ASSERTION 3; CURRENT R8-5, R8-16, R8-21) ----
     // P-SNAP-TREE: the SNAPSHOT pass control on the tree (C0 (d) / C1 measured --smoke exit 0, failingWorlds 0, no BREACH),
     // P-CAP-TREE's shape; the revert of every T-SNAP-* row (the same env and argv, patches []).
@@ -1130,6 +1157,12 @@ const CFG_KERNELS = Object.freeze(['scratch', 'missing', 'basename', 'nowatch', 
 const isStrArr = (a) => Array.isArray(a) && a.every((x) => typeof x === 'string' && x.length > 0);
 /** A `k>=n` spec token with a non-empty key and a finite numeric bound. */
 const isGe = (t) => { const i = t.indexOf('>='); return i > 0 && t.slice(i + 2).length > 0 && Number.isFinite(Number(t.slice(i + 2))); };
+/**
+ * A live-kernel control (b158 B1, D-b156-1): run 'main' with env.SOAK_ENGINE set to a string other than 'lite'.
+ * config.mjs refuses SOAK_KERNEL with any engine but lite (exit 2), so runControl gives it no scratch kernel and
+ * no SOAK_KERNEL: it drives the checkout's pinned live Signal.js + Watch.js through that engine's adapter.
+ */
+const liveKernel = (c) => c.run === 'main' && c.env !== null && typeof c.env === 'object' && own(c.env, 'SOAK_ENGINE') && typeof c.env.SOAK_ENGINE === 'string' && c.env.SOAK_ENGINE !== 'lite';
 
 /** Shape problems of one control; [] when it is valid. */
 export function validSpec(c) {
@@ -1147,6 +1180,14 @@ export function validSpec(c) {
     if (!Array.isArray(c.patches) || !c.patches.every((x) => Array.isArray(x) && x.length === 2 && typeof x[0] === 'string' && x[0].length > 0 && typeof x[1] === 'string')) p.push('patches');
     if (c.arm !== null && typeof c.arm !== 'string') p.push('arm');
     if (own(c, 'soakPatch')) for (const q of soakPatchProblems(c)) p.push(q);
+    if (liveKernel(c)) {
+        // b158 B1 (PLAN-146 TASK 1): the live tree is the only kernel such a run can drive; one problem per violation
+        const at = "a live-kernel control (SOAK_ENGINE='" + c.env.SOAK_ENGINE + "')";
+        if (ENGINES_AVAILABLE.indexOf(c.env.SOAK_ENGINE) === -1) p.push(at + ' needs an engine in config.mjs ENGINES_AVAILABLE (' + ENGINES_AVAILABLE.join(', ') + ')');
+        if (own(BASES, c.base) && c.base !== 'tree') p.push(at + ' runs base tree (the pinned live Signal.js), not ' + c.base);
+        if (Array.isArray(c.patches) && c.patches.length > 0) p.push(at + ' patches nothing (no scratch kernel, no SOAK_KERNEL)');
+        if (c.arm !== null && typeof c.arm === 'string') p.push(at + ' has no arm');
+    }
     const e = c.expect;
     if (e === null || typeof e !== 'object') return p.concat(['expect']);
     if (!(Number.isInteger(e.exit) && e.exit >= 0 && e.exit <= 3)) p.push('expect.exit');
@@ -1393,7 +1434,9 @@ export function runControl(c, pinProblems) {
         const keys = Object.assign({}, c.env, { SOAK_OUT: out });
         let main = c.run === 'wrap' ? WRAP : MAIN;
         let configLine = c.expect.config;
-        if (c.run === 'main' || c.run === 'wrap' || c.kernel === 'scratch') {
+        if (liveKernel(c)) {
+            // b158 B1 (D-b156-1): the pinned live tree through c.env.SOAK_ENGINE's adapter; no kernel dir, no SOAK_KERNEL
+        } else if (c.run === 'main' || c.run === 'wrap' || c.kernel === 'scratch') {
             writeKernelDir(kdir, buildKernel(c).src, c.base);
             keys.SOAK_KERNEL = join(kdir, 'Signal.js');
         } else if (c.kernel === 'missing') {

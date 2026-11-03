@@ -699,7 +699,7 @@ test('teeth j: B5 -- validSpec: extra.pass is wrap-only, a non-empty list of dis
 });
 
 test('teeth j: B5 -- audit(): every _mustfail control is under some CHECKS id or in NOT_TEETH (orphan control: <name>)', () => {
-    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP', 'P-CAP-TREE', 'P-BOX-TREE', 'P-SNAP-TREE']);
+    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP', 'P-CAP-TREE', 'P-BOX-TREE', 'P-LITEBOX-TREE', 'P-SNAP-TREE']);
     assert.ok(CHECKS['cause:scenario'].includes('P-HOOK-TREE-COVOFF'), 'the b93 HOOK cov-off scenario control is a cause:scenario tooth');
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']) }), ['orphan control: X-orphan']);
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']), notTeeth: Object.assign({}, NOT_TEETH, { 'X-orphan': 'a reason' }) }), []);
@@ -1468,7 +1468,7 @@ test('teeth u: the BOX ids have teeth -- T-BOX-untracked (SHORT, OT trace-diff k
     assert.deepEqual(shape(tb).concat([tb.expect.known]), ['main', 'tree', BOX_MF_ENV, ['--smoke'], [], null, 1, 'match', [], [BOX_SPEC], undefined]);
     assert.equal(buildKernel(tb).src, rowsBase(), 'the kernel is the unpatched tree');
     assert.equal(buildKernel(pb).src, rowsBase(), 'the kernel is the unpatched tree');
-    assert.deepEqual(CONTROLS.filter((x) => /BOX/.test(x.name)).map((x) => x.name), ['P-BOX-TREE', 'T-BOX-untracked']);
+    assert.deepEqual(CONTROLS.filter((x) => /BOX/.test(x.name)).map((x) => x.name), ['P-BOX-TREE', 'T-BOX-untracked', 'P-LITEBOX-TREE']);
     assert.deepEqual(pairing(CHECKS, CONTROLS), []);
     // must-fail: a spec on another lane does not back lane:BOX; another oracle does not back oracle:OT; another sig not sig:OT:trace-diff
     const ctl = copy(CONTROLS);
@@ -1609,4 +1609,127 @@ test('teeth v: on the frozen pre-C1 build (before-C-7548461) each T-SNAP-* MISSe
             assert.ok(problems.includes('no line matches spec [' + SNAP(sig) + ']'), name + ': ' + JSON.stringify(problems));
         } finally { rmSync(dir, { recursive: true, force: true }); }
     }
+});
+
+/* ---- w. the lite-box engine main run (b158 B1, PLAN-146 TASKS 1-5; D-b156-1; F144 / acb9c5b) ---- */
+
+const LITEBOX_ENV = { SOAK_ENGINE: 'lite-box' };
+// MEASURED b158 B1 (HEAD 1e4b6e6, node v26.8.2; .handoff/b158-evidence/litebox-smoke/stderr.txt): SOAK_ENGINE=lite-box main
+// --smoke prints exactly these 4 BREACH heads, exit 1, END verdict=FAIL records=44 (42 cycle records, 3 per lane x 14 lanes)
+const LITEBOX_SPECS = [
+    'oracle=O6 lane=ERROR sig=expected-escape-missing known=DIV-F22',
+    'oracle=O6 lane=REGISTRY sig=escape-TypeError known=DIV-F10',
+    'oracle=O6 lane=REGISTRY sig=expected-escape-missing known=DIV-F10',
+    'oracle=O6 lane=BOX sig=expected-escape-missing known=DIV-F22',
+];
+const LB_AT = (engine) => "a live-kernel control (SOAK_ENGINE='" + engine + "')";
+// F144 (acb9c5b): config.mjs LATENCY_UNTIMED without 'boxCounts' -> latency.mjs fails closed on the lite-box world method
+// and every lite-box main run CRASHes before its first cycle. The row re-introduces it in a SCRATCH copy (soakPatch), never
+// in the live config.mjs (parity-pinned). MEASURED b158 B1 (.handoff/b158-evidence/f144-row.txt): these problems, exactly.
+const F144_FIND = "'update', 'boxCounts', 'snapshot'";
+const F144_REPLACE = "'update', 'snapshot'";
+const F144_PROBLEMS = [
+    'CRASH line',
+].concat(LITEBOX_SPECS.map((s) => 'no line matches spec [' + s + ']'), [
+    'explained control saw no BREACH',
+    'boundaries 0 != 42',
+    'SoakReport did not print "soak:report: verdict FAIL (consistent)": soak:report: INTEGRITY -- gates-block: header gates differ from this code\'s gatesBlock() at LATENCY_UNTIMED (tampered, or recorded under different code)',
+]);
+/** A live-kernel control, by this test's own reading of the rule: run main, env.SOAK_ENGINE set and not 'lite'. */
+const isLiveKernel = (c) => c.run === 'main' && own(c.env, 'SOAK_ENGINE') && c.env.SOAK_ENGINE !== 'lite';
+/**
+ * The open-divergence pin (PLAN-146 TASK 5): every 'explained' main control on the TREE tolerates only divergences that
+ * are open in divergences.json (fixedIn null). main / SoakReport classify a tree run with includeFixed false, so a fixed
+ * id never explains a tree line: an engine fix that closes an id must edit every tree row naming it in the same diff.
+ */
+function openDivergenceProblems(controls, entries) {
+    const byId = new Map(entries.map((d) => [d.id, d]));
+    const p = [];
+    for (const c of controls) {
+        if (c.run !== 'main' || c.base !== 'tree' || c.expect.kind !== 'explained') continue;
+        for (const id of c.expect.known) {
+            const d = byId.get(id);
+            if (d === undefined) p.push(c.name + ': known ' + id + ' is no divergences.json id');
+            else if (d.fixedIn !== null) p.push(c.name + ': known ' + id + ' is not an open divergence (fixedIn ' + String(d.fixedIn) + ')');
+        }
+    }
+    return p;
+}
+const divEntries = () => JSON.parse(readFileSync(join(ROOT, 'bench', 'soak', 'divergences.json'), 'utf8')).entries;
+
+test('teeth w: P-LITEBOX-TREE -- main --smoke on SOAK_ENGINE=lite-box, a live-kernel pass control explained by DIV-F10 + DIV-F22 (D-b156-1)', () => {
+    const c = CONTROLS.find((x) => x.name === 'P-LITEBOX-TREE');
+    assert.ok(c, 'P-LITEBOX-TREE exists');
+    assert.deepEqual(validSpec(c), []);
+    assert.ok(SHORT_RE.test(c.name) && !LONG_RE.test(c.name) && !own(c, 'soakPatch'), 'SHORT battery (the nightly teeth job), no soakPatch');
+    assert.deepEqual(shape(c).concat([c.flags, c.expect.known, c.expect.extra]), ['main', 'tree', LITEBOX_ENV, ['--smoke'], [], null, 1, 'explained', [], LITEBOX_SPECS,
+        ['--expose-gc'], ['DIV-F10', 'DIV-F22'], { verdict: 'FAIL', boundaries: 42 }]);
+    for (const s of LITEBOX_SPECS) assert.ok(c.expect.known.includes(s.slice(s.indexOf('known=') + 6)), s + ': its known tag is tolerated');
+    assert.deepEqual(buildKernel(c).anchors, [], 'no kernel patch');
+    assert.equal(buildKernel(c).src, rowsBase(), 'the live tree, pinned');
+    assert.deepEqual(CONTROLS.filter(isLiveKernel).map((x) => x.name), ['P-LITEBOX-TREE'], 'the one live-kernel control');
+    // TASK 4: a pass control, a tooth of no id; out of NOT_TEETH it is an orphan
+    assert.equal(typeof NOT_TEETH['P-LITEBOX-TREE'], 'string');
+    for (const id of Object.keys(CHECKS)) assert.ok(!CHECKS[id].includes('P-LITEBOX-TREE'), id + ' never maps P-LITEBOX-TREE');
+    assert.deepEqual(live(), []);
+    const nt = Object.assign({}, NOT_TEETH);
+    delete nt['P-LITEBOX-TREE'];
+    hasProblem(live({ notTeeth: nt }), 'orphan control: P-LITEBOX-TREE');
+});
+
+test('teeth w: validSpec -- a live-kernel control is base tree, patches [], arm null and an available engine (one problem each)', () => {
+    const lb = () => copy(CONTROLS.find((x) => x.name === 'P-LITEBOX-TREE'));
+    const at = LB_AT('lite-box');
+    const rows = [
+        ['base headpatched', (c) => { c.base = 'headpatched'; }, [at + ' runs base tree (the pinned live Signal.js), not headpatched']],
+        ['a kernel patch', (c) => { c.patches = [['a', 'b']]; }, [at + ' patches nothing (no scratch kernel, no SOAK_KERNEL)']],
+        ['an arm', (c) => { c.arm = 'x'; }, [at + ' has no arm']],
+        ['engine alien', (c) => { c.env = { SOAK_ENGINE: 'alien' }; }, [LB_AT('alien') + ' needs an engine in config.mjs ENGINES_AVAILABLE (lite, lite-box)']],
+        ['engine polyfill', (c) => { c.env = { SOAK_ENGINE: 'polyfill' }; }, [LB_AT('polyfill') + ' needs an engine in config.mjs ENGINES_AVAILABLE (lite, lite-box)']],
+        ['engine lite (a scratch-kernel control: SOAK_KERNEL + lite is legal)', (c) => { c.env = { SOAK_ENGINE: 'lite' }; c.patches = [['a', 'b']]; }, []],
+        ['an inherited SOAK_ENGINE is no live-kernel control (the child env copies own keys only)', (c) => { c.env = Object.create({ SOAK_ENGINE: 'lite-box' }); c.patches = [['a', 'b']]; }, []],
+    ];
+    for (const [label, mut, want] of rows) {
+        const c = lb();
+        mut(c);
+        assert.deepEqual(validSpec(c), want, label);
+    }
+    // a cfg row is no live-kernel control: T-cfg-engine-typo (SOAK_ENGINE 'alein', run cfg) stays valid
+    const ty = CONTROLS.find((x) => x.name === 'T-cfg-engine-typo');
+    assert.deepEqual([ty.run, ty.env], ['cfg', { SOAK_ENGINE: 'alein' }]);
+    assert.deepEqual(validSpec(ty), []);
+    // runControl refuses the malformed shape before anything is spawned
+    const bad = lb();
+    bad.base = 'headpatched';
+    const r = runControl(bad);
+    assert.deepEqual([r.ok, r.invalid, r.status, r.problems], [false, false, null, ['malformed control: ' + at + ' runs base tree (the pinned live Signal.js), not headpatched']]);
+});
+
+test('teeth w: the open-divergence pin -- every explained tree control tolerates only fixedIn-null divergences', () => {
+    const entries = divEntries();
+    assert.deepEqual(openDivergenceProblems(CONTROLS, entries), []);
+    assert.deepEqual(CONTROLS.filter((c) => c.run === 'main' && c.base === 'tree' && c.expect.kind === 'explained').map((c) => c.name),
+        ['L-REGISTRY-F10', 'P-BOX-TREE', 'P-LITEBOX-TREE'], 'the explained tree controls');
+    for (const id of ['DIV-F10', 'DIV-F22']) assert.equal(entries.find((d) => d.id === id).fixedIn, null, id + ' is open');
+    // must-fail: an engine fix closing DIV-F10 / DIV-F22 (fixedIn forged) names exactly the tree rows that tolerate it
+    const forge = (id) => { const e = copy(entries); e.find((d) => d.id === id).fixedIn = 'b158-forged'; return openDivergenceProblems(CONTROLS, e); };
+    assert.deepEqual(forge('DIV-F10'), ['L-REGISTRY-F10: known DIV-F10 is not an open divergence (fixedIn b158-forged)', 'P-LITEBOX-TREE: known DIV-F10 is not an open divergence (fixedIn b158-forged)']);
+    assert.deepEqual(forge('DIV-F22'), ['P-BOX-TREE: known DIV-F22 is not an open divergence (fixedIn b158-forged)', 'P-LITEBOX-TREE: known DIV-F22 is not an open divergence (fixedIn b158-forged)']);
+    // and an id the registry does not hold
+    const ctl = copy(CONTROLS);
+    ctl.find((x) => x.name === 'P-LITEBOX-TREE').expect.known = ['DIV-F10', 'DIV-F99'];
+    assert.deepEqual(openDivergenceProblems(ctl, entries), ['P-LITEBOX-TREE: known DIV-F99 is no divergences.json id']);
+});
+
+test('teeth w: F144 must-fail -- P-LITEBOX-TREE on a scratch config.mjs without boxCounts in LATENCY_UNTIMED MISSes on its CRASH line', () => {
+    const cfgPath = join(ROOT, 'bench', 'soak', 'config.mjs');
+    const before = createHash('sha256').update(readFileSync(cfgPath)).digest('hex');
+    assert.equal(readFileSync(cfgPath, 'utf8').split(F144_FIND).length - 1, 1, 'the F144 find occurs exactly once in the live config.mjs');
+    const c = copy(CONTROLS.find((x) => x.name === 'P-LITEBOX-TREE'));
+    c.soakPatch = [{ file: 'config.mjs', find: F144_FIND, replace: F144_REPLACE }];
+    assert.deepEqual(validSpec(c), []);
+    const r = runControl(c);
+    assert.deepEqual([r.ok, r.invalid, r.status], [false, false, 1]);
+    assert.deepEqual(r.problems, F144_PROBLEMS);
+    assert.equal(createHash('sha256').update(readFileSync(cfgPath)).digest('hex'), before, 'the live config.mjs is untouched');
 });
