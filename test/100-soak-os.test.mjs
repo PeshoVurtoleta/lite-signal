@@ -103,7 +103,7 @@ describe('H: the hand graph is the probed one (pins every literal below)', () =>
     });
 });
 
-// ---- TREE: 200 seeded graphs (the A0 census generator, trimmed: same seeds, same op mix) -----------------------------
+// ---- TREE: 200 seeded graphs (the A0 census generator, trimmed: same seeds, same op mix; plan shuffle = Fisher-Yates) --
 function mulberry32(a) {
     return function () {
         a = (a + 0x6D2B79F5) | 0;
@@ -158,7 +158,9 @@ function treeGraph(g) {
     for (let i = 0; i < nS; i++) plan.push('s');
     for (let i = 0; i < nC; i++) plan.push('c');
     for (let i = 0; i < nE; i++) plan.push('e');
-    plan = ['s'].concat(plan.slice(1).sort(() => R() - 0.5));
+    // Fisher-Yates on R (b158). The A0 census shuffled with sort(() => R() - 0.5): the comparator call order is V8's
+    // sort algorithm, so the population moved between Node majors (node 22 / 24 drew 2468 nodes, node 26 drew 2463).
+    for (let i = plan.length - 1; i > 1; i--) { const j = 1 + ri(i); const t = plan[i]; plan[i] = plan[j]; plan[j] = t; }
     for (const p of plan) {
         const key = nextKey++;
         if (p === 's') {
@@ -240,10 +242,29 @@ describe('TREE: 200 seeded graphs (ASSERTION 1)', () => {
         }
         assert.equal(nulls, 200);
         assert.equal(refireNulls, 200);
-        assert.equal(nodes, 2463, 'A0 census population (census-none.json nodesTotal)');
-        assert.deepEqual(kinds, { signal: 567, signalBox: 252, computed: 1085, computedBox: 316, effect: 243 });
+        // b158 re-pin after the Fisher-Yates shuffle (probed on node v26.8.2); the A0 census-none.json (2463 nodes) used the
+        // V8-order shuffle, so it no longer matches this population.
+        assert.equal(nodes, 2465, 'TREE population (Fisher-Yates plan shuffle)');
+        assert.deepEqual(kinds, { signal: 551, signalBox: 268, computed: 1088, computedBox: 286, effect: 272 });
         assert.equal(owned, 101);
         assert.ok(cleanMarked > 0, 'clean computeds with markEpoch != 0 exist (the M-OS-roundtrip tamper has a target)');
+    });
+    it('the population does not depend on the engine sort: graphs 0-49 with Array.prototype.sort replaced by a stable linear insertion sort deep-equal the unpatched S1 (b158; the sort(() => R() - 0.5) shuffle fails it)', () => {
+        const base = [];
+        for (let g = 0; g < 50; g++) base.push(treeGraph(g).S1);
+        const orig = Array.prototype.sort;
+        const alt = [];
+        Array.prototype.sort = function (cmp) {
+            const c = cmp === undefined ? (a, b) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0) : cmp;
+            for (let i = 1; i < this.length; i++) {
+                const x = this[i]; let j = i - 1;
+                while (j >= 0 && c(this[j], x) > 0) { this[j + 1] = this[j]; j--; }
+                this[j + 1] = x;
+            }
+            return this;
+        };
+        try { for (let g = 0; g < 50; g++) alt.push(treeGraph(g).S1); } finally { Array.prototype.sort = orig; }
+        assert.deepEqual(alt, base);
     });
 });
 
