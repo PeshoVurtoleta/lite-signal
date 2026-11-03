@@ -110,10 +110,12 @@ Dev-only (`bench/soak/` and `test/`, not shipped). No engine change. F144 (acb9c
   It runs in the existing soak-nightly `teeth` job via `npm run soak:teeth`: no workflow or test/47 change.
 - `test/45` section w, +4 tests (45 -> 49): row shape, NOT_TEETH must-fail, validSpec matrix (an inherited-prototype
   SOAK_ENGINE is no live-kernel control), an open-divergence pin (every explained tree control's known list must be OPEN:
-  fixedIn null), and the F144 row (P-LITEBOX-TREE on a scratch copy whose config.mjs drops 'boxCounts' is not OK; among its problems: CRASH line,
+  fixedIn null), and the F144 row (P-LITEBOX-TREE on a scratch copy whose config.mjs drops 'boxCounts' is not OK; among
+  its problems: CRASH line,
   all 4 specs unmatched, 'explained control saw no BREACH', boundaries 0 != 42). When DIV-F10 / DIV-F22 close, the row is edited
   in the same diff (the pin and the explained-control checks go red otherwise).
-- Measured (b158, Node v26.8.2, host PRELIMINARY: soak:teeth at load1 ~4.5-6, torture at 9.34): `soak:teeth` short battery 77 OK / 0 MISS (was 76; P-LITEBOX-TREE
+- Measured (b158, Node v26.8.2, host PRELIMINARY: soak:teeth at load1 ~4.5-6, torture at 9.34): `soak:teeth` short
+  battery 77 OK / 0 MISS (was 76; P-LITEBOX-TREE
   OK at exit 1 in 33 s); MUSTFAIL_LIST 95 -> 96 controls; `npm test` 3081 tests / 3068 pass / 0 fail / 12 skip / 1 todo; torture
   0 B/op. Evidence: `.handoff/b158-evidence/`.
 

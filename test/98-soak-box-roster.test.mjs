@@ -195,7 +195,8 @@ function mainSmoke(envExtra) {
     if (envExtra !== undefined) for (const k of Object.keys(envExtra)) env[k] = envExtra[k];
     let r, recs;
     try {
-        // bounded: SIGKILL (main.mjs traps SIGTERM), so a hung child fails this row (status null, no JSONL) instead of hanging the suite
+        // bounded: SIGKILL (main.mjs traps SIGTERM), so a hung child fails this row (status null, JSONL absent
+        // or partial) instead of hanging the suite
         r = spawnSync(process.execPath, [HEAP, '--expose-gc', join(HERE, 'bench/soak/main.mjs'), '--smoke'], { cwd: HERE, env, encoding: 'utf8', maxBuffer: 1 << 26, timeout: 300000, killSignal: 'SIGKILL' });
         recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     } finally {

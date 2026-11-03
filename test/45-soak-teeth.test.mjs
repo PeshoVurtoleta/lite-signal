@@ -8,7 +8,8 @@
  * the universe ids GAPS cover, and the CHECKS id floor. A landing control deletes its GAP AND edits them; a new
  * GAP, an id moved from CHECKS into a GAP's covers, or a dropped CHECKS id fails here.
  *
- * Fast and deterministic: no child process, no kernel run. The mutants run on doctored COPIES of the registry
+ * Fast and deterministic. Only sections t, v and w spawn child processes (runControl: git init + main.mjs + report.mjs;
+ * v also the frozen main.mjs); the rest runs no child and no kernel. The mutants run on doctored COPIES of the registry
  * inputs (audit() takes universe / gates / checks / gaps / unreachable / testAnchors overrides); the real kernel
  * files are only read. Each mutant expects one specific problem string, so a check that stops firing goes red.
  *
@@ -1442,6 +1443,7 @@ test('teeth t: soakPatch runs -- a 0-match / 2-match find is INVALID (never spaw
 const UNIVERSE_PRE_BOX = 72;
 const BOX_IDS = ['lane:BOX', 'oracle:OT', 'sig:OT:trace-diff'];
 const BOX_ENV = { SOAK_LANES: 'BOX' };
+const SNAP_IDS = ['lane:SNAPSHOT', 'oracle:OS', 'sig:OS:roundtrip', 'sig:OS:refire', 'sig:OS:clean-bit'];
 const BOX_MF_ENV = { SOAK_LANES: 'BOX', SOAK_MUSTFAIL: 'box-untracked' };
 const BOX_SPEC = 'oracle=OT lane=BOX sig=trace-diff known=none';
 
@@ -1494,9 +1496,9 @@ test('teeth u: the BOX ids have teeth -- T-BOX-untracked (SHORT, OT trace-diff k
 
 /* ---- v. the SNAPSHOT teeth (R8 C2a, PLAN-R8 GROUP C task 4 + ASSERTION 3; CURRENT R8-5, R8-16, R8-21) ---- */
 
-// The universe before the SNAPSHOT lane (b151 C2a .. R8 C1) held 75 ids; C1 adds exactly these five (C2a maps them).
+// The universe before the SNAPSHOT lane (b151 C2a .. R8 C1) held 75 ids; C1 adds exactly the five SNAP_IDS
+// (section u declares them; C2a maps them).
 const UNIVERSE_PRE_SNAP = 75;
-const SNAP_IDS = ['lane:SNAPSHOT', 'oracle:OS', 'sig:OS:roundtrip', 'sig:OS:refire', 'sig:OS:clean-bit'];
 const SNAP_ENV = { SOAK_LANES: 'SNAPSHOT' };
 const SNAP = (sig) => 'oracle=OS lane=SNAPSHOT sig=' + sig + ' known=none';
 const A_SNAP_EV = '                    node.evalVersion = evs[i];   // D-M: the recorded stamps\n';

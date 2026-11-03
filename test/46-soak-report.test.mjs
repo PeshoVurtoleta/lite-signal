@@ -52,7 +52,8 @@ const LONG = { SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: '1000000' };
 /**
  * Scratch-kernel tail: wrap the module's createRegistry binding (a function declaration: a mutable live binding
  * the adapter reads through the namespace) and run `action` on the 2nd registry, i.e. inside world 0 of cycle 0
- * (the 1st registry is adapters/lite.mjs's caps.snapshot probe at import), after the stream is open. The event fires at the next yield (world 63), mid-cycle, whatever the host load.
+ * (the 1st registry is adapters/lite.mjs's caps.snapshot probe at import), after the stream is open. The event fires
+ * at the next yield (world 63), mid-cycle, whatever the host load.
  */
 const ARMED = 'test/46 ARMED';   // the kernel writes it to stderr when the armed event fires
 const armAt2 = (action) => '\n;const __t46Reg = createRegistry; let __t46N = 0;\n' +

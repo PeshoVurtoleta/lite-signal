@@ -260,8 +260,8 @@ test('BOX descriptor: name, twin, hardOracles ["OT"], required pair, covOff {}, 
     assert.equal(b.needsCaps.length, 4);
     for (const s of ['box-trace-equal', 'box-interop']) assert.equal(b.optional.includes(s), false, 'required names are not repeated in optional');
 });
-test('BOX is rostered last (ROSTER[12]) and has LANE_INDEX 9', () => {
-    assert.equal(ROSTER.indexOf('BOX'), 12, 'R7 C1: BOX is ROSTER[12], rostered last');
+test('BOX is ROSTER[12] and has LANE_INDEX 9', () => {
+    assert.equal(ROSTER.indexOf('BOX'), 12, 'R7 C1: BOX is ROSTER[12]');
     assert.equal(LANE_INDEX.BOX, 9);
 });
 test('scenarios.mjs lists box-trace-equal and box-interop directly before the 7 SNAPSHOT ids (R8: they are no longer the last two)', () => {
@@ -378,10 +378,12 @@ test('F144 every function-valued key of an opened lite-box world (all + alt, pla
             } finally { w.close(); }
             const lane = new LatencyLane({ floorNs: 40 });
             lane.armed = true;
+            assert.equal(lane.armed, true);
             const aw = lane.wrap(ad).open(o);
-            assert.equal(typeof aw.boxCounts, 'function', ad.name + ': the armed world keeps boxCounts');
-            assert.deepEqual(Object.keys(aw.boxCounts()), ['box', 'callable', 'crossRead']);
-            aw.close();
+            try {
+                assert.equal(typeof aw.boxCounts, 'function', ad.name + ': the armed world keeps boxCounts');
+                assert.deepEqual(Object.keys(aw.boxCounts()), ['box', 'callable', 'crossRead']);
+            } finally { aw.close(); }
         }
     }
     assert.equal(sawBoxCounts, 4, 'boxCounts is an own function key of every opened lite-box world (non-vacuous)');

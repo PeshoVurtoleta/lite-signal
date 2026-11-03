@@ -676,7 +676,8 @@ ROSTER[12], laneSpan 13; SNAPSHOT joined last in R8, 14 lanes, section 20). Wher
   `test/fixtures/r7-b0-applicability.json`; the closing `npm test` 2940 tests / 2927 pass / 0 fail / 12 skip / 1 todo,
   torture 0 B/op (Node v26.8.2). Detail: CHANGELOG [Unreleased] and SPEC-B Addendum 17.
 
-- lite-box main run in the teeth battery (2026-11-03, b158; F144 acb9c5b, D-b156-1). Every `SOAK_ENGINE=lite-box` main run had crashed
+- lite-box main run in the teeth battery (2026-11-03, b158; F144 acb9c5b, D-b156-1). Every `SOAK_ENGINE=lite-box` main
+  run had crashed
   ("latency: unclassified world method boxCounts") and no CI job ran main on lite-box. P-LITEBOX-TREE (`SOAK_ENGINE=lite-box`,
   --smoke, the full 14-lane roster) expects exit 1, kind explained, 4 O6 specs (ERROR expected-escape-missing DIV-F22;
   REGISTRY escape-TypeError DIV-F10; REGISTRY expected-escape-missing DIV-F10; BOX expected-escape-missing DIV-F22), known
@@ -714,13 +715,19 @@ Where this text and the code differ, the code is the record.
   gives worst13 90.30 x (1 + 1.6151/13) x 1.2 = 121.82 min > 120, so the budget rises (the
   D-b149-2 paragraph above stays as history). parity 60 files (+ `lanes/snapshot.mjs`); golden scripts-1000 gains the
   SNAPSHOT digest, the 13 old digests are identical.
-- Calibration (b157, TIMED recut under the quiet lock, `run --strict` exit 0, 1523 s, load1 1.31 before / 5.91 after): SNAPSHOT
-  tree full 2451 worlds (1101730 ops), smoke 135 (60639 ops); OS performed 37428 === restore events (smoke 2108 === 2108),
-  failingWorlds 0; the old-lane cells are unchanged once `performed.OS` is stripped. `npm test` then 3076 tests / 3063 pass / 0
-  fail / 12 skip / 1 todo. Evidence: `.handoff/r8-evidence/C3/` (recut.out, recut.meta, assert2-check.out), `.handoff/b157-verify.txt`.
+- Calibration (b157, TIMED recut under the quiet lock, `run --strict` exit 0, 1523 s, load1 1.31 before / 5.91 after):
+  SNAPSHOT
+  tree full 2451 worlds (1101730 ops), smoke 135 (60639 ops); OS performed 37428 === restore events (smoke 2108 ===
+  2108),
+  failingWorlds 0; the old-lane cells are unchanged once `performed.OS` is stripped. `npm test` then 3076 tests / 3063
+  pass / 0
+  fail / 12 skip / 1 todo. Evidence: `.handoff/r8-evidence/C3/` (recut.out, recut.meta, assert2-check.out),
+  `.handoff/b157-verify.txt`.
 - Control-kernel rows. The failing rows on control kernels (headpatched ERROR; lite-1.5.2 BATCH / ERROR) need FIXED
-  divergences to be explained (classify `includeFixed` for any named control kernel: DIV-F5 A3-FIX-R, DIV-F6 A2-FIX-T, DIV-F21 A2-F21). Still OPEN
-  (fixedIn null): DIV-F15 (NEST; the tree NEST cells read 0 failing worlds), DIV-F10 (tree REGISTRY), DIV-F22 (tree BOX).
+  divergences to be explained (classify `includeFixed` for any named control kernel: DIV-F5 A3-FIX-R, DIV-F6 A2-FIX-T,
+  DIV-F21 A2-F21). Still OPEN
+  (fixedIn null): DIV-F15 (NEST; the tree NEST cells read 0 failing worlds), DIV-F10 (tree REGISTRY), DIV-F22 (tree
+  BOX).
 - Tests: `test/99-soak-snapshot-roster` (16 rows), `test/100-soak-os` (61), `test/101-soak-snapshot-adapter` (22),
   `test/102-soak-snapshot-lane` (13), `test/43-soak-model` +14 (restoreCopy); SCENARIOS 79 -> 86. Detail: CHANGELOG
   [Unreleased] and SPEC-B Addendum 18.

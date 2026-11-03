@@ -154,7 +154,7 @@ function treeGraph(g) {
     const sigKeys = [], depable = [], comps = [], effs = [], ownersAvail = [];
     const rdL = (k) => (L.isBox[k] ? L.T[k].get() : L.T[k]());
     const nS = 2 + ri(5), nC = 3 + ri(10), nE = 1 + ri(4);
-    let plan = [];
+    const plan = [];
     for (let i = 0; i < nS; i++) plan.push('s');
     for (let i = 0; i < nC; i++) plan.push('c');
     for (let i = 0; i < nE; i++) plan.push('e');
@@ -224,7 +224,7 @@ function treeGraph(g) {
 }
 
 describe('TREE: 200 seeded graphs (ASSERTION 1)', () => {
-    it('checkOsRoundtrip(S1, S2) null and checkOsRefire null on 200/200; the census population is exercised', () => {
+    it('checkOsRoundtrip(S1, S2) null and checkOsRefire null on 200/200; the TREE population is exercised', () => {
         let nulls = 0, refireNulls = 0, nodes = 0, cleanMarked = 0, owned = 0;
         const kinds = {};
         for (let g = 0; g < 200; g++) {
@@ -249,7 +249,8 @@ describe('TREE: 200 seeded graphs (ASSERTION 1)', () => {
         assert.equal(owned, 101);
         assert.ok(cleanMarked > 0, 'clean computeds with markEpoch != 0 exist (the M-OS-roundtrip tamper has a target)');
     });
-    it('the population does not depend on the engine sort: graphs 0-49 with Array.prototype.sort replaced by a stable linear insertion sort deep-equal the unpatched S1 (b158; the sort(() => R() - 0.5) shuffle fails it)', () => {
+    // b158: the sort(() => R() - 0.5) shuffle fails this row
+    it('the population does not depend on the engine sort: graphs 0-49 with Array.prototype.sort replaced by a stable linear insertion sort deep-equal the unpatched S1', () => {
         const base = [];
         for (let g = 0; g < 50; g++) base.push(treeGraph(g).S1);
         const orig = Array.prototype.sort;
