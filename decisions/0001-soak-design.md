@@ -32,14 +32,14 @@ report-only. Oracles are pure and property-based; no oracle re-walks the kernel 
 share its errors).
 
 Defaults are calibrated, not guessed (section 8): DEFAULT_OPS 100000 per lane-cycle, 11 cycles (MIN_ACTIVE_CYCLES,
-config.mjs:21, :35). Smoke = 3 x 20000 and can only be SMOKE, never PASS.
+config.mjs:21, :36). Smoke = 3 x 20000 and can only be SMOKE, never PASS.
 
 ### 2. Cold-path policy
 
 Every bench/soak module is COLD (each header says so): none is imported by Signal.js, none sits on a hot body. The
 harness may allocate freely. Two rules keep it honest anyway: run totals live in a Float64Array (gates.mjs `Totals`,
 exact to 2^53; the startup self-check `totals` feeds 3 x 2^30 and demands 3221225472, gates.mjs `totalsRule`) and SOAK_OPS is
-capped at 0x3FFFFFFF (config.mjs:39) so a per-lane counter stays a Smi on pointer-compressed V8 (the F20 class).
+capped at 0x3FFFFFFF (config.mjs:40) so a per-lane counter stays a Smi on pointer-compressed V8 (the F20 class).
 Per-op 0 B/op stays owned by test/32-perf-gate and test/torture.mjs, not by the soak (GC_MAJOR_POLICY, config.mjs).
 
 ### 3. Frozen kernels (SOAK_KERNEL)
@@ -148,7 +148,7 @@ b1e7a06, 32625fe, 87a9e92, eb5acc2). Body lines it makes false carry a pointer t
   engine=ERR(computed:N), each with worldScen [recovery-after-throw] and notWorldScen [revert-after-mid-read]
   (F5 shapes stay F5). N19.6 dropped throw-dep-computed-prewalk from them: the cached-rethrow fast path runs no body
   frame, so scenarios.mjs:194-197 never tags it (tagger gap, follow-up). Full enumeration of all 17039 failing preb33
-  ERROR worlds: known=none 2 -> 0 (b53 t2). FAIL_CAP (16 per cycle, config.mjs:59) caps the stored failure records
+  ERROR worlds: known=none 2 -> 0 (b53 t2). FAIL_CAP (16 per cycle, config.mjs:60) caps the stored failure records
   only; every failing world reaches the BREACH log (main.mjs:492-493; b80 census: the 12 L- controls at FAIL_CAP 16
   vs 1e9 print the same BREACH keys). Not F-MB: the 4 BATCH known=none lines are LEDGER #36, triaged b77 and folded
   into DIV-F5 (F5, FIXED in A3-FIX-R, b109; was OPEN, fixBy A3).
@@ -206,7 +206,7 @@ Amendment 2026-10-20 (bursts 84-89; commits c11abf0, 3ef853a, 85d02e8, 4f5f200, 
 - Report-only lanes (gates.mjs `REPORT_ONLY_GATES`; neither gates): latency (3ef853a: one DDSketch alpha 0.01 per world
   method, worlds w%16=8; devDependency lite-sketch 1.2.0) and anatomy (85d02e8: the resolved kernel instrumented into a
   temp copy, shape worlds re-run on it; cycle key `anatomy` or null).
-- T-mark (4f5f200): markDedupe >= MARK_DEDUPE_NOTE (0.99, config.mjs:54, in the header gates block), a NOTE spec kind.
+- T-mark (4f5f200): markDedupe >= MARK_DEDUPE_NOTE (0.99, config.mjs:55, in the header gates block), a NOTE spec kind.
 - T-flushdrop (66b6a50, the 41st control): headpatched GRAPH smoke, every 64th flushed effect dropped -> O4 effect-dead
   and O1 effect-stale. graph-fuzzer and torture-soak are retired (absorbed by the bench/soak GRAPH lane; accepted loss =
   single-registry aging; bench/torture/MANIFEST.txt RETIRED block).
@@ -276,7 +276,7 @@ scalar floor serves every oracle: at 11 x OPS_MIN only GRAPH (O5 14791 on both k
 it; ERROR OB (2152 / 1227), BATCH OB (8295 / 1789) and NEST O7a (tree 672; the fail-stopped headpatched / 1.5.2 rows
 read 413 / 502) read INCONCLUSIVE (per-oracle floors stay deferred, decision (e)). The 1.5.2 ERROR smoke
 `aggregate` count (2) is seed-dependent; no action.
-Config comment: config.mjs:61-72 (the CHECK_FLOOR note).
+Config comment: config.mjs:62-74 (the CHECK_FLOOR note).
 
 ### 9. SoakReport: integrity, release refusals, residuals
 
@@ -340,6 +340,10 @@ MUSTFAIL_LIST=1) runs each through the REAL main.mjs on a scratch kernel directo
 every spec on ONE BREACH/INCONCLUSIVE head, no CRASH, END sentinel last, and SoakReport re-derivation `(consistent)`.
 `npm run soak:teeth` = short (^(?!L-)); `npm run soak:teeth:long` = ^L-; MUSTFAIL_LIST=1 builds all and runs none;
 MUSTFAIL_ONLY=<regex>; MUSTFAIL_HEADS=1 prints matched heads.
+Amendment 2026-11-03 (b158, F144): a fourth run shape, the LIVE-KERNEL control: a run-main control whose own
+`env.SOAK_ENGINE` is set and != 'lite' runs the pinned live tree after the pin check (no scratch kernel, no SOAK_KERNEL);
+validSpec requires the engine in config `ENGINES_AVAILABLE`, base tree, patches [], arm null. First user: P-LITEBOX-TREE
+(pass control, NOT_TEETH). MUSTFAIL_LIST 95 -> 96 controls; short battery 76 -> 77 OK.
 NEARWRAP teeth (b84, c11abf0): L-NW-hp-zero (lane:GRAPH) kills "kernel ignores SOAK_NEARWRAP" and "derive() skips the
 gV rewrite"; its spec is not keyed on known= / sig=, so a DIV-F29 entry leaves it green.
 
@@ -672,6 +676,18 @@ ROSTER[12], laneSpan 13; SNAPSHOT joined last in R8, 14 lanes, section 20). Wher
   `test/fixtures/r7-b0-applicability.json`; the closing `npm test` 2940 tests / 2927 pass / 0 fail / 12 skip / 1 todo,
   torture 0 B/op (Node v26.8.2). Detail: CHANGELOG [Unreleased] and SPEC-B Addendum 17.
 
+- lite-box main run in the teeth battery (2026-11-03, b158; F144 acb9c5b, D-b156-1). Every `SOAK_ENGINE=lite-box` main run had crashed
+  ("latency: unclassified world method boxCounts") and no CI job ran main on lite-box. P-LITEBOX-TREE (`SOAK_ENGINE=lite-box`,
+  --smoke, the full 14-lane roster) expects exit 1, kind explained, 4 O6 specs (ERROR expected-escape-missing DIV-F22;
+  REGISTRY escape-TypeError DIV-F10; REGISTRY expected-escape-missing DIV-F10; BOX expected-escape-missing DIV-F22), known
+  [DIV-F10, DIV-F22], verdict FAIL, boundaries 42 (3 cycles x 14 lanes, every boundary trackerSize 0 / weakAlive 0). It runs in
+  the existing soak-nightly `teeth` job via `npm run soak:teeth` (no workflow or test/47 change). `test/45` section w +4
+  tests (45 -> 49): row shape, NOT_TEETH must-fail, validSpec matrix, an open-divergence pin (every explained tree
+  control's known list must be OPEN: fixedIn null), and an F144 row (a scratch copy whose config.mjs drops 'boxCounts' is not
+  OK). When DIV-F10 / DIV-F22 close, the row is edited in the same diff or those checks go red. b158 (Node v26.8.2, host
+  PRELIMINARY, load1 ~4.5-6): soak:teeth 77 OK / 0 MISS (P-LITEBOX-TREE OK at exit 1, 33 s). Evidence:
+  `.handoff/b158-evidence/`.
+
 ### 20. Amendment 2026-11-02 (b154-b157): SNAPSHOT lane (R8)
 
 Harness only; Signal.js is untouched. The roster is now 14 lanes in ROSTER order: GRAPH, BATCH, ERROR, NEST, WIE, HOOK,
@@ -698,6 +714,13 @@ Where this text and the code differ, the code is the record.
   gives worst13 90.30 x (1 + 1.6151/13) x 1.2 = 121.82 min > 120, so the budget rises (the
   D-b149-2 paragraph above stays as history). parity 60 files (+ `lanes/snapshot.mjs`); golden scripts-1000 gains the
   SNAPSHOT digest, the 13 old digests are identical.
+- Calibration (b157, TIMED recut under the quiet lock, `run --strict` exit 0, 1523 s, load1 1.31 before / 5.91 after): SNAPSHOT
+  tree full 2451 worlds (1101730 ops), smoke 135 (60639 ops); OS performed 37428 === restore events (smoke 2108 === 2108),
+  failingWorlds 0; the old-lane cells are unchanged once `performed.OS` is stripped. `npm test` then 3076 tests / 3063 pass / 0
+  fail / 12 skip / 1 todo. Evidence: `.handoff/r8-evidence/C3/` (recut.out, recut.meta, assert2-check.out), `.handoff/b157-verify.txt`.
+- Control-kernel rows. The failing rows on control kernels (headpatched ERROR; lite-1.5.2 BATCH / ERROR) need FIXED
+  divergences to be explained (classify `includeFixed` for any named control kernel: DIV-F5 A3-FIX-R, DIV-F6 A2-FIX-T, DIV-F21 A2-F21). Still OPEN
+  (fixedIn null): DIV-F15 (NEST; the tree NEST cells read 0 failing worlds), DIV-F10 (tree REGISTRY), DIV-F22 (tree BOX).
 - Tests: `test/99-soak-snapshot-roster` (16 rows), `test/100-soak-os` (61), `test/101-soak-snapshot-adapter` (22),
   `test/102-soak-snapshot-lane` (13), `test/43-soak-model` +14 (restoreCopy); SCENARIOS 79 -> 86. Detail: CHANGELOG
   [Unreleased] and SPEC-B Addendum 18.

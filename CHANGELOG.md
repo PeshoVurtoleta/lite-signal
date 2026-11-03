@@ -97,6 +97,26 @@ D-b143-2, 2026-10-30). `--self-test` grows from 31 to 43 checks and the `test/94
 mutants are still killed. A real run on an identical Signal.js (2221b93 vs e9f8e6a, node v26.8.2) gave VERDICT SAME
 on both tiers.
 
+### Tests / CI -- soak: lite-box main run in the teeth battery (F144, FILLER 146, b158)
+
+Dev-only (`bench/soak/` and `test/`, not shipped). No engine change. F144 (acb9c5b): every `SOAK_ENGINE=lite-box` main run crashed
+("latency: unclassified world method boxCounts") and no CI job ran main on lite-box (maintainer D-b156-1: run it before 1.6.0).
+- `_mustfail.mjs` gains LIVE-KERNEL controls (a run-main control whose own `env.SOAK_ENGINE` is set and != 'lite' runs the pinned
+  live tree after the pin check: no scratch kernel, no SOAK_KERNEL; validSpec requires the engine in config `ENGINES_AVAILABLE`,
+  base tree, patches [], arm null). New pass control P-LITEBOX-TREE: `SOAK_ENGINE=lite-box`, --smoke, the full 14-lane roster,
+  exit 1, kind explained, 4 O6 specs (ERROR expected-escape-missing DIV-F22; REGISTRY escape-TypeError DIV-F10; REGISTRY
+  expected-escape-missing DIV-F10; BOX expected-escape-missing DIV-F22), known [DIV-F10, DIV-F22], verdict FAIL, boundaries 42
+  (3 cycles x 14 lanes; every boundary trackerSize 0 / weakAlive 0). `teeth.mjs` NOT_TEETH lists it (pass control).
+  It runs in the existing soak-nightly `teeth` job via `npm run soak:teeth`: no workflow or test/47 change.
+- `test/45` section w, +4 tests (45 -> 49): row shape, NOT_TEETH must-fail, validSpec matrix (an inherited-prototype
+  SOAK_ENGINE is no live-kernel control), an open-divergence pin (every explained tree control's known list must be OPEN:
+  fixedIn null), and the F144 row (P-LITEBOX-TREE on a scratch copy whose config.mjs drops 'boxCounts' is not OK; among its problems: CRASH line,
+  all 4 specs unmatched, 'explained control saw no BREACH', boundaries 0 != 42). When DIV-F10 / DIV-F22 close, the row is edited
+  in the same diff (the pin and the explained-control checks go red otherwise).
+- Measured (b158, Node v26.8.2, host PRELIMINARY: soak:teeth at load1 ~4.5-6, torture at 9.34): `soak:teeth` short battery 77 OK / 0 MISS (was 76; P-LITEBOX-TREE
+  OK at exit 1 in 33 s); MUSTFAIL_LIST 95 -> 96 controls; `npm test` 3081 tests / 3068 pass / 0 fail / 12 skip / 1 todo; torture
+  0 B/op. Evidence: `.handoff/b158-evidence/`.
+
 ### Tests / Docs -- soak: SNAPSHOT lane (OS oracle, restoreCopy, adapter restore, world swap; R8, b154-b157)
 
 Dev-only (`bench/soak/` and `test/`, not in `files[]`, not shipped). No engine change in this unit: Signal.js is
@@ -125,6 +145,11 @@ untouched, no version bump. The roster is now 14 lanes, SNAPSHOT last (`LANE_IND
   T-SNAP-clean (oracle OS, known=none); the teeth universe grows 75 -> 80 ids; the must-fail runner kills a hung main
   child with SIGKILL. Tests: `test/99-soak-snapshot-roster` (16 rows); the roster / SCENARIOS (86) literals are swept
   across the soak tests.
+- Calibration (b157, TIMED recut under the quiet lock, `run --strict` exit 0, 1523 s, load1 1.31 before / 5.91 after): SNAPSHOT
+  tree full 2451 worlds, smoke 135; OS performed 37428 === restore events (smoke 2108 === 2108); the old-lane cells are unchanged
+  once `performed.OS` is stripped. `npm test` 3076 tests / 3063 pass / 0 fail / 12 skip / 1 todo. Control-kernel failing rows
+  (headpatched ERROR; lite-1.5.2 BATCH / ERROR) need FIXED divergences to be explained (`includeFixed`: DIV-F5 / F6 / F21). OPEN
+  (fixedIn null): DIV-F15 (NEST; the tree NEST cells read 0 failing worlds), DIV-F10 (tree REGISTRY), DIV-F22 (tree BOX).
 - Burn-in budget (D-b156-3). `soak-nightly.yml` burn-in `timeout-minutes` 150 -> 180: the timed SNAPSHOT share 1.6151
   (one 14-lane release-volume run under the quiet lock, QUIET: load1 1.97 vs baseline 2.21, Node v26.8.2,
   2026-11-02) puts the rule worst13 90.30 x (1 + 1.6151/13) x 1.2
