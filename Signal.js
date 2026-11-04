@@ -2646,9 +2646,11 @@ export function createRegistry(config) {
 
     /**
      * Shut the registry down (C-RESET D-2 / D-3): invalidate every node and link at once,
-     * release both pools, rebase the capacity ledgers to the constructor values, zero every
-     * counter and the global clock, and clear the onGraphMutation stack (a held off() becomes a
-     * no-op). Runs NO cleanup and fires NO op 2: shutdown never runs user code -- use
+     * release both pools, rebase the capacity ledgers to the constructor values (pooledLinks then
+     * reads the full link capacity), zero the other live gauges and the three cumulative counters
+     * (totalAllocations, totalDisposals, poolGrowths), reset the global clock (globalVersion,
+     * batchEpoch) to 1, and clear the onGraphMutation stack (a held off() becomes a no-op). Node
+     * ids are not rewound. Runs NO cleanup and fires NO op 2: shutdown never runs user code -- use
      * {@link reset} to dispose every node with its cleanups. All previously-issued read / set /
      * dispose closures become safe no-ops (every node's `gen` bump invalidates any outstanding
      * handle). The registry stays usable: the next node or link regrows the pools lazily from

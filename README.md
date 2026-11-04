@@ -566,8 +566,9 @@ counted rounds (only rounds that create nodes or make no progress count) it ALWA
 of `batch()`'s closing flush last.
 
 **`destroy()`** is a true shutdown: it invalidates every node and link at once (generation bump), releases
-both pools, rebases the capacities to the constructor values, zeroes the live gauges and the three cumulative counters (
-`totalAllocations`, `totalDisposals`, `poolGrowths`), resets the global clock (`globalVersion`, `batchEpoch`) to 1, and clears the
+both pools, rebases the capacities to the constructor values (`pooledLinks` then reads the full link capacity),
+zeroes the other live gauges and the three cumulative counters (`totalAllocations`, `totalDisposals`,
+`poolGrowths`), resets the global clock (`globalVersion`, `batchEpoch`) to 1, and clears the
 `onGraphMutation` stack (a held unsubscribe becomes a no-op). It runs NO cleanups and fires NO op 2. Node ids
 are not rewound. The registry stays usable: the next node or link regrows the pools lazily from the
 constructor config.

@@ -523,7 +523,8 @@ export interface Registry {
     stats(): RegistryStats;
     /**
      * Shut the registry down (1.6.0): invalidate every node and link at once, release both
-     * pools, rebase the capacities to the constructor values, zero the live gauges and the three
+     * pools, rebase the capacities to the constructor values (pooledLinks then reads the full link
+     * capacity), zero the other live gauges and the three
      * cumulative counters (totalAllocations / totalDisposals / poolGrowths), reset the global
      * clock (globalVersion, batchEpoch) to 1, and clear the
      * onGraphMutation stack (a held unsubscribe becomes a no-op). Runs NO cleanup and fires

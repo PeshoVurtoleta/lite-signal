@@ -40,8 +40,9 @@ cleanup throws its `(flush/batch/track in progress)` refusal (`reset()` runs ins
 ### Changed -- `destroy()` is a true shutdown (C-RESET; LEDGER #52 closed)
 
 `destroy()` now invalidates every node and link at once (generation bump), releases BOTH pools, rebases the
-capacities to the constructor values, zeroes the live gauges and the three cumulative counters (`totalAllocations`, `totalDisposals`,
-`poolGrowths`), resets the global clock (`globalVersion`, `batchEpoch`) to 1 (`nodeSeq` is not rewound), and clears
+capacities to the constructor values (`pooledLinks` then reads the full link capacity), zeroes the other live
+gauges and the three cumulative counters (`totalAllocations`, `totalDisposals`, `poolGrowths`), resets the
+global clock (`globalVersion`, `batchEpoch`) to 1 (`nodeSeq` is not rewound), and clears
 the `onGraphMutation` stack (a held unsubscribe becomes a no-op). It runs no cleanups and fires no op 2. The
 registry stays usable: the next node or link regrows the pools lazily from the constructor config. While a
 flush, dispose / reset, batch, computed / effect body or `onGraphMutation` listener is in flight it now throws
