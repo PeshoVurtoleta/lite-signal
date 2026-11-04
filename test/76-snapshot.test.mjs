@@ -1878,21 +1878,50 @@ describe("A9 round 4 -- D-G: dirty computeds under a reader restore wired + unco
         assert.equal(liveThis[0], undefined, "#48: live body this === undefined"); assert.equal(recv[0], undefined, "#48: restored body this === undefined");
         assert.equal(recv[0], recv[1], "restored: the first run gets the same receiver as later runs");
     });
-    test("D-L gen check: a first run that destroy()s the registry and refills the slot leaves the new occupant untouched (every signal records clean:false)", () => {
+    // C-RESET D-4: destroy() inside a run throws the not-settled guard, so it can no longer reuse a slot inside a
+    // run (was: this row's D-L gen-check trigger). A GUARD row now: the restored first run caches the guard error;
+    // nothing is refilled. The gen check itself is pinned by the next row (self-dispose, b160 N4).
+    test("D-4 guard in a seeded first run: destroy() gets the not-settled guard; nothing is refilled (every signal records clean:false)", () => {
         const r = createRegistry(); const s = r.signal(1);
         const c = r.computed(() => (s() > 0 ? 1 : 0)); const e = r.effect(() => { c(); r.untrack(() => { if (s() < 2) s.set(2); }); });
         const ids = { s: r.nodeId(s), c: r.nodeId(c), e: r.nodeId(e) };
         const snap = r.snapshot(); assert.equal(rec(snap, ids.c).clean, false, "seeded shape");
         const H = {}; let r2 = null;
         r2 = r.restore(snap, { fnsById: { [ids.c]: () => {
-            r2.destroy();                                       // the only way a slot is reused inside a run (A1.8 pins otherwise)
-            for (let i = 0; i < 8; i++) r2.signal(i).set(i + 100);   // refill: one of these takes the seeded node's slot
+            r2.destroy();                                       // C-RESET D-4: throws the guard here
+            for (let i = 0; i < 8; i++) r2.signal(i).set(i + 100);   // never reached
             return 1;
         }, [ids.e]: () => { H[ids.c](); } }, handles: H });
-        H[ids.c]();
+        assert.throws(() => H[ids.c](), (e) => e.message === "[lite-signal] destroy: graph not settled (a computed / effect body is running)");
         const sigs = r2.snapshot().nodes.filter((n) => n.kind === "signal");
-        assert.equal(sigs.length, 8);
+        assert.equal(sigs.length, 1);
         assert.deepEqual(sigs.filter((n) => n.clean !== false).map((n) => n.id), [], "a signal never records clean:true");
+    });
+    // b160 N4: the only in-run path that still reaches refreshComputed's savedGen checks for a seeded node is the
+    // body disposing ITS OWN computed (dispose(api) of a dep signal, then a new signal, reuses the dep's slot in the
+    // run but never moves the computed's gen: no check reached). The pinned slot is not reused in the run; the
+    // check keeps the body's return value off the dead node (forcing the savedGen checks true parks "PARKED").
+    test("D-L gen check: a seeded first run that disposes its own computed parks nothing on the pinned node (8 new signals never take its slot)", () => {
+        const ptrOf = (h) => h[Object.getOwnPropertySymbols(h).find((k) => typeof h[k] === "object" && h[k] !== null)];
+        const r = createRegistry(); const s = r.signal(1);
+        const c = r.computed(() => (s() > 0 ? 1 : 0)); const e = r.effect(() => { c(); r.untrack(() => { if (s() < 2) s.set(2); }); });
+        const ids = { s: r.nodeId(s), c: r.nodeId(c), e: r.nodeId(e) };
+        const snap = r.snapshot(); assert.equal(rec(snap, ids.c).clean, false, "seeded shape");
+        const H = {}; let r2 = null; let cn = null; let reused = null;
+        r2 = r.restore(snap, { fnsById: { [ids.c]: () => {
+            cn = ptrOf(H[ids.c]);
+            r2.dispose(H[ids.c]);                               // self-dispose mid-run: gen bumped, slot pinned (A1.8)
+            const made = []; for (let i = 0; i < 8; i++) made.push(r2.signal(i + 100));
+            reused = made.some((t) => ptrOf(t) === cn);
+            return "PARKED";
+        }, [ids.e]: () => { H[ids.c](); } }, handles: H });
+        assert.equal(H[ids.c](), undefined, "a read of the self-disposed seeded computed returns undefined");
+        assert.ok(cn !== null, "the seeded body ran");
+        assert.equal(reused, false, "the pinned slot was reused inside the run");
+        assert.equal(cn.flags, 0, "the seeded computed is disposed");
+        assert.equal(cn.value, undefined, "the body's value was parked on the dead node");
+        assert.equal(cn.version, 1, "the dead node's version moved (seeded version 1)");
+        assert.equal(r2.stats().activeNodes, 10, "s + e + 8 new signals live");
     });
     test("D-G (T2): a dep cycle through a WIRED dirty computed is live-emittable and restores live-equivalently (D-N: restore runs no cycle scan)", () => {
         const build = (r, G, log) => {

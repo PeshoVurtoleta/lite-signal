@@ -39,7 +39,7 @@
  *       re-run, call runCleanup (L2) to cascade-dispose owned children.
  *       Sanctioned upward call -> L2: executeEffect/pullComputed -> runCleanup.
  *
- *   API  signal, computed, effect, dispose, batch, untrack, onCleanup, stats, destroy
+ *   API  signal, computed, effect, dispose, batch, untrack, onCleanup, stats, destroy, reset
  *
  *   The only cross-layer edges are L3->runCleanup and L2->freeLink. The graph of
  *   dependencies is acyclic; nothing in L1 reaches up, nothing in L2 touches
@@ -278,6 +278,18 @@ const ALLOWED_KEYS = ["maxNodes", "maxLinks", "prealloc", "onCapacityExceeded", 
  *  allocating forever. Only the `"eager"` path is bounded; `"lazy"` keeps its
  *  unbounded ledger. `1 << 24` == 16777216. */
 const EAGER_CONSTRUCT_CEILING = 1 << 24;
+
+/** C-RESET D-4: reason text for the notSettled() codes (index = code; 0 = settled). reset() and
+ *  destroy() build `[lite-signal] <op>: graph not settled (<reason>)` from it at the throw site. */
+const NOT_SETTLED_REASON = [
+    "",
+    "flush in progress",
+    "batch in progress",
+    "a computed / effect body is running",
+    "a computed / effect body is running (untrack)",
+    "dispose or reset in progress",
+    "onGraphMutation listener running"
+];
 
 /**
  * Levenshtein edit distance between two short strings. Cold: called only on the
@@ -741,7 +753,8 @@ export function createRegistry(config) {
     let statEffects = 0;
     // 1.4: cumulative lifecycle counters for churn-rate observability (lite-devtools
     // / lite-studio derive allocationRate, poolReuseRate, avg node lifetime from these).
-    // Monotonic across the registry's life; reset only by destroy(). Three integer
+    // Monotonic across the registry's life; zeroed only by destroy() (reset() keeps them and
+    // adds its disposals to totalDisposals: C-RESET D-1). Three integer
     // bumps at existing chokepoints -- no new node fields, no hot-path cost.
     let statTotalAllocations = 0;   // bumped on every createNode (pool pop OR fresh build)
     let statTotalDisposals = 0;     // bumped on every disposeNode
@@ -776,7 +789,8 @@ export function createRegistry(config) {
     // cursorDepth is a Smi and balanced on every exit path: every push sits right before a
     // `try` whose `finally` pops; the only user code inside that `finally` before the pop
     // (the epilogue severTail) runs through severTailFrame, which pops and restores on a
-    // throw. destroy() leaves it alone -- the frames that called it unwind through it.
+    // throw. destroy() and reset() refuse while any frame is in flight (C-RESET D-4), so they
+    // never see cursorDepth !== 0; destroy() nulls the stale saved slots.
     const cursorStack = [];
     for (let i = 0; i < 32; i++) cursorStack.push(null);
     let cursorDepth = 0;
@@ -2355,7 +2369,7 @@ export function createRegistry(config) {
      *        The thunk is cached per-node and gen-bound, so a stale schedule
      *        fired post-dispose against a recycled slot is a guaranteed no-op.
      * @returns {() => void}         Dispose function. Idempotent. Safe to call
-     *                               after registry.destroy().
+     *                               after registry.destroy() or registry.reset().
      */
     function effect(fn, opts) {
         const scheduler = (opts !== undefined) ? opts.scheduler : undefined;
@@ -2433,6 +2447,10 @@ export function createRegistry(config) {
     // runs see disposeDepth > 0, so snapshot() refuses inside them. Smi (bounded by the JS stack).
     // Cold: never inside the pinned disposeNode body.
     let disposeDepth = 0;
+    // C-RESET D-6 (ADDENDUM 3, 2b): the AggregateError resetRounds() leaves for reset() to throw
+    // AFTER batch()'s closing flush (so a flush error rides in it, last). Set and cleared only by
+    // reset() / resetRounds(); null outside a reset. Cold.
+    let resetFail = null;
     function disposeGuarded(node) {
         disposeDepth++;
         try { disposeNode(node); } finally { disposeDepth--; }
@@ -2584,11 +2602,12 @@ export function createRegistry(config) {
      * Snapshot of registry counters. Useful for diagnostics and tests --
      * e.g. asserting that `activeNodes` returns to a baseline after teardown.
      *
-     * Returns 11 keys: eight live gauges (`signals`, `computeds`, `effects`,
+     * Returns 13 keys: ten live gauges (`signals`, `computeds`, `effects`,
      * `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`,
-     * `linkPoolCapacity`) plus three cumulative lifecycle counters added in 1.4.0
+     * `linkPoolCapacity`, `nodePoolPopulation`, `linkPoolPopulation`) plus three cumulative lifecycle counters added in 1.4.0
      * (`totalAllocations`, `totalDisposals`, `poolGrowths`). The counters are
-     * monotonic over the registry's life and reset only by {@link destroy}; sample
+     * monotonic over the registry's life and zeroed only by {@link destroy}
+     * ({@link reset} keeps them: totalDisposals grows by the nodes it disposes); sample
      * them over time to derive allocation rate, pool-reuse ratio, and graph churn
      * without the engine computing rates itself. In a quiescent registry
      * `totalAllocations - totalDisposals === activeNodes`. Box nodes
@@ -2611,7 +2630,7 @@ export function createRegistry(config) {
             nodePoolPopulation: nodePool.length,
             linkPoolPopulation: linkPool.length,
             activeNodes,
-            // 1.4: cumulative lifecycle counters (monotonic; reset by destroy()).
+            // 1.4: cumulative lifecycle counters (monotonic; zeroed by destroy(), kept by reset()).
             // Derive: allocationRate = deltatotalAllocations/deltat; poolReuseRate =
             // 1 - poolGrowths*initialCap/totalAllocations; avgLifetime ~ totalDisposals/rate.
             totalAllocations: statTotalAllocations,
@@ -2620,12 +2639,26 @@ export function createRegistry(config) {
         };
     }
 
+    // C-RESET D-2: the constructor's capacity ledgers; destroy() rebases currentNodesCapacity /
+    // currentLinkCapacity to them (growth doubles those). Cold: read only by destroy().
+    const initialNodesCapacity = currentNodesCapacity;
+    const initialLinkCapacity = currentLinkCapacity;
+
     /**
-     * Reset the entire registry: clear every node, every link, every queue, the
-     * global clock. All previously-issued read/set/dispose closures become safe
-     * no-ops (every node's `gen` bump invalidates any outstanding handle).
+     * Shut the registry down (C-RESET D-2 / D-3): invalidate every node and link at once,
+     * release both pools, rebase the capacity ledgers to the constructor values, zero every
+     * counter and the global clock, and clear the onGraphMutation stack (a held off() becomes a
+     * no-op). Runs NO cleanup and fires NO op 2: shutdown never runs user code -- use
+     * {@link reset} to dispose every node with its cleanups. All previously-issued read / set /
+     * dispose closures become safe no-ops (every node's `gen` bump invalidates any outstanding
+     * handle). The registry stays usable: the next node or link regrows the pools lazily from
+     * the constructor config. Throws `[lite-signal] destroy: graph not settled (...)`, before any
+     * state is touched, while a flush, batch, computed / effect body, dispose, reset or
+     * onGraphMutation listener is in flight (C-RESET D-4).
      */
     function destroy() {
+        const ns = notSettled();
+        if (ns !== 0) throw new Error("[lite-signal] destroy: graph not settled (" + NOT_SETTLED_REASON[ns] + ")");
         const nodeCount = nodePool.length;
         for (let i = 0; i < nodeCount; i++) {
             const n = nodePool[i];
@@ -2634,6 +2667,7 @@ export function createRegistry(config) {
             n.cleanupFn = undefined;
             n.equals = undefined;
             n.scheduler = undefined;
+            n.schedulerThunk = undefined;
             n.flags = 0;
             n.headDep = null;
             n.tailDep = null;
@@ -2653,17 +2687,13 @@ export function createRegistry(config) {
             n.firstOwned = null;
             n.nextMark = null;
 
-            if (lifecycleCount !== 0) dropLifecycleHooks(n);   // LEDGER #40: destroy re-seats every slot too
+            if (lifecycleCount !== 0) dropLifecycleHooks(n);   // LEDGER #40: drop the slot's observeObservers regs: a held stale handle retains none, lifecycleCount stays exact
             n.gen = (n.gen + 1) | 0;
 
-            if (i < nodeCount - 1) n.nextFree = nodePool[i + 1];
+            n.nextFree = null;   // C-RESET D-2: a held stale handle retains its own node, never the pool
         }
-        if (nodeCount > 0) {
-            nodePool[nodeCount - 1].nextFree = null;
-            freeNodeHead = nodePool[0];
-        } else {
-            freeNodeHead = null;
-        }
+        nodePool.length = 0;
+        freeNodeHead = null;
         effectQueueA.length = 0;
         effectQueueB.length = 0;
 
@@ -2676,16 +2706,17 @@ export function createRegistry(config) {
             l.nextDep = null;
             l.prevSub = null;
             l.nextSub = null;
-            if (i < linkCount - 1) l.nextFree = linkPool[i + 1];
+            l.nextFree = null;
         }
-        if (linkCount > 0) {
-            linkPool[linkCount - 1].nextFree = null;
-            freeLinkHead = linkPool[0];
-        } else {
-            freeLinkHead = null;
-        }
+        linkPool.length = 0;
+        freeLinkHead = null;
+        // Saved cursors of long-unwound frames (the guard proved cursorDepth === 0).
+        for (let i = 0; i < cursorStack.length; i++) cursorStack[i] = null;
 
-        pinnedHead = null;   // A1.8: every slot, pinned ones included, is on the rebuilt free list
+        pinnedHead = null;   // A1.8: pinned slots are released with the rest of the pool
+        // C-RESET D-2: the next node / link miss regrows the pools from the constructor config.
+        currentNodesCapacity = initialNodesCapacity;
+        currentLinkCapacity = initialLinkCapacity;
         activeNodes = 0;
         activeLinks = 0;
         activeQueueLen = 0;
@@ -2706,6 +2737,154 @@ export function createRegistry(config) {
         for (let i = 0; i < flushErrorCount; i++) flushErrorBuffer[i] = null;
         flushErrorCount = 0;
         flushErrorBuffer.length = 0;
+
+        // C-RESET D-3: clear the onGraphMutation stack. Every entry is marked dead, so a held
+        // off() is a no-op and cannot re-seat a listener on the emptied stack.
+        let e = hookTop;
+        hookTop = null;
+        mutationHook = null;
+        while (e !== null) {
+            const below = e.below;
+            e.live = false;
+            e.w = null;
+            e.below = null;
+            e.above = null;
+            e = below;
+        }
+    }
+
+    /**
+     * C-RESET D-4: the in-flight guard reset() and destroy() share. Returns a Smi reason code,
+     * 0 = settled, else an index into NOT_SETTLED_REASON, checked in this order: a flush, a
+     * public dispose or a reset (disposeDepth: their cleanups and listeners), a batch, a running
+     * computed / effect body (currentObserver, or cursorDepth for untrack() inside one), or an
+     * onGraphMutation listener (hookDepth). The callers build the throw text, so this allocates
+     * nothing. Cold.
+     * @private
+     */
+    function notSettled() {
+        if (isFlushing) return 1;
+        // C-RESET A3': before batchDepth, so a reset() / destroy() from a cleanup or listener
+        // that reset() runs (inside its batch) reports "dispose or reset in progress".
+        if (disposeDepth > 0) return 5;
+        if (batchDepth > 0) return 2;
+        if (currentObserver !== null) return 3;
+        if (cursorDepth !== 0) return 4;
+        if (hookDepth > 0) return 6;
+        return 0;
+    }
+
+    /**
+     * Dispose every live node and keep the registry (C-RESET). The owner cascade runs
+     * inside-out; onGraphMutation fires op 2 per disposal attempt and op 4 per dep link,
+     * onDisconnect fires on a source's last-subscriber loss. Order: rounds of three phases --
+     * effects, then computeds, then signals -- each walking the pool from the highest slot down
+     * and disposing every live root (owner null) of that kind; in a fresh registry that is newest
+     * first, consumers before producers. Rounds repeat while nodes stay live. Runs inside batch(),
+     * so cleanup writes do not flush mid-reset.
+     *
+     * Each cleanup runs at most once; a throwing cleanup skips the same node's later onCleanup
+     * callbacks (as dispose()). A root whose disposal throws is retried in the same round while
+     * each retry consumes a cleanup, a child or a node. op 2 fires on every disposal attempt, so
+     * it may fire more than once for a node whose cleanup (or a descendant's, or a listener)
+     * threw. Rounds count toward maxFlushPasses only when they create nodes or make no progress;
+     * past that it throws an AggregateError carrying every collected error, survivors live:
+     * `[lite-signal] reset: cleanups kept creating nodes (...)` or `[lite-signal] reset: no
+     * progress (...)`, an error of batch()'s closing flush last. Otherwise one cleanup error is
+     * rethrown as-is; two or more become an `AggregateError` ("reset: cleanups threw") in throw
+     * order. Throws `[lite-signal] reset: graph not settled (...)`, before any state is touched,
+     * while a flush, dispose, reset, batch, computed / effect body or onGraphMutation listener is
+     * in flight (C-RESET D-4).
+     *
+     * stats(): the live gauges (signals, computeds, effects, activeNodes, activeLinks) fall to 0;
+     * totalAllocations and poolGrowths are kept; totalDisposals grows by the nodes disposed;
+     * capacities and pools stay (C-RESET D-1). Node ids continue (nodeSeq is not rewound). Every
+     * old handle reads undefined and its set is a no-op. Allocates nothing unless a cleanup or
+     * listener throws or the maxFlushPasses bound is reached (the D-6 AggregateError).
+     */
+    function reset() {
+        const ns = notSettled();
+        if (ns !== 0) throw new Error("[lite-signal] reset: graph not settled (" + NOT_SETTLED_REASON[ns] + ")");
+        let errs = null;
+        let fe = null;
+        let fthrew = false;   // a flag, not fe !== null: a closing flush may throw null / undefined
+        // disposeDepth (A3'): a reset() / destroy() from a cleanup or listener reports "dispose or
+        // reset in progress". batch()'s closing flushEffects releases pinned slots on a normal exit;
+        // on an abnormal one reset throws and the next nodeMiss releases them.
+        disposeDepth++;
+        try { errs = batch(resetRounds); } catch (e) { fe = e; fthrew = true; } finally { disposeDepth--; }
+        if (resetFail !== null) {
+            const a = resetFail;
+            resetFail = null;
+            if (fthrew) a.errors.push(fe);
+            throw a;
+        }
+        if (fthrew) throw fe;
+        if (errs !== null) {
+            if (errs.length === 1) throw errs[0];
+            throw new AggregateError(errs, "reset: cleanups threw");
+        }
+    }
+
+    /**
+     * reset()'s rounds, run as batch(resetRounds) (hoisted: no closure per call). Returns null,
+     * or the cleanup / listener errors in throw order (with the D-6 AggregateError, the only
+     * allocations: error or bound path only).
+     * Each root's disposeNode sits in its own try / catch and is retried in the same round while
+     * the failed attempt made progress that cannot regenerate without creating a node: a
+     * disposal, a detached child, or a cleanup consumed to undefined (runOwnCleanup clears it
+     * before the call). An attempt that changes nothing (an op-2-entry thrower) or creates a node
+     * ends the root's turn. A round counts toward maxFlushPasses when it created a node (why 1)
+     * or disposed nothing and detached no child (why 2); past the bound it leaves the D-6
+     * AggregateError in resetFail and returns null (reset() throws it after the closing flush).
+     * nodeSeq / statTotalDisposals are only copied and compared; every counter is a Smi local.
+     * Cold.
+     * @private
+     */
+    function resetRounds() {
+        let errs = null;
+        let counted = 0;
+        let why = 0;
+        while (activeNodes !== 0) {
+            // D-b160-1: counted rounds only grow, by 1, so any maxFlushPasses bounds the loop.
+            if (counted >= maxFlushPasses) {
+                resetFail = new AggregateError(errs !== null ? errs : [], why === 2
+                    ? "[lite-signal] reset: no progress (" + activeNodes + " still live after " + counted +
+                      " counted rounds, maxFlushPasses; every remaining disposal threw)"
+                    : "[lite-signal] reset: cleanups kept creating nodes (" + activeNodes + " still live after " +
+                      counted + " counted rounds, maxFlushPasses)");
+                return null;
+            }
+            const seq0 = nodeSeq;
+            const d0 = statTotalDisposals;
+            let lost = 0;
+            for (let p = 0; p < 3; p++) {
+                const kind = p === 0 ? FLAG_EFFECT : (p === 1 ? FLAG_COMPUTED : FLAG_SIGNAL);
+                for (let i = nodePool.length - 1; i >= 0; i--) {
+                    const n = nodePool[i];
+                    while ((n.flags & kind) !== 0 && n.owner === null) {
+                        const s = nodeSeq;
+                        const d = statTotalDisposals;
+                        const fo = n.firstOwned;
+                        const fc = n.cleanupFn;
+                        try {
+                            disposeNode(n);
+                            break;
+                        } catch (e) {
+                            if (errs === null) errs = [];
+                            errs.push(e);
+                            if (n.firstOwned !== fo) lost = 1;
+                            // Retry only on progress that cannot regenerate without a new node.
+                            if (nodeSeq !== s || (statTotalDisposals === d && n.firstOwned === fo &&
+                                (fc === undefined || n.cleanupFn !== undefined))) break;
+                        }
+                    }
+                }
+            }
+            if (nodeSeq !== seq0) { counted++; why = 1; }
+            else if (statTotalDisposals === d0 && lost === 0) { counted++; why = 2; }
+        }
+        return errs;
     }
 
     function hasObservers(handle) {
@@ -3229,6 +3408,7 @@ export function createRegistry(config) {
         onCleanup,
         stats,
         destroy,
+        reset,
         isTracking,
         hasObservers,
         observeObservers,
@@ -3336,6 +3516,10 @@ export function stats() {
 
 export function destroy() {
     return defaultRegistry.destroy();
+}
+
+export function reset() {
+    return defaultRegistry.reset();
 }
 
 export function hasObservers(handle) {

@@ -225,7 +225,9 @@ describe("branch completion: error and structural edges", () => {
         assert.throws(() => c(), /cycle/i);
     });
 
-    it("destroying the registry mid-flush discards buffered effect errors", () => {
+    // C-RESET D-4: destroy() mid-flush now throws the guard (was: discarded the buffered errors); the
+    // guard throw is buffered beside the effect's own and the registry is left intact.
+    it("destroy() mid-flush throws the not-settled guard, buffered with the other effect errors", () => {
         const rr = createRegistry();
         const a = rr.signal(0);
         rr.effect(() => {
@@ -233,10 +235,13 @@ describe("branch completion: error and structural edges", () => {
         }); // buffers an error
         rr.effect(() => {
             if (a() > 0) rr.destroy();
-        });           // reset() with count>0
-        assert.doesNotThrow(() => {
+        });           // destroy() in flight -> guard throw
+        assert.throws(() => {
             a.set(1);
-        });
+        }, (e) => e instanceof AggregateError && e.errors.length === 2 && e.errors[0].message === "boom" &&
+            e.errors[1].message === "[lite-signal] destroy: graph not settled (flush in progress)");
+        assert.equal(rr.stats().activeNodes, 3);
+        assert.equal(a(), 1);
     });
 });
 

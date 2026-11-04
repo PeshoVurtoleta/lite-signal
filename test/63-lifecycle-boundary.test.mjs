@@ -123,14 +123,17 @@ describe('P5-P7 dispose / destroy from inside callbacks', () => {
         readThenStop(r, reuse(r, n)); assert.equal(fired, 1);
         r.destroy();
     });
-    it('P7 destroy() while an effect is mid-run (registered dep): lc 0 and the registry is usable', (t) => {
-        const r = mk(); const lc = lcOf(r); const s = r.signal(0); let outcome = 'returned';
+    // C-RESET D-4: destroy() inside a running effect throws the not-settled guard (was: tore the registry down
+    // mid-run, lc 0); the first-run throw disposes the effect, s and its registration stay live.
+    it('P7 destroy() while an effect is mid-run (registered dep): throws the guard and the registry is usable', () => {
+        const r = mk(); const lc = lcOf(r); const s = r.signal(0);
         r.observeObservers(s, { onConnect: () => {} });
-        try { r.effect(() => { s(); r.destroy(); s(); }); } catch (e) { outcome = 'threw ' + (e && e.name); }
-        t.diagnostic('P7 outcome: ' + outcome);
-        assert.equal(lc(), 0, 'destroy mid-run left a lifecycle entry');
+        assert.throws(() => r.effect(() => { s(); r.destroy(); s(); }),
+            (e) => e.message === '[lite-signal] destroy: graph not settled (a computed / effect body is running)');
+        assert.equal(lc(), 1, 'the refused destroy dropped a lifecycle entry');
+        assert.equal(r.stats().activeNodes, 1);
         const s2 = r.signal(0); const c = counter(); r.observeObservers(s2, { onConnect: c.f });
-        readThenStop(r, s2); assert.equal(c.n, 1); assert.equal(lc(), 1);
+        readThenStop(r, s2); assert.equal(c.n, 1); assert.equal(lc(), 2);
         r.destroy(); assert.equal(lc(), 0);
     });
     it('P8 a computed disposing ITSELF mid-run (pinned-slot path) with hooks', () => {
@@ -192,11 +195,15 @@ describe('P9-P11 iteration / re-entrancy / duplicates', () => {
         assert.equal(lc(), 0);
         r.destroy();
     });
-    it('P13 stale off() across destroy(): the re-seated slot\'s new entry survives', () => {
+    // C-RESET D-2: destroy() releases the pool, so the old node is never re-seated (was: reuse() re-seated it);
+    // a stale off() after destroy() still leaves a new registration intact.
+    it('P13 stale off() across destroy(): the released node is never re-seated, a new entry survives', () => {
         const r = mk(); const lc = lcOf(r);
         const s1 = r.signal(0); const n = nodeOf(s1); const off1 = r.observeObservers(s1, { onConnect: () => {} });
         r.destroy(); assert.equal(lc(), 0);
-        const s2 = reuse(r, n); const c2 = counter(); r.observeObservers(s2, { onConnect: c2.f });
+        assert.throws(() => reuse(r, n), /slot never reused/);
+        r.destroy();
+        const s2 = r.signal(0); assert.notEqual(nodeOf(s2), n); const c2 = counter(); r.observeObservers(s2, { onConnect: c2.f });
         off1(); assert.equal(lc(), 1);
         readThenStop(r, s2); assert.equal(c2.n, 1);
         r.destroy();

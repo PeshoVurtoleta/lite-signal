@@ -314,13 +314,17 @@ describe('A8 hooks registered during teardown', () => {
 
 describe('D1 destroy() drops lifecycle hooks', () => {
     // The registry stays usable after destroy() (pool kept, free list rebuilt); slot reuse is proven via NODE_PTR.
-    it('(a) old hooks do not reach the next resident of a slot after destroy(); new hooks fire 1/1', () => {
+    // C-RESET D-2: destroy() releases the pool, so the old node never gets a next resident (was: reuse() re-seated
+    // it); the old hooks reach no new signal and new hooks fire 1/1.
+    it('(a) old hooks reach no node after destroy() (the released node is never re-seated); new hooks fire 1/1', () => {
         const r = mk(); const c1 = counter(), d1 = counter(), c2 = counter(), d2 = counter();
         const s1 = r.signal(0); const n1 = nodeOf(s1);
         r.observeObservers(s1, { onConnect: c1.f, onDisconnect: d1.f });
         r.destroy();
-        const s2 = reuse(r, n1);
-        assert.equal(nodeOf(s2), n1, 'precondition: slot reused after destroy');
+        assert.throws(() => reuse(r, n1), /slot never reused/);
+        r.destroy();
+        const s2 = r.signal(0);
+        assert.notEqual(nodeOf(s2), n1, 'a released node was re-seated after destroy');
         readThenStop(r, s2);
         assert.equal(c1.n, 0, 'stale onConnect fired after destroy');
         assert.equal(d1.n, 0, 'stale onDisconnect fired after destroy');
