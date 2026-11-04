@@ -231,6 +231,10 @@ test('applicability engine arg fail-closed: non-string / inherited-key engines n
 });
 // b163 C-RESET soak S3a (D-b163-3) moved the golden's REGISTRY entry (test/fixtures/r7-b0-applicability.json): scenariosNA
 // [] -> ['reset-top'] (scenCaps reset-top needs reset / owner / hook; GOLD.caps has no reset key); requiredApplicable unchanged
+// b164 S3a-r3 (D-b163-4) moved it again: oraclesNA [] -> ['O8', 'OW'] (REGISTRY.oracleScen: reset-top, their only
+// exerciser, is in scenariosNA); status / scenariosNA / requiredApplicable unchanged; every other entry byte-identical
+// b164 S3b moved it again: scenariosNA [reset-top] -> [reset-top, reset-in-flight, reset-in-batch, reset-in-body,
+// reset-in-computed] (the 4 in-flight reset ids joined required, scenCaps reset / owner / hook); the rest unchanged
 test('B-3 the 12 pre-BOX ROSTER lanes (ROSTER minus BOX) deepEqual the B0 golden, with and without the engine arg (engine is not read for non-twin lanes)', () => {
     assert.deepEqual(GOLD.lanes.map((l) => l.lane), ROSTER.slice(0, 12));
     assert.equal(GOLD.lanes.length, 12);

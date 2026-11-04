@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url';
 import * as O from '../bench/soak/oracles.mjs';
 import { Model } from '../bench/soak/model.mjs';
 import { Detectors, SCENARIOS } from '../bench/soak/scenarios.mjs';
-import { REGISTRY, REG_EXPECT } from '../bench/soak/lanes/registry.mjs';
+import { REGISTRY, REG_EXPECT, RESET_EXPECT } from '../bench/soak/lanes/registry.mjs';
 import { generateWorld, scriptJson } from '../bench/soak/gen.mjs';
 import { runWorld } from '../bench/soak/exec.mjs';
 import { seedFor, worldSeed } from '../bench/soak/seeds.mjs';
@@ -30,7 +30,10 @@ const { checkEscape, expectFromThrow, EXPECT_NEVER_ENTRY, EXPECT_NONE, EXPECT_CY
 const sigs = (fs) => fs.map((f) => f.oracle + ':' + f.sig);
 const ERR = (ctor, message) => ({ ctor, message });
 const IN_FLIGHT = ['batch', 'body', 'computed'];
-const REG_SCEN = ['destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy', 'reset-top'];
+const REG_SCEN = ['destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed',
+    'reuse-after-destroy', 'reset-top',
+    'reset-in-flight', 'reset-in-batch', 'reset-in-body', 'reset-in-computed'];
+const RESET5 = REG_SCEN.slice(6);
 const CYCLE_SEED = seedFor(0xC0FFEE, 10, 0);
 const D2 = JSON.parse(readFileSync(new URL('../bench/soak/divergences.json', import.meta.url), 'utf8')).entries.find((e) => e.id === 'DIV-D2-destroy-throws');
 
@@ -121,7 +124,7 @@ describe('MODEL: destroyAll', () => {
 });
 
 describe('DETECT: onRegDestroy / onRegReuse', () => {
-    it('SCENARIOS lists the seven REGISTRY required ids', () => { for (const s of REG_SCEN) assert.ok(SCENARIOS.includes(s), s); });
+    it('SCENARIOS lists the eleven REGISTRY required ids', () => { for (const s of REG_SCEN) assert.ok(SCENARIOS.includes(s), s); });
     it('top counts destroy-top; an in-flight at counts destroy-in-flight + destroy-in-<at>', () => {
         const D = new Detectors({});
         D.onRegDestroy('top');
@@ -138,33 +141,38 @@ describe('DETECT: onRegDestroy / onRegReuse', () => {
 });
 
 describe('LANE: descriptor + generator', () => {
-    it('descriptor: index 10, seven required scenarios (reset-top last), covOff destroy-in-flight -> in-flight, ops rdestroy / rreset / rbuilt, frozen', () => {
+    it('descriptor: index 10, eleven required scenarios (reset-top, then the 4 reset-in-* ids), covOff destroy- ' +
+        '/ reset-in-flight -> in-flight, ops rdestroy / rreset / rbuilt, frozen', () => {
         assert.equal(REGISTRY.name, 'REGISTRY');
         assert.equal(REGISTRY.index, 10);
         assert.deepEqual([...REGISTRY.required], REG_SCEN);
-        assert.deepEqual({ ...REGISTRY.covOff }, { 'destroy-in-flight': 'in-flight' });
+        assert.deepEqual({ ...REGISTRY.covOff }, { 'destroy-in-flight': 'in-flight', 'reset-in-flight': 'in-flight' });
         assert.deepEqual(Object.keys(REGISTRY.ops).sort(), ['rbuilt', 'rdestroy', 'rreset']);
         assert.ok(Object.isFrozen(REGISTRY) && Object.isFrozen(REGISTRY.ops));
     });
-    it('S3a descriptor fields: mix gains reset 4 (other weights kept); needsCaps unchanged (D-b163-3); scenCaps reset-top -> reset / owner / hook; hardOracles + O8 / OW; frozen', () => {
+    it('S3a descriptor fields: mix gains reset 4 (other weights kept); needsCaps unchanged (D-b163-3); scenCaps ' +
+        'reset-top + 4 reset-in-* -> reset / owner / hook (one frozen array); hardOracles + O8 / OW; frozen', () => {
         assert.deepEqual({ ...REGISTRY.mix }, { set: 40, read: 16, mk: 12, stop: 8, destroy: 4, reset: 4 });
         assert.deepEqual([...REGISTRY.needsCaps], ['destroy', 'stopEffect', 'links']);
         assert.deepEqual([...REGISTRY.hardOracles], ['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O8', 'OW']);
         assert.deepEqual([...REGISTRY.optional], []);
-        assert.deepEqual(JSON.parse(JSON.stringify(REGISTRY.scenCaps)), { 'reset-top': ['reset', 'owner', 'hook'] });
+        const RC = ['reset', 'owner', 'hook'];
+        assert.deepEqual(JSON.parse(JSON.stringify(REGISTRY.scenCaps)), Object.fromEntries(RESET5.map((k) => [k, RC])));
+        for (const k of RESET5) assert.equal(REGISTRY.scenCaps[k], REGISTRY.scenCaps['reset-top'], k);
         for (const k of ['mix', 'needsCaps', 'hardOracles', 'required', 'scenCaps']) assert.ok(Object.isFrozen(REGISTRY[k]), k);
         assert.ok(Object.isFrozen(REGISTRY.scenCaps['reset-top']));
         // every needed / scenario cap is present on the lite-s3 adapter (the 1.6.0 tree): reset-top is required there
         for (const c of REGISTRY.needsCaps.concat(REGISTRY.scenCaps['reset-top'])) assert.ok(liteS3Adapter.caps[c] !== undefined && liteS3Adapter.caps[c] !== false && liteS3Adapter.caps[c] !== 'no', c);
         assert.deepEqual(applicability(REGISTRY, liteS3Adapter.caps), { status: 'run', missingCaps: [], oraclesNA: [], scenariosNA: [], requiredApplicable: REG_SCEN });
     });
-    it('D-b163-3: on reset-less caps (reset false, or owner / hook false) the lane still RUNS and requiredApplicable drops reset-top only', () => {
+    it('D-b163-3: on reset-less caps (reset false, or owner / hook false) the lane still RUNS; the 5 reset ids ' +
+        'are NA', () => {
         for (const k of ['reset', 'owner', 'hook']) {
             const caps = Object.assign({}, liteS3Adapter.caps, { [k]: false });
             const a = applicability(REGISTRY, caps);
             assert.equal(a.status, 'run', k);
             assert.deepEqual(a.missingCaps, [], k);
-            assert.deepEqual(a.scenariosNA, ['reset-top'], k);
+            assert.deepEqual(a.scenariosNA, RESET5, k);
             assert.deepEqual(a.requiredApplicable, REG_SCEN.slice(0, 6), k);
         }
     });
@@ -210,15 +218,16 @@ describe('LANE: descriptor + generator', () => {
             }
         }
         assert.deepEqual([...seen].sort(), ['batch', 'body', 'computed', 'top']);
-        assert.deepEqual([top, inFlight], [387, 619], 'b163 S3a measured (60 worlds, CYCLE_SEED; MIX reset 4)');
+        assert.deepEqual([top, inFlight], [412, 621], 'b164 S3b measured (60 worlds, CYCLE_SEED; rreset draws at)');
     });
-    it('60 worlds: every rreset is { o, at top, i a live leaf, t 0 | 1 | 2 } followed by a rebuild closed by rbuilt; t drawn 6:2:2, exact per-t counts', () => {
+    it('60 worlds: every TOP rreset is { o, at top, i a live leaf, t 0 | 1 | 2 } then a rebuild closed by ' +
+        'rbuilt; t 6:2:2', () => {
         const perT = [0, 0, 0];
         for (let w = 0; w < 60; w++) {
             const ops = gen(w).ops;
             for (let k = 0; k < ops.length; k++) {
                 const op = ops[k];
-                if (op.o !== 'rreset') continue;
+                if (op.o !== 'rreset' || op.at !== 'top') continue;
                 // the generator's own chk / cs bits follow (gen.mjs push)
                 assert.deepEqual(Object.keys(op).slice(0, 4), ['o', 'at', 'i', 't'], JSON.stringify(op));
                 for (const key of Object.keys(op).slice(4)) assert.ok(key === 'chk' || key === 'cs', JSON.stringify(op));
@@ -232,7 +241,38 @@ describe('LANE: descriptor + generator', () => {
                 }
             }
         }
-        assert.deepEqual(perT, [609, 231, 212], 'b163 S3a measured (60 worlds, CYCLE_SEED)');
+        assert.deepEqual(perT, [265, 83, 93], 'b164 S3b measured (60 worlds, CYCLE_SEED)');
+    });
+    it('S3b 60 worlds: an in-flight rreset is { o, at, i, v[, n] } (no t), v 1..9, batch n 1 | 2, never followed ' +
+        'by a rebuild; exact per-at', () => {
+        const perAt = { top: 0, batch: 0, body: 0, computed: 0 };
+        const perN = [0, 0, 0];
+        for (let w = 0; w < 60; w++) {
+            const ops = gen(w).ops;
+            for (let k = 0; k < ops.length; k++) {
+                const op = ops[k];
+                if (op.o !== 'rreset') continue;
+                perAt[op.at]++;
+                if (op.at === 'top') continue;
+                const keys = Object.keys(op).filter((q) => q !== 'chk' && q !== 'cs');
+                assert.deepEqual(keys, op.at === 'batch' ? ['o', 'at', 'i', 'v', 'n'] : ['o', 'at', 'i', 'v'], JSON.stringify(op));
+                assert.equal(op.t, undefined, JSON.stringify(op));
+                const ok = Number.isInteger(op.i) && op.i >= 0 && Number.isInteger(op.v) && op.v >= 1 && op.v <= 9;
+                assert.ok(ok, JSON.stringify(op));
+                if (op.at === 'batch') perN[op.n]++;
+                if (k + 1 < ops.length) assert.notEqual(ops[k + 1].o, 'seq', JSON.stringify(op));
+            }
+        }
+        assert.deepEqual(perAt, { top: 441, batch: 222, body: 223, computed: 246 }, 'b164 S3b measured');
+        assert.deepEqual(perN, [0, 113, 109]);
+    });
+    it('S3b ruleOff(in-flight) (cov-off reset-in-flight, or destroy-in-flight: one rule): 60 worlds hold top ' +
+        'rresets only', () => {
+        for (const off of ['reset-in-flight', 'destroy-in-flight']) {
+            let top = 0;
+            for (let w = 0; w < 60; w++) for (const op of gen(w, off).ops) if (op.o === 'rreset') { assert.equal(op.at, 'top', off); top++; }
+            assert.equal(top, 1010, off + ' (b164 S3b measured)');
+        }
     });
     it('cov-off destroy-in-flight: 60 worlds hold top destroys only (and some)', () => {
         let top = 0;
@@ -255,11 +295,12 @@ describe('KERNEL: live tree through lite-s3 (direct laneOps wiring)', () => {
         assert.ok(top > 0 && reuse > 0, 'top ' + top + ' reuse ' + reuse);
         assert.deepEqual([top, reuse], [626, 625], 'b163 S3a measured (40 cov-off worlds; a rebuild after an rreset counts no reuse)');
     });
-    it('default: 40 worlds pass (every in-flight rdestroy O6-clean vs REG_EXPECT; every top-level rreset O5 / O8 / OW clean); exact scenario + per-t counts, each t >= 1', () => {
+    it('default: 40 worlds pass (in-flight rdestroy / rreset O6-clean; top rreset O5 / O8 / OW clean); exact ' +
+        'scenario + per-t counts', () => {
         const tot = {};
         const perT = [0, 0, 0];
         const checks = { O8: 0, OW: 0 };
-        const flat = (ops) => { for (const op of ops) { if (op.o === 'seq') flat(op.ops); else if (op.o === 'rreset') perT[op.t]++; } };
+        const flat = (ops) => { for (const op of ops) { if (op.o === 'seq') flat(op.ops); else if (op.o === 'rreset' && op.at === 'top') perT[op.t]++; } };
         for (let w = 0; w < 40; w++) {
             const sc = gen(w);
             flat(sc.ops);
@@ -270,11 +311,14 @@ describe('KERNEL: live tree through lite-s3 (direct laneOps wiring)', () => {
             checks.O8 += r.checks.O8;
             checks.OW += r.checks.OW;
         }
-        // b163 S3a measured (40 worlds, CYCLE_SEED); in-flight = batch + body + computed; one O8 + one OW check per rreset
-        assert.deepEqual(tot, { 'destroy-top': 249, 'destroy-in-flight': 410, 'destroy-in-batch': 133, 'destroy-in-body': 144, 'destroy-in-computed': 133, 'reuse-after-destroy': 248, 'reset-top': 701 });
-        assert.deepEqual(perT, [400, 162, 139]);
+        // b164 S3b measured (40 worlds, CYCLE_SEED); in-flight = batch + body + computed; one O8 + one OW check per TOP
+        // rreset
+        assert.deepEqual(tot, { 'destroy-top': 272, 'destroy-in-flight': 427, 'destroy-in-batch': 147,
+            'destroy-in-body': 135, 'destroy-in-computed': 145, 'reuse-after-destroy': 271, 'reset-top': 293,
+            'reset-in-flight': 470, 'reset-in-batch': 150, 'reset-in-body': 153, 'reset-in-computed': 167 });
+        assert.deepEqual(perT, [171, 61, 61]);
         for (const n of perT) assert.ok(n >= 1);
-        assert.deepEqual(checks, { O8: 701, OW: 701 });
+        assert.deepEqual(checks, { O8: 293, OW: 293 });
     });
     it('each in-flight shape (batch n 1 / 2, body, computed) is O6-clean and leaves the graph intact: the next set and read are clean, engine stats unchanged', () => {
         for (const [at, n] of [['batch', 1], ['batch', 2], ['body', 1], ['computed', 1]]) {
@@ -627,8 +671,11 @@ describe('RESET (S3a, TASK 8a): top-level rreset, private cleanup fixture t 0 / 
         assert.equal(m.tracked, 2000);
         for (const n of m.sizes) assert.ok(n >= 1, 'twin (x.lastEsc) sizes ' + JSON.stringify(m.sizes));
     });
-    it('malformed rreset -> unmodelled throw (fail closed); in flight is not modelled in S3a', () => {
-        for (const bad of [{ at: 'batch', i: 0, t: 0 }, { at: 'body', i: 0, t: 0 }, { at: 'computed', i: 0, t: 0 }, { at: undefined, i: 0, t: 0 },
+    it('malformed rreset -> unmodelled throw (fail closed): top t / i; in flight (S3b) at / i / v / n / t', () => {
+        for (const bad of [{ at: 'nope', i: 0, v: 5 }, { at: 'batch', i: 0, v: 5, n: 3 }, { at: 'batch', i: 0, v: 5 },
+            { at: 'body', i: 0, v: 0 }, { at: 'computed', i: 0, v: 10 }, { at: 'body', i: '0', v: 5 },
+            { at: 'body', i: 0, v: 5, t: 1 }, { at: 'batch', i: 0, v: 5, n: 1, t: 2 }, { at: 'computed', i: 0, v: 5.5 },
+            { at: 'batch', i: 0, t: 0 }, { at: 'body', i: 0, t: 0 }, { at: 'computed', i: 0, t: 0 }, { at: undefined, i: 0, t: 0 },
             { at: 'top', i: 0, t: 3 }, { at: 'top', i: 0, t: -1 }, { at: 'top', i: 0, t: '1' }, { at: 'top', i: 0, t: 1.5 }, { at: 'top', i: 0 },
             { at: 'top', i: '0', t: 0 }, { at: 'top', i: 0.5, t: 0 }]) {
             assert.throws(() => run(script(BASE.concat([Object.assign({ o: 'rreset' }, bad)]))), /unmodelled registry op/, JSON.stringify(bad));
@@ -639,6 +686,139 @@ describe('RESET (S3a, TASK 8a): top-level rreset, private cleanup fixture t 0 / 
         const r = run(script(BASE.concat([{ o: 'rdestroy', at: 'top' }, rebuild(5, 6), { o: 'rreset', at: 'top', i: 5, t: 1 }, rebuild(7, 8)])));
         assert.equal(r.failure, null, JSON.stringify(r.failure));
         assert.deepEqual({ ...r.scen }, { 'destroy-top': 1, 'reuse-after-destroy': 1, 'reset-top': 1 });
+    });
+});
+
+describe('RESET IN FLIGHT (S3b, TASK 8b): rreset inside batch / an effect body / a computed body', () => {
+    const lane = (fn) => ({ rdestroy: REGISTRY.ops.rdestroy, rreset: fn, rbuilt: REGISTRY.ops.rbuilt });
+    const one = (at, n) => script(BASE.concat([{ o: 'rreset', at, i: 0, v: 5, n }]));
+    const MSG = { batch: 'batch in progress', body: 'flush in progress', computed: 'flush in progress' };
+    const full = (at) => '[lite-signal] reset: graph not settled (' + MSG[at] + ')';
+    it('RESET_EXPECT is frozen { batch, body, computed }, each expectFromThrow(Error, the exact C-RESET ' +
+        'message)', () => {
+        assert.ok(Object.isFrozen(RESET_EXPECT));
+        assert.deepEqual(Object.keys(RESET_EXPECT), IN_FLIGHT);
+        for (const at of IN_FLIGHT) {
+            assert.deepEqual(RESET_EXPECT[at], expectFromThrow({ ctor: 'Error', messagePrefix: full(at) }), at);
+            assert.ok(Object.isFrozen(RESET_EXPECT[at]) && Object.isFrozen(RESET_EXPECT[at][0]), at);
+        }
+    });
+    it('each at (batch n 1 / 2, body, computed): the guard sees the exact Error, O6-clean, graph + leaf intact, ' +
+        'privates gone', () => {
+        for (const [at, n] of [['batch', 1], ['batch', 2], ['body', undefined], ['computed', undefined]]) {
+            let st = null;
+            const esc = [];
+            const spy = lane((x, op, k) => {
+                x.guard = function (fn, c) {
+                    const wrap = (g) => { try { return fn(g); } catch (e) { esc.push([e.constructor.name, e.message]); throw e; } };
+                    return Object.getPrototypeOf(this).guard.call(this, wrap, c);
+                };
+                try { REGISTRY.ops.rreset(x, op, k); } finally { delete x.guard; }
+                const s2 = x.W.stats();
+                st = [s2.activeNodes, s2.activeLinks, s2.signals, s2.computeds, s2.effects, x.W.peek(x.H[0]), x.M.n[0].v, x.regExpect];
+            });
+            const ops = BASE.concat([{ o: 'rreset', at, i: 0, v: 5, n }, { o: 'set', i: 0, v: 6 }, { o: 'read', is: [2] }]);
+            const r = run(script(ops), { laneOps: spy });
+            assert.equal(r.failure, null, at + ' n' + n + ': ' + JSON.stringify(r.failure));
+            assert.deepEqual(esc, [['Error', full(at)]], at);
+            // the BASE graph (5 nodes / 4 links), the private nodes disposed; leaf 0 holds 5 in engine and model
+            assert.deepEqual(st, [5, 4, 2, 1, 2, 5, 5, null], at + ' n' + n);
+            assert.deepEqual({ ...r.scen }, { 'reset-in-flight': 1, ['reset-in-' + at]: 1 }, at);
+            assert.deepEqual([r.checks.O8, r.checks.OW, r.checks.O5], [0, 0, 10], at);
+        }
+    });
+    it('must-fail: RESET_EXPECT[at] forced to EXPECT_NONE -> exactly O6 escape-Error (the guard throw, exact ' +
+        'message)', () => {
+        const none = lane((x, op, k) => {
+            x.guard = function (fn, c) {
+                if (this.regExpect === RESET_EXPECT[op.at]) this.regExpect = EXPECT_NONE;
+                return Object.getPrototypeOf(this).guard.call(this, fn, c);
+            };
+            try { REGISTRY.ops.rreset(x, op, k); } finally { delete x.guard; }
+        });
+        for (const at of IN_FLIGHT) {
+            const r = run(one(at, 1), { laneOps: none });
+            assert.equal(r.failure.step, BASE.length, at);
+            assert.deepEqual(failRows(r), [['O6', 'escape-Error', 'engine error escaped: Error: ' + full(at)]], at);
+        }
+    });
+    it('O6 AggregateError: wrapping the exact guard Error -> escape-AggregateError (lane); empty -> checkEscape ' +
+        'pair', () => {
+        const agg = (mk) => lane((x, op, k) => {
+            const o = x.W.reset;
+            x.W.reset = () => { try { o(); } catch (e) { throw mk(e); } };
+            try { REGISTRY.ops.rreset(x, op, k); } finally { x.W.reset = o; }
+        });
+        const MISS = ['O6', 'expected-escape-missing', 'predicted expectedThrow did not happen'];
+        for (const at of IN_FLIGHT) {
+            const wrapped = run(one(at, 1), { laneOps: agg((e) => new AggregateError([e], 'reset: cleanups threw')) });
+            const why = 'reset in ' + at + ': an AggregateError (1 errors) escaped; the guard throw is a plain Error';
+            assert.deepEqual(failRows(wrapped), [['O6', 'escape-AggregateError', why]], at);
+            const empty = run(one(at, 1), { laneOps: agg(() => new AggregateError([], 'x')) });
+            const E0 = ['O6', 'escape-AggregateError', 'engine error escaped: AggregateError: x'];
+            assert.deepEqual(failRows(empty), [E0, MISS], at);
+            const other = run(one(at, 1), { laneOps: agg(() => new AggregateError([new Error('a')], 'x')) });
+            assert.deepEqual(failRows(other), [['O6', 'escape-Error', 'engine error escaped: Error: a'], MISS,
+                ['O6', 'escape-AggregateError', why]], at);
+        }
+    });
+    it('must-fail: a reset that leaks one node per in-flight call -> O5 node-count (exact) + kind-count; the ' +
+        'check dropped -> only the generic O5 detail', async () => {
+        const leak = (laneOps) => lane((x, op, k) => {
+            const o = x.W.reset;
+            x.W.reset = () => { x.W.signal(0); return o(); };
+            try { laneOps.rreset(x, op, k); } finally { x.W.reset = o; }
+        });
+        const KC = ['O5', 'kind-count', 'signals engine=3 model=2'];
+        for (const at of IN_FLIGHT) {
+            const nc = ['O5', 'node-count', 'reset in ' + at + ': activeNodes 6 != 5 before the op (the graph stays)'];
+            assert.deepEqual(failRows(run(one(at, 1), { laneOps: leak(REGISTRY.ops) })), [nc, KC], at);
+        }
+        const CHECK = "    if (a1 !== a0) x.failF({ oracle: 'O5', sig: 'node-count', detail: 'reset in ' + at + ': activeNodes ' + a1 + ' != ' + a0 + ' before the op (the graph stays)' });\n";
+        const mut = await scratchLane([[CHECK, '']]);
+        const GEN = [KC, ['O5', 'node-count', 'activeNodes engine=6 model=5']];
+        for (const at of IN_FLIGHT) {
+            assert.deepEqual(failRows(run(one(at, 1), { laneOps: leak(mut.ops) })), GEN, 'mutant ' + at);
+        }
+    });
+    it('reset-less caps (reset / owner / hook false): an in-flight rreset writes the leaf, counts nothing (D-b164-2); ' +
+        '5 reset ids NA', () => {
+        for (const k of ['reset', 'owner', 'hook']) {
+            const caps = Object.freeze(Object.assign({}, liteS3Adapter.caps, { [k]: false }));
+            const ad = Object.freeze(Object.assign({}, liteS3Adapter, { caps }));
+            for (const at of IN_FLIGHT) {
+                let st = null;
+                const spy = lane((x, op, q) => { REGISTRY.ops.rreset(x, op, q); st = [x.W.stats().activeNodes, x.W.peek(x.H[0]), x.M.n[0].v]; });
+                const r = runWorld(ad, one(at, 1), { laneOps: spy });
+                assert.equal(r.failure, null, k + ' ' + at);
+                assert.deepEqual({ ...r.scen }, {}, k + ' ' + at);
+                assert.deepEqual(st, [5, 5, 5], k + ' ' + at + ': graph untouched, leaf 0 written to 5 in engine and model');
+            }
+            assert.deepEqual(applicability(REGISTRY, caps).scenariosNA, RESET5, k);
+        }
+    });
+    it('60 generated worlds pass on reset:false / owner:false / hook:false caps (D-b164-2)', () => {
+        for (const k of ['reset', 'owner', 'hook']) {
+            const caps = Object.freeze(Object.assign({}, liteS3Adapter.caps, { [k]: false }));
+            const ad = Object.freeze(Object.assign({}, liteS3Adapter, { caps }));
+            const bad = [];
+            for (let w = 0; w < 60; w++) {
+                const r = runWorld(ad, gen(w), { laneOps: REGISTRY.ops });
+                if (r.failure !== null) bad.push(w + '@' + r.failure.step + ' ' + sigs(r.failure.fails).join(','));
+            }
+            assert.deepEqual(bad, [], k + ':false failing worlds');
+        }
+    });
+    it('an in-flight rreset on a dead / absent leaf is a no-op; regExpect never outlives the op', () => {
+        for (const at of IN_FLIGHT) {
+            const r = run(script(BASE.concat([{ o: 'rreset', at, i: 99, v: 5, n: 1 }])));
+            assert.equal(r.failure, null, at);
+            assert.deepEqual({ ...r.scen }, {}, at);
+        }
+        const seen = [];
+        const spy = lane((x, op, k) => { try { REGISTRY.ops.rreset(x, op, k); } finally { seen.push(x.regExpect); } });
+        for (const at of IN_FLIGHT) run(one(at, 1), { laneOps: spy });
+        assert.deepEqual(seen, [null, null, null]);
     });
 });
 

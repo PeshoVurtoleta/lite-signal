@@ -3,7 +3,10 @@
  *
  * Each descriptor: { name, index, needsCaps, hardOracles, required, optional, scenCaps, mix, worldShape,
  * flushPasses, covOff, init(g), step(g) } (+ optional ops: { <op>: (exec, op, k) => void }, the lane-owned ops
- * exec.mjs apply() dispatches after its core ops). index is LANE_INDEX[name], a RESERVED literal (S3-D6, SPEC-B 5.3
+ * exec.mjs apply() dispatches after its core ops; + optional oracleScen: { <hard oracle>: [<scenario id>, ...] }, the
+ * oracle's only exercisers -- adapters/contract.mjs applicability() marks the oracle NA when every listed scenario is
+ * in scenariosNA, and throws a TypeError on a malformed map; b164 S3a-r3, D-b163-4).
+ * index is LANE_INDEX[name], a RESERVED literal (S3-D6, SPEC-B 5.3
  * order), never the roster position: seeds.mjs packs it into 4 bits, so a lane keeps its seeds, replay keys and
  * calibration rows whichever lanes are rostered before it. GRAPH 0 .. WIE 4 never move.
  */

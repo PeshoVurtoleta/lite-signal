@@ -130,9 +130,16 @@ export const TWINS = Object.freeze({ lite: 'lite-box/alt', 'lite-box': 'lite-box
  * Lane applicability on an adapter. desc: a lanes/index.mjs descriptor; engine: the run's engine name (SOAK_ENGINE).
  * A twin lane (desc.twin === true) on an engine with no own TWINS entry, or with engine undefined, gets 'twin' in
  * missingCaps (so it skips); engine is not read for any other lane (their result is the 2-argument one).
+ * desc.oracleScen (optional; b164 S3a-r3, D-b163-4): { <oracle>: [<scenario id>, ...] }, the scenarios that are an
+ * oracle's ONLY exercisers. An oracle whose every listed scenario is in scenariosNA is NA too: oraclesNA is the
+ * caps-derived part (ORACLE_CAPS key order), then these rule-derived oracles appended in desc.hardOracles order.
+ * A malformed oracleScen throws a TypeError (fail closed; see oracleScenCheck). desc.oracleScen and each list are read
+ * ONCE: the rule runs on oracleScenCheck's validated copy (b164 S3b), so an accessor cannot change a list after the check.
  * Returns { status: 'run'|'skip', missingCaps[], oraclesNA[], scenariosNA[], requiredApplicable[] }.
  */
 export function applicability(desc, caps, engine) {
+    const raw = desc.oracleScen;
+    const oscen = raw === undefined ? undefined : oracleScenCheck(desc, raw);
     const missingCaps = desc.needsCaps.filter((c) => !hasCap(caps, c));
     if (desc.twin === true && !(typeof engine === 'string' && Object.hasOwn(TWINS, engine))) missingCaps.push('twin');
     const oraclesNA = Object.keys(ORACLE_CAPS).filter((o) => ORACLE_CAPS[o].some((c) => !hasCap(caps, c)));
@@ -141,9 +148,52 @@ export function applicability(desc, caps, engine) {
         const need = desc.scenCaps[s] || [];
         if (need.some((c) => !hasCap(caps, c))) scenariosNA.push(s);
     }
+    if (oscen !== undefined) {
+        for (const o of desc.hardOracles) {
+            if (!Object.hasOwn(oscen, o) || oraclesNA.indexOf(o) !== -1) continue;
+            if (oscen[o].every((s) => scenariosNA.indexOf(s) !== -1)) oraclesNA.push(o);
+        }
+    }
     const requiredApplicable = desc.required.filter((s) => scenariosNA.indexOf(s) === -1);
     const hardLeft = desc.hardOracles.filter((o) => oraclesNA.indexOf(o) === -1);
     let status = 'run';
     if (missingCaps.length > 0 || hardLeft.length === 0 || requiredApplicable.length === 0) status = 'skip';
     return { status, missingCaps, oraclesNA, scenariosNA, requiredApplicable };
+}
+
+/**
+ * desc.oracleScen validation (cold; applicability() calls it before any result is built). TypeError when oracleScen is
+ * not a plain object (null / array / non-Object prototype / Symbol keys), a key is not in desc.hardOracles or not an
+ * ORACLE_CAPS oracle, a value is not a non-empty array, a scenario id is not in desc.required / desc.optional, or one
+ * list names a scenario twice. Returns the validated copy: a frozen null-prototype { <oracle>: frozen [ids] }, each
+ * list's length and elements read once (the rule reads only the copy).
+ */
+function oracleScenCheck(desc, oscen) {
+    const pre = 'applicability: ' + desc.name + '.oracleScen';
+    const proto = oscen !== null && typeof oscen === 'object' ? Object.getPrototypeOf(oscen) : undefined;
+    if (proto !== Object.prototype && proto !== null) throw new TypeError(pre + ' is not a plain object');
+    if (Object.getOwnPropertySymbols(oscen).length > 0) {
+        throw new TypeError(pre + ' is not a plain object (Symbol key)');
+    }
+    const scen = desc.required.concat(desc.optional);
+    const out = Object.create(null);
+    for (const o of Object.getOwnPropertyNames(oscen)) {   // non-enumerable keys too (the rule reads Object.hasOwn)
+        if (desc.hardOracles.indexOf(o) === -1) throw new TypeError(pre + '.' + o + ' is not in hardOracles');
+        if (!Object.hasOwn(ORACLE_CAPS, o)) throw new TypeError(pre + '.' + o + ' is not an ORACLE_CAPS oracle');
+        const list = oscen[o];
+        const len = Array.isArray(list) ? list.length : 0;
+        if (len === 0) throw new TypeError(pre + '.' + o + ' is not a non-empty array');
+        const copy = [];
+        for (let i = 0; i < len; i++) {
+            const s = list[i];
+            const at = pre + '.' + o + ' ';
+            if (scen.indexOf(s) === -1) {
+                throw new TypeError(at + 'scenario ' + JSON.stringify(s) + ' is not in required / optional');
+            }
+            if (copy.indexOf(s) !== -1) throw new TypeError(at + 'lists scenario ' + JSON.stringify(s) + ' twice');
+            copy.push(s);
+        }
+        out[o] = Object.freeze(copy);
+    }
+    return Object.freeze(out);
 }

@@ -22,6 +22,8 @@ import { K } from '../bench/soak/kernel.mjs';
 import { LATENCY_METHODS, LATENCY_UNTIMED } from '../bench/soak/config.mjs';
 import { LatencyLane } from '../bench/soak/latency.mjs';
 import * as HP from '../bench/soak/controls/headpatched/Signal.js';
+import * as RG from '../bench/soak/lanes/registry.mjs';
+import * as LI from '../bench/soak/lanes/index.mjs';
 
 const TREE = [
     ['lite', () => L.liteAdapter],
@@ -264,4 +266,140 @@ test('lite-s3 hook off reaches the engine off at most once (a kernel whose off t
     w2.reset();
     assert.doesNotThrow(() => w2.close());
     assert.equal(engineOffs, 3);
+});
+
+/* ---- 6. oracleScen: O8 / OW NA where reset-top is NA (b164 S3a-r3, D-b163-4) ---------------------------------- */
+
+const DESTROY6 = ['destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy'];
+const RESET5 = ['reset-top', 'reset-in-flight', 'reset-in-batch', 'reset-in-body', 'reset-in-computed'];   // b164 S3b
+const REG11 = DESTROY6.concat(RESET5);
+/** A REGISTRY clone with fields overridden (the descriptor itself is frozen). */
+const regWith = (o) => Object.assign({}, RG.REGISTRY, o);
+
+test('oracleScen: REGISTRY declares O8 / OW -> [reset-top] (frozen, both lists frozen); no other ROSTER lane declares it', () => {
+    assert.deepEqual(JSON.parse(JSON.stringify(RG.REGISTRY.oracleScen)), { O8: ['reset-top'], OW: ['reset-top'] });
+    assert.deepEqual(Object.keys(RG.REGISTRY.oracleScen), ['O8', 'OW']);
+    assert.ok(Object.isFrozen(RG.REGISTRY.oracleScen) && Object.isFrozen(RG.REGISTRY.oracleScen.O8) && Object.isFrozen(RG.REGISTRY.oracleScen.OW));
+    assert.deepEqual(LI.LANES.filter((d) => d.oracleScen !== undefined).map((d) => d.name), ['REGISTRY']);
+});
+
+test('oracleScen: REGISTRY on CAPS_LITE_PRE_RESET / CAPS_LITE_NO_RESET -> oraclesNA exactly [O8, OW], ' +
+    'scenariosNA the 5 reset ids, the 6 destroy ids, run', () => {
+    for (const [k, caps] of [['PRE_RESET', L.CAPS_LITE_PRE_RESET], ['NO_RESET', L.CAPS_LITE_NO_RESET]]) {
+        assert.deepEqual(CT.applicability(RG.REGISTRY, caps),
+            { status: 'run', missingCaps: [], oraclesNA: ['O8', 'OW'], scenariosNA: RESET5,
+                requiredApplicable: DESTROY6 }, k);
+        for (const e of ['lite', 'lite-box', undefined]) assert.deepEqual(CT.applicability(RG.REGISTRY, caps, e).oraclesNA, ['O8', 'OW'], k + ' ' + String(e));
+    }
+});
+
+test('oracleScen: REGISTRY on CAPS_LITE (reset runs) -> O8 / OW stay hard: oraclesNA [], scenariosNA [], all 11 ' +
+    'required', () => {
+    const a = CT.applicability(RG.REGISTRY, L.CAPS_LITE);
+    assert.deepEqual(a, { status: 'run', missingCaps: [], oraclesNA: [], scenariosNA: [], requiredApplicable: REG11 });
+    assert.equal(a.oraclesNA.indexOf('O8'), -1);
+    assert.equal(a.oraclesNA.indexOf('OW'), -1);
+});
+
+test('oracleScen order: caps-derived part in ORACLE_CAPS key order, rule-derived appended in hardOracles order (owner false -> [OW, O8]; hook false -> [O8, OW])', () => {
+    assert.deepEqual(CT.applicability(RG.REGISTRY, { ...L.CAPS_LITE, owner: false }).oraclesNA, ['OW', 'O8']);
+    assert.deepEqual(CT.applicability(RG.REGISTRY, { ...L.CAPS_LITE, hook: false }).oraclesNA, ['O8', 'OW']);
+    assert.deepEqual(CT.applicability(RG.REGISTRY, { ...L.CAPS_LITE, reset: false }).oraclesNA, ['O8', 'OW']);
+    // hardOracles order, not oracleScen key order
+    const rev = regWith({ oracleScen: { OW: ['reset-top'], O8: ['reset-top'] } });
+    assert.deepEqual(CT.applicability(rev, L.CAPS_LITE_PRE_RESET).oraclesNA, ['O8', 'OW']);
+});
+
+test('oracleScen rule is EVERY, not some: an oracle with one applicable listed scenario stays hard (O8 [reset-top, destroy-top] on PRE_RESET)', () => {
+    const d = regWith({ oracleScen: { O8: ['reset-top', 'destroy-top'], OW: ['reset-top'] } });
+    assert.deepEqual(CT.applicability(d, L.CAPS_LITE_PRE_RESET).oraclesNA, ['OW']);
+    const both = regWith({ oracleScen: { O8: ['destroy-top', 'reset-top'] } });
+    assert.deepEqual(CT.applicability(both, L.CAPS_LITE_PRE_RESET).oraclesNA, []);
+});
+
+test('oracleScen: a lane whose only hard oracles are rule-NA skips (hardLeft empty); an absent / undefined oracleScen is the frozen contract', () => {
+    const d = regWith({ hardOracles: ['O8', 'OW'] });
+    assert.deepEqual(CT.applicability(d, L.CAPS_LITE_PRE_RESET),
+        { status: 'skip', missingCaps: [], oraclesNA: ['O8', 'OW'], scenariosNA: RESET5,
+            requiredApplicable: DESTROY6 });
+    assert.equal(CT.applicability(d, L.CAPS_LITE).status, 'run');
+    const none = regWith({ oracleScen: undefined });
+    assert.deepEqual(CT.applicability(none, L.CAPS_LITE_PRE_RESET).oraclesNA, []);
+});
+
+test('oracleScen absent: GRAPH / HOOK on CAPS_LITE_PRE_RESET deepEqual the frozen pre-b164 contract result (literals derived on b164-before)', () => {
+    const by = (n) => LI.LANES.find((d) => d.name === n);
+    assert.deepEqual(CT.applicability(by('GRAPH'), L.CAPS_LITE_PRE_RESET), { status: 'run', missingCaps: [], oraclesNA: [], scenariosNA: [], requiredApplicable: ['diamond-write', 'dep-set-flip', 'deep-pull', 'second-invalidation', 'equality-cutoff', 'adversarial-equality'] });
+    assert.deepEqual(CT.applicability(by('HOOK'), L.CAPS_LITE_PRE_RESET), { status: 'run', missingCaps: [], oraclesNA: [], scenariosNA: [], requiredApplicable: ['hook-multi', 'hook-non-lifo-off', 'hook-mirror-dispose', 'hook-recompute'] });
+    // every lane without oracleScen: oraclesNA is exactly the caps-only formula (an independent oracle, not the new code)
+    const capsOnly = (caps) => Object.keys(CT.ORACLE_CAPS).filter((o) => CT.ORACLE_CAPS[o].some((c) => !CT.hasCap(caps, c)));
+    const CASES = [L.CAPS_LITE, L.CAPS_LITE_PRE_RESET, L.CAPS_LITE_NO_RESET, { ...L.CAPS_LITE, owner: false }, { ...L.CAPS_LITE, hook: false }];
+    for (const d of LI.LANES) {
+        if (d.oracleScen !== undefined) continue;
+        for (const caps of CASES) assert.deepEqual(CT.applicability(d, caps).oraclesNA, capsOnly(caps), d.name);
+    }
+});
+
+test('oracleScen fail closed: not a plain object -> TypeError (null, array, number, string, function, Map, Object.create({}), Symbol key); a null-prototype map is accepted', () => {
+    const NOT = /^applicability: REGISTRY\.oracleScen is not a plain object$/;
+    for (const v of [null, [], [['O8', ['reset-top']]], 5, 'O8', () => {}, new Map(), Object.create({ O8: ['reset-top'] }), new (class X {})(), true]) {
+        assert.throws(() => CT.applicability(regWith({ oracleScen: v }), L.CAPS_LITE), (e) => e instanceof TypeError && NOT.test(e.message), String(v));
+    }
+    assert.throws(() => CT.applicability(regWith({ oracleScen: { O8: ['reset-top'], [Symbol('s')]: ['reset-top'] } }), L.CAPS_LITE), (e) => e instanceof TypeError && /^applicability: REGISTRY\.oracleScen is not a plain object \(Symbol key\)$/.test(e.message));
+    const np = Object.assign(Object.create(null), { O8: ['reset-top'], OW: ['reset-top'] });
+    assert.deepEqual(CT.applicability(regWith({ oracleScen: np }), L.CAPS_LITE_PRE_RESET).oraclesNA, ['O8', 'OW']);
+});
+
+test('oracleScen fail closed: a key not in hardOracles -> TypeError (O9, OT, OB; a non-enumerable O9)', () => {
+    for (const k of ['O9', 'OT', 'OB']) {
+        assert.throws(() => CT.applicability(regWith({ oracleScen: { [k]: ['reset-top'] } }), L.CAPS_LITE), (e) => e instanceof TypeError && new RegExp('^applicability: REGISTRY\\.oracleScen\\.' + k + ' is not in hardOracles$').test(e.message), k);
+    }
+    const hidden = { OW: ['reset-top'] };
+    Object.defineProperty(hidden, 'O9', { value: ['reset-top'], enumerable: false });
+    assert.throws(() => CT.applicability(regWith({ oracleScen: hidden }), L.CAPS_LITE), (e) => e instanceof TypeError && /^applicability: REGISTRY\.oracleScen\.O9 is not in hardOracles$/.test(e.message));
+});
+
+test('oracleScen fail closed: a key in hardOracles but not an ORACLE_CAPS oracle -> TypeError (OZ, toString, constructor)', () => {
+    for (const k of ['OZ', 'toString', 'constructor']) {
+        const d = regWith({ hardOracles: RG.REGISTRY.hardOracles.concat([k]), oracleScen: { [k]: ['reset-top'] } });
+        assert.throws(() => CT.applicability(d, L.CAPS_LITE), (e) => e instanceof TypeError && new RegExp('^applicability: REGISTRY\\.oracleScen\\.' + k + ' is not an ORACLE_CAPS oracle$').test(e.message), k);
+    }
+});
+
+test('oracleScen fail closed: a value that is not a non-empty array -> TypeError ([], string, array-like, null, undefined, a Set)', () => {
+    for (const v of [[], 'reset-top', { 0: 'reset-top', length: 1 }, null, undefined, new Set(['reset-top'])]) {
+        assert.throws(() => CT.applicability(regWith({ oracleScen: { O8: ['reset-top'], OW: v } }), L.CAPS_LITE), (e) => e instanceof TypeError && /^applicability: REGISTRY\.oracleScen\.OW is not a non-empty array$/.test(e.message), String(v));
+    }
+});
+
+test('oracleScen fail closed: a scenario id not in required / optional -> TypeError (typo, unknown, number, undefined, another lane\'s scenario)', () => {
+    for (const [s, shown] of [['reset-tp', '"reset-tp"'], ['nope', '"nope"'], [7, '7'], [undefined, 'undefined'], ['diamond-write', '"diamond-write"']]) {
+        const re = new RegExp('^applicability: REGISTRY\\.oracleScen\\.O8 scenario ' + shown.replace(/[-"]/g, '\\$&') + ' is not in required / optional$');
+        assert.throws(() => CT.applicability(regWith({ oracleScen: { O8: ['reset-top', s] } }), L.CAPS_LITE), (e) => e instanceof TypeError && re.test(e.message), String(s));
+    }
+});
+
+// b164 S3b B1 (S3a-r3 NIT): kills mutant R6 `const scen = desc.required;` (an optional id would throw)
+test('oracleScen ids come from required AND optional: O8 [reset-top, x-opt] on PRE_RESET -> oraclesNA [OW]', () => {
+    const d = regWith({ optional: ['x-opt'], oracleScen: { O8: ['reset-top', 'x-opt'], OW: ['reset-top'] } });
+    assert.deepEqual(CT.applicability(d, L.CAPS_LITE_PRE_RESET).oraclesNA, ['OW']);
+});
+
+// b164 S3b B2 (S3a-r3 NIT): the rule runs on the validated copy, so an accessor cannot swap a list after the check
+test('oracleScen read ONCE: an accessor O8 giving [reset-top] then [] -> on CAPS_LITE oraclesNA [] (O8 hard), 1 ' +
+    'read', () => {
+    let reads = 0;
+    const os = { OW: ['reset-top'] };
+    Object.defineProperty(os, 'O8', { enumerable: true, get: () => (reads++ === 0 ? ['reset-top'] : []) });
+    assert.deepEqual(CT.applicability(regWith({ oracleScen: os }), L.CAPS_LITE).oraclesNA, []);
+    assert.equal(reads, 1);
+});
+
+test('oracleScen fail closed: a scenario listed twice in one list -> TypeError (adjacent and split); the same scenario in two lists is fine', () => {
+    for (const v of [['reset-top', 'reset-top'], ['destroy-top', 'reset-top', 'destroy-top']]) {
+        const dup = v[0] === 'reset-top' ? 'reset-top' : 'destroy-top';
+        const re = new RegExp('^applicability: REGISTRY\\.oracleScen\\.O8 lists scenario "' + dup + '" twice$');
+        assert.throws(() => CT.applicability(regWith({ oracleScen: { O8: v } }), L.CAPS_LITE), (e) => e instanceof TypeError && re.test(e.message), v.join(','));
+    }
+    assert.deepEqual(CT.applicability(regWith({ oracleScen: { O8: ['reset-top'], OW: ['reset-top'] } }), L.CAPS_LITE_NO_RESET).oraclesNA, ['O8', 'OW']);
 });

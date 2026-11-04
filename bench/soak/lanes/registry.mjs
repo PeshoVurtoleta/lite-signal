@@ -23,6 +23,11 @@
  *                                           private fixture reads, t = its thrown-cleanup count 0 | 1 | 2 (weights
  *                                           6:2:2, D-b162-1). The shadow model then resets (model.resetAll) and the
  *                                           next step rebuilds the graph, as after a top-level destroy
+ *   rreset   { at: 'batch', i, v, n }      (TASK 8b) the in-flight rdestroy shapes with reset() in place of destroy():
+ *   rreset   { at: 'body' | 'computed',    the guard expects RESET_EXPECT[at] (Error '[lite-signal] reset: graph not
+ *              i, v }                      settled (batch | flush in progress)'), no t is drawn, the graph stays (no
+ *                                           model.resetAll; only the leaf write lands) and no rebuild follows; O5
+ *                                           node-count: engine activeNodes before the op === after the privates go
  *   rbuilt   {}                             the rebuild after a top-level destroy is done: counts reuse-after-destroy
  *                                           when a destroy ran in this world and the model holds live nodes again;
  *                                           never for the rebuild after an rreset (the last top-level teardown)
@@ -45,9 +50,15 @@
  *       t=1 esc === T_Q (identity: a wrapper fails), t=2 an AggregateError, message exactly "reset: cleanups threw",
  *       errors [T_R, T_Q] by identity; a D-6 message (cleanups kept creating nodes / no progress) is detail d6
  * One did() per oracle per rreset. The tokens, the log and the escape are op locals: no lane field keeps them (A6).
- * Caps (D-b163-3, ADDENDUM 5): needsCaps stays destroy / stopEffect / links; reset-top is gated per scenario (scenCaps
- * reset / owner / hook, the lanes/batch.mjs precedent), so a pre-1.6.0 kernel still runs the lane's destroy ops and
- * requiredApplicable drops reset-top. On such a world an rreset (scripts stay engine-independent) is a validated no-op.
+ * Caps (D-b163-3, ADDENDUM 5): needsCaps stays destroy / stopEffect / links; reset-top and the four reset-in-* ids
+ * (b164 S3b) are gated per scenario (scenCaps reset / owner / hook, the lanes/batch.mjs precedent), so a pre-1.6.0
+ * kernel still runs the lane's destroy ops and requiredApplicable drops the five reset ids. On such a world a
+ * top-level rreset is a validated no-op; an in-flight one still applies the shadow's leaf write (setTop, D-b164-2)
+ * and counts nothing (scripts stay engine-independent).
+ * oracleScen (D-b163-4, b164 S3a-r3): O8 / OW -> [reset-top], their only exerciser (an in-flight rreset runs no census
+ * hook and no cleanup); so where reset-top is in
+ * scenariosNA, contract.mjs applicability() puts O8 and OW in oraclesNA (no check-floor INCONCLUSIVE on a reset-less
+ * kernel); wherever reset-top runs, their floors stay strict.
  * O6 (v): every IN-FLIGHT destroy's outermost guard is judged against expectFromThrow(DIV-D2-destroy-throws
  * .expectedThrow), read ONCE at module load from divergences.json, module-relative (the file divergences.mjs
  * REGISTRY_URL names; no import: divergences.mjs imports the ROSTER, which imports this lane); a missing row throws
@@ -62,10 +73,11 @@
  * An in-flight rdestroy leaves the graph intact (no model.destroyAll); the private nodes are never in the model, so
  * the op disposes them after the guard, else O5 node-count reports them.
  * An in-flight op (and an rreset) on a dead / absent leaf (a shrunk script) is a no-op, as exec.setTop is.
- * covOff destroy-in-flight -> rule in-flight: every rdestroy is at 'top' (P-REGISTRY-TRIGGERLESS).
+ * covOff destroy-in-flight / reset-in-flight -> rule in-flight: every rdestroy and rreset is at 'top'
+ * (P-REGISTRY-TRIGGERLESS).
  * Per-exec state in a WeakMap (exec needs no slot; the entry dies with the world). Fail closed (exec.unmodelled): an
- * unknown at, a value outside 1..9, a nesting outside 1..2, a non-integer leaf index; an rreset at other than 'top' or
- * with t outside 0..2.
+ * unknown at, a value outside 1..9, a nesting outside 1..2, a non-integer leaf index; a top-level rreset with t outside
+ * 0..2, an in-flight rreset with a t other than absent / 0.
  * COLD module: harness code, never an engine hot path.
  */
 
@@ -92,6 +104,15 @@ function d2Row() {
 
 /** The O6 (v) expect[] list of every in-flight destroy (frozen; read once). */
 export const REG_EXPECT = expectFromThrow(d2Row().expectedThrow);
+
+const NOT_SETTLED = '[lite-signal] reset: graph not settled ';
+
+/** The O6 expect[] list of each in-flight rreset (TASK 8b, ADDENDUM 2b; frozen): Error, the exact C-RESET message. */
+export const RESET_EXPECT = Object.freeze({
+    batch: expectFromThrow({ ctor: 'Error', messagePrefix: NOT_SETTLED + '(batch in progress)' }),
+    body: expectFromThrow({ ctor: 'Error', messagePrefix: NOT_SETTLED + '(flush in progress)' }),
+    computed: expectFromThrow({ ctor: 'Error', messagePrefix: NOT_SETTLED + '(flush in progress)' }),
+});
 
 /* ---- generator side (G0: the generator reads only its shadow model) ------------------------------------------ */
 
@@ -148,13 +169,24 @@ function destroyOp(g) {
     return op;
 }
 
-/** A top-level rreset: the shadow model resets and the next step rebuilds (as a top-level destroy). */
+/**
+ * An rreset, `at` drawn as destroyOp draws it. Top: the shadow model resets and the next step rebuilds (as a top-level
+ * destroy). In flight (TASK 8b): destroyOp's in-flight branch (the guard throw leaves the graph; only the leaf write
+ * lands); no t is drawn (forced 0: no fixture).
+ */
 function resetOp(g) {
+    const at = g.ruleOff('in-flight') ? 'top' : g.weighted(AT);
     const i = g.pick(g.leaves());
-    const t = Number(g.weighted(TW));
-    g.M.resetAll();
-    shadowOf(g).built = false;
-    return { o: 'rreset', at: 'top', i, t };
+    if (at === 'top') {
+        const t = Number(g.weighted(TW));
+        g.M.resetAll();
+        shadowOf(g).built = false;
+        return { o: 'rreset', at, i, t };
+    }
+    const op = { o: 'rreset', at, i, v: other(g, i) };
+    if (at === 'batch') op.n = 1 + g.int(2);
+    g.M.setValue(i, op.v);
+    return op;
 }
 
 function init(g) {
@@ -389,9 +421,74 @@ const RESET_CAPS = Object.freeze(['reset', 'owner', 'hook']);
 /** contract.mjs hasCap, inlined (no new import edge into the ROSTER cycle): present = anything but false / 'no'. */
 function capOn(caps, k) { const v = caps[k]; return v !== undefined && v !== false && v !== 'no'; }
 
-/** A top-level rreset (TASK 8a; in flight is TASK 8b). The fixture, census and probe are disposed / off by the op. */
+/**
+ * reset() in flight. The guard's O6 flattens an AggregateError (normalizeEscape), so one wrapping the exact guard Error
+ * would be absorbed: the escape is noted in box.agg (an op local) and rethrown unchanged.
+ */
+function resetNoting(W, box) {
+    try { W.reset(); } catch (e) { if (e instanceof AggregateError) box.agg = e; throw e; }
+}
+
+function batchReset(x, n, h, v, box) {
+    if (n === 1) x.W.batch(() => { x.W.set(h, v); resetNoting(x.W, box); });
+    else x.W.batch(() => { x.W.batch(() => { x.W.set(h, v); resetNoting(x.W, box); }); });
+}
+
+/**
+ * An in-flight rreset (TASK 8b): opDestroyInFlight with reset() in place of destroy() and RESET_EXPECT[at] in place of
+ * REG_EXPECT; on reset-less caps only the leaf write lands (setTop, D-b164-2), counting nothing. The graph stays
+ * (no model.resetAll): O5 node-count when the engine's activeNodes after the private nodes are disposed differs from
+ * before the op.
+ */
+function opResetInFlight(x, op, at) {
+    if (at !== 'batch' && at !== 'body' && at !== 'computed') unmodelled(x, 'rreset at ' + JSON.stringify(at) + ' is not top / batch / body / computed');
+    const i = op.i;
+    const v = op.v;
+    if (!Number.isInteger(i)) unmodelled(x, 'rreset leaf ' + JSON.stringify(i) + ' is not an integer');
+    if (!(Number.isInteger(v) && v >= 1 && v <= 9)) unmodelled(x, 'rreset value ' + JSON.stringify(v) + ' is not 1..9');
+    const n = at === 'batch' ? op.n : 1;
+    if (n !== 1 && n !== 2) unmodelled(x, 'rreset batch nesting ' + JSON.stringify(op.n) + ' is not 1 / 2');
+    if (op.t !== undefined && op.t !== 0) unmodelled(x, 'rreset in flight t ' + JSON.stringify(op.t) + ' is not absent / 0');
+    const nd = i >= 0 ? x.M.n[i] : undefined;
+    if (nd === undefined || !nd.live || nd.t !== 's' || x.H[i] === undefined) return;   // shrunk away / dead
+    // D-b164-2: no reset / owner / hook cap (or world method): the generator's shadow already took the leaf write
+    // (g.M.setValue), so the op still applies it -- setTop, at 'batch' too (no batch needed) -- and counts nothing
+    let capsOn = typeof x.W.reset === 'function' && typeof x.W.hook === 'function' && typeof x.W.onCleanup === 'function';
+    for (const k of RESET_CAPS) if (!capOn(x.caps, k)) capsOn = false;
+    if (!capsOn) { x.setTop(i, v, false); return; }
+    const h = x.H[i];
+    const W = x.W;
+    const a0 = W.stats().activeNodes;
+    const box = { agg: null };
+    if (at === 'batch') {
+        x.M.setValue(i, v);
+        x.regExpect = RESET_EXPECT.batch;
+        x.guard(() => batchReset(x, n, h, v, box));
+    } else {
+        let e, c;   // the private nodes (never modelled): disposed after the guard, effect first
+        if (at === 'body') x.guard(() => { e = W.effect(() => { if (W.read(h) === v) resetNoting(W, box); }); });
+        else x.guard(() => { c = W.computed(() => { const r = W.read(h); if (r === v) resetNoting(W, box); return r; }); e = W.effect(() => { W.read(c); }); });
+        x.regExpect = RESET_EXPECT[at];
+        x.setTop(i, v, false);
+        x.regExpect = null;
+        x.guard(() => { if (e !== undefined) W.dispose(e); if (c !== undefined) W.dispose(c); });
+    }
+    x.regExpect = null;
+    const agg = box.agg;
+    if (agg !== null && Array.isArray(agg.errors) && agg.errors.length > 0) {
+        // an empty one is already O6 escape-AggregateError (no leaf to flatten)
+        x.failF({ oracle: 'O6', sig: 'escape-AggregateError', detail: 'reset in ' + at + ': an AggregateError (' + agg.errors.length + ' errors) escaped; the guard throw is a plain Error' });
+    }
+    x.did('O5');
+    const a1 = W.stats().activeNodes;
+    if (a1 !== a0) x.failF({ oracle: 'O5', sig: 'node-count', detail: 'reset in ' + at + ': activeNodes ' + a1 + ' != ' + a0 + ' before the op (the graph stays)' });
+    x.D.onRegReset(at);
+}
+
+/** An rreset: in flight -> opResetInFlight; top level (TASK 8a): the fixture, census and probe are disposed / off by the op. */
 function opReset(x, op) {
-    if (op.at !== 'top') unmodelled(x, 'rreset at ' + JSON.stringify(op.at) + ' is not top');
+    const at = op.at;
+    if (at !== 'top') { opResetInFlight(x, op, at); return; }
     const t = op.t;
     if (t !== 0 && t !== 1 && t !== 2) unmodelled(x, 'rreset t ' + JSON.stringify(t) + ' is not 0 / 1 / 2');
     const i = op.i;
@@ -448,13 +545,16 @@ export const REGISTRY = Object.freeze({
     index: 10,
     needsCaps: Object.freeze(['destroy', 'stopEffect', 'links']),
     hardOracles: Object.freeze(['O1c', 'O1e', 'O2', 'O4', 'O5', 'O6', 'O8', 'OW']),
-    required: Object.freeze(['destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy', 'reset-top']),
+    required: Object.freeze(['destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy', 'reset-top',
+        'reset-in-flight', 'reset-in-batch', 'reset-in-body', 'reset-in-computed']),
     optional: Object.freeze([]),
-    scenCaps: Object.freeze({ 'reset-top': RESET_CAPS }),
+    scenCaps: Object.freeze({ 'reset-top': RESET_CAPS, 'reset-in-flight': RESET_CAPS, 'reset-in-batch': RESET_CAPS,
+        'reset-in-body': RESET_CAPS, 'reset-in-computed': RESET_CAPS }),
+    oracleScen: Object.freeze({ O8: Object.freeze(['reset-top']), OW: Object.freeze(['reset-top']) }),
     mix: MIX,
-    worldShape: Object.freeze({ steps: 400, largeEvery: 0, normal: '3-5 leaves, 2-4 computeds, 2-3 effects (sum / identity, values 1..9; <= 24 live); destroy() at the top level or in flight (batch, effect body, computed body), then a rebuild; reset() at the top level (a private cleanup fixture, t 0 / 1 / 2 throwing cleanups), then a rebuild' }),
+    worldShape: Object.freeze({ steps: 400, largeEvery: 0, normal: '3-5 leaves, 2-4 computeds, 2-3 effects (sum / identity, values 1..9; <= 24 live); destroy() at the top level or in flight (batch, effect body, computed body), then a rebuild; reset() at the top level (a private cleanup fixture, t 0 / 1 / 2 throwing cleanups), then a rebuild, or in flight (batch, effect body, computed body; the graph stays)' }),
     flushPasses: null,
-    covOff: Object.freeze({ 'destroy-in-flight': 'in-flight' }),
+    covOff: Object.freeze({ 'destroy-in-flight': 'in-flight', 'reset-in-flight': 'in-flight' }),
     init,
     step,
     specRefs,

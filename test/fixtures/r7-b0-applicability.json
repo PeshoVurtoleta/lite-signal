@@ -197,9 +197,16 @@
    "res": {
     "status": "run",
     "missingCaps": [],
-    "oraclesNA": [],
+    "oraclesNA": [
+     "O8",
+     "OW"
+    ],
     "scenariosNA": [
-     "reset-top"
+     "reset-top",
+     "reset-in-flight",
+     "reset-in-batch",
+     "reset-in-body",
+     "reset-in-computed"
     ],
     "requiredApplicable": [
      "destroy-top",
