@@ -139,13 +139,14 @@ export interface RegistryStats {
     /**
      * Cumulative count of every node acquired over the registry's life -- whether
      * popped from the free list or freshly constructed during a pool-growth chunk.
-     * Monotonic; reset only by {@link Registry.destroy}. The true total ever handed
-     * out, not the live count (`activeNodes` is the live gauge). Added in 1.4.0.
+     * Monotonic; zeroed only by {@link Registry.destroy} ({@link Registry.reset} keeps it).
+     * The true total ever handed out, not the live count (`activeNodes` is the live gauge). Added in 1.4.0.
      */
     totalAllocations: number;
     /**
      * Cumulative count of every node returned to the pool (`disposeNode`). Monotonic;
-     * reset only by {@link Registry.destroy}. In a quiescent registry
+     * zeroed only by {@link Registry.destroy}; {@link Registry.reset} grows it by the nodes
+     * it disposes. In a quiescent registry
      * `totalAllocations - totalDisposals === activeNodes`. Added in 1.4.0.
      */
     totalDisposals: number;
@@ -153,7 +154,8 @@ export interface RegistryStats {
      * Cumulative count of pool-growth chunks -- incremented whenever a node *or* link
      * refill pushes capacity past its current ledger. Nonzero after warm-up means the
      * initial pool was undersized and grew at runtime; an eager pool sized for its
-     * workload keeps this at 0. Reset only by {@link Registry.destroy}. Added in 1.4.0.
+     * workload keeps this at 0. Zeroed only by {@link Registry.destroy}
+     * ({@link Registry.reset} keeps it). Added in 1.4.0.
      */
     poolGrowths: number;
 }
@@ -519,10 +521,47 @@ export interface Registry {
     onGraphMutation(fn: GraphMutationListener | null): GraphMutationUnsubscribe;
     onCleanup(fn: () => void): void;
     stats(): RegistryStats;
-    /** Reset everything: nodes, links, queues, global clock. Outstanding dispose
-     *  closures become safe no-ops. Outstanding read/set closures still reference
-     *  pool slots -- they will silently misbehave; use a fresh registry afterwards. */
+    /**
+     * Shut the registry down (1.6.0): invalidate every node and link at once, release both
+     * pools, rebase the capacities to the constructor values, zero the live gauges and the three
+     * cumulative counters (totalAllocations / totalDisposals / poolGrowths), reset the global
+     * clock (globalVersion, batchEpoch) to 1, and clear the
+     * onGraphMutation stack (a held unsubscribe becomes a no-op). Runs NO cleanup and fires
+     * NO op 2 -- use {@link reset} to dispose every node with its cleanups. Node ids are not
+     * rewound. Every previously-issued read / set / dispose closure becomes a safe no-op. The
+     * registry stays usable: the next node or link regrows the pools lazily from the
+     * constructor config.
+     * @throws Error `[lite-signal] destroy: graph not settled (<reason>)`, before any state is
+     *   touched, while a flush, dispose or reset, batch, computed / effect body or
+     *   onGraphMutation listener is in flight.
+     */
     destroy(): void;
+    /**
+     * Dispose every live node and keep the registry (1.6.0): pools and capacities stay. Runs
+     * inside `batch()`, in rounds of three phases -- effects, then computeds, then signals --
+     * each walking the pool from the highest slot down and disposing every live root (owner
+     * null); in a fresh registry that is newest first, consumers before producers. Each cleanup
+     * runs at most once; a throwing cleanup skips the same node's later onCleanup callbacks (as
+     * dispose()). onGraphMutation fires op 2 on every disposal attempt (so it can repeat for a
+     * node whose cleanup, a descendant's, or a listener threw) and op 4 per dependency link;
+     * onDisconnect fires on a source's last-subscriber loss.
+     *
+     * stats(): signals / computeds / effects / activeNodes / activeLinks fall to 0;
+     * totalAllocations and poolGrowths are kept; totalDisposals grows by the nodes disposed.
+     * Node ids continue. Every old handle reads undefined and its set is a no-op. Allocates
+     * nothing unless a cleanup or listener throws or the maxFlushPasses bound is reached.
+     *
+     * @throws The cleanup error itself when exactly one cleanup threw; an `AggregateError`
+     *   with message `reset: cleanups threw` (throw order) when two or more did.
+     * @throws AggregateError `[lite-signal] reset: cleanups kept creating nodes (...)` or
+     *   `[lite-signal] reset: no progress (...)` past `maxFlushPasses` counted rounds (only
+     *   rounds that create nodes or make no progress count); survivors stay live and every
+     *   collected error is carried, an error of batch()'s closing flush last.
+     * @throws Error `[lite-signal] reset: graph not settled (<reason>)`, before any state is
+     *   touched, while a flush, dispose or reset, batch, computed / effect body or
+     *   onGraphMutation listener is in flight.
+     */
+    reset(): void;
     /**
      * Serialize this registry's live graph to a plain {@link Snapshot} (1.6.0) --
      * in-process time-travel / undo. A cold, one-time walk of the live node pool:
@@ -535,10 +574,13 @@ export interface Registry {
      * `(flush/batch/track in progress)`: mid-flush or mid-batch, where a captured
      * cut would be torn, or from inside any running body (effect / computed /
      * watcher), including under `untrack`, `createRoot` and `runWithOwner`.
+     * OPEN exception: a body that disposed its own node (LEDGER #53).
      * `(dispose in progress)`: inside an `onCleanup` during a dispose or its owner
      * cascade (a handle's dispose, `dispose()`, or `effect()`'s first-run-throw
-     * dispose; `destroy()` runs no cleanups). `(onGraphMutation listener running)`:
-     * inside an `onGraphMutation` listener. `(scheduled effect run pending)`: while
+     * dispose); a cleanup run by `reset()` gets `(flush/batch/track in progress)` (reset() runs
+     * inside batch()); `destroy()` runs no cleanups.
+     * `(onGraphMutation listener running)`: inside an `onGraphMutation` listener.
+     * `(scheduled effect run pending)`: while
      * any effect has a scheduled run pending (queued, or its first scheduled run not
      * yet executed) -- so no pending run can be silently lost; a scheduler that never
      * runs its thunk keeps snapshot() refusing until the effect is disposed.
@@ -709,7 +751,10 @@ export function describe(handle: ReactiveHandle): NodeDescriptor | undefined;
 export function onGraphMutation(fn: GraphMutationListener | null): GraphMutationUnsubscribe;
 export function onCleanup(fn: () => void): void;
 export function stats(): RegistryStats;
+/** Top-level binding of {@link Registry.destroy} (1.6.0: true shutdown; throws while in flight). */
 export function destroy(): void;
+/** Top-level binding of {@link Registry.reset} (1.6.0): dispose every live node, keep the registry. */
+export function reset(): void;
 /** Serialize the default registry's live graph (1.6.0). See {@link Registry.snapshot}. */
 export function snapshot(): Snapshot;
 /** Rebuild a fresh registry from a snapshot (1.6.0). See {@link Registry.restore}. */

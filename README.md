@@ -149,11 +149,11 @@ There is no 64-bit or BigInt counter mode, and none is planned: every engine cou
 
 | Counter | Width / arithmetic | Exact wrap condition | At wrap | Status | Pin / soak lane |
 | ------- | ------------------ | -------------------- | ------- | ------ | --------------- |
-| `globalVersion` (stamps `node.version`, `evalVersion`, `markEpoch`) | int32 increment in `read.set` / `boxSet`, 0 skipped (F29); period 2^32 - 1; `destroy()` resets to 1 | the counter itself wraps after 2^32 - 1 writes (harmless: every compare is the modular `(a - b) \| 0`). The hazard is a node whose stamp lags the clock by g writes, g mod (2^32 - 1) in [2^31 - 1, 2^32 - 2] (lower end 2^31 - 2 when the window crosses 0) | the 2^31 dormancy band: the FIRST dependency write after the dormancy is absorbed (computed serves its stale cache; an observed effect is queued but its dep walk skips the body); the next write is exact (one-shot self-heal) | KNOWN residual (live). The 0 "unset" sentinel is handled (F29, fixed 1.6.0) | `test/51-version-zero-sentinel.test.mjs` (0 skipped); `bench/torture/wraparound-torture.mjs` (opt-in `TORTURE_WRAPAROUND=1`, full-distance band pins); soak W1 (`npm run soak:wrap`), whose control L-WRAP-TREE expects the breach. No numbered LEDGER row; the band is described in the torture header |
+| `globalVersion` (stamps `node.version`, `evalVersion`, `markEpoch`) | int32 increment in `read.set` / `boxSet`, 0 skipped (F29); period 2^32 - 1; `destroy()` resets to 1 (`reset()` does not rewind it) | the counter itself wraps after 2^32 - 1 writes (harmless: every compare is the modular `(a - b) \| 0`). The hazard is a node whose stamp lags the clock by g writes, g mod (2^32 - 1) in [2^31 - 1, 2^32 - 2] (lower end 2^31 - 2 when the window crosses 0) | the 2^31 dormancy band: the FIRST dependency write after the dormancy is absorbed (computed serves its stale cache; an observed effect is queued but its dep walk skips the body); the next write is exact (one-shot self-heal) | KNOWN residual (live). The 0 "unset" sentinel is handled (F29, fixed 1.6.0) | `test/51-version-zero-sentinel.test.mjs` (0 skipped); `bench/torture/wraparound-torture.mjs` (opt-in `TORTURE_WRAPAROUND=1`, full-distance band pins); soak W1 (`npm run soak:wrap`), whose control L-WRAP-TREE expects the breach. No numbered LEDGER row; the band is described in the torture header |
 | `node.gen` | int32 increment per dispose and per `destroy()` | a handle captured at gen g is fooled only if its slot is gen-bumped (dispose or destroy()) exactly k * 2^32 times (k >= 1) between capture and check | a stale `off()` / read / `set()` handle passes the gen check on a recycled slot (ABA) | KNOWN residual, practically unreachable (2^32 recycles of one slot) | not pinned by a unit test; soak W3 (2^32 - 1 recycles after the first dispose), L-WRAP-TREE expects the breach; the `off()` gen guard is LEDGER #40, read-path gen checks LEDGER #44 |
 | `evalCount` (FIX-R run counter) | `(x + 1) & 0x3fffffff`, 30-bit Smi, equality only | exactly k * 2^30 body runs (k >= 1) between a batch's first write to a signal and its revert, inside one batch | that revert is not blocked: pre-FIX-R behavior (stale computed / glitch) for that one revert | KNOWN residual (LEDGER #47, residual b) | `test/82-f5-fixr.test.mjs` (source pin: exactly one masked bump, 8-bit boundary row); `test/48-soak-wrap.test.mjs` near-wrap derive class (mask30); soak W5 `evalCount` |
 | `batchEpoch` | int32 increment per top-level `batch()` only, 0 skipped; period 2^32 - 1; `destroy()` resets to 1 | the epoch equals a captured value again after 2^32 - 2 intervening top-level batches (the next one reuses it) | the revert-capture looks current; FIX-R still blocks the stale revert unless the `evalCount` alias above also holds | handled (bounded by the `evalCount` residual) | soak W2; must-fail control L-WRAP-W2-PREFIXR (pre-FIX-R kernel breaches) |
-| `nodeSeq` (node id) | int32 increment per node allocation, no skip; ids start at 1 | allocation number 2^31 receives a negative id (-2^31); 0 at allocation 2^32; ids repeat after 2^32 allocations | ids leave [1, 2^31 - 1] (op streams, `nodeId()`); `restore()` accepts only snapshot ids in [1, 2^30 - 1] but copies `nextId` as any int32. At allocation k * 2^32 the id is 0: `onGraphMutation` reports node 0 as 0 (`intA`, or `intB` as a link target in opcodes 3 / 4), the same value opcode 5 (recompute) passes as its constant `intB`, so only a listener that reads `intB === 0` as "no second id" without checking the opcode misreads a link to node 0; `restore()` encodes a null or undefined `ownerId` internally as 0 ("no owner"), which is sound only because it rejects id 0: a snapshot holding a node id or `ownerId` of 0 (or any id outside [1, 2^30 - 1]) throws a `TypeError` instead of restoring. `destroy()` does not reset `nodeSeq` | KNOWN residual (live) | soak W4 (2^31 allocations), L-WRAP-TREE expects the breach; no unit pin of the wrap itself |
+| `nodeSeq` (node id) | int32 increment per node allocation, no skip; ids start at 1 | allocation number 2^31 receives a negative id (-2^31); 0 at allocation 2^32; ids repeat after 2^32 allocations | ids leave [1, 2^31 - 1] (op streams, `nodeId()`); `restore()` accepts only snapshot ids in [1, 2^30 - 1] but copies `nextId` as any int32. At allocation k * 2^32 the id is 0: `onGraphMutation` reports node 0 as 0 (`intA`, or `intB` as a link target in opcodes 3 / 4), the same value opcode 5 (recompute) passes as its constant `intB`, so only a listener that reads `intB === 0` as "no second id" without checking the opcode misreads a link to node 0; `restore()` encodes a null or undefined `ownerId` internally as 0 ("no owner"), which is sound only because it rejects id 0: a snapshot holding a node id or `ownerId` of 0 (or any id outside [1, 2^30 - 1]) throws a `TypeError` instead of restoring. Neither `destroy()` nor `reset()` resets `nodeSeq` | KNOWN residual (live) | soak W4 (2^31 allocations), L-WRAP-TREE expects the breach; no unit pin of the wrap itself |
 | live gauges and counts | `activeLinks`, `activeNodes`, `batchDepth`, lifecycle count: int32, move +/- 1; other `stat*` counts | bounded by pool capacity / the link ceiling, nesting depth, live objects | none | not reachable | none needed |
 | `statTotalAllocations`, `statTotalDisposals` (`stats().totalAllocations` / `totalDisposals`) | plain `++` on a closure `let`, no mask | exact to 2^53, but leaves the Smi range after 2^31 node allocations / disposals (2^30 on pointer-compressed V8: Chrome, Electron) | every later create / dispose boxes a HeapNumber (that path is no longer zero-allocation); counts stay exact | KNOWN residual (audit F19, not fixed) | soak W5[nodeSeq] (create+dispose class); no unit pin |
 
@@ -267,6 +267,7 @@ import {
   // Registry / lifecycle
   createRegistry, setDefaultRegistry, dispose, destroy,
   stats, CapacityError,
+  reset,                        // 1.6.0 -- dispose every live node, keep the registry
   // Introspection (1.1.4 / 1.1.5 / 1.2.1)
   hasObservers, observeObservers,
   forEachObserver, forEachSource,
@@ -536,12 +537,62 @@ const r = createRegistry({
 
 const s = r.signal(0);
 const e = r.effect(() => s());
-r.destroy();                     // reset all pools, invalidate generations
+r.reset();                       // dispose every live node (runs cleanups); registry and pools stay
+r.destroy();                     // shutdown: invalidate generations, release pools, zero counters
 ```
 
 `createRegistry` is the unit of isolation. Two registries share no state -- useful for multi-tenant code, plugin sandboxes, and tests that need a fresh world.
 
 `setDefaultRegistry(r)` swaps the registry used by top-level helpers. Use sparingly; intended for test setup.
+
+### reset / destroy (1.6.0)
+
+```ts
+r.reset(): void;     // top-level reset() binds the default registry
+r.destroy(): void;   // top-level destroy() likewise
+```
+
+**`reset()`** disposes every live node and keeps the registry: pools and capacities stay. It runs inside
+`batch()` in rounds of three phases -- effects, then computeds, then signals -- each walking the pool from
+the highest slot down and disposing every live root (owner null); in a fresh registry that is newest first,
+consumers before producers. Each cleanup runs at most once; a throwing cleanup skips the same node's later
+`onCleanup` callbacks (as `dispose()`). `onGraphMutation` fires op 2 on every disposal attempt (so it can
+repeat for a node whose cleanup, a descendant's cleanup or a listener threw) and op 4 per dependency link;
+`onDisconnect` fires on a source's last-subscriber loss. One cleanup error is rethrown as itself; two or more
+become an `AggregateError` with message `reset: cleanups threw`, in throw order. Past `maxFlushPasses`
+counted rounds (only rounds that create nodes or make no progress count) it ALWAYS throws an
+`AggregateError` (`[lite-signal] reset: cleanups kept creating nodes (...)` or
+`[lite-signal] reset: no progress (...)`); survivors stay live and every collected error is carried, an error
+of `batch()`'s closing flush last.
+
+**`destroy()`** is a true shutdown: it invalidates every node and link at once (generation bump), releases
+both pools, rebases the capacities to the constructor values, zeroes the live gauges and the three cumulative counters (
+`totalAllocations`, `totalDisposals`, `poolGrowths`), resets the global clock (`globalVersion`, `batchEpoch`) to 1, and clears the
+`onGraphMutation` stack (a held unsubscribe becomes a no-op). It runs NO cleanups and fires NO op 2. Node ids
+are not rewound. The registry stays usable: the next node or link regrows the pools lazily from the
+constructor config.
+
+**In flight.** Both throw `[lite-signal] reset|destroy: graph not settled (<reason>)` BEFORE touching any
+state while the graph is not settled. Reasons, in check order: `flush in progress`,
+`dispose or reset in progress`, `batch in progress`, `a computed / effect body is running`,
+`a computed / effect body is running (untrack)`, `onGraphMutation listener running`.
+
+**`stats()` after.** `reset()`: `signals`, `computeds`, `effects`, `activeNodes`, `activeLinks` fall to 0;
+`totalAllocations` and `poolGrowths` are kept; `totalDisposals` grows by the nodes disposed. `destroy()`
+zeroes all three cumulative counters. After either, an old handle reads `undefined` and its `set` is a no-op.
+`reset()` allocates nothing unless a cleanup or listener throws or the bound above is hit.
+
+```js
+const r = createRegistry();
+const s = r.signal(1);
+r.effect(() => { s(); r.onCleanup(() => console.log("cleanup ran")); });
+r.reset();                    // logs "cleanup ran"; every node disposed, r stays usable
+r.stats().activeNodes;        // 0
+s();                          // undefined -- stale handle
+const t = r.signal(2);        // pools and capacities were kept
+r.destroy();                  // shutdown: no cleanups run, counters zeroed
+r.stats().totalAllocations;   // 0
+```
 
 ### snapshot / restore (1.6.0)
 
@@ -567,7 +618,7 @@ handles[1].set(7);                                             // the restored e
 `snapshot()` walks the live node pool once (cold path) and returns a plain, in-process object; values are held by reference (no structured clone). `restore()` builds a fresh registry from it and returns that registry; the source registry is untouched.
 
 - **What restore does.** It rebuilds nodes and links without running any body, keeps the snapshot ids (a re-snapshot round-trips), and does NOT re-fire effects -- an effect runs only on its next dependency change. A dirty computed restores with its recorded deps, value, version, error bit, evalVersion and markEpoch, so a read pulls it exactly as live does: the pull walks its deps and runs the body only if a dep moved past its evalVersion (otherwise the seeded value is a cache hit); when the body runs, a result equal to the seeded value (under Object.is -- a custom `equals` is not captured, so a computed built with one may propagate after restore where the live graph would not) does not propagate. A never-evaluated computed (version 0) is not seeded; its body runs on its first read. A clean one restores with its cached value and deps. Restore places every subscriber link at its recorded position and each owner's children in recorded order, so each source's subscriber order and each owner's child order round-trip. After restore, the rebuilt graph runs each effect with the same sequence of values, and leaves every node with the same value or error and the same subscriber / owner order, as the live graph would from the same point; this is a gated property (the seeded live fuzz in test/76: 400 graphs x 3 seeds in `npm test`, 4000 x 5 seeds at the A9 close), not a universal law. Limits: cleanup callbacks (`onCleanup`) and a custom `equals` / scheduler are NOT captured, so an effect that registered a cleanup before `snapshot()` has none until its next run (the ORDER of pre-snapshot cleanups is therefore not reproduced); restore copies live state, so it reproduces live as it is now: LEDGER #38 (F6), #41 and #42 are fixed in 1.6.0-dev (FIX-T), so a restored graph's dependency pre-walk no longer rethrows a cached error either, leaving an error state is a change in it too, and a restored dep cycle throws CycleError (below).
-- **Fail-closed on capture.** `snapshot()` throws `[lite-signal] snapshot: graph not settled (<reason>)`: `(flush/batch/track in progress)` inside a flush, inside a batch, or while any body is running -- including a body under `untrack`, `createRoot` or `runWithOwner`; `(dispose in progress)` inside an `onCleanup` during a dispose or its owner cascade (a handle's dispose, `dispose()`, or `effect()`'s first-run-throw dispose -- `destroy()` runs no cleanups); `(onGraphMutation listener running)` inside an `onGraphMutation` listener; `(scheduled effect run pending)` while any effect has a scheduled run pending (queued, or its first scheduled run not yet executed), so no pending run can be silently lost. A scheduler that never runs its thunk keeps `snapshot()` refusing until that effect is disposed.
+- **Fail-closed on capture.** `snapshot()` throws `[lite-signal] snapshot: graph not settled (<reason>)`: `(flush/batch/track in progress)` inside a flush, inside a batch, or while any body is running -- including a body under `untrack`, `createRoot` or `runWithOwner` (OPEN exception: a body that disposed its own node, LEDGER #53); `(dispose in progress)` inside an `onCleanup` during a dispose or its owner cascade (a handle's dispose, `dispose()`, or `effect()`'s first-run-throw dispose) -- a cleanup run by `reset()` gets `(flush/batch/track in progress)` instead, since `reset()` runs inside `batch()`; `destroy()` runs no cleanups; `(onGraphMutation listener running)` inside an `onGraphMutation` listener; `(scheduled effect run pending)` while any effect has a scheduled run pending (queued, or its first scheduled run not yet executed), so no pending run can be silently lost. A scheduler that never runs its thunk keeps `snapshot()` refusing until that effect is disposed.
 - **Fail-closed on restore.** A malformed snapshot (`TypeError`), a computed or effect with no `fnsById[id]` entry, a duplicate id, a dangling dep id (on any record, dirty and never-read computeds included), a dangling owner id, or a non-object `opts` / `config` all throw instead of returning a partial registry.
 - **Input law.** `restore()` validates the whole snapshot before building anything: ids must be positive integers <= 0x3FFFFFFF (2^30 - 1) and unique; dep ids and ownerIds must be positive integers <= 0x3FFFFFFF that resolve to a record id; versions and flags must be int32; the snapshot's `gv`, `nextId` and every record's `evalVersion` / `markEpoch` are required and must be int32 (a missing or non-int32 one throws a TypeError before anything is built); `gv` is never 0, `nextId` may be any 32-bit integer, even at or below a restored id (live's counter wraps), and restore continues ids from it exactly, an effect's `evalVersion` is never 0, a signal's `evalVersion` and `markEpoch` are 0, `clean` must equal (`evalVersion !== 0` and `markEpoch` not modularly ahead of `evalVersion`), and a computed has `evalVersion` 0 exactly when its `version` is 0 (negative stamps after an int32 wrap and any stamp-vs-`gv` order are NOT refused: live reaches them); a signal is never owned; deps must be an array; subPos must be an array with one entry per dep (each an int >= 0, and per source a permutation of 0..n-1); ownerPos must be an int >= -1, exactly -1 when ownerId is null, and per owner a permutation of 0..n-1; a snapshot without subPos / ownerPos is refused; a null / non-object record throws a named TypeError. Snapshots carry live node ids, so a snapshot holding any node id past 0x3FFFFFFF (a node created after the registry's first 2^30 - 1, including in a registry restored at the cap that then grew) snapshots fine but restore() refuses it -- fail closed, by design (D-F); once those nodes are disposed, a NEW snapshot of that registry restores again (the old snapshot still holds the id and stays refused). Options must be a plain object with own keys fnsById / handles / config only -- an unknown key throws with a did-you-mean hint; bodies are looked up only as own properties of fnsById. Rejected structures: a signal with deps, an effect as a dep source, a signal as owner, a self owner, owner cycles, and a dep id missing from the snapshot on any record (dirty and never-read computeds included). opts.handles is filled only after the rebuild succeeds; a failed restore leaves it untouched. A snapshot taken after a registry's node-id counter wrapped (ids <= 0) is rejected (fail closed). A dep cycle among clean computeds is NOT refused: live can emit one (a computed whose body catches a CycleError from a partner), and the restored graph reproduces live exactly, including live's own CycleError ("CycleError: Circular dependency detected.") on the next read after a write to a dep (LEDGER #42, fixed in FIX-T; residual: a pool larger than the pre-walk stack limit still overflows the stack with a RangeError first).
 - **Sizing.** Without `opts.config`, the fresh registry gets `maxNodes = max(1.5N + 16, 1024)` and `maxLinks = max(1.5L + 16, 4 x maxNodes)` (N nodes, L dep edges). The source registry's `onCapacityExceeded` and `maxFlushPasses` are not carried -- pass `opts.config` to set them; an explicit config wins outright.
@@ -609,7 +660,7 @@ Default sizing for a Twitch-extension-style budget:
 | Heavy dashboard (variable scale)    | 2048     | 16384    | `"eager"` | `"grow"`  |
 | Per-viewer sandbox / short-lived    | 512      | 2048     | `"lazy"`  | `"throw"` |
 
-`stats()` reports 13 keys: ten live gauges -- `signals`, `computeds`, `effects`, `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`, `linkPoolCapacity` (the capacity keys are ledgers under `"lazy"`), plus `nodePoolPopulation` / `linkPoolPopulation` (**1.5.0**: the true constructed-object counts, distinct from the capacity ledgers) -- plus three cumulative lifecycle counters added in **1.4.0**: `totalAllocations`, `totalDisposals`, and `poolGrowths` (monotonic over the registry's life, reset only by `destroy()`). Sample them over time to chart allocation rate, pool-reuse ratio, and graph churn; in a quiescent registry `totalAllocations - totalDisposals === activeNodes`. Drop it on screen for live observability.
+`stats()` reports 13 keys: ten live gauges -- `signals`, `computeds`, `effects`, `activeNodes`, `activeLinks`, `pooledLinks`, `nodePoolCapacity`, `linkPoolCapacity` (the capacity keys are ledgers under `"lazy"`), plus `nodePoolPopulation` / `linkPoolPopulation` (**1.5.0**: the true constructed-object counts, distinct from the capacity ledgers) -- plus three cumulative lifecycle counters added in **1.4.0**: `totalAllocations`, `totalDisposals`, and `poolGrowths` (monotonic over the registry's life, zeroed only by `destroy()`; `reset()` keeps `totalAllocations` and `poolGrowths` and grows `totalDisposals`). Sample them over time to chart allocation rate, pool-reuse ratio, and graph churn; in a quiescent registry `totalAllocations - totalDisposals === activeNodes`. Drop it on screen for live observability.
 
 </details>
 
@@ -769,6 +820,7 @@ These are the questions you'd ask in a code review, with the answers:
 - **Dispose during flush.** Effects re-check their generation (`gen`) before running through a scheduler trampoline. If `dispose()` bumped the gen between schedule and execute, the trampoline becomes a no-op. The trampoline closure is cached on the node (v1.2) so repeated re-schedules reuse the same function -- ABA safe under async schedulers.
 - **32-bit version wrap.** Versions bump as `((... + 1) | 0) || 1` (skips 0, reserved for "unset"; period 2^32-1), so after 2^31 writes they wrap to a negative number. The comparison `((dep.version - evalVer) | 0) > 0` is wrap-safe -- it works on the *modular distance*, not raw integer ordering, except the 2^31 dormancy band (see "Counter widths and wrap limits" above).
 - **Deep chain depth.** Computed resolution is recursive in the JS call stack, and the limit depends on the path. Measured on Node v26.8.2 (darwin, 2026-10-22, untimed depth probes; a measurement, not a law): a COLD first read of a chain of computeds overflows near 2,411 levels (warmed bisection; 2,567 on 1.5.2; a one-shot fresh process: 1,984 vs 2,120), a `computedBox` `get()` chain near 1,945 (one extra frame per cold level), and re-walking an already-evaluated chain near 5,055 on every build. Beyond that you get `RangeError: Maximum call stack size exceeded`. A dependency cycle among computeds (for example a restored graph) throws `CycleError: Circular dependency detected.` once the pre-walk is deeper than the node pool (LEDGER #42); a pool larger than the pre-walk stack limit still overflows the stack with a `RangeError` first (measured on the same host: eager `maxNodes` 4096, 16384 and 65536 -> `RangeError`; the default 1024 -> `CycleError`). Effects use an iterative mark phase, so signal -> effect fan-out has no depth limit other than memory.
+- **`reset()` / `destroy()` in flight.** Both throw `graph not settled` before touching state (see [reset / destroy](#reset--destroy-160)); call them from outside any flush, batch, body, dispose or listener. `reset()` called from one of its own cleanups reports `dispose or reset in progress`.
 - **`destroy()` after dispose.** `destroy()` bumps every node's generation, so any in-flight scheduled trampolines from before destruction are silently dropped. Closures returned to user code from disposed effects guard with `if (node.flags === 0) return;` -- calling `dispose()` again is a no-op.
 
 </details>
@@ -918,20 +970,20 @@ npm run bench
 
 ### Tier 4 -- Torture (correctness and resources under chaos)
 
-`bench/torture/` holds the complete **24-scenario suite (23 semantic + 1
+`bench/torture/` holds the complete **25-scenario suite (24 semantic + 1
 soak, opt-in)** in two groups, behind one runner (`run.mjs`
 SCENARIOS; 22 at the 1.4.4-parity RC, 26 after the 2026-08 audit added
 `retrack-dispose-torture`, `contract-torture`, `interop-torture` and
 `wraparound-torture`, 24 since the resource soaks `graph-fuzzer` and
 `torture-soak` were retired on 2026-10-20, 25 since `snapshot-torture` joined for 1.6.0,
-24 since `scheduler-bench` was retired on 2026-10-29). They are not
+24 since `scheduler-bench` was retired on 2026-10-29, 25 since `reset-torture` joined for 1.6.0). They are not
 perf benchmarks: the ops/sec figures reflect random workload composition, not
 engine throughput -- `bench/benchmark.mjs` remains the canonical perf harness.
 
 Every scenario feature-detects and **skips cleanly** below the engine version
 that introduces its feature, so the whole set is safe to ship on the 1.5.0 engine
-and stays green from 1.4.x forward. On this engine the runner executes **19
-semantic scenarios** -- `snapshot-torture` (1.6.0) plus the 18 of the 1.5.x engine, including `owner-torture`, `error-torture`,
+and stays green from 1.4.x forward. On this engine the runner executes **20
+semantic scenarios** -- `snapshot-torture` and `reset-torture` (both 1.6.0) plus the 18 of the 1.5.x engine, including `owner-torture`, `error-torture`,
 `deep-chain-torture`, `zerogc-torture` (its `churn-box` signalBox lane),
 `introspect-torture` and `lifecycle-torture`, which EXECUTE here for the first
 time via signalBox and the getOwner/runWithOwner/createRoot surface -- and
@@ -1304,7 +1356,7 @@ function spawnPlugin(pluginCode) {
   } catch (err) {
     console.error("Plugin failed:", err);
   }
-  return () => r.destroy();  // unload kills the whole reactive world
+  return () => r.destroy();  // unload invalidates the whole reactive world (no cleanups; r.reset() runs them)
 }
 ```
 
@@ -1406,7 +1458,7 @@ A 1000-signal graph might have anywhere from 1000 to 1,000,000 edges depending o
 Two reasons: `NaN !== NaN` would cause a `set(NaN)` followed by `set(NaN)` to re-fire effects (almost never what you want); and `-0 === +0` would silently merge signed zeros, which is a footgun in physics/animation code where the sign carries information.
 
 **Will `destroy()` interrupt in-flight effects?**
-Effects already on the call stack will finish their current invocation. Future scheduled runs (via `scheduler` option) become no-ops because their captured generation no longer matches the node's gen. Effects in the active queue but not yet executed are dropped.
+No -- since 1.6.0 it cannot be called in flight. `destroy()` and `reset()` throw `[lite-signal] destroy|reset: graph not settled (<reason>)` before touching any state while a flush, dispose or reset, batch, computed / effect body or `onGraphMutation` listener is in flight. Called when settled, `destroy()` bumps every node's generation, so a scheduled run (via `scheduler` option) queued earlier becomes a no-op because its captured generation no longer matches.
 
 **How do I integrate with React/Vue/Svelte?**
 `signal.subscribe(callback)` is the integration surface. For React, wire it into `useSyncExternalStore`. For Vue, expose `signal()` as a getter. For Svelte, return `{ subscribe }` matching the store contract.
@@ -1430,7 +1482,7 @@ Yes, if your computeFn reads its deps in the same order each invocation. The `cu
 npm test          # behavior suite, ~1.3s
 npm run test:gc   # zero-gc suite, requires --expose-gc, ~3s
 npm run bench     # microscope + mirror comparative benches (rb.txt / r.txt), ~5min
-npm run torture          # full torture suite, all 24 scenarios (23 semantic + 1 opt-in soak)
+npm run torture          # full torture suite, all 25 scenarios (24 semantic + 1 opt-in soak)
 npm run torture:semantic # correctness scenarios only, ~10s
 npm run torture:soak     # opt-in wraparound soak (0 passed, 1 skipped by default)
 node --expose-gc bench/benchmarkReactive.mjs  # DEPRECATED pre-v3 reactivity suite (removed after 1.5.1)

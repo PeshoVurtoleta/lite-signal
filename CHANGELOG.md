@@ -15,7 +15,55 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 4-1, commit fc1f826), whose entry lands here when its campaign is accepted. The Signal.js rungs after that:
 `observeObservers` registrations are independent (A5a), `onGraphMutation` unsubscribe works in any order (A5b),
 user callbacks run with `this === undefined` (#48) and a stale signal handle's `update(fn)` returns without calling `fn` (#51); see their "### Fixed" entries below. Nothing else in the
-published `files[]` changes except `README.md`, `llms.txt` and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
+published `files[]` changes except `README.md`, `llms.txt`, the 1.6.0 `reset()` / true-shutdown `destroy()` (C-RESET, below) and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
+
+### Added -- `registry.reset()` and top-level `reset()` (C-RESET)
+
+`reset()` disposes every live node and keeps the registry, its pools and its capacities. It runs inside `batch()`
+in rounds of phases effects -> computeds -> signals, each walking the pool from the highest slot down and
+disposing every live root (owner null); in a fresh registry that is newest first, consumers before producers.
+Each cleanup runs at most once; a throwing cleanup skips the same node's later `onCleanup` callbacks (as
+`dispose()`). `onGraphMutation` fires op 2 on every disposal attempt (it can repeat for a node whose cleanup, a
+descendant's cleanup or a listener threw) and op 4 per dependency link; `onDisconnect` fires on a source's
+last-subscriber loss. One cleanup error is rethrown as itself; two or more become an `AggregateError` with
+message `reset: cleanups threw`, in throw order. Past `maxFlushPasses` counted rounds (only rounds that create
+nodes or make no progress count) it always throws an `AggregateError` (`[lite-signal] reset: cleanups kept
+creating nodes (...)` or `[lite-signal] reset: no progress (...)`); survivors stay live and every collected
+error is carried, an error of `batch()`'s closing flush last. `stats()`: the live gauges fall to 0,
+`totalAllocations` and `poolGrowths` are kept, `totalDisposals` grows by the nodes disposed; node ids continue.
+Old handles read `undefined` and their `set` is a no-op. It allocates nothing unless a cleanup or listener
+throws or the bound is hit. While a flush, dispose / reset, batch, computed / effect body or `onGraphMutation`
+listener is in flight it throws `[lite-signal] reset: graph not settled (<reason>)` before touching any state.
+`Signal.d.ts` gains `Registry.reset()` and `export function reset()`. `snapshot()` called from a `reset()`
+cleanup throws its `(flush/batch/track in progress)` refusal (`reset()` runs inside `batch()`).
+
+### Changed -- `destroy()` is a true shutdown (C-RESET; LEDGER #52 closed)
+
+`destroy()` now invalidates every node and link at once (generation bump), releases BOTH pools, rebases the
+capacities to the constructor values, zeroes the live gauges and the three cumulative counters (`totalAllocations`, `totalDisposals`,
+`poolGrowths`), resets the global clock (`globalVersion`, `batchEpoch`) to 1 (`nodeSeq` is not rewound), and clears
+the `onGraphMutation` stack (a held unsubscribe becomes a no-op). It runs no cleanups and fires no op 2. The
+registry stays usable: the next node or link regrows the pools lazily from the constructor config. While a
+flush, dispose / reset, batch, computed / effect body or `onGraphMutation` listener is in flight it now throws
+`[lite-signal] destroy: graph not settled (<reason>)` before touching any state (was: undefined behaviour; the
+LEDGER #52 crash class, a `TypeError` from `destroy()` inside a body, is closed by the guard).
+
+### Fixed -- the stale "use a fresh registry afterwards" `destroy()` typing doc
+
+`Signal.d.ts` said outstanding read / set closures "silently misbehave; use a fresh registry afterwards".
+Every old read / set / dispose closure is a safe no-op after `destroy()`; the doc, and the README / llms.txt
+lines that said `destroy()` was "safe to call mid-flight" or that counters were "reset only by destroy()" (now
+"zeroed only by destroy(); reset() keeps them"), are rewritten.
+
+### Tests / Docs -- reset() and destroy() (C-RESET)
+
+- `test/103-reset.test.mjs` -- 56 tests (55 without `--expose-gc`; 1 skips there).
+- `test/104-destroy-release.test.mjs` -- 19 tests (17 without `--expose-gc`; 2 skip there).
+- `bench/torture/reset-torture.mjs` (`npm run torture`, the 25th scenario) -- DETERMINISTIC tier: `reset()`
+  window max 0 B per 256-node window, 0 minor / 0 major GC over 200 windows, on the tiered build AND under
+  `--no-opt --no-maglev`; its must-fail control measured 32 B/node tiered (48 B/node no-opt) and fails the same
+  gate; lite-leak witness 5 reset cycles x 384 targets, `tracker.size()` 0 each cycle.
+- NOT in yet (a later unit): the soak REGISTRY lane's DIV-F10 / DIV-D2 re-judging and the parity re-pin.
 
 ### Fixed -- stale update(fn) no longer calls fn (LEDGER #51, b136)
 
