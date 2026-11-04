@@ -264,7 +264,12 @@
     "destroy-in-batch",
     "destroy-in-body",
     "destroy-in-computed",
-    "reuse-after-destroy"
+    "reuse-after-destroy",
+    "reset-top",
+    "reset-in-flight",
+    "reset-in-batch",
+    "reset-in-body",
+    "reset-in-computed"
    ],
    "optional": [],
    "oracles": [
@@ -273,7 +278,9 @@
     "O2",
     "O4",
     "O5",
-    "O6"
+    "O6",
+    "O8",
+    "OW"
    ]
   },
   "CAPACITY": {
@@ -367,97 +374,67 @@
   }
  },
  "provenance": {
-  "date": "2026-11-02T22:19:01.643Z",
-  "gitHead": "dc7ed8fb8eaa8975273409e543c81d383e3943f1",
+  "date": "2026-11-04T20:39:06.634Z",
+  "gitHead": "29bc397473375a5cf942ff165ffd9b78f858d92c",
   "gitDirty": [
-   " M .github/workflows/soak-nightly.yml",
-   " M CHANGELOG.md",
-   " M bench/soak/_mustfail.mjs",
-   " M bench/soak/calibration/calibrate.mjs",
-   " M bench/soak/calibration/golden/scripts-1000.json",
-   " M bench/soak/config.mjs",
-   " M bench/soak/gates.mjs",
-   " M bench/soak/lanes/index.mjs",
-   " M bench/soak/lanes/snapshot.mjs",
-   " M bench/soak/main.mjs",
-   " M bench/soak/oracles.mjs",
-   " M bench/soak/parity.json",
-   " M bench/soak/parity.mjs",
-   " M bench/soak/scenarios.mjs",
-   " M bench/soak/teeth.mjs",
-   " M decisions/0001-soak-design.md",
-   " M test/41-soak-config.test.mjs",
-   " M test/42-soak-gates.test.mjs",
-   " M test/43-soak-model.test.mjs",
-   " M test/45-soak-teeth.test.mjs",
-   " M test/46-soak-report.test.mjs",
-   " M test/47-ci-workflows.test.mjs",
-   " M test/74-soak-s3-seam.test.mjs",
-   " M test/75-soak-hook.test.mjs",
-   " M test/89-soak-scheduler.test.mjs",
-   " M test/92-soak-registry.test.mjs",
-   " M test/93-soak-capacity.test.mjs",
-   " M test/97-soak-twin.test.mjs",
-   " M test/98-soak-box-roster.test.mjs",
    "?? BRIEF.md",
-   "?? bench/bench-runs/",
-   "?? test/99-soak-snapshot-roster.test.mjs"
+   "?? bench/bench-runs/"
   ],
-  "engineSha256": "ea0b64d17e6d68b49809f2124a44abf0204e47cd1e48bcefeccd33fcba023fe9",
+  "engineSha256": "d235e505c6732e6d7849bd5305484f3309e43f4d23a75e4ca12cc9e0345bb65a",
   "engineNote": "sha256 of <root>/Signal.js (the tree kernel), equal at launch, at the end and in kernels.tree.files (--write dies otherwise): the engine actually cut, also on a dirty tree",
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "MacBook-Pro.local",
   "loadavgBefore": [
-   1.31,
-   1.39,
-   1.57
+   1.1,
+   1.1,
+   1.13
   ],
   "loadavgAfterTimed": [
-   1.85,
-   1.56,
-   1.56
+   1.96,
+   1.55,
+   1.34
   ],
   "loadavgAfter": [
-   5.91,
-   4.33,
-   3.09
+   5.36,
+   4.28,
+   2.99
   ],
   "busyNodeBefore": [],
   "busyNodeRule": "other node processes (not this process or its node launcher chain, e.g. the quiet-lock wrapper) >= 10% CPU at launch, as pid pcpu command; [] = none, null = ps failed",
-  "seconds": 1523,
-  "cutSeconds": 781,
+  "seconds": 1493,
+  "cutSeconds": 768,
   "secondsClock": "wall clock (Date.now), whole seconds: seconds = --write entry to the evidence write (every step; the origin of the \"(N s)\" log stamps); cutSeconds = step 1, the cut (the only timed phase under --timed)",
   "timing": "timed under quiet-lock, sequential children, one kernel at a time (REPORTED tier; decides no gate)",
   "pinnedSha256": {
    "bench/soak/gen.mjs": "9ce4d2a7eb9294a899a867938dfbefc4a6c10b4704605cc407391a8806b3315a",
    "bench/soak/exec.mjs": "1dd5b1c281507adad99bee43c96f69e85e572049a4167e41f14194286b37d2ce",
-   "bench/soak/oracles.mjs": "18cbd51956c72ba4ba6c64ffe4ae07cf042c09a0b3af211da300359247301792",
-   "bench/soak/model.mjs": "aa26039cbd8149cf896ed2490b46b9b433ab1e33515d558a286917484db9746e",
-   "bench/soak/scenarios.mjs": "3c2defe5a0b28c5f35255b547480b3f7c80b611efdceef7aa11533374e456326",
+   "bench/soak/oracles.mjs": "7a870b623fc650a693bae40a096904eaf126cffd798f0e81c010f11da14720c5",
+   "bench/soak/model.mjs": "84535c0345733e4f09e3390a14bf5191d854cf7f9cb544cad1d7a3e53c31568c",
+   "bench/soak/scenarios.mjs": "b66cdae4be8e158ee16bb9dff3828bf3fcf6704f6e50959eaf765ce4d1460b2b",
    "bench/soak/seeds.mjs": "b68b535f7dcc83c2e12582c488fea1299704d41b492420854279e768010e9ff5",
-   "bench/soak/lanes/index.mjs": "60b2d8e5be9cb1d29e91bc38aeefa7ad19ea6a8fc3b9a15d245a684efc51df38",
+   "bench/soak/lanes/index.mjs": "9cbb47ef4392c4eac3c00d7f29c04eb0a9a994d242eb75ac6e9c1818c382b19d",
    "bench/soak/lanes/graph.mjs": "81a0738279e1852c6105bd2a6dd3eed78dc9e6969d27eefe0b1fe42cff5e3950",
    "bench/soak/lanes/batch.mjs": "70aabc8006f0aad955bbef743f48477f6de2922738e97b66bdcdfbd219785603",
    "bench/soak/lanes/error.mjs": "c69e92c4f5070ab8e70794964a8a1e76d4b34af81bde2972806265ddfa62d8ef",
    "bench/soak/lanes/nest.mjs": "5bf12719fefc70aa52e6556db33456c2a4a99f09c1a4b8467061d018f97f4984",
-   "bench/soak/adapters/lite.mjs": "3fab2de955510bd87f1f65b0cbbf451488e737227c463deab34259c48be2762a",
-   "bench/soak/adapters/contract.mjs": "95760589bc3081dcf2cfccd25bc7896e33c995912047f1820a8b755a04286e31",
+   "bench/soak/adapters/lite.mjs": "58cdedc115c0cac523b852f650e1207b3eee40103f0d29da19b54620dec1aaeb",
+   "bench/soak/adapters/contract.mjs": "dc76a4c10272f472b1e7cf4a61f1167105316eb353239e3ac88174b08f78ebf1",
    "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
    "bench/torture/helpers/index.mjs": "0f58faf5f553716bf5059cdfeae7fe887ea07fe3e853d8cba0e75106e54cb119",
-   "bench/soak/adapters/lite-s3.mjs": "1b28b4c336d90e5522368146c066bf34200e1b07160b8a20c6d07320d4760d72",
+   "bench/soak/adapters/lite-s3.mjs": "c65976c825a7640a78edfe0871f9b798000b2cc019cf6774e15a26dc88a2e181",
    "bench/soak/mirror.mjs": "11998b7aebdd0e2003e10e68a146720d943598f6c71575dcddcffa0634935be7",
    "bench/soak/twin.mjs": "4ba2d244ccc035e569433c98ee11857fe5a4323fde7148f7287875139c7bedb2",
    "bench/soak/trace.mjs": "77b81f000cf729f20992e68e2ece0d56b0c4f09cc58ccadde12d35546afd8890",
-   "bench/soak/adapters/lite-box.mjs": "6303463149efff57c02a318b69817f2ab41cc17118e2d1a0062a6487329f330a",
+   "bench/soak/adapters/lite-box.mjs": "4926b2b467c5f2772a04eea776dba4d909f432c9fa27ac2634add1c60251fb15",
    "bench/soak/lanes/wie.mjs": "67aebd356665312b11c0f323e756485caf8cf50f8bec277322937bbf067a0e34",
    "bench/soak/lanes/hook.mjs": "9108a30a1a5a17fdecec2ad221d886a6c2540f29dc6fdf476c7ec9fcdc8cb5f3",
    "bench/soak/lanes/lifecycle.mjs": "1be1721a7f04caa993ed6e16ea18490602322c2452befbb9f80efc8544c43a4c",
    "bench/soak/lanes/owner.mjs": "f8e803e3481e2f5693368862119bb102053287bd74ddd3cba138291637982eb6",
    "bench/soak/lanes/recycle.mjs": "2f7e0d56a3e9e4e6dd94220a0b1af424b08defdc0908a46df39eb197a59aa7b8",
    "bench/soak/lanes/scheduler.mjs": "e03f0fc102fb076d7055493c0795d29eef99a1ddc77a242082a4c243206930b0",
-   "bench/soak/lanes/registry.mjs": "ddf650bb0665e2633f4b7082d85ccb5182cbfddc81665aef8d3ba58b40755732",
+   "bench/soak/lanes/registry.mjs": "6068dcdd7ec42b120f3a3f76ff8b55a0f55da03c47334d3e2ef770f64a828be7",
    "bench/soak/lanes/capacity.mjs": "f94162ff661918b01a0809a1daa762bfcdaeeb167eb0577909e5c378eb2f4f9e",
    "bench/soak/lanes/box.mjs": "348c64fb19a4a68c88a621f48b5de381f5ee66dba519b6743a021257fa56d661",
    "bench/soak/lanes/snapshot.mjs": "8477d53c0e031a0f0b838f3752baa8972d306f5262b119481e88794a48a99609"
@@ -886,12 +863,12 @@
     },
     "REGISTRY": {
      "rarestRequired": {
-      "scenario": "destroy-in-batch",
-      "hits": 8298
+      "scenario": "reset-in-computed",
+      "hits": 9723
      },
      "leastPerformed": {
-      "oracle": "O6",
-      "performed": 1093819
+      "oracle": "O8",
+      "performed": 19810
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -1037,11 +1014,11 @@
     "REGISTRY": {
      "rarestRequired": {
       "scenario": "destroy-in-batch",
-      "hits": 448
+      "hits": 503
      },
      "leastPerformed": {
-      "oracle": "O6",
-      "performed": 59867
+      "oracle": "O8",
+      "performed": 1080
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -1740,111 +1717,111 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      14935,
-      14896,
-      14807,
-      15085,
-      14338,
-      14354,
-      14750,
-      14560,
-      14451,
-      14087,
-      14297
+      14836,
+      14686,
+      14860,
+      15145,
+      14344,
+      14413,
+      14742,
+      14507,
+      14445,
+      14066,
+      14012
      ],
-     "min": 14087,
-     "median": 14560,
-     "max": 15085
+     "min": 14012,
+     "median": 14507,
+     "max": 15145
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      48822,
-      49656,
-      50050,
-      48846,
+      49078,
+      49752,
+      50161,
+      48979,
+      48936,
       49049,
-      49018,
-      49339,
-      49322,
-      49080,
-      49063,
-      48498
+      49683,
+      49468,
+      49013,
+      48996,
+      48770
      ],
-     "min": 48498,
-     "median": 49063,
-     "max": 50050
+     "min": 48770,
+     "median": 49049,
+     "max": 50161
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      47448,
-      48111,
-      47507,
-      47440,
-      48626,
-      47992,
-      47820,
-      48933,
-      47835,
-      48391,
-      47467
+      47156,
+      48291,
+      46957,
+      47348,
+      48876,
+      47924,
+      47584,
+      48806,
+      47794,
+      48471,
+      47464
      ],
-     "min": 47440,
-     "median": 47835,
-     "max": 48933
+     "min": 46957,
+     "median": 47794,
+     "max": 48876
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      32626,
-      36909,
-      36587,
-      36693,
-      36741,
-      37083,
-      36672,
-      36607,
-      36666,
-      36648,
-      36675
+      26559,
+      36815,
+      36765,
+      36987,
+      36814,
+      37225,
+      36660,
+      36904,
+      36794,
+      36833,
+      36873
      ],
-     "min": 32626,
-     "median": 36672,
-     "max": 37083
+     "min": 26559,
+     "median": 36815,
+     "max": 37225
     },
     "HOOK": {
      "opsPerSecPerCycle": [
-      38613,
-      38873,
-      37968,
-      38501,
-      39223,
+      38616,
+      38676,
+      37929,
+      38512,
+      39246,
       38833,
-      39631,
-      37897,
-      39545,
-      38243,
-      37960
+      39441,
+      37873,
+      39688,
+      38221,
+      37809
      ],
-     "min": 37897,
-     "median": 38613,
-     "max": 39631
+     "min": 37809,
+     "median": 38616,
+     "max": 39688
     },
     "SCHEDULER": {
      "opsPerSecPerCycle": [
-      192965,
-      224953,
-      225003,
-      230220,
-      227298,
-      229221,
-      229011,
-      230062,
-      228022,
-      227195,
-      228177
+      195295,
+      227608,
+      231978,
+      233110,
+      231389,
+      230273,
+      232031,
+      230750,
+      229956,
+      229693,
+      228541
      ],
-     "min": 192965,
-     "median": 228022,
-     "max": 230220
+     "min": 195295,
+     "median": 230273,
+     "max": 233110
     }
    }
   },
@@ -2406,93 +2383,93 @@
    "throughput": {
     "GRAPH": {
      "opsPerSecPerCycle": [
-      13751,
-      14002,
-      13889,
-      14247,
-      13565,
-      13659,
-      14050,
-      13846,
-      13895,
-      13518,
-      13746
+      13837,
+      13888,
+      13901,
+      14238,
+      13501,
+      13337,
+      13841,
+      13899,
+      13847,
+      13589,
+      13817
      ],
-     "min": 13518,
-     "median": 13846,
-     "max": 14247
+     "min": 13337,
+     "median": 13841,
+     "max": 14238
     },
     "BATCH": {
      "opsPerSecPerCycle": [
-      16843,
-      20601,
-      20845,
-      20690,
-      20587,
-      20721,
-      20741,
-      20837,
-      20570,
+      17283,
+      20821,
+      20913,
+      20812,
+      20640,
       20770,
-      20656
+      20747,
+      21002,
+      20770,
+      21028,
+      20652
      ],
-     "min": 16843,
-     "median": 20690,
-     "max": 20845
+     "min": 17283,
+     "median": 20770,
+     "max": 21028
     },
     "ERROR": {
      "opsPerSecPerCycle": [
-      47308,
-      66060,
-      66555,
-      67303,
-      66980,
-      67928,
-      66823,
-      67863,
-      66927,
-      66964,
-      67460
+      48657,
+      64962,
+      65910,
+      66015,
+      65877,
+      66830,
+      66134,
+      66593,
+      66013,
+      66282,
+      65807
      ],
-     "min": 47308,
-     "median": 66964,
-     "max": 67928
+     "min": 48657,
+     "median": 66013,
+     "max": 66830
     },
     "NEST": {
      "opsPerSecPerCycle": [
-      31641,
-      34593,
-      34568,
-      34782,
-      34714,
-      34865,
-      34652,
-      34705,
-      34633,
-      34846,
-      34669
+      30999,
+      34210,
+      34271,
+      34271,
+      34324,
+      34361,
+      34206,
+      34365,
+      34474,
+      34454,
+      34400
      ],
-     "min": 31641,
-     "median": 34669,
-     "max": 34865
+     "min": 30999,
+     "median": 34324,
+     "max": 34474
     },
     "SCHEDULER": {
      "opsPerSecPerCycle": [
-      192743,
-      228177,
-      228698,
-      231924,
-      232894,
-      230115,
-      229904,
-      231016,
-      229535,
-      230910,
-      229325
+      192891,
+      226324,
+      227556,
+      230485,
+      230326,
+      232031,
+      230009,
+      230856,
+      229588,
+      230273,
+      229378
      ],
-     "min": 192743,
-     "median": 229904,
-     "max": 232894
+     "min": 192891,
+     "median": 230009,
+     "max": 232031
     }
    }
   },
@@ -2502,7 +2479,7 @@
    "files": [
     {
      "path": "Signal.js",
-     "sha256": "ea0b64d17e6d68b49809f2124a44abf0204e47cd1e48bcefeccd33fcba023fe9"
+     "sha256": "d235e505c6732e6d7849bd5305484f3309e43f4d23a75e4ca12cc9e0345bb65a"
     },
     {
      "path": "Watch.js",
@@ -2879,30 +2856,35 @@
     },
     "REGISTRY": {
      "cycles": 11,
-     "worlds": 25376,
-     "ops": 1100513,
-     "failingWorlds": 25376,
+     "worlds": 2695,
+     "ops": 1103655,
+     "failingWorlds": 0,
      "crashes": 0,
      "scenarios": {
-      "destroy-top": 16989,
-      "destroy-in-flight": 25376,
-      "destroy-in-batch": 8298,
-      "destroy-in-body": 8533,
-      "destroy-in-computed": 8545,
-      "reuse-after-destroy": 16989
+      "destroy-top": 19478,
+      "destroy-in-flight": 29820,
+      "destroy-in-batch": 9835,
+      "destroy-in-body": 9887,
+      "destroy-in-computed": 10098,
+      "reuse-after-destroy": 19434,
+      "reset-top": 19810,
+      "reset-in-flight": 29593,
+      "reset-in-batch": 9751,
+      "reset-in-body": 10119,
+      "reset-in-computed": 9723
      },
      "performed": {
-      "O1c": 2336305,
-      "O1e": 2149232,
-      "O2": 4618779,
-      "O4": 1281961,
-      "O5": 1100513,
-      "O6": 1093819,
+      "O1c": 3042147,
+      "O1e": 2627225,
+      "O2": 6051897,
+      "O4": 1512660,
+      "O5": 1155753,
+      "O6": 1417027,
       "O7a": 0,
       "O7": 0,
       "OB": 0,
-      "O8": 0,
-      "OW": 0,
+      "O8": 19810,
+      "OW": 19810,
       "O9": 0,
       "OT": 0,
       "OS": 0
@@ -2920,12 +2902,17 @@
       "O4": 0
      },
      "scenarioMinPerCycle": {
-      "destroy-top": 1468,
-      "destroy-in-flight": 2261,
-      "destroy-in-batch": 695,
-      "destroy-in-body": 732,
-      "destroy-in-computed": 743,
-      "reuse-after-destroy": 1468
+      "destroy-top": 1660,
+      "destroy-in-flight": 2669,
+      "destroy-in-batch": 852,
+      "destroy-in-body": 854,
+      "destroy-in-computed": 873,
+      "reuse-after-destroy": 1657,
+      "reset-top": 1729,
+      "reset-in-flight": 2543,
+      "reset-in-batch": 828,
+      "reset-in-body": 866,
+      "reset-in-computed": 839
      }
     },
     "CAPACITY": {
@@ -3526,30 +3513,35 @@
     },
     "REGISTRY": {
      "cycles": 3,
-     "worlds": 1413,
-     "ops": 60107,
-     "failingWorlds": 1413,
+     "worlds": 147,
+     "ops": 60208,
+     "failingWorlds": 0,
      "crashes": 0,
      "scenarios": {
-      "destroy-top": 937,
-      "destroy-in-flight": 1413,
-      "destroy-in-batch": 448,
-      "destroy-in-body": 472,
-      "destroy-in-computed": 493,
-      "reuse-after-destroy": 937
+      "destroy-top": 1002,
+      "destroy-in-flight": 1595,
+      "destroy-in-batch": 503,
+      "destroy-in-body": 531,
+      "destroy-in-computed": 561,
+      "reuse-after-destroy": 1000,
+      "reset-top": 1080,
+      "reset-in-flight": 1608,
+      "reset-in-batch": 515,
+      "reset-in-body": 541,
+      "reset-in-computed": 552
      },
      "performed": {
-      "O1c": 126844,
-      "O1e": 119878,
-      "O2": 256496,
-      "O4": 70908,
-      "O5": 60107,
-      "O6": 59867,
+      "O1c": 169615,
+      "O1e": 144365,
+      "O2": 339429,
+      "O4": 82269,
+      "O5": 63043,
+      "O6": 76932,
       "O7a": 0,
       "O7": 0,
       "OB": 0,
-      "O8": 0,
-      "OW": 0,
+      "O8": 1080,
+      "OW": 1080,
       "O9": 0,
       "OT": 0,
       "OS": 0
@@ -3567,12 +3559,17 @@
       "O4": 0
      },
      "scenarioMinPerCycle": {
-      "destroy-top": 296,
-      "destroy-in-flight": 459,
-      "destroy-in-batch": 144,
-      "destroy-in-body": 141,
-      "destroy-in-computed": 157,
-      "reuse-after-destroy": 296
+      "destroy-top": 327,
+      "destroy-in-flight": 505,
+      "destroy-in-batch": 160,
+      "destroy-in-body": 155,
+      "destroy-in-computed": 172,
+      "reuse-after-destroy": 327,
+      "reset-top": 355,
+      "reset-in-flight": 518,
+      "reset-in-batch": 162,
+      "reset-in-body": 168,
+      "reset-in-computed": 172
      }
     },
     "CAPACITY": {
@@ -3806,201 +3803,201 @@
    "throughput": {
     "NEST": {
      "opsPerSecPerCycle": [
-      47853,
-      48855,
-      49970,
-      49480,
-      49215,
-      49176,
-      49722,
-      49063,
-      49297,
-      49737,
-      48853
+      46966,
+      48696,
+      50122,
+      49688,
+      49433,
+      49497,
+      49938,
+      49169,
+      49385,
+      50022,
+      49526
      ],
-     "min": 47853,
-     "median": 49215,
-     "max": 49970
+     "min": 46966,
+     "median": 49497,
+     "max": 50122
     },
     "WIE": {
      "opsPerSecPerCycle": [
-      10656,
+      10602,
       10237,
-      10196,
-      10368,
-      10728,
-      10137,
-      10326,
-      10231,
-      10674,
-      10403,
-      10446
+      10157,
+      10324,
+      10686,
+      10112,
+      10293,
+      10189,
+      10615,
+      10333,
+      10397
      ],
-     "min": 10137,
-     "median": 10368,
-     "max": 10728
+     "min": 10112,
+     "median": 10324,
+     "max": 10686
     },
     "HOOK": {
      "opsPerSecPerCycle": [
-      37742,
-      37949,
-      37250,
-      37612,
-      38378,
-      38001,
-      38605,
-      36921,
-      38861,
-      37453,
-      37253
+      37732,
+      37758,
+      37261,
+      37457,
+      38057,
+      37723,
+      38610,
+      36649,
+      38551,
+      37053,
+      36854
      ],
-     "min": 36921,
-     "median": 37742,
-     "max": 38861
+     "min": 36649,
+     "median": 37723,
+     "max": 38610
     },
     "LIFECYCLE": {
      "opsPerSecPerCycle": [
-      28986,
-      29760,
-      29579,
-      29945,
-      29964,
-      30204,
-      29733,
-      28863,
-      29313,
-      29087,
-      29439
+      28762,
+      29507,
+      29240,
+      29839,
+      29827,
+      29969,
+      29498,
+      28561,
+      29098,
+      28582,
+      29268
      ],
-     "min": 28863,
-     "median": 29579,
-     "max": 30204
+     "min": 28561,
+     "median": 29268,
+     "max": 29969
     },
     "OWNER": {
      "opsPerSecPerCycle": [
-      69640,
-      71064,
-      70673,
-      70513,
-      70753,
-      70479,
-      70563,
-      70668,
-      71089,
+      69529,
+      70958,
+      70399,
+      70266,
+      70459,
       70350,
-      70738
+      70608,
+      70783,
+      70553,
+      69971,
+      70848
      ],
-     "min": 69640,
-     "median": 70668,
-     "max": 71089
+     "min": 69529,
+     "median": 70459,
+     "max": 70958
     },
     "RECYCLE": {
      "opsPerSecPerCycle": [
-      270219,
-      282107,
-      282027,
+      269273,
+      279427,
       280997,
-      280132,
-      278184,
+      280289,
+      283787,
+      280210,
+      282984,
+      281472,
+      283707,
       281551,
-      277259,
-      279818,
-      280839,
-      281234
+      279740
      ],
-     "min": 270219,
-     "median": 280839,
-     "max": 282107
+     "min": 269273,
+     "median": 280997,
+     "max": 283787
     },
     "SCHEDULER": {
      "opsPerSecPerCycle": [
-      182401,
-      192780,
-      192041,
-      195371,
+      184719,
+      191711,
+      191309,
+      193898,
+      191784,
       190835,
-      191858,
-      193039,
-      193188,
-      192225,
-      191163,
-      192632
+      193151,
+      186298,
+      185436,
+      192115,
+      194575
      ],
-     "min": 182401,
-     "median": 192225,
-     "max": 195371
+     "min": 184719,
+     "median": 191711,
+     "max": 194575
     },
     "REGISTRY": {
      "opsPerSecPerCycle": [
-      52398,
-      52603,
-      52642,
-      52871,
-      51920,
-      51697,
-      52884,
-      53116,
-      53105,
-      52210,
-      51857
+      171668,
+      176913,
+      179036,
+      178335,
+      177378,
+      179937,
+      178439,
+      180111,
+      182133,
+      179941,
+      181970
      ],
-     "min": 51697,
-     "median": 52603,
-     "max": 53116
+     "min": 171668,
+     "median": 179036,
+     "max": 182133
     },
     "CAPACITY": {
      "opsPerSecPerCycle": [
-      123969,
-      129516,
-      127276,
-      125844,
-      124608,
-      123414,
-      127550,
-      123920,
-      128152,
-      124597,
-      131255
+      122921,
+      126528,
+      125603,
+      124240,
+      124130,
+      121886,
+      125650,
+      122558,
+      126712,
+      123372,
+      130352
      ],
-     "min": 123414,
-     "median": 125844,
-     "max": 131255
+     "min": 121886,
+     "median": 124240,
+     "max": 130352
     },
     "BOX": {
      "opsPerSecPerCycle": [
-      9576,
-      10893,
-      10918,
-      10269,
-      10415,
-      10945,
-      10650,
-      10011,
-      10512,
-      9775,
-      9260
+      9596,
+      10914,
+      10949,
+      10299,
+      10418,
+      10973,
+      10696,
+      10022,
+      10498,
+      9732,
+      9273
      ],
-     "min": 9260,
-     "median": 10415,
-     "max": 10945
+     "min": 9273,
+     "median": 10418,
+     "max": 10973
     },
     "SNAPSHOT": {
      "opsPerSecPerCycle": [
-      21483,
-      21936,
-      22051,
-      22144,
-      22466,
-      22199,
-      21797,
-      21304,
-      22265,
-      22041,
-      21831
+      21460,
+      21894,
+      22070,
+      22209,
+      22506,
+      22256,
+      21924,
+      21200,
+      22153,
+      22025,
+      21805
      ],
-     "min": 21304,
-     "median": 22041,
-     "max": 22466
+     "min": 21200,
+     "median": 22025,
+     "max": 22506
     }
    }
   }
@@ -4814,33 +4811,33 @@
    },
    "REGISTRY": {
     "cycles": 11,
-    "ops": 11327,
-    "worlds": 270,
-    "failingWorlds": 270,
+    "ops": 13516,
+    "worlds": 33,
+    "failingWorlds": 0,
     "performed": {
-     "O1c": 23705,
-     "O1e": 22335,
-     "O2": 48290,
-     "O4": 13151,
-     "O5": 11327,
-     "O6": 11441,
+     "O1c": 36528,
+     "O1e": 33247,
+     "O2": 73009,
+     "O4": 19514,
+     "O5": 14143,
+     "O6": 17452,
      "O7a": 0,
      "O7": 0,
      "OB": 0,
-     "O8": 0,
-     "OW": 0,
+     "O8": 258,
+     "OW": 258,
      "O9": 0,
      "OT": 0,
      "OS": 0
     },
     "worst": {
      "rarestRequired": {
-      "scenario": "destroy-in-batch",
-      "hits": 71
+      "scenario": "reset-in-body",
+      "hits": 104
      },
      "leastPerformed": {
-      "oracle": "O5",
-      "performed": 11327
+      "oracle": "O8",
+      "performed": 258
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -5461,17 +5458,17 @@
    "ops": 60208,
    "worlds": 147,
    "performed": {
-    "O1c": 157741,
-    "O1e": 141341,
-    "O2": 305517,
-    "O4": 82804,
-    "O5": 60355,
-    "O6": 72409,
+    "O1c": 129792,
+    "O1e": 132855,
+    "O2": 282252,
+    "O4": 74531,
+    "O5": 62871,
+    "O6": 104895,
     "O7a": 0,
     "O7": 0,
     "OB": 0,
-    "O8": 0,
-    "OW": 0,
+    "O8": 2516,
+    "OW": 2516,
     "O9": 0,
     "OT": 0,
     "OS": 0
@@ -5494,8 +5491,58 @@
      "hits": 0
     },
     "leastPerformed": {
-     "oracle": "O5",
-     "performed": 60355
+     "oracle": "O8",
+     "performed": 2516
+    },
+    "maxTaint": {
+     "oracle": "O1c",
+     "ratio": 0
+    }
+   }
+  },
+  "REGISTRY:reset-in-flight": {
+   "lane": "REGISTRY",
+   "scenario": "reset-in-flight",
+   "kernel": "tree",
+   "hits": 0,
+   "ops": 60208,
+   "worlds": 147,
+   "performed": {
+    "O1c": 129792,
+    "O1e": 132855,
+    "O2": 282252,
+    "O4": 74531,
+    "O5": 62871,
+    "O6": 104895,
+    "O7a": 0,
+    "O7": 0,
+    "OB": 0,
+    "O8": 2516,
+    "OW": 2516,
+    "O9": 0,
+    "OT": 0,
+    "OS": 0
+   },
+   "skipTainted": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "taintRatio": {
+    "O1c": 0,
+    "O1e": 0,
+    "O2": 0,
+    "O4": 0
+   },
+   "worst": {
+    "rarestRequired": {
+     "scenario": "destroy-in-flight",
+     "hits": 0
+    },
+    "leastPerformed": {
+     "oracle": "O8",
+     "performed": 2516
     },
     "maxTaint": {
      "oracle": "O1c",
@@ -7767,12 +7814,12 @@
     {
      "seed": 2654435769,
      "rarestRequired": {
-      "scenario": "destroy-in-computed",
-      "hits": 436
+      "scenario": "destroy-in-body",
+      "hits": 494
      },
      "leastPerformed": {
-      "oracle": "O6",
-      "performed": 60089
+      "oracle": "O8",
+      "performed": 1088
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -7782,12 +7829,12 @@
     {
      "seed": 1013904242,
      "rarestRequired": {
-      "scenario": "destroy-in-computed",
-      "hits": 424
+      "scenario": "destroy-in-body",
+      "hits": 511
      },
      "leastPerformed": {
-      "oracle": "O5",
-      "performed": 60142
+      "oracle": "O8",
+      "performed": 1064
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -7797,12 +7844,12 @@
     {
      "seed": 3668340011,
      "rarestRequired": {
-      "scenario": "destroy-in-body",
-      "hits": 419
+      "scenario": "reset-in-computed",
+      "hits": 504
      },
      "leastPerformed": {
-      "oracle": "O6",
-      "performed": 59581
+      "oracle": "O8",
+      "performed": 1043
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -7812,12 +7859,12 @@
     {
      "seed": 2027808484,
      "rarestRequired": {
-      "scenario": "destroy-in-batch",
-      "hits": 447
+      "scenario": "reset-in-batch",
+      "hits": 493
      },
      "leastPerformed": {
-      "oracle": "O6",
-      "performed": 59659
+      "oracle": "O8",
+      "performed": 1107
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -7827,12 +7874,12 @@
     {
      "seed": 387276957,
      "rarestRequired": {
-      "scenario": "destroy-in-batch",
-      "hits": 430
+      "scenario": "reset-in-batch",
+      "hits": 513
      },
      "leastPerformed": {
-      "oracle": "O6",
-      "performed": 59994
+      "oracle": "O8",
+      "performed": 1112
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -7842,12 +7889,12 @@
     {
      "seed": 3041712726,
      "rarestRequired": {
-      "scenario": "destroy-in-batch",
-      "hits": 455
+      "scenario": "reset-in-batch",
+      "hits": 489
      },
      "leastPerformed": {
-      "oracle": "O6",
-      "performed": 59067
+      "oracle": "O8",
+      "performed": 1103
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -7857,12 +7904,12 @@
     {
      "seed": 1401181199,
      "rarestRequired": {
-      "scenario": "destroy-in-body",
-      "hits": 454
+      "scenario": "destroy-in-computed",
+      "hits": 489
      },
      "leastPerformed": {
-      "oracle": "O5",
-      "performed": 60007
+      "oracle": "O8",
+      "performed": 1081
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -7873,11 +7920,11 @@
      "seed": 4055616968,
      "rarestRequired": {
       "scenario": "destroy-in-batch",
-      "hits": 454
+      "hits": 524
      },
      "leastPerformed": {
-      "oracle": "O6",
-      "performed": 58954
+      "oracle": "O8",
+      "performed": 1079
      },
      "maxTaint": {
       "oracle": "O1c",
@@ -10851,6 +10898,144 @@
     }
    ],
    "tree:REGISTRY:destroy-in-flight": [
+    {
+     "seed": 12648430,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2654435769,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1013904242,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3668340011,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 2027808484,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 387276957,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 3041712726,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 1401181199,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 4055616968,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 11,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 12,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 13,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 14,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 15,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 16,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 17,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    },
+    {
+     "seed": 18,
+     "hits": 0,
+     "maxTaint": {
+      "oracle": "O1c",
+      "ratio": 0
+     }
+    }
+   ],
+   "tree:REGISTRY:reset-in-flight": [
     {
      "seed": 12648430,
      "hits": 0,
