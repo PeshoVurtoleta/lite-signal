@@ -63,7 +63,8 @@
     "soak:parity": "node bench/soak/parity.mjs",
     "soak:parity:update": "node bench/soak/parity.mjs --update",
     "inline-diff": "node bench/inline-diff.mjs",
-    "inline-budget-diff": "bash bench/inlining-budget-diff.sh"
+    "inline-budget-diff": "bash bench/inlining-budget-diff.sh",
+    "bytecode-budget": "bash bench/bytecode-budget.sh"
   },
   "keywords": [
     "signal",
