@@ -9,6 +9,27 @@
 // Gates (fix the code, never widen a budget):
 //   * 1e5 set->propagate ops              -> maxMajor 0; 0 B/op retention SLOPE
 //   * 1e5 untrack-in-effect ops           -> maxMajor 0; 0 B/op retention SLOPE  (LEDGER #30 path)
+//     maxMajor 0 is gated in this process (phase 2a). Every retention SLOPE (set, untrack, QS and the
+//     QS control) is measured in ONE child (b194, FILLER 194, CI class 13): `--alloc-lane`, started
+//     with ALLOC_LANE_ARGS (--expose-gc --no-use-osr; --minor-ms forwarded). allocLane() builds its own
+//     Path A / B and QS graphs (the phase-2 / phase-6 shapes), warms each with HOT unmeasured steps,
+//     runs up to 3 attempts per lane (set, untrack, QS main, QS control) and stops each lane at its
+//     first pass under the same judge functions (b194 A2), then prints the raw readings as one JSON
+//     line. This process re-judges every attempt it receives and fails a lane closed unless the
+//     sequence is legal: 1..3 attempts, every one but the last red, the last a pass or the 3rd (a
+//     child that stops after a red, sends none or more than 3, or runs on past a pass is red). K=
+//     counts the attempts read. On a red QS slope only, a second cold child (`--alloc-lane
+//     --qs-attr`, the same flags) runs the advisory attribution call; its failure or timeout never
+//     changes a verdict. This process makes no measureAllocs call. Why: on
+//     a slow host, on-stack replacement of measureAllocs' batch loop in a process's FIRST measureAllocs
+//     call read ~5080 B on every batch from batch 3, both parities (local `taskpolicy -b`: set attempt
+//     0 Dlo 0 / Dhi 5080, 6/6 runs; macOS CI node 24 was red on all 3 set attempts, other sizes); with only set /
+//     untrack moved out, QS became the first call and went red the same way (Dlo 408 / Dhi 5064, b194
+//     A1). Local evidence (.handoff/b194-evidence/), mechanism UNVERIFIED on CI, not engine retention.
+//     GATE osr=off|on|unmeasured is the child's own process.execArgv; anything but off, a spawn
+//     error, a timeout (120 s, SIGKILL), a non-zero exit, a signal, unparseable output or an illegal
+//     attempt sequence is red (fail closed; stderr `  alloc lane: osr=... exit=... signal=... lanes=
+//     <set>/<un>/<qs>/<ctl> seq=<4 flags>`).
 //     Slope (b72, the test/64 flake): min-over-batches read the instrument's
 //     per-batch constant k as per-op bytes (b64 + b71 under load: untrack
 //     0.0008 B/op = 16 B in the minimum 2e4-call batch, exit 1; `node --expose-gc
@@ -20,8 +41,10 @@
 //     odd batch. An attempt passes iff it settled, ran exactly 1080000 steps, every
 //     step fired the effect, it ended in the reset state, every batch reading is
 //     null or a finite number >= 0, it kept >= 4 batches per parity and Dhi <= Dlo;
-//     up to 3 attempts per lane, stop at the first pass.
-//     Catches a retainer down to 1 per 1e5 steps (the old floor: 1 per 2e4).
+//     up to 3 attempts per lane, stop at the first pass (in the child; re-judged here).
+//     Catches a retainer down to 1 per 1e5 steps (the old floor: 1 per 2e4): probe P5 (b194, P-cores),
+//     one retained object per 1e5 read.set calls, read red with every set and untrack attempt at
+//     Dlo 0 / Dhi 32 B (.handoff/b194-evidence/probes).
 //     No single bad batch passes a retainer: one odd dip is skipped by the
 //     2nd-smallest (b72-b77 read Dhi = min odd, so ONE odd batch dipped to the even
 //     floor passed a retainer -- b77, vector V1), one even spike is not the min, and
@@ -34,7 +57,7 @@
 //     per batch or GC cycle, independent of step count (printed as k from a
 //     passing attempt only -- a failed lane prints fail(Dlo=<n>B) -- gated
 //     nowhere); (3) allocations that die young -- both lanes read the heap after
-//     a forced GC; the pinned child covers set only through the NEST / QS graphs
+//     a forced GC; the pinned NEST child covers set only through the NEST / QS graphs
 //     and untrack not at all, so a transient per-op box passes (the old floor was
 //     equally blind to it); (4) two odd dips in one attempt, each dipping by >= the
 //     retainer's per-batch bytes (vector B1); (5) a spike on every measured even
@@ -69,10 +92,11 @@
 //     mid-run, then the parent's slot recycled) -> the child is never adopted by
 //     the stranger in that slot
 //   * QS (F21, LEDGER #35): 1e5 s.set with one sync-scheduled effect (the
-//     scheduler calls run() immediately) + one plain effect -> maxMajor 0 and a
-//     0 B/op retention SLOPE; the same step in the pinned child -> <= 0.05 B/op
-//     steady state; every step must run both bodies and the scheduler (else the
-//     lane is blind). Both halves gate, but only the child lane caught the
+//     scheduler calls run() immediately) + one plain effect -> maxMajor 0 (this
+//     process) and a 0 B/op retention SLOPE (the --alloc-lane child, b194 A1: its
+//     own qS graph, warmed with 1e5 unmeasured steps); the same step in the pinned
+//     NEST child -> <= 0.05 B/op steady state; in each of the three processes every
+//     step must run both bodies and the scheduler (else the lane is blind). Both halves gate, but only the child lane caught the
 //     QS-teeth control (one run, burst 38: child 135.972 B/op FAIL; in-process
 //     still 0 B/op with gc minor=2).
 //     Slope (PLAN-0c addendum 1): ONE measureAllocs call per attempt over a
@@ -85,7 +109,7 @@
 //     2nd-smallest odd). An attempt passes iff it settled, ran exactly 1080000
 //     steps, ended in the reset state, every batch reading is null or a finite
 //     number >= 0, it kept >= 4 batches per parity and Dhi <= Dlo; up to 3
-//     attempts, stop at the first pass. Control: the same
+//     attempts, stop at the first pass (in the child; re-judged here). Control: the same
 //     call shape with one object retained per 1000 qsSteps, read as the MIN OF
 //     PAIRED DIFFERENCES (b74): over the 8 pairs (even batch b - 1, odd batch b)
 //     min(odd - even) MUST be >= 1280 B with >= 4 measured pairs, or the slope
@@ -94,8 +118,11 @@
 //     (b74: also the first QS attempt, from odd batch 9); begun between batch 0
 //     and 1 it reads ~6240 B. A step lands inside at
 //     most one pair, so it cannot lift the min.) Up to 3 attempts, each from the
-//     reset state with an empty ring, stop at the first pass, exhausted = red
-//     (b73: a single call went red under 8x parallel load, ctl=-3664B). A k that
+//     reset state with an empty ring, measured in the child (the regime the control
+//     vouches for) after one unmeasured control warm-up, stop at the first pass,
+//     exhausted = red (b73: a single call went red under 8x parallel load,
+//     ctl=-3664B). Attribution: a second cold child, on a red slope only
+//     (advisory; never changes a verdict). A k that
 //     grows with batch duration lifts every pair: it fails OPEN in the control
 //     (a blind control passes once it reaches 1280 B per pair). Cannot see: (1) a
 //     retainer slower than ~1 per 1e5 steps; (2) retention once per batch or GC
@@ -247,6 +274,154 @@ function windowNulls(per, base) {
   for (let w = 1; w < per.length; w++) if (per[w] === null || base[w] === null) n++;
   return n;
 }
+// ---- set / untrack retention-SLOPE lane (child mode, b194) -------------------------
+// Per-op retention SLOPE (requires --expose-gc; the phase-6 QS estimator, see the header). It runs in
+// the --alloc-lane CHILD (ALLOC_LANE_ARGS, phase 2b): allocLane() measures, the parent judges (alRead).
+// min-over-batches alone reads the instrument's per-batch constant k as k / iterations B/op
+// (b64, b71: untrack 0.0008 B/op = 16 B per batch, a false red). ONE measureAllocs call per
+// attempt alternates pseudo-batches of AL_ITER calls at 1 step per call (even) and 5 (odd):
+// k is shared by both parities and cancels; a per-step retainer grows with the 8e4 extra steps.
+// Steps drive Smi counters below 2^30 (a value never repeats: an equal set is a no-op). The
+// wrappers are hot (Smi state only); everything else is cold and may allocate.
+const AL_ITER = 20000, AL_BATCHES = 16, AL_WARM = 40000, AL_K = 3;
+// Warm-up = pseudo-batches 0 (even) and 1 (odd); measured batch b has parity b & 1.
+const AL_STEPS = ((AL_WARM + AL_ITER * AL_BATCHES) / AL_ITER / 2) * AL_ITER * 6;   // 1080000
+// null is not zero: an attempt that did not settle, run exactly AL_STEPS steps, fire the effect
+// on every step, end in the reset state, read only null / finite >= 0 batches and keep >= 4 batches
+// per parity is unmeasured, never a pass. Verdict: judgeSlope (Dlo = min even, Dhi = 2nd-smallest odd).
+function alRead(r, steps, fires, endOk) {
+  const ok = r.settled && endOk && steps === AL_STEPS && fires === AL_STEPS;
+  return { r, steps, fires, endOk, ...judgeSlope(r.batchBytes, ok) };
+}
+const alOpts = { iterations: AL_ITER, batches: AL_BATCHES, warmup: AL_WARM };
+// QS lane (phase 6, F21): the same estimator; measured in the same child since b194 A1.
+const QS_ITER = 20000, QS_BATCHES = 16, QS_WARM = 40000, QS_K = 3;
+// Warm-up = pseudo-batches 0 (even) and 1 (odd); measured batch b has parity b & 1.
+const QS_STEPS = ((QS_WARM + QS_ITER * QS_BATCHES) / QS_ITER / 2) * QS_ITER * 6;   // 1080000
+const QS_HOLD_N = 2048;   // the QS control's pre-sized ring (1080 holds per attempt; past it fails closed)
+// Child only: builds its own Path A / B graphs (the phase-2 shapes), warms them with HOT set + HOT
+// untrack steps unmeasured (as phase 2a), then up to AL_K attempts per lane (set first); then the QS
+// graph (the phase-6 shape), HOT unmeasured qsSteps, up to QS_K main attempts, one unmeasured control
+// warm-up and up to QS_K control attempts (b194 A1). Every lane stops at its first pass under the
+// SAME judge functions the parent uses (alRead / qsRead / ctlOf + ctlPasses; b194 A2 R1); the parent
+// re-judges every attempt. attrOnly (`--qs-attr`): no measured lane, only the advisory attribution
+// call on a warmed QS graph (A2 R3). Returns the raw readings. A batch reading that JSON cannot carry (NaN, Infinity,
+// a non-number) is sent as its String(), which judgeSlope rejects (fail closed, never a null).
+function allocLane(attrOnly) {
+  const sa = signal(0);
+  const ca = computed(() => sa() + 1);
+  let sinkA = 0, aRuns = 0;
+  const stopA = effect(() => { sinkA += ca(); aRuns++; });
+  const setStep = (i) => { sa.set(i); };
+  const sb = signal(0);
+  let sinkB = 0;
+  const untrackedBody = () => { sinkB++; };
+  const stopB = effect(() => { sb(); untrack(untrackedBody); });
+  const untrackStep = (i) => { sb.set(i); };
+  for (let i = 0; i < HOT; i++) setStep(i);
+  for (let i = 0; i < HOT; i++) untrackStep(i);
+  let aN = 0, apLeft = 0, apOdd = 1;
+  const setStepN = () => { aN = (aN + 1) & 0x3FFFFFFF; sa.set(aN); };
+  const setPairStep = () => {
+    if (apLeft === 0) { apLeft = AL_ITER; apOdd ^= 1; }
+    apLeft--;
+    setStepN();
+    if (apOdd === 1) { setStepN(); setStepN(); setStepN(); setStepN(); }
+  };
+  let bN = 0, bpLeft = 0, bpOdd = 1;
+  const untrackStepN = () => { bN = (bN + 1) & 0x3FFFFFFF; sb.set(bN); };
+  const untrackPairStep = () => {
+    if (bpLeft === 0) { bpLeft = AL_ITER; bpOdd ^= 1; }
+    bpLeft--;
+    untrackStepN();
+    if (bpOdd === 1) { untrackStepN(); untrackStepN(); untrackStepN(); untrackStepN(); }
+  };
+  const raw = (r, steps, fires, endOk) => ({ settled: r.settled === true,
+    batchBytes: Array.isArray(r.batchBytes) ? r.batchBytes.map((v) => v === null || Number.isFinite(v) ? v : String(v)) : String(r.batchBytes),
+    measuredBatches: r.measuredBatches, invertedBatches: r.invertedBatches, steps, fires, endOk });
+  const set = [], un = [];
+  for (let a = 0; a < AL_K && !attrOnly; a++) {
+    apLeft = 0; apOdd = 1;
+    const n0 = aN, f0 = aRuns;
+    const r = measureAllocs(setPairStep, alOpts);
+    const x = raw(r, (aN - n0) & 0x3FFFFFFF, aRuns - f0, apLeft === 0 && apOdd === 1);
+    set.push(x);
+    if (alRead(x, x.steps, x.fires, x.endOk).pass) break;   // R1: stop at the first pass
+  }
+  for (let a = 0; a < AL_K && !attrOnly; a++) {
+    bpLeft = 0; bpOdd = 1;
+    const n0 = bN, f0 = sinkB;   // sinkB counts untrackedBody runs (one per fired effect)
+    const r = measureAllocs(untrackPairStep, alOpts);
+    const x = raw(r, (bN - n0) & 0x3FFFFFFF, sinkB - f0, bpLeft === 0 && bpOdd === 1);
+    un.push(x);
+    if (alRead(x, x.steps, x.fires, x.endOk).pass) break;   // R1
+  }
+  stopA();
+  stopB();
+  // QS: one sync-scheduled effect + one plain effect on qS (HEAD phase 6 shape); Smi counter below 2^30.
+  const qS = signal(0);
+  let qsN = 0, qsRuns = 0, qsPlain = 0, qsSched = 0;
+  const qsScheduler = (run) => { qsSched++; run(); };
+  const qsStop1 = effect(() => { qS(); qsRuns++; }, { scheduler: qsScheduler });
+  const qsStop2 = effect(() => { qS(); qsPlain++; });
+  const qsStep = () => { qsN = (qsN + 1) & 0x3FFFFFFF; qS.set(qsN); };
+  for (let i = 0; i < HOT; i++) qsStep();
+  let qpLeft = 0, qpOdd = 1;
+  const qsPairStep = () => {
+    if (qpLeft === 0) { qpLeft = QS_ITER; qpOdd ^= 1; }
+    qpLeft--;
+    qsStep();
+    if (qpOdd === 1) { qsStep(); qsStep(); qsStep(); qsStep(); }
+  };
+  // Control with teeth: drives qsPairStep itself (same call shape, one call per attempt), retaining one
+  // { v } per 1000 qsN steps, at most 1 per call (Smi mark, pre-sized ring: 1080 holds per
+  // call; past the ring fails closed). Odd batches hold 100, even 20, so every (even b - 1, odd b) pair
+  // differs by 80 holds = 1280 B at a 16 B object floor (measured 32 B per { v }: 2560 B).
+  const QS_HOLD = new Array(QS_HOLD_N).fill(null);
+  let qcMark = 0, qh = 0;
+  const qsCtlPairStep = () => {
+    qsPairStep();
+    if (((qsN - qcMark) & 0x3FFFFFFF) >= 1000) { qcMark = (qcMark + 1000) & 0x3FFFFFFF; if (qh < QS_HOLD_N) QS_HOLD[qh] = { v: qh }; qh++; }
+  };
+  const qsOpts = { iterations: QS_ITER, batches: QS_BATCHES, warmup: QS_WARM };
+  const qs = [], qsCtl = [];
+  for (let a = 0; a < QS_K && !attrOnly; a++) {
+    qpLeft = 0; qpOdd = 1;
+    const n0 = qsN;
+    const r = measureAllocs(qsPairStep, qsOpts);
+    const x = raw(r, (qsN - n0) & 0x3FFFFFFF, null, qpLeft === 0 && qpOdd === 1);
+    qs.push(x);
+    if (qsRead(x, x.steps, x.endOk).pass) break;   // R1
+  }
+  // Unmeasured control warm-up (A2 note e: under --no-use-osr a cold qsCtlPairStep spiked batch 0 of
+  // control attempt 0), then each control attempt starts from the reset state with an empty ring.
+  for (let i = 0; i < QS_WARM && !attrOnly; i++) qsCtlPairStep();
+  for (let a = 0; a < QS_K && !attrOnly; a++) {
+    qpLeft = 0; qpOdd = 1; qcMark = qsN; qh = 0;
+    QS_HOLD.fill(null);
+    const n0 = qsN;
+    const r = measureAllocs(qsCtlPairStep, qsOpts);
+    const c = raw(r, (qsN - n0) & 0x3FFFFFFF, null, qpLeft === 0 && qpOdd === 1);
+    c.holds = qh;
+    qsCtl.push(c);
+    if (ctlPasses(ctlOf(qsRead(c, c.steps, c.endOk), c.holds))) break;   // R1
+  }
+  QS_HOLD.fill(null);
+  // Advisory only (never gates; attrOnly = the parent's second child, on a red slope): where the qs
+  // steps allocate.
+  let qsAttr = null;
+  if (attrOnly) try {
+    qpLeft = 0; qpOdd = 1;
+    const ar = measureAllocs(qsPairStep, { iterations: QS_ITER, batches: 4, warmup: 0, attribute: true, topSites: 5 });
+    qsAttr = ar !== null && typeof ar === 'object' && ar.attribution !== undefined ? ar.attribution : null;
+  } catch (e) {
+    qsAttr = { available: false, reason: 'threw: ' + String(e && e.message), sites: [] };
+  }
+  qsStop1();
+  qsStop2();
+  dispose(qS);
+  return { set, un, qs, qsCtl, qsAttr, qsCounts: { n: qsN, runs: qsRuns, plain: qsPlain, sched: qsSched } };
+}
 if (process.argv.includes('--nest-lane')) {
   const pinned = process.execArgv.includes('--min-semi-space-size=4') &&
     process.execArgv.includes('--max-semi-space-size=4');
@@ -337,6 +512,16 @@ if (process.argv.includes('--nest-lane')) {
 const CYCLES = 10000;   // 1e4 create/dispose cycles
 const HOT = 100000;     // 1e5 hot ops per path
 
+// ---- set / untrack / QS SLOPE lanes (child mode, b194 + A1): raw attempts as one JSON line, no verdict ----
+if (process.argv.includes('--alloc-lane')) {
+  const attrOnly = process.argv.includes('--qs-attr');
+  const al = allocLane(attrOnly);
+  const noOsr = process.execArgv.includes('--no-use-osr');
+  console.log(JSON.stringify(attrOnly ? { noOsr, qsAttr: al.qsAttr }
+    : { noOsr, set: al.set, un: al.un, qs: al.qs, qsCtl: al.qsCtl, qsCounts: al.qsCounts }));
+  process.exit(0);
+}
+
 const leaks = [];
 const warns = [];
 const tracker = createLeakTracker({
@@ -414,57 +599,68 @@ const s = gc.summary();
 const gcReport = checkNoGc(s, { maxMajor: 0, maxPauseMs: 4 });
 gc.stop();
 
-// 2b: per-op retention SLOPE (requires --expose-gc; the phase-6 QS estimator, see the header).
-// min-over-batches alone reads the instrument's per-batch constant k as k / iterations B/op
-// (b64, b71: untrack 0.0008 B/op = 16 B per batch, a false red). ONE measureAllocs call per
-// attempt alternates pseudo-batches of AL_ITER calls at 1 step per call (even) and 5 (odd):
-// k is shared by both parities and cancels; a per-step retainer grows with the 8e4 extra steps.
-// Steps drive Smi counters below 2^30 (a value never repeats: an equal set is a no-op). The
-// wrappers are hot (Smi state only); everything else is cold and may allocate.
-const AL_ITER = 20000, AL_BATCHES = 16, AL_WARM = 40000, AL_K = 3;
-// Warm-up = pseudo-batches 0 (even) and 1 (odd); measured batch b has parity b & 1.
-const AL_STEPS = ((AL_WARM + AL_ITER * AL_BATCHES) / AL_ITER / 2) * AL_ITER * 6;   // 1080000
-let aN = 0, apLeft = 0, apOdd = 1;
-const setStepN = () => { aN = (aN + 1) & 0x3FFFFFFF; sa.set(aN); };
-const setPairStep = () => {
-  if (apLeft === 0) { apLeft = AL_ITER; apOdd ^= 1; }
-  apLeft--;
-  setStepN();
-  if (apOdd === 1) { setStepN(); setStepN(); setStepN(); setStepN(); }
-};
-let bN = 0, bpLeft = 0, bpOdd = 1;
-const untrackStepN = () => { bN = (bN + 1) & 0x3FFFFFFF; sb.set(bN); };
-const untrackPairStep = () => {
-  if (bpLeft === 0) { bpLeft = AL_ITER; bpOdd ^= 1; }
-  bpLeft--;
-  untrackStepN();
-  if (bpOdd === 1) { untrackStepN(); untrackStepN(); untrackStepN(); untrackStepN(); }
-};
-// null is not zero: an attempt that did not settle, run exactly AL_STEPS steps, fire the effect
-// on every step, end in the reset state, read only null / finite >= 0 batches and keep >= 4 batches
-// per parity is unmeasured, never a pass. Verdict: judgeSlope (Dlo = min even, Dhi = 2nd-smallest odd).
-function alRead(r, steps, fires, endOk) {
-  const ok = r.settled && endOk && steps === AL_STEPS && fires === AL_STEPS;
-  return { r, steps, fires, endOk, ...judgeSlope(r.batchBytes, ok) };
+// 2b: per-op retention SLOPE in the --alloc-lane CHILD (b194, CI class 13; see the header). The
+// child is started with --no-use-osr: on a slow host OSR of measureAllocs' batch loop in the first
+// measureAllocs call of a process read as per-step growth (b194 local evidence, UNVERIFIED on CI).
+// Fail closed: a spawn error, a timeout (SIGKILL), a non-zero exit, a signal, unparseable output,
+// an illegal attempt sequence in any lane (set, untrack, QS, QS control; R2 below), or noOsr !== true
+// is red, whatever the attempts read. The child also runs the QS lanes (phase 6 judges them, b194 A1).
+const ALLOC_LANE_ARGS = ['--expose-gc', '--no-use-osr'];
+const alArgs = ALLOC_LANE_ARGS.slice();
+if (process.execArgv.includes('--minor-ms')) alArgs.push('--minor-ms');
+alArgs.push(fileURLToPath(import.meta.url), '--alloc-lane');
+const alLane = spawnSync(process.execPath, alArgs, { encoding: 'utf8', timeout: 120000, killSignal: 'SIGKILL' });
+let alObj = null;
+if (alLane.error === undefined && alLane.status === 0 && alLane.signal === null) {
+  try { alObj = JSON.parse(String(alLane.stdout).trim().split('\n').pop()); } catch { alObj = null; }
 }
-const alOpts = { iterations: AL_ITER, batches: AL_BATCHES, warmup: AL_WARM };
+const alRec = alObj !== null && typeof alObj === 'object' && !Array.isArray(alObj) ? alObj : null;
+const alNoOsr = alRec !== null ? alRec.noOsr : undefined;
+const alSetRaw = alRec !== null && Array.isArray(alRec.set) ? alRec.set : [];
+const alUnRaw = alRec !== null && Array.isArray(alRec.un) ? alRec.un : [];
+const alQsRaw = alRec !== null && Array.isArray(alRec.qs) ? alRec.qs : [];
+const alQsCtlRaw = alRec !== null && Array.isArray(alRec.qsCtl) ? alRec.qsCtl : [];
+const alOsrLabel = alNoOsr === true ? 'off' : alNoOsr === false ? 'on' : 'unmeasured';
+// A malformed attempt becomes a safe r that alRead fails: settled / endOk only when exactly true,
+// counters only when numbers, batches an array whose non-null non-number entries judgeSlope rejects.
+const alNum = (v) => typeof v === 'number' ? v : null;
+function alSafe(x) {
+  const o = x !== null && typeof x === 'object' ? x : {};
+  const bb = Array.isArray(o.batchBytes) ? o.batchBytes.map((v) => v === null || typeof v === 'number' ? v : String(v)) : [];
+  return { r: { settled: o.settled === true, batchBytes: bb, measuredBatches: alNum(o.measuredBatches), invertedBatches: alNum(o.invertedBatches) },
+    steps: alNum(o.steps), fires: alNum(o.fires), endOk: o.endOk === true };
+}
+// R2 (b194 A2): the child stops each lane at its first pass. Fail closed per lane unless 1 <= n <= k,
+// every attempt but the last is red under THIS process's judge, and the last passes or n === k (a child
+// that stops after a red, sends none or more than k, or runs on past a pass is red).
+function alSeqOk(raws, k, passOf) {
+  const n = raws.length;
+  if (!(n >= 1 && n <= k)) return false;
+  for (let a = 0; a < n - 1; a++) if (passOf(raws[a])) return false;
+  return n === k || passOf(raws[n - 1]);
+}
+const alHolds = (x) => x !== null && typeof x === 'object' ? x.holds : undefined;
+const alPassAl = (x) => { const c = alSafe(x); return alRead(c.r, c.steps, c.fires, c.endOk).pass; };
+const alPassQs = (x) => { const c = alSafe(x); return qsRead(c.r, c.steps, c.endOk).pass; };
+const alPassCtl = (x) => { const c = alSafe(x); return ctlPasses(ctlOf(qsRead(c.r, c.steps, c.endOk), alHolds(x))); };
+const alSeq = [alSeqOk(alSetRaw, AL_K, alPassAl), alSeqOk(alUnRaw, AL_K, alPassAl),
+  alSeqOk(alQsRaw, QS_K, alPassQs), alSeqOk(alQsCtlRaw, QS_K, alPassCtl)];
+const alLaneOk = alRec !== null && alSeq[0] && alSeq[1] && alSeq[2] && alSeq[3];
+// Read the child's attempts in order and stop at the first pass (K= counts the attempts read). A
+// missing attempt reads as malformed, so an exhausted lane always has AL_K rows.
 const setAttempts = [];
 let setPass = null;
 for (let a = 0; a < AL_K && setPass === null; a++) {
-  apLeft = 0; apOdd = 1;
-  const n0 = aN, f0 = aRuns;
-  const r = measureAllocs(setPairStep, alOpts);
-  const at = alRead(r, (aN - n0) & 0x3FFFFFFF, aRuns - f0, apLeft === 0 && apOdd === 1);
+  const c = alSafe(alSetRaw[a]);
+  const at = alRead(c.r, c.steps, c.fires, c.endOk);
   setAttempts.push(at);
   if (at.pass) setPass = at;
 }
 const unAttempts = [];
 let unPass = null;
 for (let a = 0; a < AL_K && unPass === null; a++) {
-  bpLeft = 0; bpOdd = 1;
-  const n0 = bN, f0 = sinkB;   // sinkB counts untrackedBody runs (one per fired effect)
-  const r = measureAllocs(untrackPairStep, alOpts);
-  const at = alRead(r, (bN - n0) & 0x3FFFFFFF, sinkB - f0, bpLeft === 0 && bpOdd === 1);
+  const c = alSafe(alUnRaw[a]);
+  const at = alRead(c.r, c.steps, c.fires, c.endOk);
   unAttempts.push(at);
   if (at.pass) unPass = at;
 }
@@ -480,7 +676,7 @@ const bpcLabel = allocMeasured
 const kLabel = (pass, shown) => pass !== null ? pass.lo + 'B/batch' :
   'fail(' + (Number.isFinite(shown.lo) ? 'Dlo=' + shown.lo + 'B' : 'unmeasured') + ')';
 const alKLabel = kLabel(setPass, setShown) + ',' + kLabel(unPass, unShown);
-const allocOk = setPass !== null && unPass !== null;
+const allocOk = setPass !== null && unPass !== null && alLaneOk && alNoOsr === true;
 
 stopA();
 stopB();
@@ -826,80 +1022,73 @@ await new Promise((r) => setTimeout(r, 50));
 const qs = qgc.summary();
 const qsGcReport = checkNoGc(qs, { maxMajor: 0, maxPauseMs: 4 });
 qgc.stop();
-// In-process verdict = retention SLOPE. min-over-batches alone reads a per-batch constant
-// k as k / iterations B/op, and k differs between measureAllocs calls, so ONE call per
-// attempt interleaves both step counts: even batches run 1 qsStep per call, odd ones 5.
-// k is shared by both parities and cancels; a per-call retainer grows with the steps.
-// The wrappers are hot (Smi state only); everything else is cold and may allocate.
-const QS_ITER = 20000, QS_BATCHES = 16, QS_WARM = 40000, QS_K = 3;
-// Warm-up = pseudo-batches 0 (even) and 1 (odd); measured batch b has parity b & 1.
-const QS_STEPS = ((QS_WARM + QS_ITER * QS_BATCHES) / QS_ITER / 2) * QS_ITER * 6;   // 1080000
-let qpLeft = 0, qpOdd = 1;
-const qsPairStep = () => {
-  if (qpLeft === 0) { qpLeft = QS_ITER; qpOdd ^= 1; }
-  qpLeft--;
-  qsStep();
-  if (qpOdd === 1) { qsStep(); qsStep(); qsStep(); qsStep(); }
-};
+// Retention SLOPE: measured in the --alloc-lane child (phase 2b; b194 A1 -- this process makes no
+// measureAllocs call, so no lane here can take the OSR step of a process's first call). ONE call per
+// attempt interleaves both step counts: even batches run 1 qsStep per call, odd ones 5; k is shared
+// by both parities and cancels; a per-call retainer grows with the steps. The child ran QS_K main and
+// QS_K control attempts, each lane stopping at its first pass; here they are re-judged in order.
 // Fail closed: an attempt that did not run exactly QS_STEPS steps, end in the reset state,
 // settle, read only null / finite >= 0 batches and keep >= 4 batches per parity is unmeasured,
-// never a pass. Verdict: judgeSlope (Dlo = min even, Dhi = 2nd-smallest odd).
-// Also the control's min of paired differences (from judgeSlope): pmin = min over odd b of
-// batchBytes[b] - batchBytes[b - 1] (both halves non-null), nPair = the pairs counted. A one-time
-// step in k lands inside at most one pair.
-function qsRead(r, n0, endOk) {
-  const steps = (qsN - n0) & 0x3FFFFFFF;
+// never a pass (a malformed child attempt arrives through alSafe). Verdict: judgeSlope (Dlo = min
+// even, Dhi = 2nd-smallest odd). Also the control's min of paired differences (from judgeSlope):
+// pmin = min over odd b of batchBytes[b] - batchBytes[b - 1] (both halves non-null), nPair = the
+// pairs counted. A one-time step in k lands inside at most one pair.
+function qsRead(r, steps, endOk) {
   const ok = r.settled && endOk && steps === QS_STEPS;
   return { r, steps, endOk, ...judgeSlope(r.batchBytes, ok) };
+}
+// The QS control verdict, ONE function pair shared by the child (its stop rule) and this process (the
+// gate): an attempt passes iff measured with >= 4 measured pairs, the min of paired differences >= 1280
+// and the ring never overflowed (holds a number <= QS_HOLD_N).
+function ctlOf(at, holds) {
+  return { at, delta: at.measured && at.nPair >= 4 ? at.pmin : null, holds: typeof holds === 'number' ? holds : null };
+}
+function ctlPasses(c) {
+  return c.delta !== null && c.delta >= 1280 && c.holds !== null && c.holds <= QS_HOLD_N;
 }
 const qsAttempts = [];
 let qsPass = null;
 for (let a = 0; a < QS_K && qsPass === null; a++) {
-  qpLeft = 0; qpOdd = 1;
-  const n0 = qsN;
-  const r = measureAllocs(qsPairStep, { iterations: QS_ITER, batches: QS_BATCHES, warmup: QS_WARM });
-  const at = qsRead(r, n0, qpLeft === 0 && qpOdd === 1);
+  const c = alSafe(alQsRaw[a]);
+  const at = qsRead(c.r, c.steps, c.endOk);
   qsAttempts.push(at);
   if (at.pass) qsPass = at;
 }
 const qsAllocOk = qsPass !== null;
-// Control with teeth: drives qsPairStep itself (same call shape, one call per attempt), retaining one
-// { v } per 1000 qsN steps, at most 1 per call (Smi mark, pre-sized ring: 1080 holds per
-// call; past the ring fails closed). Odd batches hold 100, even 20, so every (even b - 1, odd b) pair
-// differs by 80 holds = 1280 B at a 16 B object floor (measured 32 B per { v }: 2560 B). Gate: the
-// min of paired differences >= 1280 B, or blind (b74; not Dhi - Dlo, see the header).
-const QS_HOLD_N = 2048;
-const QS_HOLD = new Array(QS_HOLD_N).fill(null);
-let qcMark = 0, qh = 0;
-const qsCtlPairStep = () => {
-  qsPairStep();
-  if (((qsN - qcMark) & 0x3FFFFFFF) >= 1000) { qcMark = (qcMark + 1000) & 0x3FFFFFFF; if (qh < QS_HOLD_N) QS_HOLD[qh] = { v: qh }; qh++; }
-};
-// Bounded fail-closed retry, as the lane above: up to QS_K attempts, stop at the first pass; each
-// starts from the reset state with an empty ring. An attempt passes iff measured with >= 4 measured
-// pairs, the min of paired differences >= 1280 and the ring never overflowed; exhausted -> red.
+// Control with teeth (child: one { v } retained per 1000 qsN steps, odd batches 100 holds, even 20).
+// Verdict: ctlPasses (above); exhausted -> red (b74; not Dhi - Dlo).
 const qsCtlAttempts = [];
 let qsCtlPass = null;
 for (let a = 0; a < QS_K && qsCtlPass === null; a++) {
-  qpLeft = 0; qpOdd = 1; qcMark = qsN; qh = 0;
-  QS_HOLD.fill(null);
-  const n0 = qsN;
-  const at = qsRead(measureAllocs(qsCtlPairStep, { iterations: QS_ITER, batches: QS_BATCHES, warmup: QS_WARM }),
-    n0, qpLeft === 0 && qpOdd === 1);
-  const c = { at, delta: at.measured && at.nPair >= 4 ? at.pmin : null, holds: qh };   // delta = min paired difference
+  const x = alSafe(alQsCtlRaw[a]);
+  const at = qsRead(x.r, x.steps, x.endOk);
+  const c = ctlOf(at, alHolds(alQsCtlRaw[a]));
   qsCtlAttempts.push(c);
-  if (c.delta !== null && c.delta >= 1280 && c.holds <= QS_HOLD_N) qsCtlPass = c;
+  if (ctlPasses(c)) qsCtlPass = c;
 }
 const qsCtlOk = qsCtlPass !== null;
-QS_HOLD.fill(null);
-// Advisory only (never gates): on a red slope, sample where the qs steps allocate.
+// Advisory only (never gates; A2 R3): on a red slope, a second cold child (`--alloc-lane --qs-attr`, the
+// same ALLOC_LANE_ARGS) samples where the qs steps allocate. Its failure or timeout prints as unavailable.
 let qsAttr = null;
 if (!qsAllocOk) {
-  qpLeft = 0; qpOdd = 1;
-  qsAttr = measureAllocs(qsPairStep, { iterations: QS_ITER, batches: 4, warmup: 0, attribute: true, topSites: 5 });
+  const aa = spawnSync(process.execPath, alArgs.concat(['--qs-attr']), { encoding: 'utf8', timeout: 120000, killSignal: 'SIGKILL' });
+  let ao = null;
+  if (aa.error === undefined && aa.status === 0 && aa.signal === null) {
+    try { ao = JSON.parse(String(aa.stdout).trim().split('\n').pop()); } catch { ao = null; }
+  }
+  const qa = ao !== null && typeof ao === 'object' ? ao.qsAttr : null;
+  qsAttr = { attribution: qa !== null && typeof qa === 'object'
+    ? { available: qa.available === true, reason: String(qa.reason),
+      sites: Array.isArray(qa.sites) ? qa.sites.filter((x) => x !== null && typeof x === 'object') : [] }
+    : { available: false, reason: 'attr child exit=' + aa.status + ' signal=' + aa.signal +
+      (aa.error !== undefined ? ' error=' + String(aa.error.code || aa.error.message) : ''), sites: [] } };
 }
-// Blind unless every step ran the scheduler and both bodies (+1: each creation run).
-// Counted after the control and the attribution run: both drive qsStep.
+// Child: blind unless every child qsStep (warm-ups, attempts, control) ran the scheduler
+// and both bodies (+1: each creation run).
+const alQc = alRec !== null && alRec.qsCounts !== null && typeof alRec.qsCounts === 'object' ? alRec.qsCounts : null;
+const childQsFired = alQc !== null && typeof alQc.n === 'number' && alQc.n > 0 &&
+  alQc.runs === alQc.n + 1 && alQc.plain === alQc.n + 1 && alQc.sched === alQc.n + 1;
+// This process: the 6a HOT steps only.
 const qsFired = qsN >= HOT && qsRuns === qsN + 1 && qsPlain === qsN + 1 && qsSched === qsN + 1;
 // Label: the passing attempt, else the last one. A pass has Dhi <= Dlo, so it reads 0.
 const qsShown = qsPass !== null ? qsPass : qsAttempts[qsAttempts.length - 1];
@@ -908,7 +1097,7 @@ const qsKLabel = kLabel(qsPass, qsShown);
 // Control label: the passing attempt, else the last one.
 const qsCtlShown = qsCtlPass !== null ? qsCtlPass : qsCtlAttempts[qsCtlAttempts.length - 1];
 const qsCtlLabel = qsCtlShown.delta === null ? 'unmeasured' : qsCtlShown.delta + 'B';
-const qsOk = qsFired && qsGcReport.ok && qsAllocOk && qsCtlOk && qsChildOk;
+const qsOk = qsFired && childQsFired && qsGcReport.ok && qsAllocOk && qsCtlOk && qsChildOk && alLaneOk && alNoOsr === true;
 qsStop1();
 qsStop2();
 dispose(qS);
@@ -1096,7 +1285,7 @@ console.log(
   ' warnings=' + warns.length +
   ' | gc major=' + s.gc.major + ' minor=' + s.gc.minor +
   ' maxMs=' + s.gc.maxMs.toFixed(2) +
-  ' | alloc=' + bpcLabel + ' B/op k=' + alKLabel + ' K=' + setAttempts.length + ',' + unAttempts.length +
+  ' | alloc=' + bpcLabel + ' B/op k=' + alKLabel + ' K=' + setAttempts.length + ',' + unAttempts.length + ' osr=' + alOsrLabel +
   ' | nest gc major=' + ns.gc.major + ' minor=' + ns.gc.minor + ' alloc=' + nestLabel + ' B/op' +
   ' watch=' + watchLabel + ' B/op control=' + ctlLabel + ' B/op retention=' + nestAlive + '/' + nestRefs.length +
   ' free=' + nDrained + '/' + nD + 'n,' + (lMeasured ? lDrained + '/' + lD + 'l' : 'unmeasured') + ' res=' + nestResKB.toFixed(1) + 'KB(adv)' +
@@ -1194,6 +1383,11 @@ if (!ok) {
     ' measured=' + at.r.measuredBatches + ' inverted=' + at.r.invertedBatches + ' settled=' + at.r.settled +
     ' perParity=' + at.nLo + '/' + at.nHi + ' steps=' + at.steps + '/' + AL_STEPS + ' fires=' + at.fires +
     ' endState=' + at.endOk;
+  if (!childQsFired) console.error('  alloc lane qs counts: ' + JSON.stringify(alQc) + ' (runs === plain === sched === n + 1)');
+  if (!allocOk || !qsOk) console.error('  alloc lane: osr=' + alOsrLabel + ' exit=' + alLane.status + ' signal=' + alLane.signal +
+    ' lanes=' + alSetRaw.length + '/' + alUnRaw.length + '/' + alQsRaw.length + '/' + alQsCtlRaw.length +
+    ' seq=' + alSeq.map((v) => (v ? 1 : 0)).join('') + ' ' +
+    (alLane.error !== undefined ? 'error=' + String(alLane.error.code || alLane.error.message) + ' ' : '') + String(alLane.stderr).slice(-400));
   if (setPass === null) for (let a = 0; a < setAttempts.length; a++) console.error('  set alloc fail attempt ' + a + ': ' + alShow(setAttempts[a]));
   if (unPass === null) for (let a = 0; a < unAttempts.length; a++) console.error('  untrack alloc fail attempt ' + a + ': ' + alShow(unAttempts[a]));
   for (const f of findings) console.error('  finding ' + f.kind + ':' + f.reason);

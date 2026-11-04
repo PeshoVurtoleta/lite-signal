@@ -5,11 +5,12 @@
 // and a node_modules symlink, applies one text mutant, and runs `node --expose-gc <tmp>/test/torture.mjs` in a
 // child process (the torture spawns its own --nest-lane child).
 // Lanes (recipe: .handoff/b61-evidence/qa/mkmut.mjs; b61 signatures in scratch-{slow,lslow,val-new}.log):
-//   live  -- unmutated: exit 0, GATE line ends `| ok`, every drain full, retention 0 (the control).
+//   live  -- unmutated: exit 0, GATE line ends `| ok`, every drain full, retention 0, ` osr=off ` (the control).
 //   slow  -- every 1000th disposal the node is not pushed to the free list -> `free=` nodes short (b61: 811/1021n).
 //   lslow -- every 1000th disposal the sub link is not pushed to the free list -> links short (b61: 4032/4095l).
 //   val   -- disposal stops clearing node.value -> `retention=` alive >= 1 (b61: 1/966).
 //   aset  -- read.set retains one { n } per 20 calls -> GATE `| alloc=` > 0 + a `set alloc fail attempt` line
+//            + a `qs attempt` line (b194 A1: the QS lane's qS.set goes through read.set, so aset is its tooth too)
 //            (the phase-2b retention-slope lane's must-fail; since b78 Dhi is the 2nd-smallest odd batch, judgeSlope
 //            in test/torture-judge.mjs). REPORTED (b122 census, PLAN-F7-A A9): Dlo 32,000 / Dhi 160,000 B at N=20.
 //   aun   -- untrack retains one { n } per 20 calls -> `| alloc=` > 0 + an `untrack alloc fail attempt` line.
@@ -21,6 +22,19 @@
 //            flushEffects (qs) and fireConnect / fireDisconnect past their no-registration return (mreg) ->
 //            `  whole watch:` / `  whole qs:` / `  whole mreg:` (mean >= 0.4 or minor >= 1) + the legacy
 //            `  watch lane:` / `  qs:` / `  mreg:` lines, and no nest cell (b123).
+//   aosr  -- a TORTURE mutant (TMUTANTS, b194 FILLER 194): drops '--no-use-osr' from ALLOC_LANE_ARGS, so the
+//            alloc-lane child (set / untrack / QS slopes and the QS control, b194 A1) runs with OSR on -> GATE
+//            `| FAIL` with ` osr=on ` and an `  alloc lane: osr=on` stderr line. CI class 13: on slow hosts OSR
+//            of the measureAllocs batch loop read ~5-20 KB odd batches (local evidence, unverified on CI;
+//            PLAN-F194).
+//   qsrunlie -- a TORTURE mutant (b194 A2 R4b): the child reports qsCounts.runs one too high -> the parent's
+//            childQsFired is false -> `| FAIL` + an `  alloc lane qs counts:` stderr line.
+//   stopred -- a TORTURE mutant (b194 A2 R4b): the child corrupts set attempt 0 (steps -1) and stops the set lane
+//            after that red attempt -> the parent's sequence check (R2) fails the set lane: `| FAIL` + an
+//            `  alloc lane:` line with ` lanes=1/` and ` seq=0`.
+// Cascade (b194): slow / lslow / val read the live totals through the pure liveTotalsOf(r): it returns
+// { refs, nTotal, lTotal } as soon as the live GATE line parses (even when the live row itself went red) and,
+// with no GATE line, throws a message carrying status= and the stderr tail (never a bare "no totals").
 // The pure judge vectors (judgeWhole / classifyGcKind / countSpan of test/torture-judge.mjs) run first, no child.
 // Each mutant must exit 1 AND print a GATE line ending `| FAIL` AND show its own signature (a crash also exits 1,
 // so the exit code alone proves nothing). A child that prints no GATE line fails every lane (fail closed).
@@ -87,14 +101,26 @@ const MUTANTS = {
 };
 // ---- mutants (end)
 
+// b194 (FILLER 194): mutants of test/torture.mjs itself (its copy in the scratch package), applied by runLane.
+// Kept OUT of the MUTANTS block (the b122 load-witness evaluates that block verbatim). Same exactly-once rule.
+// aosr: the alloc-lane child loses --no-use-osr -> the parent must fail closed with osr=on.
+const TMUTANTS = {
+    aosr: [["'--expose-gc', '--no-use-osr']", "'--expose-gc']"]],
+    qsrunlie: [['qsCounts: { n: qsN, runs: qsRuns, plain: qsPlain, sched: qsSched }',
+        'qsCounts: { n: qsN, runs: qsRuns + 1, plain: qsPlain, sched: qsSched }']],
+    stopred: [['    set.push(x);\n    if (alRead(x, x.steps, x.fires, x.endOk).pass) break;   // R1: stop at the first pass\n',
+        '    x.steps = -1;\n    set.push(x);\n    break;\n']],
+    runpast: [['    if (alRead(x, x.steps, x.fires, x.endOk).pass) break;   // R1: stop at the first pass\n', '']],
+};
+
 // Apply a mutant's pairs in order; each anchor must occur exactly once (else the row fails, never skips).
-function mutate(src, kind) {
-    const pairs = MUTANTS[kind];
+function mutate(src, kind, table = MUTANTS, path = KPATH) {
+    const pairs = Object.hasOwn(table, kind) ? table[kind] : undefined;
     assert.ok(Array.isArray(pairs) && pairs.length > 0, 'unknown mutant ' + kind);
     for (const [a, b] of pairs) {
         const n = src.split(a).length - 1;
         assert.equal(n, 1, 'mutant ' + kind + ': anchor ' + JSON.stringify(a.slice(0, 60)) + ' occurs ' + n + 'x in ' +
-            KPATH + ' (must be exactly 1) -- re-anchor the mutant in test/64, never skip it');
+            path + ' (must be exactly 1) -- re-anchor the mutant in test/64, never skip it');
         src = src.split(a).join(b);  // literal: no $-patterns in b
     }
     return src;
@@ -114,11 +140,14 @@ function runLane(kind) {
     try {
         mkdirSync(join(dir, 'test'));
         let src = readFileSync(KPATH, 'utf8');
-        if (kind !== 'live') src = mutate(src, kind);
+        const tm = Object.hasOwn(TMUTANTS, kind);   // a torture mutant leaves the kernel unmutated
+        if (kind !== 'live' && !tm) src = mutate(src, kind);
         writeFileSync(join(dir, 'Signal.js'), src);
         copyFileSync(WATCH, join(dir, 'Watch.js'));
         copyFileSync(join(ROOT, 'package.json'), join(dir, 'package.json'));
-        copyFileSync(TORTURE, join(dir, 'test', 'torture.mjs'));
+        let tsrc = readFileSync(TORTURE, 'utf8');
+        if (tm) tsrc = mutate(tsrc, kind, TMUTANTS, TORTURE);
+        writeFileSync(join(dir, 'test', 'torture.mjs'), tsrc);
         copyFileSync(JUDGE, join(dir, 'test', 'torture-judge.mjs'));   // torture.mjs imports it (b78)
         symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'), 'dir');
         const env = { ...process.env };
@@ -158,10 +187,18 @@ function assertGate(kind, r) {
         describeRun(kind, r));
 }
 
-let liveSig = null;
-function liveTotals() {
-    assert.ok(liveSig !== null, 'live lane did not produce totals (it must run and pass first)');
-    return liveSig;
+// b194: the live lane's run, stored BEFORE any live assertion, so a red live row still feeds the cascade.
+let liveRun = null;
+// Pure: the totals slow / lslow / val compare against -> { refs, nTotal, lTotal } as soon as the GATE line parses,
+// whatever the live verdict. No run / no GATE line / a missing total throws; the message carries status= and
+// the stderr tail (describeRun), so a cascade row reports the live failure itself.
+function liveTotalsOf(r) {
+    assert.ok(r !== null && typeof r === 'object', 'live lane has not run (run the whole file, not one row)');
+    assert.ok(typeof r.gate === 'string', 'live lane printed no GATE line -- ' + describeRun('live', r));
+    const s = sig(r.gate);
+    assert.ok(s.refs !== null && s.nTotal !== null && s.lTotal !== null,
+        'live GATE line lacks the retention= / free=...n,...l totals -- ' + describeRun('live', r));
+    return { refs: s.refs, nTotal: s.nTotal, lTotal: s.lTotal };
 }
 
 // ---- pure judge vectors (b123 T5, PLAN-F7-A ASSERTION 5 + FILLER 16 window edges): no child process ----
@@ -280,15 +317,39 @@ describe('torture judge vectors (pure, test/torture-judge.mjs)', () => {
             ['t1 Infinity -> null', countSpan(T, K, 4, 0, Infinity) === null],
         ]);
     });
+
+    it('liveTotalsOf (b194 cascade): a FAIL GATE still yields the totals; no GATE throws status= + stderr tail', () => {
+        const G = 'GATE leak=size 0/0 findings=0 warnings=0 | gc major=0 minor=0 maxMs=0.00 | alloc=12.5 B/op ' +
+            'k=0B/batch,0B/batch K=3,1 osr=off | nest gc major=0 minor=0 alloc=0.000 B/op watch=0.000 B/op ' +
+            'control=15.96 B/op retention=0/966 free=1021/1021n,4095/4095l res=21.4KB(adv) | FAIL';
+        const R = (o) => ({ status: 1, signal: null, error: undefined, gate: G, stdout: '', stderr: '', ...o });
+        const T3 = { refs: 966, nTotal: 1021, lTotal: 4095 };
+        assert.deepEqual(liveTotalsOf(R()), T3, 'FAIL GATE (status 1) -> totals');
+        assert.deepEqual(liveTotalsOf(R({ status: 0, gate: G.replace('| FAIL', '| ok') })), T3, 'ok GATE -> totals');
+        const msgOf = (r) => { try { liveTotalsOf(r); } catch (e) { return e.message; } return 'NO THROW'; };
+        const m1 = msgOf(R({ gate: null, stderr: 'x'.repeat(2000) + 'TAIL-b194' }));
+        assert.match(m1, /status=1/, 'gate null + status 1: ' + m1.slice(0, 200));
+        assert.match(m1, /TAIL-b194$/, 'gate null: the stderr tail is in the message');
+        assert.doesNotMatch(m1, /did not produce totals/);
+        assert.match(msgOf(R({ gate: null, status: null, signal: 'SIGKILL' })), /status=null signal=SIGKILL/);
+        assert.match(msgOf(null), /has not run/);
+        assert.match(msgOf(undefined), /has not run/);
+        assert.match(msgOf(R({ gate: G.replace(/ free=\S+/, '') })), /lacks the retention=[\s\S]*status=1/);
+        assert.match(msgOf(R({ gate: G.replace(/ retention=\S+/, '') })), /lacks the retention=/);
+        assert.match(msgOf(R({ gate: G.replace('4095/4095l', 'unmeasured') })), /lacks the retention=/);
+    });
 });
 
 describe('torture must-fail control', () => {
     it('live: exit 0, GATE ends | ok, drains full, retention 0', (t) => {
         const r = runLane('live');
+        liveRun = r;   // b194: before any assertion -- the cascade reads it even when this row goes red
         t.diagnostic('live ' + r.gate);
         assertGate('live', r);
         assert.equal(r.status, 0, 'live torture must exit 0 -- ' + describeRun('live', r));
         assert.ok(r.gate.endsWith('| ok'), 'live GATE must end `| ok` -- ' + describeRun('live', r));
+        assert.ok(r.gate.includes(' osr=off '), 'live GATE must carry ` osr=off ` (alloc-lane child under ' +
+            '--no-use-osr, b194) -- ' + describeRun('live', r));
         const s = sig(r.gate);
         assert.ok(s.alive !== null && s.nDrained !== null && s.lDrained !== null,
             'live GATE line lacks retention= / free=...n,...l fields (parser out of date?) -- ' + r.gate);
@@ -297,7 +358,6 @@ describe('torture must-fail control', () => {
         assert.ok(s.refs > 0 && s.nTotal > 0 && s.lTotal > 0, 'live totals must be positive -- ' + r.gate);
         assert.equal(s.nDrained, s.nTotal, 'live node drain must be full');
         assert.equal(s.lDrained, s.lTotal, 'live link drain must be full');
-        liveSig = s;
     });
 
     const expectFail = (kind, r) => {
@@ -313,7 +373,7 @@ describe('torture must-fail control', () => {
         const r = runLane('slow');
         t.diagnostic('slow ' + r.gate);
         const s = expectFail('slow', r);
-        const L = liveTotals();
+        const L = liveTotalsOf(liveRun);
         assert.equal(s.nTotal, L.nTotal, 'slow node total must match live');
         assert.ok(s.nDrained < s.nTotal, 'slow signature: free nodes ' + s.nDrained + '/' + s.nTotal + ' must be short');
     });
@@ -322,7 +382,7 @@ describe('torture must-fail control', () => {
         const r = runLane('lslow');
         t.diagnostic('lslow ' + r.gate);
         const s = expectFail('lslow', r);
-        const L = liveTotals();
+        const L = liveTotalsOf(liveRun);
         assert.ok(s.lDrained !== null, 'lslow signature: link drain unmeasured -- ' + r.gate);
         assert.equal(s.lTotal, L.lTotal, 'lslow link total must match live');
         assert.ok(s.lDrained < s.lTotal, 'lslow signature: free links ' + s.lDrained + '/' + s.lTotal + ' must be short');
@@ -332,7 +392,7 @@ describe('torture must-fail control', () => {
         const r = runLane('val');
         t.diagnostic('val ' + r.gate);
         const s = expectFail('val', r);
-        const L = liveTotals();
+        const L = liveTotalsOf(liveRun);
         assert.equal(s.refs, L.refs, 'val retention refs must match live');
         assert.ok(s.alive >= 1, 'val signature: retention alive ' + s.alive + '/' + s.refs + ' must be >= 1');
     });
@@ -344,6 +404,10 @@ describe('torture must-fail control', () => {
         assert.ok(s.alloc > 0, 'aset signature: alloc=' + s.alloc + ' B/op must be > 0 -- ' + r.gate);
         assert.ok(/^ {2}set alloc fail attempt \d+: /m.test(r.stderr),
             'aset signature: no `set alloc fail attempt` line -- ' + describeRun('aset', r));
+        assert.ok(/^ {2}qs attempt \d+: /m.test(r.stderr),   // b194 A1: qS.set goes through read.set (QS tooth)
+            'aset signature: no `qs attempt` line -- ' + describeRun('aset', r));
+        assert.match(r.gate, /\| qs gc [^|]* k=fail\(Dlo=/,   // b194 A2 R4d: the QS slope itself is red
+            'aset signature: GATE qs segment lacks `k=fail(Dlo=` -- ' + describeRun('aset', r));
     });
 
     it('aun (untrack retains one object per 20 calls): FAIL with alloc > 0 and an untrack alloc fail line', (t) => {
@@ -354,6 +418,42 @@ describe('torture must-fail control', () => {
         assert.ok(/^ {2}untrack alloc fail attempt \d+: /m.test(r.stderr),
             'aun signature: no `untrack alloc fail attempt` line -- ' + describeRun('aun', r));
     });
+
+    it('aosr (torture mutant: alloc-lane child without --no-use-osr): FAIL with osr=on + an alloc lane line', (t) => {
+        const r = runLane('aosr');
+        t.diagnostic('aosr ' + r.gate);
+        expectFail('aosr', r);
+        assert.ok(r.gate.includes(' osr=on '),
+            'aosr signature: GATE must carry ` osr=on ` -- ' + describeRun('aosr', r));
+        assert.match(r.stderr, /^ {2}alloc lane: osr=on /m,
+            'aosr signature: no `  alloc lane: osr=on` stderr line -- ' + describeRun('aosr', r));
+    });
+
+    it('qsrunlie (torture mutant: child qsCounts.runs + 1): FAIL with an alloc lane qs counts line', (t) => {
+        const r = runLane('qsrunlie');
+        t.diagnostic('qsrunlie ' + r.gate);
+        expectFail('qsrunlie', r);
+        assert.ok(r.gate.includes(' osr=off '), 'qsrunlie: the lane itself ran under --no-use-osr -- ' + describeRun('qsrunlie', r));
+        assert.match(r.stderr, /^ {2}alloc lane qs counts: \{"n":\d+,"runs":\d+,/m,
+            'qsrunlie signature: no `  alloc lane qs counts:` stderr line -- ' + describeRun('qsrunlie', r));
+    });
+
+    it('stopred (torture mutant: child stops the set lane after a red attempt): FAIL via the R2 sequence check', (t) => {
+        const r = runLane('stopred');
+        t.diagnostic('stopred ' + r.gate);
+        expectFail('stopred', r);
+        assert.match(r.stderr, /^ {2}alloc lane: osr=off exit=0 signal=null lanes=1\/\d\/\d\/\d seq=0[01]{3} /m,
+            'stopred signature: no `  alloc lane:` line with lanes=1/ and seq=0 -- ' + describeRun('stopred', r));
+    });
+
+    it('runpast (torture mutant: child runs the set lane on past its first pass): FAIL via the R2 sequence check',
+        (t) => {
+            const r = runLane('runpast');
+            t.diagnostic('runpast ' + r.gate);
+            expectFail('runpast', r);
+            assert.match(r.stderr, /^ {2}alloc lane: osr=off exit=0 signal=null lanes=3\/\d\/\d\/\d seq=0[01]{3} /m,
+                'runpast signature: no `  alloc lane:` line with lanes=3/ and seq=0 -- ' + describeRun('runpast', r));
+        });
 
     // b123: the whole-run cells. `  whole <cell>: mean=<x|unmeasured(..)> B/op minor=<n|null> ...` on stderr;
     // an unmeasured mean or a null count parses as NaN (never meets a bound: fail closed).

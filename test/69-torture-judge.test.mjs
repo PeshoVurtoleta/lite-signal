@@ -7,6 +7,10 @@
 // derived by hand from the arrays (lo = min even index; hi = 2nd-smallest odd index; pass iff hi <= lo).
 // Revert-red: SLOPE_ORD = 1 -> V1 red; lo = 2nd-smallest even -> V3 red; no entry validation -> F rows red;
 // an own min loop back in alRead / qsRead -> the wiring row red.
+// b194 (FILLER 194, CI class 13): the OSR vectors row locks the judge on the CI macOS node 24 set attempts and the
+// local `taskpolicy -b` / --no-use-osr dumps (PLAN-F194 Evidence). Green on HEAD too: a lock, not a tooth.
+// b194 A1: every `measureAllocs(` call in torture.mjs sits inside allocLane() (the --no-use-osr child); the parent
+// makes none. Red on HEAD (set / untrack / QS measured in the parent) and on the pre-A1 B1 state (QS in the parent).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -132,6 +136,29 @@ test('ord other than 1 or 2 throws RangeError', () => {
     }
 });
 
+// b194: set-lane batchBytes, verbatim from PLAN-F194 Evidence (job 126476288221 a0-a2; local v26.8.2 dumps).
+// [lo, hi, hiMin, nLo, nHi, measured, pass], hand-derived (lo = min even; hi = 2nd-smallest odd; nulls skipped).
+const OSR = {
+    ci_a0: [[null, null, 0, 20576, 56, 20024, 48, 16, 16, 16, 16, 16, 16, 16, 16, 16], [0, 16, 16, 7, 7, true, false]],
+    ci_a1: [[19936, 16, 0, null, 20744, 20744, 184, 23976, 20760, 20760, null, 20760, null, 20744, 16, 23848],
+        [0, 20744, 16, 6, 7, true, false]],
+    ci_a2: [[null, 0, 16, 21960, 16, 21168, 16, 21168, null, 26352, 16, 21168, 16, 88, 88, 88],
+        [16, 88, 0, 6, 8, true, false]],
+    local_b_a0: [[null, 0, 0, 5624, 5160, 5080, 5184, 5080, 5080, 5080, 5248, 5080, 5080, 5080, 5080, 5080],
+        [0, 5080, 0, 7, 8, true, false]],
+    local_b_noosr: [[null, 0, 0, 504, 32, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 7, 8, true, true]],
+};
+
+test('b194 OSR vectors: CI a0 / a1 / a2 + local -b a0 FAIL, -b --no-use-osr PASSES (exact lo / hi)', () => {
+    for (const k of Object.keys(OSR)) {
+        const [bb, want] = OSR[k];
+        assert.equal(bb.length, 16, k + ' batches');
+        const r = judgeSlope(bb, true);
+        assert.deepEqual([r.lo, r.hi, r.hiMin, r.nLo, r.nHi, r.measured, r.pass], want, k);
+    }
+    assert.equal(Object.keys(OSR).filter((k) => OSR[k][1][6] === false).length, 4, 'four red vectors');
+});
+
 test('QS control vector: pmin 5104, nPair 8', () => {
     const r = judgeSlope(V.CTL, true);
     assert.equal(r.pmin, 5104);
@@ -219,6 +246,35 @@ test('wiring: the own-min-loop check reads only the alRead / qsRead bodies; a mi
     assert.ok(wiringProblems(GOOD.replace('function alRead(', 'function alReadX(')).includes('alRead body'));
     assert.ok(wiringProblems(GOOD.replace('function qsRead(', 'function qsRead2(')).includes('qsRead body'));
     assert.ok(wiringProblems(GOOD.replace('const ok = steps === 1;', "const ok = steps === 1; const t = '}'; if (v < hi) hi = v;")).includes('alRead body'), 'a } in a string cannot cut the body short');
+});
+
+// ---- b194 A1: measureAllocs only inside allocLane (the --alloc-lane child under --no-use-osr) ----
+const allocLaneProblems = (raw) => {
+    const s = strip(raw), bad = [];
+    const total = (s.match(/\bmeasureAllocs\s*\(/g) || []).length;
+    const body = bodyOf(s, 'allocLane');
+    if (body === null) return ['allocLane body'];
+    const inside = (body.match(/\bmeasureAllocs\s*\(/g) || []).length;
+    if (inside === 0) bad.push('no measureAllocs in allocLane');
+    if (total !== inside) bad.push('measureAllocs outside allocLane ' + (total - inside));
+    return bad;
+};
+
+test('wiring (b194 A1): every measureAllocs( in test/torture.mjs sits inside allocLane()', () => {
+    const src = readFileSync(new URL('./torture.mjs', import.meta.url), 'utf8');
+    assert.deepEqual(allocLaneProblems(src), []);
+});
+
+test('wiring (b194 A1) has teeth: a parent call, a missing / duplicate allocLane and an empty lane fail closed', () => {
+    const IN = 'function allocLane() { const a = measureAllocs(f, o);\n' +
+        '    const b = measureAllocs (g, o); return [a, b]; }\n';
+    assert.deepEqual(allocLaneProblems(IN), []);
+    assert.deepEqual(allocLaneProblems(IN + '// measureAllocs(x) in a comment\n'), [], 'comments are stripped');
+    assert.deepEqual(allocLaneProblems(IN + 'const q = measureAllocs(qsPairStep, {});\n'),
+        ['measureAllocs outside allocLane 1']);
+    assert.deepEqual(allocLaneProblems('function other() { measureAllocs(f); }\n'), ['allocLane body']);
+    assert.deepEqual(allocLaneProblems(IN + IN), ['allocLane body'], 'two allocLane bodies');
+    assert.deepEqual(allocLaneProblems('function allocLane() { return 1; }\n'), ['no measureAllocs in allocLane']);
 });
 
 // ---- purity ----

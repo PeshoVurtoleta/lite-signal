@@ -130,6 +130,42 @@ The LEDGER #45 / #46 op-3 rules are unchanged (a throwing `onConnect` still anno
 bodies (+ `allocateLink`, `freeLink`, values unchanged); `test/torture.mjs` gains the `mreg` lane (steady-state, whole-run window
 gate and retention half in the pinned child). (User code running with `this` = the internal node was fixed later, LEDGER #48: see the #48 entry above.)
 
+### Tests / CI -- torture: retention-slope lanes in one `--no-use-osr` child (CI class 13, FILLER 194)
+
+Dev-only (`test/torture.mjs`, `test/64`, `test/69`; no engine, API or shipped-file change, no version bump).
+Symptom: on macOS CI node 24 (05f8d2e, job 126476288221) the phase-2b set-lane retention-slope witness
+(lite-gc-profiler `measureAllocs`, `judgeSlope`: Dlo = min even batch, Dhi = 2nd-smallest odd, pass iff Dhi <= Dlo)
+failed all 3 attempts, so the torture gate exited 1 and the `test/64` live row failed. The slow / lslow / val rows then
+failed as "live lane did not produce totals", which hid the cause. The CI census also showed the set lane spending
+retries (K=2..3) on ubuntu 24 / 26 and macOS 24 runs that passed. Local evidence (node v26.8.2, Apple M4 Pro): on
+P-cores the lane passed 20/20; under `taskpolicy -b` (efficiency cores, a slow host) HEAD failed set attempt 0 6/6 with
+a ~5 KB per-batch constant on both parities from batch 3 (Dlo 0 / Dhi 5080); with `--no-use-osr` it passed 3/3, and the
+reviewer confirmed with `--trace-osr` on a synthetic hot loop that the flag removes OSR (13 OSR trace lines -> 0).
+Moving set / untrack alone shifted the same step onto the QS lane, the next `measureAllocs` call (QS a0 Dlo 408 /
+Dhi 5064). Mechanism, local evidence UNVERIFIED on CI: on-stack replacement of `measureAllocs`' batch loop leaves
+compiled code on the heap at the after-read. Locally it is instrument noise, not engine retention (P-cores and
+`--no-use-osr` read clean).
+
+Fix: the set, untrack and QS lanes (main, control) now run in one `--alloc-lane` child spawned with
+`--expose-gc --no-use-osr`; the parent makes no `measureAllocs` call. The child stops each lane at its first pass with
+the same judge functions. The parent re-judges every attempt and checks the attempt sequence (1..K attempts, every one
+but the last red, the last a pass or attempt K), and fails closed on any child error, timeout, signal, bad JSON or a
+wrong count. A QS control warm-up runs unmeasured. Attribution is red-only, via a second `--alloc-lane --qs-attr`
+child, and never changes a verdict. The GATE line gains ` osr=off|on|unmeasured`; on failure stderr prints
+`  alloc lane: osr=.. exit=.. signal=.. lanes=.. seq=..`. Rows: `test/64` torture mutants `aosr` (flag dropped -> FAIL,
+`osr=on`), `qsrunlie` (child misreports QS counts -> FAIL), `stopred` (child stops a lane after a red attempt -> FAIL)
+and `runpast` (child runs past a pass -> FAIL via the sequence check); the `aset` row also asserts the QS
+`k=fail(Dlo=` signature. A pure `liveTotalsOf` replaces the cascade: slow / lslow / val read the live totals even when
+the live row is red, and a missing GATE throws with `status=` and the stderr tail. `test/69` pins the CI and local OSR
+vectors' exact judge verdicts, plus a wiring row: every `measureAllocs(` in `torture.mjs` is inside `allocLane()`.
+
+Cost (wall, PRELIMINARY, loaded shared host): head was at or below base (frozen f88e3d0) in 9 interleaved pairs
+(coder, load1 18-58); in the reviewer's 3 back-to-back pairs (2026-11-05, load1 5.6-6.2), base 1257-1268 ms vs head
+1280-1292 ms. `test/64` lanes took 1.3-2.8 s (reviewer, 1 run, load1 4.8) against the 60 s per-child bound. PENDING: CI
+proof (the census K=1,1 `osr=off` on every OS) after the maintainer's push. Follow-up for `@zakkster/lite-gc-profiler`
+(not patched here): `measureAllocs`' batch loop OSRs (suspected, local evidence; UNVERIFIED on CI), which reads as a
+per-batch constant in `heapUsed`.
+
 ### Tests / Docs -- bench: inlining-budget-diff (dev tool, 2026-10-29)
 
 Dev-only (`bench/inlining-budget-diff.sh`, `npm run inline-budget-diff -- ...`; not shipped, never in `npm test` /
