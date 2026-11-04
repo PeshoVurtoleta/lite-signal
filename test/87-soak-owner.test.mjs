@@ -28,9 +28,9 @@ const parentOf = (id) => (id in PAR ? PAR[id] : -1);
 const f = (o, k) => ({ o, k });
 
 describe('OW registration', () => {
-    it('ORACLES holds OW and SIGS.OW is [cleanup-order, callback-this]', () => {
+    it('ORACLES holds OW and SIGS.OW is [cleanup-order, callback-this, reset-cleanup]', () => {
         assert.ok(ORACLES.includes('OW'), JSON.stringify(ORACLES));
-        assert.deepEqual(SIGS.OW, ['cleanup-order', 'callback-this']);
+        assert.deepEqual(SIGS.OW, ['cleanup-order', 'callback-this', 'reset-cleanup']);
     });
 });
 

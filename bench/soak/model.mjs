@@ -420,6 +420,34 @@ export class Model {
         return n;
     }
 
+    /**
+     * REGISTRY (C-RESET, lanes/registry.mjs rreset): registry.reset() at rest disposed every node and registration and
+     * left the registry USABLE. Every live node dies and every registration goes off, as destroyAll(); where it differs:
+     *   - cleanups fire: each live owner's current registration set is fired (fired += cl; destroy fires none);
+     *   - the sentinel is released (sentinel -> -1; its signal is dead), so a world rebuilt after the reset may set one;
+     *   - new nodes may follow (addSignal / addComputed / addEffect / addReg keep working; destroy ends the registry).
+     * No taint pass: nothing stays live to read a dead node. Returns a FRESH {e, c, s}: the live effects, computeds and
+     * signals BEFORE the kill (all 0 on a second call). Throws TypeError, before any write, when a node has
+     * dying === true (an in-flight reset throws the engine guard and disposes nothing; the model never resets there).
+     */
+    resetAll() {
+        const src = this.n;
+        for (let k = 0; k < src.length; k++) {
+            const nd = src[k];
+            if (nd !== undefined && nd.dying === true) throw new TypeError('Model.resetAll: node #' + k + ' is mid-dispose (a reset happens only at rest)');
+        }
+        const was = this.counts();
+        for (let k = 0; k < src.length; k++) {
+            const nd = src[k];
+            if (nd === undefined || !nd.live) continue;
+            nd.live = false;
+            if (nd.t !== 's') this.fireCleanups(nd);
+        }
+        for (let r = 0; r < this.regs.length; r++) if (this.regs[r] !== undefined) this.regs[r].live = false;
+        this.sentinel = -1;
+        return { e: was.effects, c: was.computeds, s: was.signals };
+    }
+
     addReg(r, target) {
         this.regs[r] = { r, target, live: true };
     }

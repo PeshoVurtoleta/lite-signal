@@ -78,8 +78,8 @@ function runMany(ad, n, opts) {
 /* ---- 1. surface ------------------------------------------------------------------------------------------------ */
 
 test('surface: SCENARIOS 79 -> 86 with the 7 snapshot ids appended last; CHECK_NAMES ends OT, OS; the descriptor', () => {
-    assert.equal(SCENARIOS.length, 86);
-    assert.deepEqual(SCENARIOS.slice(79), SNAP_SCEN);
+    assert.equal(SCENARIOS.length, 91);
+    assert.deepEqual(SCENARIOS.slice(84), SNAP_SCEN);
     assert.deepEqual(CHECK_NAMES.slice(-2), ['OT', 'OS']);
     assert.equal(CHECK_NAMES.length, 14);
     assert.equal(SNAPSHOT.name, 'SNAPSHOT');

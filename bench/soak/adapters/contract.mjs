@@ -36,6 +36,7 @@ export const CAPS = Object.freeze({
     capacity: Object.freeze([true, false]),
     box: Object.freeze([true, false]),
     snapshot: Object.freeze([true, false]),
+    reset: Object.freeze([true, false]),
 });
 export const CAP_KEYS = Object.freeze(Object.keys(CAPS));
 
@@ -71,7 +72,8 @@ export function validateAdapter(a) {
 /**
  * Extension world methods (S3 R0), cap -> the TOP-LEVEL world keys a lane needing that cap calls. scheduler adds no
  * key: it is the effect(fn, {scheduler}) form of the base effect method. recycle (b137): update(h, fn), the handle's
- * own update(fn) (lanes/recycle.mjs rsupd: a stale signal update, D-b135-1).
+ * own update(fn) (lanes/recycle.mjs rsupd: a stale signal update, D-b135-1). reset (C-RESET soak S2a): reset(), the
+ * registry's reset() (adapters/lite-s3.mjs; a lane needing cap reset calls it).
  */
 export const EXT_METHODS = Object.freeze({
     hook: Object.freeze(['hook']),
@@ -80,6 +82,7 @@ export const EXT_METHODS = Object.freeze({
     capacity: Object.freeze(['capacity']),
     scheduler: Object.freeze([]),
     recycle: Object.freeze(['update']),
+    reset: Object.freeze(['reset']),
 });
 
 /**

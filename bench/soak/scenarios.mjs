@@ -42,6 +42,8 @@ export const SCENARIOS = Object.freeze([
     'fifo-delivery', 'lifo-delivery',
     // REGISTRY (S3 R5; lanes/registry.mjs, not rostered until R5 B2)
     'destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy',
+    // REGISTRY reset (C-RESET; onRegReset, counted by lanes/registry.mjs rreset from S3a)
+    'reset-top', 'reset-in-flight', 'reset-in-batch', 'reset-in-body', 'reset-in-computed',
     // CAPACITY (S3 R5; lanes/capacity.mjs, not rostered until R5 B2)
     'node-cap-throw', 'link-cap-throw', 'link-ceiling-grow', 'grow-past-initial', 'reuse-at-edge',
     // BOX (R7; lanes/box.mjs, rostered in R7 C1, b150)
@@ -562,6 +564,18 @@ export class Detectors {
         if (at !== 'batch' && at !== 'body' && at !== 'computed') throw new TypeError('onRegDestroy: at must be top / batch / body / computed, got ' + String(at));
         this.count('destroy-in-flight');
         this.count('destroy-in-' + at);
+    }
+
+    /**
+     * One registry reset() ran (C-RESET). at: 'top' (no batch, flush or body open) | 'batch' | 'body' | 'computed' (in
+     * flight: reset-in-flight plus reset-in-<at>), the onRegDestroy map with reset-* ids. Throws TypeError on any other
+     * at (fail closed).
+     */
+    onRegReset(at) {
+        if (at === 'top') { this.count('reset-top'); return; }
+        if (at !== 'batch' && at !== 'body' && at !== 'computed') throw new TypeError('onRegReset: at must be top / batch / body / computed, got ' + String(at));
+        this.count('reset-in-flight');
+        this.count('reset-in-' + at);
     }
 
     /** A world rebuilt after a destroy() and the rebuilt nodes are live (n: live model nodes, an integer >= 1). */

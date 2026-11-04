@@ -229,6 +229,8 @@ test('applicability engine arg fail-closed: non-string / inherited-key engines n
         assert.deepEqual(a.missingCaps, ['twin'], String(e));
     }
 });
+// b163 C-RESET soak S3a (D-b163-3) moved the golden's REGISTRY entry (test/fixtures/r7-b0-applicability.json): scenariosNA
+// [] -> ['reset-top'] (scenCaps reset-top needs reset / owner / hook; GOLD.caps has no reset key); requiredApplicable unchanged
 test('B-3 the 12 pre-BOX ROSTER lanes (ROSTER minus BOX) deepEqual the B0 golden, with and without the engine arg (engine is not read for non-twin lanes)', () => {
     assert.deepEqual(GOLD.lanes.map((l) => l.lane), ROSTER.slice(0, 12));
     assert.equal(GOLD.lanes.length, 12);
@@ -266,7 +268,7 @@ test('BOX is ROSTER[12] and has LANE_INDEX 9', () => {
 });
 test('scenarios.mjs lists box-trace-equal and box-interop directly before the 7 SNAPSHOT ids (R8: they are no longer the last two)', () => {
     assert.deepEqual(SCENARIOS.slice(-9, -7), ['box-trace-equal', 'box-interop']);
-    assert.equal(SCENARIOS.length, 86);
+    assert.equal(SCENARIOS.length, 91);
 });
 test('BOX script = the picked sub-lane script on the same seed (pick = seed % 5 over GRAPH, BATCH, ERROR, NEST, WIE), lane name BOX; the pick draws nothing from the stream', () => {
     const b = BOX();

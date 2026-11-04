@@ -24,6 +24,7 @@ import { isDeepStrictEqual } from 'node:util';
 import v8 from 'node:v8';
 import { createLeakTracker } from '@zakkster/lite-leak';
 import { Model } from '../bench/soak/model.mjs';
+import { Detectors } from '../bench/soak/scenarios.mjs';
 import * as O from '../bench/soak/oracles.mjs';
 import { SoakThrow, normalizeEscape } from '../bench/soak/kinds.mjs';
 import { generateWorld, scriptJson } from '../bench/soak/gen.mjs';
@@ -1253,4 +1254,90 @@ test('restoreCopy retention MUST-FAIL: a copy that keeps the swapped-out model k
     cur.prev = null;
     await rcSettle(gc, tracker, (s) => s === 0);
     assert.equal(tracker.size(), 0, 'dropping the back-reference releases them');
+});
+
+/* -- C-RESET soak S2b (b163, PLAN-C-RESET-soak TASK 7): model.resetAll + Detectors.onRegReset ------------------- */
+
+// s0 1 / 2 (live), s2 disposed before the reset; c3 = s0 + s1; e4 reads c3 and holds 2 cleanups; e5 reads s1; reg 0 on e4
+function resetWorld() {
+    const M = new Model(CAPS);
+    M.addSignal(0, 1, {});
+    M.addSignal(1, 2, {});
+    M.addSignal(2, 3, {});
+    M.addComputed(3, { k: 'sum', d: [0, 1], role: 'comp' }, -1);
+    M.addEffect(4, { k: 'identity', d: [3], role: 'eff' }, -1);
+    M.addEffect(5, { k: 'identity', d: [1], role: 'eff' }, -1);
+    M.kill(2);
+    assert.equal(M.addCleanup(4), 0);
+    assert.equal(M.addCleanup(4), 1);
+    M.addReg(0, 4);
+    return M;
+}
+
+test('C-RESET resetAll: returns the exact live {e, c, s} before the kill as a fresh object; 0 live nodes and every registration off after', () => {
+    const M = resetWorld();
+    assert.deepEqual(M.counts(), { signals: 2, computeds: 1, effects: 2 });
+    const r = M.resetAll();
+    assert.deepEqual(r, { e: 2, c: 1, s: 2 });
+    assert.deepEqual(Object.keys(r), ['e', 'c', 's']);
+    assert.equal(Object.getPrototypeOf(r), Object.prototype);
+    assert.deepEqual(M.counts(), { signals: 0, computeds: 0, effects: 0 });
+    for (let k = 0; k < M.n.length; k++) assert.equal(M.n[k].live, false, 'node #' + k);
+    assert.equal(M.regs[0].live, false);
+    assert.equal(M.regMayFire(0), 'registration off');
+    assert.equal(M.fired, 2, 'reset fires the owner cleanups (destroy fires none): fired += cl');
+    assert.equal(M.n[4].cl, 0);
+    const r2 = M.resetAll();
+    assert.deepEqual(r2, { e: 0, c: 0, s: 0 }, 'a second reset kills nothing');
+    assert.notEqual(r2, r, 'a fresh object per call');
+    assert.equal(M.fired, 2);
+});
+
+test('C-RESET resetAll: the model stays usable (new nodes and registrations count; a new sentinel may be set) -- destroyAll differs only in cleanups', () => {
+    const M = resetWorld();
+    M.setSentinel(0);
+    M.resetAll();
+    assert.equal(M.sentinel, -1, 'the dead sentinel is released');
+    M.addSignal(6, 7, {});
+    M.addComputed(7, { k: 'sum', d: [6], role: 'comp' }, -1);
+    M.addEffect(8, { k: 'identity', d: [7], role: 'eff' }, -1);
+    M.addReg(1, 8);
+    assert.deepEqual(M.counts(), { signals: 1, computeds: 1, effects: 1 });
+    assert.equal(M.regMayFire(1), null);
+    assert.equal(M.val(7, new Map()), 7);
+    assert.equal(M.addCleanup(8), 0, 'a new owner registers cleanups again');
+    M.setSentinel(6);
+    assert.equal(M.sentinel, 6);
+    assert.deepEqual(M.resetAll(), { e: 1, c: 1, s: 1 });
+    // the destroyAll twin: same kill, no cleanup fire, sentinel kept
+    const D = resetWorld();
+    assert.equal(D.destroyAll(), 5);
+    assert.equal(D.fired, 0);
+});
+
+test('C-RESET resetAll: a mid-dispose node (dying) throws TypeError before any write', () => {
+    const M = resetWorld();
+    M.n[5].dying = true;
+    assert.throws(() => M.resetAll(), (e) => e instanceof TypeError && e.message === 'Model.resetAll: node #5 is mid-dispose (a reset happens only at rest)');
+    assert.deepEqual(M.counts(), { signals: 2, computeds: 1, effects: 2 });
+    assert.equal(M.regs[0].live, true);
+    assert.equal(M.fired, 0);
+    assert.equal(M.n[4].cl, 2);
+});
+
+test('C-RESET onRegReset: top -> reset-top; batch / body / computed -> reset-in-flight + reset-in-<at>; anything else TypeError, no count', () => {
+    const D = new Detectors({});
+    D.onRegReset('top');
+    D.onRegReset('batch');
+    D.onRegReset('body');
+    D.onRegReset('computed');
+    D.onRegReset('body');
+    assert.deepEqual({ ...D.counts }, { 'reset-top': 1, 'reset-in-flight': 4, 'reset-in-batch': 1, 'reset-in-body': 2, 'reset-in-computed': 1 });
+    const B = new Detectors({});
+    for (const at of ['bogus', undefined, null, 'Top', 'flight', 'effect', 'in-flight', 1, '']) assert.throws(() => B.onRegReset(at), (e) => e instanceof TypeError && e.message === 'onRegReset: at must be top / batch / body / computed, got ' + String(at), String(at));
+    assert.deepEqual({ ...B.counts }, {});
+    // the destroy detector is untouched: its ids stay destroy-*
+    const X = new Detectors({});
+    X.onRegDestroy('top');
+    assert.deepEqual({ ...X.counts }, { 'destroy-top': 1 });
 });

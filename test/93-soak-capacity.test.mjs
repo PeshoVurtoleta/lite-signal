@@ -77,9 +77,11 @@ describe('GEN: G12 capacity cfg, budget, determinism', () => {
         assert.ok(Object.isFrozen(CAPACITY) && Object.isFrozen(CAPACITY.ops));
         for (const s of CAP_SCEN) assert.ok(SCENARIOS.includes(s), s);
     });
-    it('SCENARIOS: the CAPACITY ids come directly after the REGISTRY ids; the BOX pair then the 7 SNAPSHOT ids are the tail', () => {
-        const last = SCENARIOS.indexOf('reuse-after-destroy');
-        assert.ok(last > 0);
+    it('SCENARIOS: the 5 reset ids come directly after reuse-after-destroy, the CAPACITY ids directly after them; the BOX pair then the 7 SNAPSHOT ids are the tail', () => {
+        const reg = SCENARIOS.indexOf('reuse-after-destroy');
+        assert.ok(reg > 0);
+        assert.deepEqual(SCENARIOS.slice(reg + 1, reg + 6), ['reset-top', 'reset-in-flight', 'reset-in-batch', 'reset-in-body', 'reset-in-computed']);
+        const last = reg + 5;
         assert.deepEqual(SCENARIOS.slice(last + 1, last + 1 + CAP_SCEN.length), CAP_SCEN);
         // R8: the 7 SNAPSHOT ids (B2) follow the BOX pair, so the BOX pair is no longer the tail
         assert.deepEqual(SCENARIOS.slice(last + 1 + CAP_SCEN.length), ['box-trace-equal', 'box-interop', 'snap-restore', 'restore-after-dispose', 'restore-recycled', 'restore-twice', 'snap-refused-batch', 'snap-refused-body', 'snap-untrack-ok']);

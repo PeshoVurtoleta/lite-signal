@@ -3,8 +3,12 @@
  * stays byte-identical: it is calibration-pinned) and adds the S3 extension methods (contract.mjs EXT_METHODS) as
  * TOP-LEVEL world keys, forwarded to the world's own registry (w.registry):
  *
- *   hook(fn) -> off        registry.onGraphMutation(fn); the off is remembered for close()
+ *   hook(fn) -> off        registry.onGraphMutation(fn); the off is remembered for close(). The returned off is
+ *                          IDEMPOTENT (D-S5, C-RESET soak): a cold done-flag wrapper, so an off called twice, or after
+ *                          destroy() cleared the engine's listener stack (reset() keeps it: a census hook sees reset's
+ *                          op 2 / op 4), or again by close(), never reaches the engine's off a second time
  *   destroy()              registry.destroy()
+ *   reset()                registry.reset() (cap reset, contract.mjs EXT_METHODS.reset; C-RESET soak S2a)
  *   createRoot(fn), runWithOwner(h, fn), getOwner(), onCleanup(fn)   forwarded as they are
  *   effect(fn, opts)       opts undefined -> the inner effect(fn), the identical S1 path; otherwise
  *                          registry.effect(fn, opts) (own key scheduler only), the handle remembered for close()
@@ -65,6 +69,16 @@ function checkEffectOpts(e) {
     if (Object.hasOwn(e, 'scheduler') && typeof e.scheduler !== 'function') throw new TypeError('lite-s3: effect(fn, opts) scheduler must be a function');
 }
 
+/** off -> an idempotent off (D-S5): the first call forwards, every later call is a no-op. COLD. */
+function onceOf(off) {
+    let done = false;
+    return () => {
+        if (done) return;
+        done = true;
+        off();
+    };
+}
+
 /** One decorated world over `kernel`. */
 function openS3World(kernel, opts, broken) {
     const o = opts || {};
@@ -93,8 +107,9 @@ function openS3World(kernel, opts, broken) {
             handles.push(h);
             return h;
         },
-        hook(fn) { const off = r.onGraphMutation(fn); offs.push(off); return off; },
+        hook(fn) { const off = onceOf(r.onGraphMutation(fn)); offs.push(off); return off; },
         destroy() { r.destroy(); },
+        reset() { r.reset(); },
         createRoot(fn) { return r.createRoot(fn); },
         runWithOwner(h, fn) { return r.runWithOwner(h, fn); },
         getOwner() { return r.getOwner(); },

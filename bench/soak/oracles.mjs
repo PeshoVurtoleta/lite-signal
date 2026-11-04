@@ -80,7 +80,7 @@ export const SIGS = Object.freeze({
     O7: ['spurious-connect', 'missed-disconnect', 'stale-off', 'spurious-disconnect', 'missed-connect'],   // S3-D5 order
     OB: ['batch-early-run'],
     O8: ['ghost-listener', 'mirror-links'],
-    OW: ['cleanup-order', 'callback-this'],
+    OW: ['cleanup-order', 'callback-this', 'reset-cleanup'],
     O9: ['stale-write', 'stale-read', 'stale-dispose', 'stale-thunk'],
     OT: ['trace-diff'],
     OS: ['roundtrip', 'refire', 'clean-bit'],

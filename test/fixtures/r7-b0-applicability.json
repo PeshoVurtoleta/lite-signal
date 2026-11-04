@@ -198,7 +198,9 @@
     "status": "run",
     "missingCaps": [],
     "oraclesNA": [],
-    "scenariosNA": [],
+    "scenariosNA": [
+     "reset-top"
+    ],
     "requiredApplicable": [
      "destroy-top",
      "destroy-in-flight",

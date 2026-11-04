@@ -48,6 +48,7 @@ const SCENARIOS = [
     'stale-write-recycled', 'stale-peek-recycled', 'stale-read-recycled', 'stale-dispose-recycled', 'stale-dead-unrecycled', 'multi-gen',
     'thunk-after-dispose', 'thunk-recycled', 'pending-write', 'partial-drain', 'drain-all', 'hold-retry', 'fifo-delivery', 'lifo-delivery',
     'destroy-top', 'destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed', 'reuse-after-destroy',
+    'reset-top', 'reset-in-flight', 'reset-in-batch', 'reset-in-body', 'reset-in-computed',
     'node-cap-throw', 'link-cap-throw', 'link-ceiling-grow', 'grow-past-initial', 'reuse-at-edge',
     'box-trace-equal', 'box-interop',
     'snap-restore', 'restore-after-dispose', 'restore-recycled', 'restore-twice', 'snap-refused-batch', 'snap-refused-body', 'snap-untrack-ok',
@@ -55,9 +56,9 @@ const SCENARIOS = [
 // unit 0s B2 (PLAN-0s-wie ADDENDUM 2 item 6): the two literals above are pinned to the code they stand in for
 import { SCENARIOS as LIT_SCENARIOS_CODE } from '../bench/soak/scenarios.mjs';
 import { ROSTER as LIT_ROSTER_CODE } from '../bench/soak/lanes/index.mjs';
-test('the ROSTER (14 lanes, SNAPSHOT 14th) and SCENARIOS (86 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
+test('the ROSTER (14 lanes, SNAPSHOT 14th) and SCENARIOS (91 ids) literals equal lanes/index.mjs ROSTER and scenarios.mjs SCENARIOS', () => {
     assert.equal(ROSTER.length, 14);
-    assert.equal(SCENARIOS.length, 86);
+    assert.equal(SCENARIOS.length, 91);
     assert.deepEqual(ROSTER, LIT_ROSTER_CODE.slice());
     assert.deepEqual(SCENARIOS, LIT_SCENARIOS_CODE.slice());
 });

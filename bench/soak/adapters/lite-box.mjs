@@ -140,7 +140,7 @@ export function liteBoxAdapterFor(kernel, mode, opts) {
         createRegistry(cfg) { return facadeOf(kernel.createRegistry(cfg)); },
         restoreRegistry(cfg, from) { return facadeOf(restoreOf(kernel, cfg, from)); },
     };
-    snapshotProbeAs(shimKernel, kernel);   // the facade inherits snapshot / restore: read the base kernel's probe
+    snapshotProbeAs(shimKernel, kernel);   // facade inherits snapshot / restore / reset: read the base kernel's probe
     const base = liteS3AdapterFor(shimKernel);
     const caps = base.caps === CAPS_LITE ? CAPS_LITE_BOX : Object.freeze({ ...base.caps, box: true });
     return Object.freeze({

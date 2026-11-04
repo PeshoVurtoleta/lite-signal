@@ -22,11 +22,20 @@
  *                         maxFlushPasses). Every restored handle (from.handles[id], filled by restore) is pushed into the
  *                         world's handle list in ascending id order, so close() disposes it like a created one.
  *   caps.snapshot         per kernel: one throwaway registry is probed at the kernel's first liteAdapterFor() (snapshot()
- *                         and restore() both functions); true -> CAPS_LITE, false -> CAPS_LITE_NO_SNAPSHOT. A probe that
+ *                         and restore() both functions); with caps.reset (RESET below) it picks the caps object. A probe that
  *                         throws reads as false (the cap is unverified: the lane SKIPs, which is CONFIG for lite). The
  *                         result is cached per kernel object, and a wrapper kernel registered with snapshotProbeAs(shim,
  *                         kernel) (lite-box's facade shim) reads its base kernel's probe: ONE extra createRegistry() per
  *                         base kernel per process (test/46 armAt2 counts createRegistry calls).
+ *
+ * RESET (C-RESET soak S2a):
+ *   caps.reset            read from the SAME throwaway registry as caps.snapshot (one probe, so still ONE extra
+ *                         createRegistry() per base kernel): true when it exposes reset() as a function. A throwing probe
+ *                         reads both caps false; cached per kernel, and a snapshotProbeAs() wrapper reads its base's.
+ *                         The (snapshot, reset) pair picks one of four frozen caps objects: CAPS_LITE (true, true),
+ *                         CAPS_LITE_NO_SNAPSHOT (false, true), CAPS_LITE_NO_RESET (true, false), CAPS_LITE_PRE_RESET (false,
+ *                         false: a pre-1.6.0 control such as controls/headpatched). The world method reset() is
+ *                         adapters/lite-s3.mjs's (beside destroy(): contract.mjs EXT_METHODS.reset), not openWorld's.
  *   liteAdapterFor(kernel, opts)   opts undefined, or exactly { broken: 'snapshot-refire' | 'snapshot-stale' } (else
  *                         TypeError): must-fail shapes for test/101 / test/102 rows only (R8-5: the _mustfail teeth are
  *                         kernel patches). 'snapshot-refire' calls each restored effect body (fnsById[id]) once, in id
@@ -46,11 +55,22 @@ export const CAPS_LITE = Object.freeze({
     effects: 'sync', batch: 'native', untrack: true, disposeSignal: true, disposeComputed: true, stopEffect: true,
     childEffects: 'parent-run', effectErrors: 'aggregate', equality: 'is', links: 'stats', lifecycle: 'register',
     hook: true, scheduler: true, owner: true, destroy: true, recycle: true, counters32: true, capacity: true,
-    box: false, snapshot: true,
+    box: false, snapshot: true, reset: true,
 });
 
-/** The caps of a lite kernel whose registry has no snapshot() / restore() (a pre-1.6.0 control). */
+/** The caps of a lite kernel whose registry has reset() but no snapshot() / restore(). */
 export const CAPS_LITE_NO_SNAPSHOT = Object.freeze({ ...CAPS_LITE, snapshot: false });
+
+/** The caps of a lite kernel whose registry has snapshot() / restore() but no reset(). */
+export const CAPS_LITE_NO_RESET = Object.freeze({ ...CAPS_LITE, reset: false });
+
+/** The caps of a lite kernel whose registry has neither snapshot() / restore() nor reset() (a pre-1.6.0 control). */
+export const CAPS_LITE_PRE_RESET = Object.freeze({ ...CAPS_LITE, snapshot: false, reset: false });
+
+/** probe bits -> caps object (bit 1 snapshot, bit 2 reset). */
+const PROBE_SNAPSHOT = 1;
+const PROBE_RESET = 2;
+const CAPS_BY_PROBE = Object.freeze([CAPS_LITE_PRE_RESET, CAPS_LITE_NO_RESET, CAPS_LITE_NO_SNAPSHOT, CAPS_LITE]);
 
 const FROM_KEYS = Object.freeze(['registry', 'snap', 'fnsById', 'handles']);
 const OPT_KEYS = Object.freeze(['broken']);
@@ -128,13 +148,14 @@ function staleOf(snap) {
     return snap;
 }
 
-/** kernel -> its cached caps.snapshot probe result; wrapper kernel -> the base kernel whose probe it reads. */
-const SNAPSHOT_CAP = new WeakMap();
+/** kernel -> its cached probe bits (PROBE_SNAPSHOT | PROBE_RESET); wrapper kernel -> the base kernel whose probe it reads. */
+const PROBE_BITS = new WeakMap();
 const PROBE_AS = new WeakMap();
 
 /**
- * Register `shim` (a wrapper kernel whose registries forward snapshot / restore to `kernel`'s) to read `kernel`'s
- * caps.snapshot probe instead of probing a registry of its own. COLD; TypeError on a non-object argument.
+ * Register `shim` (a wrapper kernel whose registries forward snapshot / restore and reset to `kernel`'s) to read
+ * `kernel`'s caps.snapshot + caps.reset probe bits instead of probing a registry of its own. COLD; TypeError on a
+ * non-object argument.
  */
 export function snapshotProbeAs(shim, kernel) {
     if (shim === null || typeof shim !== 'object' || kernel === null || (typeof kernel !== 'object' && typeof kernel !== 'function')) {
@@ -143,21 +164,27 @@ export function snapshotProbeAs(shim, kernel) {
     PROBE_AS.set(shim, kernel);
 }
 
-/** caps.snapshot probe: one throwaway registry exposes snapshot() and restore(). A throw reads as false. Cached. */
-function snapshotCap(kernel) {
+/**
+ * caps.snapshot + caps.reset probe: one throwaway registry exposes snapshot() and restore() (PROBE_SNAPSHOT) and
+ * reset() (PROBE_RESET). A throw reads as 0 (both false). Cached.
+ */
+function probeBits(kernel) {
     const base = PROBE_AS.get(kernel);
-    if (base !== undefined) return snapshotCap(base);
-    const hit = SNAPSHOT_CAP.get(kernel);
+    if (base !== undefined) return probeBits(base);
+    const hit = PROBE_BITS.get(kernel);
     if (hit !== undefined) return hit;
-    let ok;
+    let bits = 0;
     try {
         const r = kernel.createRegistry();
-        ok = r !== null && typeof r === 'object' && typeof r.snapshot === 'function' && typeof r.restore === 'function';
+        if (r !== null && typeof r === 'object') {
+            if (typeof r.snapshot === 'function' && typeof r.restore === 'function') bits |= PROBE_SNAPSHOT;
+            if (typeof r.reset === 'function') bits |= PROBE_RESET;
+        }
     } catch {
-        ok = false;
+        bits = 0;
     }
-    SNAPSHOT_CAP.set(kernel, ok);
-    return ok;
+    PROBE_BITS.set(kernel, bits);
+    return bits;
 }
 
 function kernelVersion() {
@@ -243,8 +270,8 @@ export function openWorld(kernel, opts, broken) {
 /**
  * The lite adapter over `kernel`. Throws TypeError (before building anything) when kernel exports no
  * createRegistry() or opts is not undefined | { broken: 'snapshot-refire' | 'snapshot-stale' }. Frozen; name 'lite';
- * version / files / knownAs are liteAdapter's own; caps CAPS_LITE, or CAPS_LITE_NO_SNAPSHOT when the kernel's
- * registry has no snapshot() / restore().
+ * version / files / knownAs are liteAdapter's own; caps per the kernel's probe: CAPS_LITE, CAPS_LITE_NO_SNAPSHOT (no
+ * snapshot() / restore()), CAPS_LITE_NO_RESET (no reset()) or CAPS_LITE_PRE_RESET (neither).
  */
 export function liteAdapterFor(kernel, opts) {
     if (kernel === null || (typeof kernel !== 'object' && typeof kernel !== 'function') || typeof kernel.createRegistry !== 'function') {
@@ -256,7 +283,7 @@ export function liteAdapterFor(kernel, opts) {
         version: kernelVersion,
         files,
         knownAs,
-        caps: snapshotCap(kernel) ? CAPS_LITE : CAPS_LITE_NO_SNAPSHOT,
+        caps: CAPS_BY_PROBE[probeBits(kernel)],
         open(o) { return openWorld(kernel, o, broken); },
     });
 }

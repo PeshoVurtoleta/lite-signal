@@ -104,9 +104,9 @@ test('caps.snapshot: true on every tree adapter; CAPS_LITE.snapshot true, CAPS_L
     assert.deepEqual(B.CAPS_LITE_BOX, { ...L.CAPS_LITE, box: true });
 });
 
-test('caps.snapshot false: the headpatched control kernel (no snapshot()), a stub registry, a throwing probe', () => {
+test('caps.snapshot false: the headpatched control kernel (no snapshot(), no reset(): CAPS_LITE_PRE_RESET), a stub registry, a throwing probe', () => {
     assert.equal(typeof HP.createRegistry().snapshot, 'undefined', 'fixture: headpatched has no snapshot()');
-    assert.equal(L.liteAdapterFor(HP).caps, L.CAPS_LITE_NO_SNAPSHOT);
+    assert.equal(L.liteAdapterFor(HP).caps, L.CAPS_LITE_PRE_RESET);
     assert.equal(S.liteS3AdapterFor(HP).caps.snapshot, false);
     assert.equal(B.liteBoxAdapterFor(HP, 'all').caps.snapshot, false);
     assert.equal(B.liteBoxAdapterFor(HP, 'all').caps.box, true);

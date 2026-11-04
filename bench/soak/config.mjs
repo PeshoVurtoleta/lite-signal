@@ -116,14 +116,16 @@ const CONSTANTS = Object.freeze({
     // getOwner, onCleanup, capacity, update (contract.mjs EXT_METHODS, top-level world keys: maintainer ruling
     // D-R0-2) + the non-function 'registry'; SOAK_ENGINE=lite-box worlds (adapters/lite-box.mjs open()) add the
     // untimed arity-0 counter accessor boxCounts, R7 C-16, read by twin.mjs / trace.mjs; R8 B1 adds the untimed
-    // snapshot surface snapshot / nodeId -- snapshot allocates by design); an armed open that meets any other
+    // snapshot surface snapshot / nodeId -- snapshot allocates by design; C-RESET soak S2a adds the untimed lite-s3
+    // extension method reset, contract.mjs EXT_METHODS.reset); an armed open that meets any other
     // function key, or a listed method whose .length > 2, throws TypeError (fail closed: the wrapper
     // forwards at most two arguments).
     SKETCH_ALPHA: 0.01,
     LATENCY_METHODS: Object.freeze(['signal', 'computed', 'effect', 'set', 'read', 'peek', 'batch', 'untrack', 'dispose',
         'lifecycle', 'settle', 'close']),
     LATENCY_UNTIMED: Object.freeze(['normalizeEscape', 'stats', 'links', 'hook', 'destroy', 'createRoot', 'runWithOwner',
-        'getOwner', 'onCleanup', 'capacity', 'update', 'boxCounts', 'snapshot', 'nodeId']),
+        'getOwner', 'onCleanup', 'capacity', 'update', 'boxCounts', 'snapshot', 'nodeId',
+        'reset']),
     // retention
     DRAIN_MS: 2000,
     DRAIN_TRIES: 8,
