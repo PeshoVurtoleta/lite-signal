@@ -324,9 +324,9 @@ test('checkEscape(pred, got, expect[]): a non-array expect is a TypeError; EXPEC
     assert.equal(O.checkEscape([], [{ ctor: 'Error', message: 'CapacityError: x' }], ce)[0].sig, 'escape-Error', 'ctor is matched');
 });
 
-test('teeth: the fixMinusOne GAPs are exactly these 10 (T-A5b left GAPS for CHECKS in b117) and each cites a SPEC-B.md:<n> line', () => {
+test('teeth: the fixMinusOne GAPs are exactly these 9 (T-A5b left GAPS for CHECKS in b117, T-A6 in b165 GT) and each cites a SPEC-B.md:<n> line', () => {
     const rows = Object.entries(GAPS).filter(([, g]) => g.why.indexOf('fix-minus-one control') === 0);
-    assert.deepEqual(rows.map(([id]) => id), ['T-A1', 'T-A2', 'T-A3a', 'T-A3b', 'T-A3c', 'T-A4', 'T-A5a', 'T-A6', 'T-A7a', 'T-A7b']);
+    assert.deepEqual(rows.map(([id]) => id), ['T-A1', 'T-A2', 'T-A3a', 'T-A3b', 'T-A3c', 'T-A4', 'T-A5a', 'T-A7a', 'T-A7b']);
     for (const [id, g] of rows) assert.ok(/SPEC-B\.md:(\d+)\)/.test(g.why), id + ': no SPEC-B line ref');
 });
 

@@ -119,13 +119,13 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * (b127 B5: P-OWNER-TREE, T-cov-OWNER and the five T-owner-* mutants; LANE_KERNELS.OWNER = tree, A1), and the RECYCLE
  * rows (b130 B5: P-RC-TREE, T-cov-RECYCLE and the three T-RC-* mutants, PLAN-R4 TASK 7; b137 B4: + T-RC-updgen), and the SCHEDULER rows (b134
  * B5: P-SC-TREE, P-SC-HP, T-cov-SCHEDULER and the four T-SC-* mutants, PLAN-R4 R4c TASKS 6 + 7), and the REGISTRY rows
- * (b140 B2b: P-REGISTRY-TRIGGERLESS, L-REGISTRY-F10 -- red-explained on DIV-F10 --, T-REG-expectnone / T-REG-destroyall
- * via soakPatch; LANE_KERNELS.REGISTRY = tree) and the CAPACITY rows (b140 B2b: P-CAP-TREE, T-cov-CAPACITY and the four
+ * (b140 B2b: P-REGISTRY-TRIGGERLESS, T-REG-expectnone / T-REG-destroyall via soakPatch; b165 GT: L-REGISTRY and P-REG-TREE,
+ * clean since DIV-F10 fixedIn 1.6.0, + the T-REG-F10 / T-RESET-* kernel mutants; LANE_KERNELS.REGISTRY = tree) and the CAPACITY rows (b140 B2b: P-CAP-TREE, T-cov-CAPACITY and the four
  * T-cap-* mutants; LANE_KERNELS.CAPACITY = tree) and the BOX rows (b151 C2a: P-BOX-TREE -- red-explained on
  * DIV-F22 -- and T-BOX-untracked via SOAK_MUSTFAIL=box-untracked; LANE_KERNELS.BOX = tree) and the SNAPSHOT rows (R8 C2a:
  * P-SNAP-TREE and the three T-SNAP-* kernel mutants; LANE_KERNELS.SNAPSHOT = tree) and the live-kernel row (b158 B1,
- * D-b156-1: P-LITEBOX-TREE, every lane under SOAK_ENGINE=lite-box, no SOAK_KERNEL -- red-explained on DIV-F10 +
- * DIV-F22; tree is its only valid base, validSpec); no other main-run control
+ * D-b156-1: P-LITEBOX-TREE, every lane under SOAK_ENGINE=lite-box, no SOAK_KERNEL -- red-explained on DIV-F22 only
+ * (b165 GT); tree is its only valid base, validSpec); no other main-run control
  * does until A1-A3 land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
  * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
@@ -361,11 +361,12 @@ const LC_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE' });
 // T-cov-LIFECYCLE: no handle ever holds two live registrations (rule single-reg, lanes/lifecycle.mjs covOff).
 const LC_COV_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE', SOAK_MUSTFAIL: 'cov-off:lc-two-regs' });
 
-// T-owner-* anchors in the LIVE Signal.js (base tree ea0b64d1, b136 LEDGER #51; first cut b127 B5 on ec6d7156,
+// T-owner-* anchors in the LIVE Signal.js (base tree d235e505 (b165 G2 re-pin; was ea0b64d1), b136 LEDGER #51; first cut b127 B5 on ec6d7156,
 // PLAN-R3-owner A5 (b)): each is the full line(s) of the single hunk `diff Signal.js
 // .handoff/b125-evidence/r3/mut/tree-<id>/Signal.js`, and each replacement is that mutant's exact text, so every row's
-// kernel is the b125 mutant's hunk on the live tree (sha256/8 on ea0b64d1, b137 B4: cascade 7581ec39, cleanup bb41a594,
-// fifo 84054fab, outin 1f9942cf, this 21a4e3ac; on ec6d7156 they were 158a58b3 / ce6677c3 / 195121be / 7ef2a2db /
+// kernel is the b125 mutant's hunk on the live tree (sha256/8 on d235e505, b165 G2: cascade 3edf8998, cleanup ea4190c6,
+// fifo 2b3dd433, outin e265c6f7, this 19fbc430; on ea0b64d1 (b137 B4) 7581ec39 / bb41a594 / 84054fab / 1f9942cf /
+// 21a4e3ac; on ec6d7156 they were 158a58b3 / ce6677c3 / 195121be / 7ef2a2db /
 // b8135782, .handoff/b127-evidence/b5/). Each anchor occurs exactly once (patchAll).
 // :1450 disposeOwned's pop-from-the-front loop (8-space indent).
 const A_OW_CASCADE = '        while ((child = node.firstOwned) !== null) {\n';
@@ -380,12 +381,12 @@ const OW_ENV = Object.freeze({ SOAK_LANES: 'OWNER' });
 // T-cov-OWNER / P-OWNER-HP: no dying owner ever holds two cleanups (lanes/owner.mjs covOff cleanup-fifo -> single-cleanup).
 const OW_COV_ENV = Object.freeze({ SOAK_LANES: 'OWNER', SOAK_MUSTFAIL: 'cov-off:cleanup-fifo' });
 
-// T-RC-* anchors in the LIVE Signal.js (base tree ea0b64d1, b136 LEDGER #51; first cut b130 B5 on ec6d7156, PLAN-R4
+// T-RC-* anchors in the LIVE Signal.js (base tree d235e505 (b165 G2 re-pin; was ea0b64d1), b136 LEDGER #51; first cut b130 B5 on ec6d7156, PLAN-R4
 // TASK 7 + O9 / O11): each is the full line(s) of the single hunk `diff Signal.js
 // .handoff/b129-evidence/r4a/mut/T-RC-<id>/Signal.js` (updgen: the b136 #51 hunk reverted), and each replacement is that
-// mutant's exact text, so every row's kernel is that hunk on the live tree (sha256/8 on ea0b64d1, b137 B4: setgen
-// fb1de503, readgen 5b4ef7e2, dispgen b9a480da, updgen ec6d7156 == `git show HEAD:Signal.js`; on ec6d7156 the first
-// three were 57f16bfc / 1fa4a0ca / 8603ef56). Each anchor occurs exactly once (patchAll).
+// mutant's exact text, so every row's kernel is that hunk on the live tree (sha256/8 on d235e505, b165 G2: setgen
+// 60a28b74, readgen 9168e740, dispgen 0ca760a1, updgen 3bb2801c; on ea0b64d1 (b137 B4) fb1de503 / 5b4ef7e2 / b9a480da /
+// ec6d7156, updgen then == `git show aa154b6:Signal.js`; on ec6d7156 the first three were 57f16bfc / 1fa4a0ca / 8603ef56). Each anchor occurs exactly once (patchAll).
 // :2075-:2076 the callable read's read.set closure gen guard (O11: adapters/lite.mjs hands the lane the callable read).
 const A_RC_SETGEN = '        read.set = (value) => {\n            if (node.gen !== birthGen) return;\n';
 // :2019 sharedSignalPeek's stale-handle guard (O10: moves only a stale SIGNAL handle's peek).
@@ -402,11 +403,11 @@ const RC_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE' });
 // rule stale-dispose-dead).
 const RC_COV_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE', SOAK_MUSTFAIL: 'cov-off:stale-dispose-recycled' });
 
-// T-SC-* anchors in the LIVE Signal.js (base tree ea0b64d1, b136 LEDGER #51; first cut b134 B5 on ec6d7156, PLAN-R4
+// T-SC-* anchors in the LIVE Signal.js (base tree d235e505 (b165 G2 re-pin; was ea0b64d1), b136 LEDGER #51; first cut b134 B5 on ec6d7156, PLAN-R4
 // R4c TASKS 6 + 7): each is the full line of the single hunk .handoff/b131-evidence/r4c/mut/tree-<id>.diff (dropcall,
 // wedge, thunkgen) or .handoff/b133-evidence/census/mut/syncrun.diff, and each replacement is that mutant's exact text,
-// so every row's kernel is that hunk on the live tree (sha256/8 on ea0b64d1, test/45 SC_ROWS: dropcall 92b060e3, wedge
-// 63e4de65, thunkgen f5b90744, syncrun 01569c06; on ec6d7156 they were 9cc16933 / dbb57692 / 304984f9 / 542fcf14,
+// so every row's kernel is that hunk on the live tree (sha256/8 on d235e505, test/45 SC_ROWS: dropcall 1ee40e29, wedge
+// 29cd0216, thunkgen 8ab3d4a3, syncrun 92ff4790; on ea0b64d1 92b060e3 / 63e4de65 / f5b90744 / 01569c06; on ec6d7156 they were 9cc16933 / dbb57692 / 304984f9 / 542fcf14,
 // .handoff/b134-evidence/b5/kernels.txt). Each anchor occurs exactly once (patchAll).
 // :1699 the flush loop's queued-effect delivery through the cached thunk (32-space indent; dropcall drops it).
 const A_SC_DROPCALL = '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n';
@@ -420,19 +421,37 @@ const SC_ENV = Object.freeze({ SOAK_LANES: 'SCHEDULER' });
 // rule no-recycle).
 const SC_COV_ENV = Object.freeze({ SOAK_LANES: 'SCHEDULER', SOAK_MUSTFAIL: 'cov-off:thunk-recycled' });
 
-// The tree REGISTRY lane (b140 B2b, PLAN-R5 REGISTRY TASK 4 + D-b140-1), every scenario on: red-explained on DIV-F10
-// (S3-D3 fail-stop at the first in-flight destroy) until the A6 engine rung.
+// The tree REGISTRY lane (b140 B2b, PLAN-R5 REGISTRY TASK 4 + D-b140-1), every scenario on: clean since DIV-F10 fixedIn
+// 1.6.0 (C-RESET D-4: destroy() / reset() throw "graph not settled" in flight, the lane predicts that throw).
 const REG_ENV = Object.freeze({ SOAK_LANES: 'REGISTRY' });
 // P-REGISTRY-TRIGGERLESS / T-REG-destroyall: every rdestroy at 'top' (lanes/registry.mjs covOff destroy-in-flight ->
 // rule in-flight), so the lane is clean but INCONCLUSIVE on its in-flight scenarios.
 const REG_COV_ENV = Object.freeze({ SOAK_LANES: 'REGISTRY', SOAK_MUSTFAIL: 'cov-off:destroy-in-flight' });
 // T-REG-* soakPatch anchors in bench/soak/lanes/registry.mjs (the b139 B1a mutant-T-REG-*.json edits verbatim).
-// :55 the lane's in-flight destroy prediction (expectnone predicts EXPECT_NONE, d2Row() still validated).
+// :106 the lane's in-flight destroy prediction (expectnone predicts EXPECT_NONE, d2Row() still validated).
 const S_REG_EXPECT = 'export const REG_EXPECT = expectFromThrow(d2Row().expectedThrow);\n';
-// :188-:189 opDestroy's model teardown (destroyall skips model.destroyAll()).
+// :276-:277 opDestroy's model teardown (destroyall skips model.destroyAll()).
 const S_REG_DESTROYALL = '    x.M.destroyAll();\n    st.destroyed++;\n';
+// T-REG-F10 / T-RESET-* anchors in the LIVE Signal.js (base tree; b164 G0 kernels .handoff/b164-evidence/gates/kernels/<row>/,
+// each anchor 1x; the replacements are the G0 hunks verbatim, so each built kernel is the G0 kernel on the same base).
+// destroy()'s settled guard (T-REG-F10 drops it: an in-flight destroy runs, the predicted throw does not happen).
+const A_REG_F10 = '        if (ns !== 0) throw new Error("[lite-signal] destroy: graph not settled (" + NOT_SETTLED_REASON[ns] + ")");\n';
+// reset()'s rounds (T-RESET-noop: batch(resetRounds) never runs, disposeDepth still restored).
+const A_RESET_ROUNDS = '        try { errs = batch(resetRounds); } catch (e) { fe = e; fthrew = true; } finally { disposeDepth--; }\n';
+// reset()'s rethrow of one cleanup error by identity (T-RESET-wrap: a new Error with its message).
+const A_RESET_ONE = '            if (errs.length === 1) throw errs[0];\n';
+// reset()'s AggregateError of >= 2 cleanup errors (T-RESET-noagg: the first error alone).
+const A_RESET_AGG = '            throw new AggregateError(errs, "reset: cleanups threw");\n';
+// resetRounds' read of a root's cleanup (T-RESET-nocleanup, D-b164-4 candidate A: the cleanup is cleared before
+// disposeNode runs it, so the root's own cleanup never fires).
+const A_RESET_FC = '                        const fc = n.cleanupFn;\n';
+// disposeNode's op-2 emit (T-RESET-silent-op2, D-b164-4 candidate A: silent while a dispose / reset is in progress).
+const A_OP2 = '        if (mutationHook !== null) mutationHook(2, node.id, node.flags | 0);\n';
+// notSettled()'s first and in-body reasons (T-RESET-reason, Q1 (a): the body check moves above isFlushing).
+const A_NS_FLUSH = '        if (isFlushing) return 1;\n';
+const A_NS_OBS = '        if (currentObserver !== null) return 3;\n';
 
-// T-cap-* anchors in the LIVE Signal.js (base tree ea0b64d1; .handoff/b139-evidence/b1b/mkmut.mjs, each 1x).
+// T-cap-* anchors in the LIVE Signal.js (base tree d235e505 (b165 G2 re-pin; was ea0b64d1); .handoff/b139-evidence/b1b/mkmut.mjs, each 1x).
 // The node-pool cap test under onCapacityExceeded 'throw' (T-cap-node: >= -> >, one node past the cap).
 const A_CAP_NODE = 'policy === "throw" && nodePool.length >= currentNodesCapacity';
 // The link-pool cap test under 'throw' (T-cap-link: >= -> >).
@@ -453,9 +472,10 @@ const LITEBOX_ENV = Object.freeze({ SOAK_ENGINE: 'lite-box' });
 // The tree SNAPSHOT lane (R8 C2a, PLAN-R8 GROUP C task 4; R8-5 / R8-16 / R8-21): a plain lane (no sub-lane mix, R8-8),
 // oracle OS once per restore event.
 const SNAP_ENV = Object.freeze({ SOAK_LANES: 'SNAPSHOT' });
-// T-SNAP-* anchors in the LIVE Signal.js registry restore() pass 1 (base tree ea0b64d1; the A0 measured kernels
+// T-SNAP-* anchors in the LIVE Signal.js registry restore() pass 1 (base tree d235e505 (b165 G2 re-pin; was ea0b64d1); the A0 measured kernels
 // .handoff/r8-evidence/A0/kernels/M-OS-{roundtrip,refire,clean}/Signal.js, one hunk each, R8-16; each built kernel is
-// byte-equal to its A0 copy: sha256/8 5900bf33 / bf6c52af / f3c08f86). Each anchor occurs exactly
+// byte-equal to its A0 copy: sha256/8 04434212 / 1a579cd0 / 417aedbf, re-cut b165 G2; the ea0b64d1 cut 5900bf33 / bf6c52af /
+// f3c08f86 is A0/kernels-ea0b64d1/). Each anchor occurs exactly
 // once (the D-M comment tells the CLEAN branch apart from the dirty-seeded one; one restored effect handle site).
 // A clean computed's recorded stamps (T-SNAP-clean: evalVersion 0; T-SNAP-roundtrip: the markEpoch copy dropped).
 const A_SNAP_CLEAN_EV = '                    node.evalVersion = evs[i];   // D-M: the recorded stamps\n';
@@ -1011,27 +1031,33 @@ export const CONTROLS = deepFreeze([
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O9 lane=SCHEDULER sig=stale-thunk known=none'],
     }, { patches: [[A_SC_SYNCRUN, '                /* MUT syncrun */ executeEffect(node);\n']] }),
     // ---- REGISTRY (b140 B2b, PLAN-R5 REGISTRY TASK 4 + A-R3 / A-R4; D-b140-1 for the soakPatch rows) ----
-    // P-REGISTRY-TRIGGERLESS: the tree REGISTRY lane with every rdestroy at 'top' (cov-off:destroy-in-flight -> rule
-    // in-flight) must not false-fail: clean, INCONCLUSIVE on exactly four ids: destroy-in-flight plus the three in-flight
-    // <at> scenarios (batch / body / computed; b140 r1 fix: the batch line was unpinned). It is the revert of
-    // both T-REG-* rows (the same env and argv, no soakPatch). MEASURED: .handoff/b140-evidence/fix1/triggerless.stderr.
+    // P-REGISTRY-TRIGGERLESS: the tree REGISTRY lane with every rdestroy / rreset at 'top' (cov-off:destroy-in-flight ->
+    // rule in-flight) must not false-fail: clean, INCONCLUSIVE on exactly eight ids: destroy-in-flight plus the three
+    // in-flight destroy <at> scenarios (batch / body / computed; b140 r1 fix: the batch line was unpinned) and the four
+    // reset-in-* twins (C-RESET soak S3a / S3b). It is the revert of T-REG-destroyall (the same env and argv, no
+    // soakPatch). MEASURED: .handoff/b164-evidence/gates/rows/P-REGISTRY-TRIGGERLESS/ (exit 3, 0 BREACH, these 8 lines).
     M('P-REGISTRY-TRIGGERLESS', 'tree', REG_COV_ENV, ['--smoke'], {
         exit: 3, kind: 'nobreach', specs: ['INCONCLUSIVE scenario lane=REGISTRY missing=destroy-in-flight'],
-        lines: ['soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=destroy-in-flight',
-            'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=destroy-in-batch',
-            'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=destroy-in-body',
-            'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=destroy-in-computed'],
+        lines: ['destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed',
+            'reset-in-flight', 'reset-in-batch', 'reset-in-body', 'reset-in-computed'].map((s) => 'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=' + s),
     }),
-    // L-REGISTRY-F10 (A-R4): the full tree REGISTRY lane at the control budget is red-explained: every BREACH is an
-    // oracle line known=DIV-F10 (the S3-D3 fail-stop at an in-flight destroy, LEDGER #52 / A6), none unexplained.
-    M('L-REGISTRY-F10', 'tree', { SOAK_LANES: 'REGISTRY', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
-        exit: 1, kind: 'explained', lines: [], specs: ['oracle=O6 lane=REGISTRY sig=expected-escape-missing'], known: ['DIV-F10'],
+    // L-REGISTRY (b165 GT; was L-REGISTRY-F10 while DIV-F10 was open): the full tree REGISTRY lane at the control budget
+    // is clean since DIV-F10 fixedIn 1.6.0: exit 0, END verdict=PASS, zero BREACH lines (P-HOOK-TREE's shape). MEASURED
+    // b164 G0 (.handoff/b164-evidence/gates/rows/L-REGISTRY/: 11 x 100000, exit 0, records 13, reason end).
+    M('L-REGISTRY', 'tree', { SOAK_LANES: 'REGISTRY', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { boundaries: MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'PASS' },
+    }),
+    // P-REG-TREE (b165 GT, PLAN-C-RESET-GATES Q2 (a)): the REGISTRY pass control on the tree, P-CAP-TREE's shape (exit 0,
+    // zero BREACH, END verdict=SMOKE); the revert of T-REG-expectnone, T-REG-F10 and every T-RESET-* row (the same env and
+    // argv, patches [] and no soakPatch). MEASURED b164 G0 (rows/P-REG-TREE/: exit 0, SMOKE, records 5).
+    M('P-REG-TREE', 'tree', REG_ENV, ['--smoke'], {
+        exit: 0, kind: 'nobreach', lines: [], specs: [], extra: { verdict: 'SMOKE' },
     }),
     // T-REG-expectnone (soakPatch, lanes/registry.mjs): the lane predicts EXPECT_NONE for an in-flight destroy, so the
-    // engine's escape is no longer the predicted DIV-F10 shape: an unexplained O6 escape (known=none). Its revert is
-    // the live lane (L-REGISTRY-F10 / the default smoke: known=DIV-F10 only).
+    // engine's settled-guard throw is no longer predicted: an unexplained O6 escape-Error (known=none). Its revert is
+    // P-REG-TREE.
     M('T-REG-expectnone', 'tree', REG_ENV, ['--smoke'], {
-        exit: 1, kind: 'match', lines: [], specs: ['oracle=O6 lane=REGISTRY sig=escape-TypeError known=none'],
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O6 lane=REGISTRY sig=escape-Error known=none'],
     }, { soakPatch: [{ file: 'lanes/registry.mjs', find: S_REG_EXPECT,
         replace: 'export const REG_EXPECT = Object.freeze([]); d2Row(); expectFromThrow(null);   // MUTANT T-REG-expectnone: EXPECT_NONE for in-flight destroys\n' }] }),
     // T-REG-destroyall (soakPatch, lanes/registry.mjs): opDestroy skips model.destroyAll(), so the model keeps the
@@ -1040,6 +1066,63 @@ export const CONTROLS = deepFreeze([
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O5 lane=REGISTRY sig=node-count known=none'],
     }, { soakPatch: [{ file: 'lanes/registry.mjs', find: S_REG_DESTROYALL,
         replace: '    st.destroyed++;   // MUTANT T-REG-destroyall: model.destroyAll() skipped\n' }] }),
+    // T-REG-F10 / T-RESET-* (b165 GT, PLAN-C-RESET-GATES TASK 2; D-b164-4; SHORT battery): tree kernel mutants under
+    // REG_ENV --smoke, P-REG-TREE their revert. KNOWN rows pin the FULL drain: specs = every BREACH head the b164 G0
+    // probe measured (.handoff/b164-evidence/gates/rows/<row>/, all known=none, exit 1), in drain order.
+    // F10: destroy() without its settled guard -- the in-flight destroy runs (DIV-F10's shape, a regression on the tree).
+    M('T-REG-F10', 'tree', REG_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: [
+            'oracle=O6 lane=REGISTRY sig=expected-escape-missing known=none',
+            'oracle=O5 lane=REGISTRY sig=kind-count known=none',
+            'oracle=O5 lane=REGISTRY sig=node-count known=none',
+            'oracle=O5 lane=REGISTRY sig=link-count known=none',
+            'oracle=O1 lane=REGISTRY sig=computed-mismatch known=none',
+            'oracle=O4 lane=REGISTRY sig=effect-dead known=none',
+            'oracle=O6 lane=REGISTRY sig=escape-TypeError known=none',
+        ],
+    }, { patches: [[A_REG_F10, '']] }),
+    // noop: reset() never runs its rounds -- nothing is torn down, no cleanup fires, no op 2.
+    M('T-RESET-noop', 'tree', REG_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: [
+            'oracle=O6 lane=REGISTRY sig=expected-escape-missing known=none',
+            'oracle=O5 lane=REGISTRY sig=kind-count known=none',
+            'oracle=O5 lane=REGISTRY sig=node-count known=none',
+            'oracle=O5 lane=REGISTRY sig=link-count known=none',
+            'oracle=O8 lane=REGISTRY sig=mirror-links known=none',
+            'oracle=OW lane=REGISTRY sig=reset-cleanup known=none',
+        ],
+    }, { patches: [[A_RESET_ROUNDS, '        disposeDepth--;   // MUTANT T-RESET-noop\n']] }),
+    // nocleanup: a root's own cleanup is cleared before it runs -- OW "cleanup log [Q] != [Q,P]".
+    M('T-RESET-nocleanup', 'tree', REG_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=OW lane=REGISTRY sig=reset-cleanup known=none'],
+    }, { patches: [[A_RESET_FC, '                        const fc = n.cleanupFn; n.cleanupFn = undefined;   // MUTANT T-RESET-nocleanup-A\n']] }),
+    // silent-op2: disposeNode emits no op 2 under a dispose / reset -- O8 "op-2 count 0 != s0.activeNodes 13 + 2t".
+    M('T-RESET-silent-op2', 'tree', REG_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: ['oracle=O8 lane=REGISTRY sig=mirror-links known=none'],
+    }, { patches: [[A_OP2, '        if (mutationHook !== null && disposeDepth === 0) mutationHook(2, node.id, node.flags | 0);   // MUTANT T-RESET-silent-op2-A\n']] }),
+    // wrap: one cleanup error is rethrown wrapped, not by identity -- O6 escape-Error + OW "want T_Q (identity)".
+    M('T-RESET-wrap', 'tree', REG_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: [
+            'oracle=O6 lane=REGISTRY sig=escape-Error known=none',
+            'oracle=O6 lane=REGISTRY sig=expected-escape-missing known=none',
+            'oracle=OW lane=REGISTRY sig=reset-cleanup known=none',
+        ],
+    }, { patches: [[A_RESET_ONE, '            if (errs.length === 1) throw new Error(errs[0].message);   // MUTANT T-RESET-wrap\n']] }),
+    // noagg: >= 2 cleanup errors throw the first alone -- OW "want AggregateError, got T_R".
+    M('T-RESET-noagg', 'tree', REG_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: [
+            'oracle=O6 lane=REGISTRY sig=expected-escape-missing known=none',
+            'oracle=OW lane=REGISTRY sig=reset-cleanup known=none',
+        ],
+    }, { patches: [[A_RESET_AGG, '            throw errs[0];   // MUTANT T-RESET-noagg\n']] }),
+    // reason (Q1 (a)): the body check runs first, so an in-flight reset from a flush reports "a computed / effect body is
+    // running" -- an unpredicted O6 escape-Error + expected-escape-missing.
+    M('T-RESET-reason', 'tree', REG_ENV, ['--smoke'], {
+        exit: 1, kind: 'match', lines: [], specs: [
+            'oracle=O6 lane=REGISTRY sig=escape-Error known=none',
+            'oracle=O6 lane=REGISTRY sig=expected-escape-missing known=none',
+        ],
+    }, { patches: [[A_NS_FLUSH, '        if (currentObserver !== null) return 3;   // MUTANT T-RESET-reason (moved above isFlushing)\n' + A_NS_FLUSH], [A_NS_OBS, '']] }),
     // ---- CAPACITY (b140 B2b, PLAN-R5 CAPACITY TASK 5 + A-C2 / A-C3) ----
     // P-CAP-TREE: the CAPACITY pass control on the tree, P-RC-TREE's shape (exit 0, zero BREACH, END verdict=SMOKE);
     // the revert of every T-cap-* row (the same env and argv, patches []).
@@ -1089,15 +1172,15 @@ export const CONTROLS = deepFreeze([
     // config.mjs LATENCY_UNTIMED lacked 'boxCounts', so every lite-box main run CRASHed; with it back out (test/45 section
     // w, soakPatch) this row MISSes on its CRASH line. Measured b158 B1 (HEAD 1e4b6e6, node v26.8.2;
     // .handoff/b158-evidence/litebox-smoke/): exit 1, END verdict=FAIL records=44 (header + 42 cycle records, 3 per lane x
-    // 14 lanes, every boundary trackerSize 0 / weakAlive 0, + summary), exactly these 4 BREACH heads, all explained by
-    // the two open divergences DIV-F10 / DIV-F22. Closing either one in the engine moves this row in the same diff.
+    // 14 lanes, every boundary trackerSize 0 / weakAlive 0, + summary). Re-measured b164 G0 (HEAD 05f8d2e, Signal.js
+    // 482a1d98; .handoff/b164-evidence/gates/rows/P-LITEBOX-TREE/): the same exit / verdict / records / boundaries, and the
+    // full drain is exactly these 2 BREACH heads, both explained by the one open divergence DIV-F22 (the 2 REGISTRY
+    // DIV-F10 heads left with DIV-F10 fixedIn 1.6.0). Closing DIV-F22 in the engine moves this row in the same diff.
     M('P-LITEBOX-TREE', 'tree', LITEBOX_ENV, ['--smoke'], {
         exit: 1, kind: 'explained', lines: [], specs: [
             'oracle=O6 lane=ERROR sig=expected-escape-missing known=DIV-F22',
-            'oracle=O6 lane=REGISTRY sig=escape-TypeError known=DIV-F10',
-            'oracle=O6 lane=REGISTRY sig=expected-escape-missing known=DIV-F10',
             'oracle=O6 lane=BOX sig=expected-escape-missing known=DIV-F22',
-        ], known: ['DIV-F10', 'DIV-F22'], extra: { verdict: 'FAIL', boundaries: 42 },
+        ], known: ['DIV-F22'], extra: { verdict: 'FAIL', boundaries: 42 },
     }),
     // ---- SNAPSHOT (R8 C2a, PLAN-R8 GROUP C task 4 + ASSERTION 3; CURRENT R8-5, R8-16, R8-21) ----
     // P-SNAP-TREE: the SNAPSHOT pass control on the tree (C0 (d) / C1 measured --smoke exit 0, failingWorlds 0, no BREACH),

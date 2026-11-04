@@ -524,6 +524,7 @@ async function loadMutant(name) {
     const n = LIVE_SRC.split(from).length - 1;
     assert.equal(n, 1, name + ': patch site must match exactly once, got ' + n);
     const src = LIVE_SRC.replace(from, () => to);
+    // A0 kernels re-cut on Signal.js d235e505 by b165 G2 (== test/45 SNAP_ROWS shas); the ea0b64d1 cut is A0/kernels-ea0b64d1/
     const a0 = join(ROOT, '.handoff', 'r8-evidence', 'A0', 'kernels', name, 'Signal.js');
     if (existsSync(a0)) assert.equal(src, readFileSync(a0, 'utf8'), name + ': rebuilt kernel differs from the A0 copy');
     const dir = mkdtempSync(join(TMP, name + '-'));

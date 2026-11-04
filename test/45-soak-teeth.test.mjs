@@ -41,7 +41,7 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 // GAPS may only shrink: never derive these from GAPS. A landing control removes its name here and decrements the max.
 const GAPS_CEILING = [
     'P-TREE', 'P-NEST',
-    'T-A1', 'T-A2', 'T-A3a', 'T-A3b', 'T-A3c', 'T-A4', 'T-A5a', 'T-A6', 'T-A7a', 'T-A7b',
+    'T-A1', 'T-A2', 'T-A3a', 'T-A3b', 'T-A3c', 'T-A4', 'T-A5a', 'T-A7a', 'T-A7b',
     'T-d8pc-head',
     'T-OB-lying-adapter', 'T-OB-nested-close', 'totals-e2e',
     'T-O1c-err', 'T-O5-counts', 'T-O6-shape', 'T-no-lane', 'T-post-cycles', 'R-kernel-identity',
@@ -49,8 +49,9 @@ const GAPS_CEILING = [
 // 25 -> 24 at burst 39: P-INTERIM-ERROR-clean landed as a _mustfail control (A2-F21); 24 -> 23 at burst 87: T-mark landed;
 // 23 -> 24 at burst 117 B3a r2: T-LC-iter is a PLANNED GAP (maintainer ruling D-b117-2; its row returns in burst 118);
 // 24 -> 23 at burst 117 B3b: T-A5b landed as a _mustfail control (prea5, PLAN-A5b task 4); 23 -> 22 at burst 118 B2:
-// T-LC-iter landed as a _mustfail control (D-b117-2 closed by the lifecycle 'lself' lane op, b118 B1)
-const GAPS_MAX = 22;
+// T-LC-iter landed as a _mustfail control (D-b117-2 closed by the lifecycle 'lself' lane op, b118 B1); 22 -> 21 at burst 165
+// GT: T-A6 landed as T-REG-F10 (+ the T-RESET-* rows; DIV-F10 fixedIn 1.6.0, PLAN-C-RESET-GATES TASK 3)
+const GAPS_MAX = 21;
 // The universe ids whose only teeth are GAPS (the union of GAPS[].covers), exactly. Moving an id from CHECKS into a
 // GAP's covers (a tooth quietly turned into a gap) fails until this literal is edited.
 const GAP_COVERED = [
@@ -65,9 +66,9 @@ const GAP_COVERED = [
 // sig:O5:kind-count; 58 at burst 130 B5: lane:RECYCLE, oracle:O9, sig:O9:stale-write, sig:O9:stale-read,
 // sig:O9:stale-dispose; 60 at burst 134 B5: lane:SCHEDULER, sig:O9:stale-thunk; 62 at burst 140 B2b: lane:REGISTRY,
 // lane:CAPACITY; 65 at burst 151 C2a: lane:BOX, oracle:OT, sig:OT:trace-diff; 70 at burst 156 R8 C2a: lane:SNAPSHOT,
-// oracle:OS, sig:OS:roundtrip, sig:OS:refire, sig:OS:clean-bit).
+// oracle:OS, sig:OS:roundtrip, sig:OS:refire, sig:OS:clean-bit; 71 at burst 165 GT: sig:OW:reset-cleanup, D-b163-1).
 // A dropped id is a lost tooth; raise it when one lands.
-const CHECKS_MIN = 70;
+const CHECKS_MIN = 71;
 
 const copy = (x) => structuredClone(x);
 const live = (over) => audit(Object.assign({ controls: CONTROL_NAMES.slice(), ceiling: GAPS_CEILING.slice(), max: GAPS_MAX }, over || {}));
@@ -81,12 +82,12 @@ function hasProblem(probs, want) {
 
 const coveredBy = (gaps) => [...new Set(Object.keys(gaps).flatMap((g) => gaps[g].covers))].sort();
 
-test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 22-name GAPS ceiling and max 22 is []', () => {
+test('teeth a: audit() on the live registry with CONTROL_NAMES, the literal 21-name GAPS ceiling and max 21 is []', () => {
     assert.equal(GAPS_CEILING.length, GAPS_MAX, 'the literal ceiling and its literal size agree');
     assert.deepEqual(live(), []);
 });
 
-test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 70 ids (a tooth never quietly becomes a gap)', () => {
+test('teeth a: GAPS cover exactly the literal 9 ids; CHECKS holds >= 71 ids (a tooth never quietly becomes a gap)', () => {
     assert.equal(GAP_COVERED.length, 9);
     assert.deepEqual(coveredBy(GAPS), GAP_COVERED.slice().sort());
     assert.ok(Object.keys(CHECKS).length >= CHECKS_MIN, 'CHECKS ids ' + Object.keys(CHECKS).length + ' < ' + CHECKS_MIN);
@@ -130,8 +131,8 @@ test('teeth b: GAPS may only shrink -- a GAP outside the ceiling, a ceiling nami
     grown['T-new'] = { why: 'x', until: 'y', covers: [] };
     const pg = live({ gaps: grown });
     hasProblem(pg, 'GAP T-new is not in the ceiling (GAPS may only shrink)');
-    hasProblem(pg, 'GAPS holds 23 entries > max 22 (GAPS may only shrink)');
-    hasProblem(live({ ceiling: GAPS_CEILING.filter((n) => n !== 'T-d8pc-head'), max: 21 }), 'GAP T-d8pc-head is not in the ceiling (GAPS may only shrink)');
+    hasProblem(pg, 'GAPS holds 22 entries > max 21 (GAPS may only shrink)');
+    hasProblem(live({ ceiling: GAPS_CEILING.filter((n) => n !== 'T-d8pc-head'), max: 20 }), 'GAP T-d8pc-head is not in the ceiling (GAPS may only shrink)');
     // the ceiling with an extra name
     hasProblem(live({ ceiling: GAPS_CEILING.concat(['T-gone']) }), 'ceiling lists T-gone, which is no GAP any more: shrink the ceiling literal');
     // a deleted GAP without shrinking the literals
@@ -139,16 +140,16 @@ test('teeth b: GAPS may only shrink -- a GAP outside the ceiling, a ceiling nami
     delete shrunk['P-TREE'];
     const ps = live({ gaps: shrunk });
     hasProblem(ps, 'ceiling lists P-TREE, which is no GAP any more: shrink the ceiling literal');
-    hasProblem(ps, 'GAPS holds 21 entries < max 22: decrement the max literal');
+    hasProblem(ps, 'GAPS holds 20 entries < max 21: decrement the max literal');
     hasProblem(live({ ceiling: GAPS_CEILING.concat(['P-TREE']) }), 'ceiling lists a GAP twice');
 });
 
 test('teeth b: max must be the exact safe-integer GAPS size; NaN, a string and missing are problems, never a skip', () => {
     hasProblem(live({ max: NaN }), 'max must be a safe integer (the literal GAPS size), got NaN');
-    hasProblem(live({ max: '22' }), 'max must be a safe integer (the literal GAPS size), got 22');
+    hasProblem(live({ max: '21' }), 'max must be a safe integer (the literal GAPS size), got 21');
     hasProblem(live({ max: undefined }), 'max must be a safe integer (the literal GAPS size), got undefined');
-    hasProblem(live({ max: 23 }), 'GAPS holds 22 entries < max 23: decrement the max literal');
-    hasProblem(live({ max: 21 }), 'GAPS holds 22 entries > max 21 (GAPS may only shrink)');
+    hasProblem(live({ max: 22 }), 'GAPS holds 21 entries < max 22: decrement the max literal');
+    hasProblem(live({ max: 20 }), 'GAPS holds 21 entries > max 20 (GAPS may only shrink)');
     hasProblem(live({ ceiling: undefined }), 'ceiling must be the literal array of GAPS names (GAPS may only shrink), got undefined');
 });
 
@@ -700,7 +701,7 @@ test('teeth j: B5 -- validSpec: extra.pass is wrap-only, a non-empty list of dis
 });
 
 test('teeth j: B5 -- audit(): every _mustfail control is under some CHECKS id or in NOT_TEETH (orphan control: <name>)', () => {
-    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP', 'P-CAP-TREE', 'P-BOX-TREE', 'P-LITEBOX-TREE', 'P-SNAP-TREE']);
+    assert.deepEqual(Object.keys(NOT_TEETH), ['L-P-INTERIM', 'L-P-INTERIM-ERROR', 'P-INTERIM-ERROR-clean', 'P-HOOK-HP', 'P-HOOK-TREE', 'P-LC-tree', 'T-mark', 'P-OWNER-TREE', 'P-RC-TREE', 'P-SC-TREE', 'P-SC-HP', 'L-REGISTRY', 'P-REG-TREE', 'P-CAP-TREE', 'P-BOX-TREE', 'P-LITEBOX-TREE', 'P-SNAP-TREE']);
     assert.ok(CHECKS['cause:scenario'].includes('P-HOOK-TREE-COVOFF'), 'the b93 HOOK cov-off scenario control is a cause:scenario tooth');
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']) }), ['orphan control: X-orphan']);
     assert.deepEqual(live({ controls: CONTROL_NAMES.concat(['X-orphan']), notTeeth: Object.assign({}, NOT_TEETH, { 'X-orphan': 'a reason' }) }), []);
@@ -994,7 +995,7 @@ test('teeth q: the OWNER ids have teeth -- P-OWNER-TREE, T-cov-OWNER, P-OWNER-HP
     }
     const names = OW_ROWS.map((r) => r[0]);
     assert.deepEqual(CHECKS['lane:OWNER'], names);
-    assert.deepEqual(CHECKS['oracle:OW'], ['T-owner-fifo', 'T-owner-outin', 'T-owner-this']);
+    assert.deepEqual(CHECKS['oracle:OW'], ['T-owner-fifo', 'T-owner-outin', 'T-owner-this', 'T-RESET-nocleanup', 'T-RESET-wrap', 'T-RESET-noagg'], 'b165 GT: + the three reset-cleanup rows (teeth t)');
     assert.deepEqual(CHECKS['sig:OW:cleanup-order'], ['T-owner-fifo', 'T-owner-outin']);
     assert.deepEqual(CHECKS['sig:OW:callback-this'], ['T-owner-this']);
     for (const id of ['oracle:O5', 'sig:O5:link-count']) assert.ok(CHECKS[id].includes('T-owner-cascade'), id + ' -> T-owner-cascade');
@@ -1061,20 +1062,22 @@ const RC = (sig) => 'oracle=O9 lane=RECYCLE sig=' + sig + ' known=none';
 const RC_ROWS = [
     // [name, the anchor (full line(s)) in the live Signal.js, the mutant's replacement, the row's specs, kernel sha256/8]
     ['T-RC-setgen', '        read.set = (value) => {\n            if (node.gen !== birthGen) return;\n',
-        '        read.set = (value) => {\n            /* MUT */\n', [RC('stale-write')], 'fb1de503'],
+        '        read.set = (value) => {\n            /* MUT */\n', [RC('stale-write')], '60a28b74'],
     ['T-RC-readgen', '        if (this[NODE_GEN] !== node.gen) return undefined;   // stale handle: slot recycled (ABA guard, matches read())\n',
-        '', [RC('stale-read')], '5b4ef7e2'],
-    ['T-RC-dispgen', '        if (api[NODE_GEN] !== node.gen) return;\n', '', [RC('stale-dispose')], 'b9a480da'],
-    // b137 B4 (PLAN-b137 TASK 7 / A4): the b136 #51 sharedUpdate gen guard reverted to the HEAD aa154b6 line, so the kernel
-    // IS that commit's Signal.js (full sha256 RC_UPDGEN_SHA below)
+        '', [RC('stale-read')], '9168e740'],
+    ['T-RC-dispgen', '        if (api[NODE_GEN] !== node.gen) return;\n', '', [RC('stale-dispose')], '0ca760a1'],
+    // b137 B4 (PLAN-b137 TASK 7 / A4): the b136 #51 sharedUpdate gen guard reverted to the HEAD aa154b6 line (history: on
+    // ea0b64d1 the kernel WAS aa154b6's Signal.js; the C-RESET engine moved the rest of the file, b165 G2 Q3 (a))
     ['T-RC-updgen', '    function sharedUpdate(fn) { const node = this[NODE_PTR]; if (this[NODE_GEN] !== node.gen) return undefined; return this.set(fn(node.value)); }\n',
-        '    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }\n', [RC('stale-write')], 'ec6d7156'],
+        '    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }\n', [RC('stale-write')], '3bb2801c'],
 ];
-// sha256 of `git show aa154b6:Signal.js` (b137 B0 FACTS: k-ec6d7156/Signal.js), the kernel T-RC-updgen must rebuild exactly
-const RC_UPDGEN_SHA = 'ec6d715642d83f93e1d5eec76350a8472683f28e9037bd7614c5e42d291918fd';
-// The tree the RC_ROWS / SC_ROWS kernel shas were cut on (b136 LEDGER #51). It must equal the parity.json Signal.js pin
+// History (b137 A4 -> b165 G2 Q3 (a)): on ROWS_BASE8 ea0b64d1 the T-RC-updgen kernel was byte-equal to `git show aa154b6:Signal.js`
+// (sha256 ec6d7156..., b137 B0 FACTS: k-ec6d7156/Signal.js). Since the C-RESET engine (482a1d98 / d235e505) it is not, so
+// that equality is retired; the row keeps its exactly-once hunk + kernel sha256/8 checks on the re-pinned base.
+// The tree the RC_ROWS / SC_ROWS / CAP_ROWS / SNAP_ROWS / RESET_ROWS kernel shas were cut on (b136 LEDGER #51; re-pinned
+// ea0b64d1 -> d235e505 by b165 G2, .handoff/b165-evidence/g2/kernel-shas-d235e505.txt). It must equal the parity.json Signal.js pin
 // AND the live Signal.js: a parity re-pin without re-pinning these shas (and re-measuring the T-RC / T-SC heads) is red.
-const ROWS_BASE8 = 'ea0b64d1';
+const ROWS_BASE8 = 'd235e505';
 function rowsBase() {
     const base = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
     const live8 = createHash('sha256').update(base).digest('hex').slice(0, 8);
@@ -1131,8 +1134,7 @@ test('teeth r: the RECYCLE ids have teeth -- P-RC-TREE, T-cov-RECYCLE and four o
         assert.equal(a.length - b.length, repl === '' ? 1 : 0, name + ': line count');
         assert.equal(createHash('sha256').update(k).digest('hex').slice(0, 8), sha, name + ': kernel sha256/8 (on ' + ROWS_BASE8 + ')');
     }
-    // A4: T-RC-updgen's kernel is byte-identical to the pre-#51 HEAD Signal.js
-    assert.equal(createHash('sha256').update(buildKernel(CONTROLS.find((x) => x.name === 'T-RC-updgen')).src).digest('hex'), RC_UPDGEN_SHA, 'T-RC-updgen kernel == HEAD aa154b6 Signal.js');
+    // A4 (history, retired b165 G2 Q3 (a)): T-RC-updgen's kernel was byte-identical to aa154b6's Signal.js on ea0b64d1 only
     assert.deepEqual(pairing(CHECKS, CONTROLS), []);
     // must-fail: setgen's spec moved to stale-read no longer backs sig:O9:stale-write; a lane=OWNER spec not lane:RECYCLE
     const ctl = copy(CONTROLS);
@@ -1158,13 +1160,13 @@ const A_SC_THUNK = '                    if (node.gen === gen && (node.flags & FL
 const SC_ROWS = [
     // [name, the anchor (full line) in the live Signal.js, the mutant's replacement, the row's specs, kernel sha256/8]
     ['T-SC-dropcall', '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n',
-        '                                /* MUT dropcall */\n', [SC('O4', 'effect-dead')], '92b060e3'],
+        '                                /* MUT dropcall */\n', [SC('O4', 'effect-dead')], '1ee40e29'],
     ['T-SC-wedge', A_SC_THUNK,
-        '                    if (false && node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O4', 'effect-dead')], '63e4de65'],
+        '                    if (false && node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O4', 'effect-dead')], '29cd0216'],
     ['T-SC-thunkgen', A_SC_THUNK,
-        '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O9', 'stale-thunk')], 'f5b90744'],
+        '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O9', 'stale-thunk')], '8ab3d4a3'],
     ['T-SC-syncrun', '                scheduler(node.schedulerThunk);\n',
-        '                /* MUT syncrun */ executeEffect(node);\n', [SC('O9', 'stale-thunk')], '01569c06'],
+        '                /* MUT syncrun */ executeEffect(node);\n', [SC('O9', 'stale-thunk')], '92ff4790'],
 ];
 const SC_ENV = { SOAK_LANES: 'SCHEDULER' };
 const SC_COV_ENV = { SOAK_LANES: 'SCHEDULER', SOAK_MUSTFAIL: 'cov-off:thunk-recycled' };
@@ -1245,8 +1247,10 @@ const REG = (o, sig) => 'oracle=' + o + ' lane=REGISTRY sig=' + sig + ' known=no
 const CAP = (o, sig) => 'oracle=' + o + ' lane=CAPACITY sig=' + sig + ' known=none';
 const REG_ENV = { SOAK_LANES: 'REGISTRY' };
 const REG_COV_ENV = { SOAK_LANES: 'REGISTRY', SOAK_MUSTFAIL: 'cov-off:destroy-in-flight' };
-// A-R3: the in-flight scenario ids P-REGISTRY-TRIGGERLESS prints missing, exactly (MEASURED b140 r1 fix --smoke, .handoff/b140-evidence/fix1/triggerless.stderr)
-const REG_COV_LINES = ['destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed'].map((s) => 'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=' + s);
+// A-R3: the in-flight scenario ids P-REGISTRY-TRIGGERLESS prints missing, exactly (MEASURED b164 G0 --smoke, 8 ids incl. the
+// four reset-in-* twins: .handoff/b164-evidence/gates/rows/P-REGISTRY-TRIGGERLESS/)
+const REG_COV_LINES = ['destroy-in-flight', 'destroy-in-batch', 'destroy-in-body', 'destroy-in-computed',
+    'reset-in-flight', 'reset-in-batch', 'reset-in-body', 'reset-in-computed'].map((s) => 'soak: INCONCLUSIVE -- scenario lane=REGISTRY missing=' + s);
 const CAP_ENV = { SOAK_LANES: 'CAPACITY' };
 const CAP_COV_ENV = { SOAK_LANES: 'CAPACITY', SOAK_MUSTFAIL: 'cov-off:link-ceiling-grow' };
 const CAP_COV_LINE = 'soak: INCONCLUSIVE -- scenario lane=CAPACITY missing=link-ceiling-grow';
@@ -1254,52 +1258,106 @@ const CAP_COV_LINE = 'soak: INCONCLUSIVE -- scenario lane=CAPACITY missing=link-
 const REG_ROWS = [
     ['T-REG-expectnone', REG_ENV, 'export const REG_EXPECT = expectFromThrow(d2Row().expectedThrow);\n',
         'export const REG_EXPECT = Object.freeze([]); d2Row(); expectFromThrow(null);   // MUTANT T-REG-expectnone: EXPECT_NONE for in-flight destroys\n',
-        [REG('O6', 'escape-TypeError')]],
+        [REG('O6', 'escape-Error')]],
     ['T-REG-destroyall', REG_COV_ENV, '    x.M.destroyAll();\n    st.destroyed++;\n',
         '    st.destroyed++;   // MUTANT T-REG-destroyall: model.destroyAll() skipped\n', [REG('O5', 'node-count')]],
+];
+// b165 GT (PLAN-C-RESET-GATES TASKS 2-4, D-b164-4, Q1 (a)): the REGISTRY tree KERNEL mutants (REG_ENV --smoke, P-REG-TREE their
+// revert): [name, the exactly-once [anchor, replacement] pairs in the live Signal.js, specs = the FULL measured drain in order
+// (b164 G0 .handoff/b164-evidence/gates/rows/<row>/, every head known=none), kernel sha256/8]. The sha column was cut on
+// Signal.js 482a1d98 by GT (each == the G0 kernel; .handoff/b165-evidence/gt/gt-proof-all.log) and re-cut on ROWS_BASE8
+// d235e505 by the b165 G2 re-pin (.handoff/b165-evidence/g2/kernel-shas-d235e505.txt).
+const MUT = '   // MUTANT ';
+const RESET_ROWS = [
+    ['T-REG-F10', [['        if (ns !== 0) throw new Error("[lite-signal] destroy: graph not settled (" + NOT_SETTLED_REASON[ns] + ")");\n', '']],
+        [REG('O6', 'expected-escape-missing'), REG('O5', 'kind-count'), REG('O5', 'node-count'), REG('O5', 'link-count'),
+            REG('O1', 'computed-mismatch'), REG('O4', 'effect-dead'), REG('O6', 'escape-TypeError')], 'eed82d9f'],
+    ['T-RESET-noop', [['        try { errs = batch(resetRounds); } catch (e) { fe = e; fthrew = true; } finally { disposeDepth--; }\n', '        disposeDepth--;' + MUT + 'T-RESET-noop\n']],
+        [REG('O6', 'expected-escape-missing'), REG('O5', 'kind-count'), REG('O5', 'node-count'), REG('O5', 'link-count'),
+            REG('O8', 'mirror-links'), REG('OW', 'reset-cleanup')], '32d1d253'],
+    ['T-RESET-nocleanup', [['                        const fc = n.cleanupFn;\n', '                        const fc = n.cleanupFn; n.cleanupFn = undefined;' + MUT + 'T-RESET-nocleanup-A\n']],
+        [REG('OW', 'reset-cleanup')], 'b0d81368'],
+    ['T-RESET-silent-op2', [['        if (mutationHook !== null) mutationHook(2, node.id, node.flags | 0);\n',
+        '        if (mutationHook !== null && disposeDepth === 0) mutationHook(2, node.id, node.flags | 0);' + MUT + 'T-RESET-silent-op2-A\n']],
+        [REG('O8', 'mirror-links')], 'b19882d0'],
+    ['T-RESET-wrap', [['            if (errs.length === 1) throw errs[0];\n', '            if (errs.length === 1) throw new Error(errs[0].message);' + MUT + 'T-RESET-wrap\n']],
+        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], 'e4a16e41'],
+    ['T-RESET-noagg', [['            throw new AggregateError(errs, "reset: cleanups threw");\n', '            throw errs[0];' + MUT + 'T-RESET-noagg\n']],
+        [REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], 'cade0777'],
+    ['T-RESET-reason', [['        if (isFlushing) return 1;\n', '        if (currentObserver !== null) return 3;' + MUT + 'T-RESET-reason (moved above isFlushing)\n        if (isFlushing) return 1;\n'],
+        ['        if (currentObserver !== null) return 3;\n', '']],
+        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing')], 'c1c7002e'],
 ];
 // [name, the anchor in the live Signal.js, the replacement (b139 B1b mkmut.mjs), specs, kernel sha256/8 on ROWS_BASE8]
 // (each kernel byte-equal to .handoff/b139-evidence/b1b/mut/<name>/Signal.js, b140 B2b)
 const CAP_ROWS = [
     ['T-cap-node', 'policy === "throw" && nodePool.length >= currentNodesCapacity', 'policy === "throw" && nodePool.length > currentNodesCapacity',
-        [CAP('O6', 'expected-escape-missing')], '41adb908'],
+        [CAP('O6', 'expected-escape-missing')], 'ffe21904'],
     ['T-cap-link', 'policy === "throw" && linkPool.length >= currentLinkCapacity', 'policy === "throw" && linkPool.length > currentLinkCapacity',
-        [CAP('O6', 'expected-escape-missing')], 'de93ed07'],
+        [CAP('O6', 'expected-escape-missing')], '49608a66'],
     ['T-cap-ceiling', 'const maxLinkLimit = currentLinkCapacity * 16;', 'const maxLinkLimit = currentLinkCapacity * 17;',
-        [CAP('O6', 'expected-escape-missing')], '0654fa09'],
+        [CAP('O6', 'expected-escape-missing')], '5dce3e56'],
     ['T-cap-residue', '        link.nextFree = freeLinkHead;\n        freeLinkHead = link;\n        activeLinks = (activeLinks - 1) | 0;\n',
-        '        // MUTANT T-cap-residue: link not freed (not pooled, activeLinks not decremented)\n', [CAP('O5', 'link-count')], '97048858'],
+        '        // MUTANT T-cap-residue: link not freed (not pooled, activeLinks not decremented)\n', [CAP('O5', 'link-count')], '1fc77f9d'],
 ];
 const shape = (c) => [c.run, c.base, c.env, c.argv, c.patches, c.arm, c.expect.exit, c.expect.kind, c.expect.lines, c.expect.specs];
 
-test('teeth t: the REGISTRY + CAPACITY ids have teeth -- L-REGISTRY-F10, two soakPatch T-REG-* rows, four T-cap-* tree mutants', () => {
+test('teeth t: the REGISTRY + CAPACITY ids have teeth -- T-REG-F10 + six T-RESET-* tree mutants, two soakPatch T-REG-* rows, four T-cap-* tree mutants', () => {
     const NEW = ['lane:REGISTRY', 'lane:CAPACITY'];
     const u = universe();
     for (const id of NEW) {
         assert.ok(u.includes(id), id + ' is a judged id');
         assert.ok(Array.isArray(CHECKS[id]) && CHECKS[id].length >= 1, id + ' has a CHECKS control');
     }
-    assert.deepEqual(CHECKS['lane:REGISTRY'], ['L-REGISTRY-F10'].concat(REG_ROWS.map((r) => r[0])));
+    assert.deepEqual(CHECKS['lane:REGISTRY'], ['T-REG-F10', 'T-REG-expectnone', 'T-REG-destroyall', 'T-RESET-noop', 'T-RESET-nocleanup', 'T-RESET-silent-op2', 'T-RESET-wrap', 'T-RESET-noagg', 'T-RESET-reason']);
+    assert.deepEqual([...CHECKS['lane:REGISTRY']].sort(), REG_ROWS.concat(RESET_ROWS).map((r) => r[0]).sort(), 'lane:REGISTRY = REG_ROWS + RESET_ROWS');
+    // D-b163-1: the reset-cleanup sig has its three teeth; oracle:OW / sig:O8:mirror-links gained theirs
+    assert.deepEqual(CHECKS['sig:OW:reset-cleanup'], ['T-RESET-nocleanup', 'T-RESET-wrap', 'T-RESET-noagg']);
+    assert.deepEqual(CHECKS['oracle:OW'], ['T-owner-fifo', 'T-owner-outin', 'T-owner-this', 'T-RESET-nocleanup', 'T-RESET-wrap', 'T-RESET-noagg']);
+    assert.deepEqual(CHECKS['sig:O8:mirror-links'], ['T-hook-mirror', 'T-RESET-silent-op2']);
     assert.deepEqual(CHECKS['lane:CAPACITY'], CAP_ROWS.map((r) => r[0]));
     for (const n of ['P-REGISTRY-TRIGGERLESS', 'T-cov-CAPACITY']) assert.ok(CHECKS['cause:scenario'].includes(n), 'cause:scenario -> ' + n);
     assert.equal(typeof NOT_TEETH['P-CAP-TREE'], 'string');
     const get = (n) => { const c = CONTROLS.find((x) => x.name === n); assert.ok(c, n + ' exists'); assert.deepEqual(validSpec(c), [], n); return c; };
-    // A-R3: the triggerless row (the revert of both T-REG-* rows): exit 3, 0 BREACH, the three in-flight ids missing
+    // A-R3: the triggerless row (the revert of T-REG-destroyall): exit 3, 0 BREACH, the 8 in-flight ids missing
     const pr = get('P-REGISTRY-TRIGGERLESS');
     assert.ok(SHORT_RE.test(pr.name) && !own(pr, 'soakPatch'));
     assert.deepEqual(shape(pr), ['main', 'tree', REG_COV_ENV, ['--smoke'], [], null, 3, 'nobreach', REG_COV_LINES, ['INCONCLUSIVE scenario lane=REGISTRY missing=destroy-in-flight']]);
-    // A-R4: the red-explained long row, the control budget, explained by DIV-F10 only
-    const lf = get('L-REGISTRY-F10');
-    assert.ok(LONG_RE.test(lf.name));
-    assert.deepEqual(shape(lf).concat([lf.expect.known]), ['main', 'tree', { SOAK_LANES: 'REGISTRY', SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: '100000' }, [], [], null,
-        1, 'explained', [], ['oracle=O6 lane=REGISTRY sig=expected-escape-missing'], ['DIV-F10']]);
+    // A2 (b165 GT): DIV-F10 fixedIn 1.6.0 -- the long row is the clean pass control L-REGISTRY (was L-REGISTRY-F10)
+    assert.equal(CONTROLS.find((x) => x.name === 'L-REGISTRY-F10'), undefined, 'L-REGISTRY-F10 is gone');
+    const lf = get('L-REGISTRY');
+    assert.ok(LONG_RE.test(lf.name) && !own(lf, 'soakPatch'));
+    assert.deepEqual(shape(lf).concat([lf.expect.extra]), ['main', 'tree', { SOAK_LANES: 'REGISTRY', SOAK_CYCLES: String(MIN_ACTIVE_CYCLES), SOAK_OPS: '100000' }, [], [], null,
+        0, 'nobreach', [], [], { boundaries: MIN_ACTIVE_CYCLES, reason: 'end', verdict: 'PASS' }]);
+    // Q2 (a): the REGISTRY --smoke pass control, the same-argv revert of T-REG-expectnone / T-REG-F10 / every T-RESET-* row
+    const pt = get('P-REG-TREE');
+    assert.ok(SHORT_RE.test(pt.name) && !own(pt, 'soakPatch'));
+    assert.deepEqual(shape(pt).concat([pt.expect.extra]), ['main', 'tree', REG_ENV, ['--smoke'], [], null, 0, 'nobreach', [], [], { verdict: 'SMOKE' }]);
+    for (const n of ['L-REGISTRY', 'P-REG-TREE']) {
+        assert.equal(typeof NOT_TEETH[n], 'string', n + ' is NOT_TEETH');
+        for (const id of Object.keys(CHECKS)) assert.ok(!CHECKS[id].includes(n), id + ' never maps ' + n);
+    }
+    assert.equal(own(NOT_TEETH, 'T-RESET-absent'), false, 'D-b164-3: no T-RESET-absent control, so no NOT_TEETH entry');
+    for (const [name, , , specs] of [[REG_ROWS[0][0], null, null, REG_ROWS[0][4]]].concat(RESET_ROWS.map((r) => [r[0], null, null, r[2]]))) {
+        const c = get(name);
+        assert.deepEqual([c.env, c.argv, c.base, c.flags], [pt.env, pt.argv, pt.base, pt.flags], name + ': P-REG-TREE is its same-argv revert');
+        assert.ok(specs.length >= 1, name);
+    }
+    // the kernel rows: SHORT, no soakPatch, the literal patch pairs, the FULL measured drain as specs
+    assert.deepEqual(CONTROLS.filter((x) => /^T-(REG|RESET)-/.test(x.name) && !own(x, 'soakPatch')).map((x) => x.name), RESET_ROWS.map((r) => r[0]), 'RESET_ROWS names every REGISTRY kernel row, in order');
+    for (const [name, pairs, specs] of RESET_ROWS) {
+        const c = get(name);
+        assert.ok(SHORT_RE.test(name) && !own(c, 'soakPatch'), name);
+        assert.deepEqual(shape(c), ['main', 'tree', REG_ENV, ['--smoke'], pairs, null, 1, 'match', [], specs], name);
+        assert.equal(new Set(specs).size, specs.length, name + ': no duplicate head');
+    }
     // A-C2: the CAPACITY pass control and the coverage row
     const pc = get('P-CAP-TREE');
     assert.deepEqual(shape(pc).concat([pc.expect.extra]), ['main', 'tree', CAP_ENV, ['--smoke'], [], null, 0, 'nobreach', [], [], { verdict: 'SMOKE' }]);
     const tc = get('T-cov-CAPACITY');
     assert.deepEqual(shape(tc), ['main', 'tree', CAP_COV_ENV, ['--smoke'], [], null, 3, 'nobreach', [CAP_COV_LINE], ['INCONCLUSIVE scenario lane=CAPACITY missing=link-ceiling-grow']]);
-    // T-REG-*: no kernel patch; ONE soakPatch edit, its find exactly once in the live harness file, the built file = that one hunk
-    assert.deepEqual(CONTROLS.filter((x) => x.name.indexOf('T-REG-') === 0).map((x) => x.name), REG_ROWS.map((r) => r[0]), 'REG_ROWS names every T-REG-* row, in order');
+    // T-REG-* soakPatch rows: no kernel patch; ONE soakPatch edit, its find exactly once in the live harness file, the built file = that one hunk
+    assert.deepEqual(CONTROLS.filter((x) => x.name.indexOf('T-REG-') === 0 && own(x, 'soakPatch')).map((x) => x.name), REG_ROWS.map((r) => r[0]), 'REG_ROWS names every soakPatch T-REG-* row, in order');
     const regSrc = readFileSync(join(ROOT, 'bench', 'soak', 'lanes', 'registry.mjs'), 'utf8');
     for (const [name, env, find, replace, specs] of REG_ROWS) {
         const c = get(name);
@@ -1326,13 +1384,42 @@ test('teeth t: the REGISTRY + CAPACITY ids have teeth -- L-REGISTRY-F10, two soa
         assert.equal(createHash('sha256').update(k).digest('hex').slice(0, 8), sha, name + ': kernel sha256/8 (on ' + ROWS_BASE8 + ')');
     }
     assert.deepEqual(pairing(CHECKS, CONTROLS), []);
-    // must-fail: a lane=RECYCLE spec does not back lane:CAPACITY; an L-REGISTRY-F10 spec on another lane does not back lane:REGISTRY
+    // RESET_ROWS: each anchor exactly once in the pinned tree, the built kernel = those hunks, kernel sha pinned (G2 re-cuts)
+    const rbase = rowsBase();
+    for (const [name, pairs, , sha] of RESET_ROWS) {
+        let want = rbase;
+        for (const [a, r] of pairs) {
+            assert.equal(rbase.split(a).length - 1, 1, name + ': the anchor occurs exactly once in Signal.js');
+            want = want.replace(a, () => r);
+        }
+        const k = buildKernel(get(name)).src;
+        assert.equal(k, want, name);
+        assert.equal(createHash('sha256').update(k).digest('hex').slice(0, 8), sha, name + ': kernel sha256/8');
+    }
+    // must-fail: a lane=RECYCLE spec does not back lane:CAPACITY; a T-REG-F10 spec on another lane does not back lane:REGISTRY
     const ctl = copy(CONTROLS);
     ctl.find((x) => x.name === 'T-cap-node').expect.specs = ['oracle=O6 lane=RECYCLE sig=expected-escape-missing known=none'];
     assert.deepEqual(pairing(CHECKS, ctl), ['lane:CAPACITY: T-cap-node -- no BREACH spec naming lane=CAPACITY']);
     const ctl2 = copy(CONTROLS);
-    ctl2.find((x) => x.name === 'L-REGISTRY-F10').expect.specs = ['oracle=O6 lane=ERROR sig=expected-escape-missing'];
-    assert.deepEqual(pairing(CHECKS, ctl2), ['lane:REGISTRY: L-REGISTRY-F10 -- no BREACH spec naming lane=REGISTRY']);
+    ctl2.find((x) => x.name === 'T-REG-F10').expect.specs = ['oracle=O6 lane=ERROR sig=expected-escape-missing known=none'];
+    assert.deepEqual(pairing(CHECKS, ctl2), ['lane:REGISTRY: T-REG-F10 -- no BREACH spec naming lane=REGISTRY']);
+    // must-fail (A3): without its three teeth sig:OW:reset-cleanup is uncovered (the S3a-tree red GT clears); an emptied list fails too
+    const c3 = copy(CHECKS);
+    delete c3['sig:OW:reset-cleanup'];
+    assert.deepEqual(live({ checks: c3 }), ['uncovered: sig:OW:reset-cleanup has no CHECKS control, no GAP and no UNREACHABLE proof']);
+    const c4 = copy(CHECKS);
+    c4['sig:OW:reset-cleanup'] = c4['sig:OW:reset-cleanup'].filter((n) => !['T-RESET-nocleanup', 'T-RESET-wrap', 'T-RESET-noagg'].includes(n));
+    assert.deepEqual(live({ checks: c4 }), ['CHECKS sig:OW:reset-cleanup lists no control']);
+    // must-fail: an OW spec that is not reset-cleanup does not back sig:OW:reset-cleanup
+    const ctl5 = copy(CONTROLS);
+    ctl5.find((x) => x.name === 'T-RESET-nocleanup').expect.specs = [REG('OW', 'cleanup-order')];
+    assert.deepEqual(pairing(CHECKS, ctl5), ['sig:OW:reset-cleanup: T-RESET-nocleanup -- no BREACH spec naming oracle=OW with sig in reset-cleanup']);
+    // must-fail: the stale names fail closed (L-REGISTRY-F10 in NOT_TEETH; a T-RESET-absent NOT_TEETH entry with no control)
+    hasProblem(live({ notTeeth: Object.assign({}, NOT_TEETH, { 'L-REGISTRY-F10': 'r' }) }), 'stale NOT_TEETH: L-REGISTRY-F10 is no _mustfail control');
+    hasProblem(live({ notTeeth: Object.assign({}, NOT_TEETH, { 'T-RESET-absent': 'r' }) }), 'stale NOT_TEETH: T-RESET-absent is no _mustfail control');
+    const nt2 = Object.assign({}, NOT_TEETH);
+    delete nt2['P-REG-TREE'];
+    hasProblem(live({ notTeeth: nt2 }), 'orphan control: P-REG-TREE');
     // must-fail: a row dropped from CHECKS is an orphan; P-CAP-TREE out of NOT_TEETH is an orphan; both lane ids uncovered
     const c1 = copy(CHECKS);
     for (const id of Object.keys(c1)) c1[id] = c1[id].filter((n) => n !== 'T-REG-destroyall');
@@ -1385,13 +1472,14 @@ test('teeth t: soakPatch (D-b140-1) -- validSpec refuses every malformed shape; 
         assert.throws(() => buildSoakPatches(c), /^Error: soakPatch malformed: /, label);
         assert.ok(staleAnchors([c]).length === 1 && SP.test(staleAnchors([c])[0].error), label + ': staleAnchors reports it');
     }
-    // a find that matches 0 or 2 times, or a file that does not exist: staleAnchors names it, buildSoakPatches throws
+    // a find that matches 0 or >= 2 times (3 'export const ' in lanes/registry.mjs since C-RESET soak S3a), or a file that
+    // does not exist: staleAnchors names it, buildSoakPatches throws
     const zero = spRow((s) => [Object.assign({}, s[0], { find: s[0].find + 'XYZ' })]);
     const two = spRow((s) => [Object.assign({}, s[0], { find: 'export const ' })]);
     const nofile = spRow((s) => [Object.assign({}, s[0], { file: 'lanes/nope.mjs' })]);
     for (const c of [zero, two, nofile]) assert.deepEqual(validSpec(c), [], 'shape-valid: only the build can refuse it');
     assert.deepEqual(staleAnchors([zero, two, nofile]).map((x) => x.error.replace(/: ".*$/, '')),
-        ['soakPatch lanes/registry.mjs: stale anchor: 0 matches', 'soakPatch lanes/registry.mjs: stale anchor: 2 matches', 'soakPatch lanes/nope.mjs: ENOENT']);
+        ['soakPatch lanes/registry.mjs: stale anchor: 0 matches', 'soakPatch lanes/registry.mjs: stale anchor: 3 matches', 'soakPatch lanes/nope.mjs: ENOENT']);
     // b140 r1 fix B1: a file that resolves through a symlink (lanes/_sp-link.mjs -> a tmpdir file) is shape-valid but
     // never built: buildSoakPatches throws, staleAnchors names it, runControl is INVALID (never spawned, nothing written)
     const spDir = mkdtempSync(join(tmpdir(), 'litesignal-t45-splink-'));
@@ -1425,7 +1513,7 @@ test('teeth t: soakPatch (D-b140-1) -- validSpec refuses every malformed shape; 
 test('teeth t: soakPatch runs -- a 0-match / 2-match find is INVALID (never spawned), a no-op edit MISSes, the real edit is KILLED', () => {
     const inv = (c) => { const r = runControl(c); assert.equal(r.ok, false); assert.equal(r.invalid, true); assert.equal(r.status, null, 'never spawned'); return r.problems; };
     assert.match(inv(spRow((s) => [Object.assign({}, s[0], { find: s[0].find + 'XYZ' })]))[0], /^INVALID soakPatch lanes\/registry\.mjs: stale anchor: 0 matches/);
-    assert.match(inv(spRow((s) => [Object.assign({}, s[0], { find: 'export const ' })]))[0], /^INVALID soakPatch lanes\/registry\.mjs: stale anchor: 2 matches/);
+    assert.match(inv(spRow((s) => [Object.assign({}, s[0], { find: 'export const ' })]))[0], /^INVALID soakPatch lanes\/registry\.mjs: stale anchor: 3 matches/);
     // the field can fail: the same row with replace === find runs the unmutated harness (P-REGISTRY-TRIGGERLESS): exit 3, MISS
     const noop = runControl(spRow((s) => [Object.assign({}, s[0], { replace: s[0].find })]));
     assert.equal(noop.ok, false);
@@ -1444,6 +1532,8 @@ const UNIVERSE_PRE_BOX = 72;
 const BOX_IDS = ['lane:BOX', 'oracle:OT', 'sig:OT:trace-diff'];
 const BOX_ENV = { SOAK_LANES: 'BOX' };
 const SNAP_IDS = ['lane:SNAPSHOT', 'oracle:OS', 'sig:OS:roundtrip', 'sig:OS:refire', 'sig:OS:clean-bit'];
+// C-RESET soak S3a (D-b163-1) adds exactly sig:OW:reset-cleanup (b165 GT maps it: teeth t)
+const RESET_IDS = ['sig:OW:reset-cleanup'];
 const BOX_MF_ENV = { SOAK_LANES: 'BOX', SOAK_MUSTFAIL: 'box-untracked' };
 const BOX_SPEC = 'oracle=OT lane=BOX sig=trace-diff known=none';
 
@@ -1451,7 +1541,8 @@ test('teeth u: the BOX ids have teeth -- T-BOX-untracked (SHORT, OT trace-diff k
     // C-A3: the universe gains exactly the three BOX ids; GAPS ceiling + max unchanged (teeth a pins both literals);
     // R8 C2a then adds the five SNAPSHOT ids (teeth v pins 75 -> 80)
     const u = universe();
-    assert.equal(u.length, UNIVERSE_PRE_BOX + BOX_IDS.length + SNAP_IDS.length);
+    assert.equal(u.length, UNIVERSE_PRE_BOX + BOX_IDS.length + SNAP_IDS.length + RESET_IDS.length);
+    for (const id of RESET_IDS) assert.equal(u.filter((x) => x === id).length, 1, id + ' is a judged id, once');
     for (const id of BOX_IDS) assert.equal(u.filter((x) => x === id).length, 1, id + ' is a judged id, once');
     assert.deepEqual(u.filter((x) => /^(lane:BOX|oracle:OT|sig:OT:)/.test(x)), BOX_IDS);
     assert.equal(Object.keys(GAPS).length, GAPS_MAX);
@@ -1505,10 +1596,10 @@ const A_SNAP_EV = '                    node.evalVersion = evs[i];   // D-M: the 
 // [name, anchor in the live Signal.js restore() pass 1, replacement, spec sig, kernel sha256/8 on ROWS_BASE8]; each kernel is
 // byte-equal to .handoff/r8-evidence/A0/kernels/M-OS-<x>/Signal.js (the A0 measured tamper kernels, R8-16)
 const SNAP_ROWS = [
-    ['T-SNAP-roundtrip', A_SNAP_EV + '                    node.markEpoch = mes[i];\n', A_SNAP_EV, 'roundtrip', '5900bf33'],
+    ['T-SNAP-roundtrip', A_SNAP_EV + '                    node.markEpoch = mes[i];\n', A_SNAP_EV, 'roundtrip', '04434212'],
     ['T-SNAP-refire', '                handle = disposeFn;\n',
-        '                handle = disposeFn;\n                try { fn(); } catch (e) { /* M-OS-refire */ }\n', 'refire', 'bf6c52af'],
-    ['T-SNAP-clean', A_SNAP_EV, '                    node.evalVersion = 0;   // M-OS-clean\n', 'clean-bit', 'f3c08f86'],
+        '                handle = disposeFn;\n                try { fn(); } catch (e) { /* M-OS-refire */ }\n', 'refire', '1a579cd0'],
+    ['T-SNAP-clean', A_SNAP_EV, '                    node.evalVersion = 0;   // M-OS-clean\n', 'clean-bit', '417aedbf'],
 ];
 // The frozen pre-C1 build (git archive 7548461, rebased as dc7ed8f; .handoff is gitignored, so this row SKIPS without it)
 const FROZEN_MAIN = join(ROOT, '.handoff', 'r8-evidence', 'before-C-7548461', 'bench', 'soak', 'main.mjs');
@@ -1517,7 +1608,7 @@ const FROZEN_CONFIG = "soak: CONFIG -- SOAK_LANES: unknown lane 'SNAPSHOT' (rost
 test('teeth v: the SNAPSHOT ids have teeth -- three T-SNAP-* tree kernel mutants (SHORT, OS known=none), P-SNAP-TREE their revert', () => {
     // ASSERTION 3: the universe gains exactly the five SNAPSHOT ids; GAPS ceiling + max unchanged
     const u = universe();
-    assert.equal(u.length, UNIVERSE_PRE_SNAP + SNAP_IDS.length);
+    assert.equal(u.length, UNIVERSE_PRE_SNAP + SNAP_IDS.length + RESET_IDS.length);
     assert.deepEqual(u.filter((x) => /^(lane:SNAPSHOT|oracle:OS|sig:OS:)/.test(x)), SNAP_IDS);
     assert.equal(Object.keys(GAPS).length, GAPS_MAX);
     assert.deepEqual(Object.keys(GAPS), GAPS_CEILING);
@@ -1616,12 +1707,12 @@ test('teeth v: on the frozen pre-C1 build (before-C-7548461) each T-SNAP-* MISSe
 /* ---- w. the lite-box engine main run (b158 B1, PLAN-146 TASKS 1-5; D-b156-1; F144 / acb9c5b) ---- */
 
 const LITEBOX_ENV = { SOAK_ENGINE: 'lite-box' };
-// MEASURED b158 B1 (HEAD 1e4b6e6, node v26.8.2; .handoff/b158-evidence/litebox-smoke/stderr.txt): SOAK_ENGINE=lite-box main
-// --smoke prints exactly these 4 BREACH heads, exit 1, END verdict=FAIL records=44 (42 cycle records, 3 per lane x 14 lanes)
+// MEASURED b158 B1 (HEAD 1e4b6e6, node v26.8.2; .handoff/b158-evidence/litebox-smoke/stderr.txt): exit 1, END verdict=FAIL
+// records=44 (42 cycle records, 3 per lane x 14 lanes). RE-MEASURED b164 G0 (HEAD 05f8d2e, Signal.js 482a1d98;
+// .handoff/b164-evidence/gates/rows/P-LITEBOX-TREE/): the same, and the full drain is exactly these 2 DIV-F22 heads (the two
+// REGISTRY DIV-F10 heads left with DIV-F10 fixedIn 1.6.0)
 const LITEBOX_SPECS = [
     'oracle=O6 lane=ERROR sig=expected-escape-missing known=DIV-F22',
-    'oracle=O6 lane=REGISTRY sig=escape-TypeError known=DIV-F10',
-    'oracle=O6 lane=REGISTRY sig=expected-escape-missing known=DIV-F10',
     'oracle=O6 lane=BOX sig=expected-escape-missing known=DIV-F22',
 ];
 const LB_AT = (engine) => "a live-kernel control (SOAK_ENGINE='" + engine + "')";
@@ -1659,13 +1750,13 @@ function openDivergenceProblems(controls, entries) {
 }
 const divEntries = () => JSON.parse(readFileSync(join(ROOT, 'bench', 'soak', 'divergences.json'), 'utf8')).entries;
 
-test('teeth w: P-LITEBOX-TREE -- main --smoke on SOAK_ENGINE=lite-box, a live-kernel pass control explained by DIV-F10 + DIV-F22 (D-b156-1)', () => {
+test('teeth w: P-LITEBOX-TREE -- main --smoke on SOAK_ENGINE=lite-box, a live-kernel pass control explained by DIV-F22 only (D-b156-1)', () => {
     const c = CONTROLS.find((x) => x.name === 'P-LITEBOX-TREE');
     assert.ok(c, 'P-LITEBOX-TREE exists');
     assert.deepEqual(validSpec(c), []);
     assert.ok(SHORT_RE.test(c.name) && !LONG_RE.test(c.name) && !own(c, 'soakPatch'), 'SHORT battery (the nightly teeth job), no soakPatch');
     assert.deepEqual(shape(c).concat([c.flags, c.expect.known, c.expect.extra]), ['main', 'tree', LITEBOX_ENV, ['--smoke'], [], null, 1, 'explained', [], LITEBOX_SPECS,
-        ['--expose-gc'], ['DIV-F10', 'DIV-F22'], { verdict: 'FAIL', boundaries: 42 }]);
+        ['--expose-gc'], ['DIV-F22'], { verdict: 'FAIL', boundaries: 42 }]);
     for (const s of LITEBOX_SPECS) assert.ok(c.expect.known.includes(s.slice(s.indexOf('known=') + 6)), s + ': its known tag is tolerated');
     assert.deepEqual(buildKernel(c).anchors, [], 'no kernel patch');
     assert.equal(buildKernel(c).src, rowsBase(), 'the live tree, pinned');
@@ -1711,15 +1802,19 @@ test('teeth w: the open-divergence pin -- every explained tree control tolerates
     const entries = divEntries();
     assert.deepEqual(openDivergenceProblems(CONTROLS, entries), []);
     assert.deepEqual(CONTROLS.filter((c) => c.run === 'main' && c.base === 'tree' && c.expect.kind === 'explained').map((c) => c.name),
-        ['L-REGISTRY-F10', 'P-BOX-TREE', 'P-LITEBOX-TREE'], 'the explained tree controls');
-    for (const id of ['DIV-F10', 'DIV-F22']) assert.equal(entries.find((d) => d.id === id).fixedIn, null, id + ' is open');
-    // must-fail: an engine fix closing DIV-F10 / DIV-F22 (fixedIn forged) names exactly the tree rows that tolerate it
+        ['P-BOX-TREE', 'P-LITEBOX-TREE'], 'the explained tree controls');
+    assert.equal(entries.find((d) => d.id === 'DIV-F10').fixedIn, '1.6.0', 'DIV-F10 is fixed (C-RESET soak S1)');
+    assert.equal(entries.find((d) => d.id === 'DIV-F22').fixedIn, null, 'DIV-F22 is open');
+    // must-fail: an engine fix closing DIV-F22 (fixedIn forged) names exactly the tree rows that tolerate it
     const forge = (id) => { const e = copy(entries); e.find((d) => d.id === id).fixedIn = 'b158-forged'; return openDivergenceProblems(CONTROLS, e); };
-    assert.deepEqual(forge('DIV-F10'), ['L-REGISTRY-F10: known DIV-F10 is not an open divergence (fixedIn b158-forged)', 'P-LITEBOX-TREE: known DIV-F10 is not an open divergence (fixedIn b158-forged)']);
     assert.deepEqual(forge('DIV-F22'), ['P-BOX-TREE: known DIV-F22 is not an open divergence (fixedIn b158-forged)', 'P-LITEBOX-TREE: known DIV-F22 is not an open divergence (fixedIn b158-forged)']);
+    // must-fail: the fixed DIV-F10 back in a tree row's known is named (b165 GT: it left P-LITEBOX-TREE and L-REGISTRY)
+    const f10 = copy(CONTROLS);
+    f10.find((x) => x.name === 'P-LITEBOX-TREE').expect.known = ['DIV-F10', 'DIV-F22'];
+    assert.deepEqual(openDivergenceProblems(f10, entries), ['P-LITEBOX-TREE: known DIV-F10 is not an open divergence (fixedIn 1.6.0)']);
     // and an id the registry does not hold
     const ctl = copy(CONTROLS);
-    ctl.find((x) => x.name === 'P-LITEBOX-TREE').expect.known = ['DIV-F10', 'DIV-F99'];
+    ctl.find((x) => x.name === 'P-LITEBOX-TREE').expect.known = ['DIV-F22', 'DIV-F99'];
     assert.deepEqual(openDivergenceProblems(ctl, entries), ['P-LITEBOX-TREE: known DIV-F99 is no divergences.json id']);
 });
 

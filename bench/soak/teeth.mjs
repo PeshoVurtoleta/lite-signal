@@ -112,11 +112,13 @@ export const CHECKS = deepFreeze({
     // b134 B5 (PLAN-R4 R4c TASKS 6 + 7): the four T-SC-* tree mutants (the b131 R4c / b133 D6 kernels, SC_ENV --smoke),
     // each spec known=none; heads: .handoff/b134-evidence/b5/heads-{1,2,3}.txt. P-SC-TREE is their pass control / revert.
     'lane:SCHEDULER': ['T-SC-dropcall', 'T-SC-wedge', 'T-SC-thunkgen', 'T-SC-syncrun'],
-    // b140 B2b (PLAN-R5 REGISTRY TASK 4): L-REGISTRY-F10 (the tree lane, red-explained) heads `oracle=O6 lane=REGISTRY
-    // sig=expected-escape-missing known=DIV-F10`; the two harness mutants T-REG-expectnone (lanes/registry.mjs predicts
-    // EXPECT_NONE) and T-REG-destroyall (opDestroy skips model.destroyAll(), cov-off) head known=none
-    // (.handoff/b139-evidence/b2/). P-REGISTRY-TRIGGERLESS is their revert. T-A6 stays a GAP (no engine fix yet).
-    'lane:REGISTRY': ['L-REGISTRY-F10', 'T-REG-expectnone', 'T-REG-destroyall'],
+    // b140 B2b (PLAN-R5 REGISTRY TASK 4): the two harness mutants T-REG-expectnone (lanes/registry.mjs predicts
+    // EXPECT_NONE; b165: heads escape-Error) and T-REG-destroyall (opDestroy skips model.destroyAll(), cov-off) head
+    // known=none (.handoff/b139-evidence/b2/). b165 GT (PLAN-C-RESET-GATES TASK 3): DIV-F10 fixedIn 1.6.0, so the tree
+    // lane is clean (L-REGISTRY / P-REG-TREE, NOT_TEETH) and T-A6 is a tooth: T-REG-F10 (destroy() without its settled
+    // guard) + the six T-RESET-* kernel mutants, each known=none (.handoff/b164-evidence/gates/rows/). P-REG-TREE is the
+    // revert of T-REG-expectnone / T-REG-F10 / T-RESET-*, P-REGISTRY-TRIGGERLESS of T-REG-destroyall.
+    'lane:REGISTRY': ['T-REG-F10', 'T-REG-expectnone', 'T-REG-destroyall', 'T-RESET-noop', 'T-RESET-nocleanup', 'T-RESET-silent-op2', 'T-RESET-wrap', 'T-RESET-noagg', 'T-RESET-reason'],
     // b140 B2b (PLAN-R5 CAPACITY TASK 5): the four T-cap-* tree mutants (b1b mkmut.mjs hunks, CAP_ENV --smoke), each spec
     // known=none; P-CAP-TREE is their pass control / revert.
     'lane:CAPACITY': ['T-cap-node', 'T-cap-link', 'T-cap-ceiling', 'T-cap-residue'],
@@ -162,7 +164,8 @@ export const CHECKS = deepFreeze({
     'oracle:O7': ['L-LC-preb33', 'T-LC-dupconn', 'T-LC-dupdisc', 'T-LC-dropconn', 'T-LC-dropdisc', 'T-LC-merge', 'T-LC-iter'],
     // b127 B5 (A2 / D-b124-2: oracle OW, sigs cleanup-order + callback-this): fifo (non-FIFO within an owner) and outin
     // (its ancestor fired first) head cleanup-order, this (a multi-cleanup with this = the array) heads callback-this
-    'oracle:OW': ['T-owner-fifo', 'T-owner-outin', 'T-owner-this'],
+    // b165 GT (D-b163-1): T-RESET-nocleanup / -wrap / -noagg head `oracle=OW lane=REGISTRY sig=reset-cleanup known=none`
+    'oracle:OW': ['T-owner-fifo', 'T-owner-outin', 'T-owner-this', 'T-RESET-nocleanup', 'T-RESET-wrap', 'T-RESET-noagg'],
     // b130 B5 (PLAN-R4 TASK 7, O2: R4a lands stale-write / stale-read / stale-dispose; stale-thunk lands in R4c):
     // setgen heads stale-write, readgen stale-read, dispgen stale-dispose
     // b134 B5 (R4c): thunkgen (a stale first-run thunk runs the recycled resident; HOLD world 0 of the smoke set) and
@@ -187,9 +190,10 @@ export const CHECKS = deepFreeze({
     'sig:O7:missed-disconnect': ['T-LC-dropdisc'],
     'sig:O7:stale-off': ['L-LC-preb33', 'T-LC-merge', 'T-LC-iter'],   // T-LC-merge's measured stale-off head (b117 B3a); T-LC-iter's only head (b118 B2)
     'sig:O8:ghost-listener': ['L-REV-HOOK', 'T-A5b'],
-    'sig:O8:mirror-links': ['T-hook-mirror'],
+    'sig:O8:mirror-links': ['T-hook-mirror', 'T-RESET-silent-op2'],   // T-RESET-silent-op2: "op-2 count 0 != s0.activeNodes 13 + 2t" (b165 GT)
     'sig:OW:cleanup-order': ['T-owner-fifo', 'T-owner-outin'],
     'sig:OW:callback-this': ['T-owner-this'],
+    'sig:OW:reset-cleanup': ['T-RESET-nocleanup', 'T-RESET-wrap', 'T-RESET-noagg'],   // D-b163-1 (S3a's SIG; b165 GT its teeth)
     'sig:O9:stale-write': ['T-RC-setgen', 'T-RC-updgen'],
     'sig:O9:stale-read': ['T-RC-readgen'],
     'sig:O9:stale-dispose': ['T-RC-dispgen'],
@@ -252,7 +256,6 @@ export const GAPS = deepFreeze({
     'T-A3c': fixMinusOne(517, 'A3 + S2 wrap.mjs'),
     'T-A4': fixMinusOne(518, 'A4 + S2 wrap.mjs'),
     'T-A5a': fixMinusOne(519, 'A5 + S3 LIFECYCLE lane'),
-    'T-A6': fixMinusOne(521, 'A6 + S3 REGISTRY lane'),
     'T-A7a': fixMinusOne(522, 'A7 + S2 wrap.mjs + S3 RECYCLE lane', NEARWRAP_WHY),
     'T-A7b': fixMinusOne(523, 'A7 + S2 wrap.mjs', NEARWRAP_WHY),
     'T-d8pc-head': { why: 'the d8-pc engine lane is placed in S2 (' + S1CD + ':7, amendment 4)', until: 'S2', covers: [] },
@@ -328,12 +331,18 @@ export const NOT_TEETH = deepFreeze({
     // b134 B5 (PLAN-R4 R4c TASK 7; .handoff/b134-evidence/b5/heads-{1,2,3}.txt): the SCHEDULER pass controls
     'P-SC-TREE': 'the SCHEDULER pass control on the tree, the revert of every T-SC-* row incl. syncrun (' + MF + ' P-SC-TREE comment)',
     'P-SC-HP': 'the SCHEDULER pass control on headpatched (' + MF + ' P-SC-HP comment)',
+    // b165 GT (PLAN-C-RESET-GATES TASK 3 + Q2 (a)): the REGISTRY pass controls (DIV-F10 fixedIn 1.6.0). No T-RESET-absent
+    // control exists (D-b164-3: a reset-less kernel is a legitimate pre-1.6.0 control -- REGISTRY runs it with the 5 reset
+    // ids and O8 / OW not-applicable -- and a 1.6.0 kernel missing reset is guarded by test/105:84, the test/105 / test/92
+    // NA rows and reset-torture's version gate), so it has no NOT_TEETH entry either (audit: a stale NOT_TEETH name fails).
+    'L-REGISTRY': 'the REGISTRY pass control on the tree at the control budget (11 x DEFAULT_OPS), clean since DIV-F10 fixedIn 1.6.0 (' + MF + ' L-REGISTRY comment)',
+    'P-REG-TREE': 'the REGISTRY pass control on the tree (--smoke), the revert of T-REG-expectnone, T-REG-F10 and every T-RESET-* row (' + MF + ' P-REG-TREE comment)',
     // b140 B2b (PLAN-R5 CAPACITY TASK 5): the CAPACITY pass control
     'P-CAP-TREE': 'the CAPACITY pass control on the tree, the revert of every T-cap-* row (' + MF + ' P-CAP-TREE comment)',
     // b151 C2a (PLAN-R7 group C task 5, C-40): the BOX pass control, explained by DIV-F22 only
     'P-BOX-TREE': 'the BOX pass control on the tree, explained by DIV-F22 only, the revert of T-BOX-untracked (' + MF + ' P-BOX-TREE comment)',
     // b158 B1 (PLAN-146 TASK 4, D-b156-1): main on the lite-box engine, a live-kernel pass control (no SOAK_KERNEL)
-    'P-LITEBOX-TREE': 'the lite-box engine pass control on the live tree, every lane --smoke, explained by DIV-F10 + DIV-F22 only; its F144 must-fail is test/45 section w (' + MF + ' P-LITEBOX-TREE comment)',
+    'P-LITEBOX-TREE': 'the lite-box engine pass control on the live tree, every lane --smoke, explained by DIV-F22 only; its F144 must-fail is test/45 section w (' + MF + ' P-LITEBOX-TREE comment)',
     // R8 C2a (PLAN-R8 GROUP C task 4): the SNAPSHOT pass control
     'P-SNAP-TREE': 'the SNAPSHOT pass control on the tree, the revert of every T-SNAP-* row (' + MF + ' P-SNAP-TREE comment)',
 });

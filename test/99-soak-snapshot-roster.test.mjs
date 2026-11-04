@@ -20,7 +20,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ROSTER, LANE_INDEX, laneSpan, rosterRemapCollision } from '../bench/soak/lanes/index.mjs';
 import { seedFor } from '../bench/soak/seeds.mjs';
-import { COVOFF_SEEDS, SWEEP_SEEDS, summarize, foldMainRecords, runMainSmoke } from '../bench/soak/calibration/calibrate.mjs';
+import { COVOFF_SEEDS, SWEEP_SEEDS, summarize, foldMainRecords, runMainSmoke, runMain as calibRunMain, RUN_MAIN_TIMEOUT_MS, mainFinished } from '../bench/soak/calibration/calibrate.mjs';
 import { SKIP_NAMES } from '../bench/soak/exec.mjs';
 import * as CFG from '../bench/soak/config.mjs';
 
@@ -264,4 +264,52 @@ test('tooth: exec.mjs keeps the last swapped-out world (globalThis.__kept) -> ME
     assert.equal(/UNMEASURED/.test(r.stderr), false, r.stderr);
     assert.match(r.stderr, /^soak: BREACH gate=retention lane=SNAPSHOT detail=badBoundaries=2 \(limit 2\) unmeasured=0$/m);
     assert.deepEqual(boundariesOf(r.recs).map((b) => [b.tracked, b.trackerSize, b.weakAlive]), [[718, 1, 1], [733, 1, 1], [696, 1, 1]]);
+});
+
+// ---- FILLER 156 (b165 G2 TASK 6): calibrate runMain bounds its child ----
+// must-fail: the frozen runMain (.handoff/b164-before/gates/calibrate.mjs, no timeout) on this kernel had not resolved after
+// 35 s (bounded once, .handoff/b165-evidence/g2/runmain-frozen-hang.log), past this row's 30 s node:test timeout.
+test('FILLER 156: calibrate runMain on a spin-at-import kernel, timeoutMs 3000 -> resolves with signal SIGKILL in < 15 s', { timeout: 30000 }, async () => {
+    assert.equal(RUN_MAIN_TIMEOUT_MS, 3600000);
+    const dir = mkdtempSync(join(tmpdir(), 'g2-spin-'));
+    try {
+        writeFileSync(join(dir, 'Signal.js'), 'for (;;) {}   // spin at import (FILLER 156 row)\n' + readFileSync(join(HERE, 'Signal.js'), 'utf8'));
+        copyFileSync(join(HERE, 'Watch.js'), join(dir, 'Watch.js'));
+        const t0 = Date.now();
+        const r = await calibRunMain(join(dir, 'Signal.js'), true, undefined, 3000);
+        const ms = Date.now() - t0;
+        assert.deepEqual([r.status, r.signal, r.recs], [null, 'SIGKILL', null]);
+        assert.ok(ms >= 2900 && ms < 15000, 'killed after ' + ms + ' ms');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('FILLER 156: calibrate runMain refuses a timeoutMs outside the integers [1, 2^31 - 1] (TypeError, no spawn)', async () => {
+    for (const bad of [0, -0, -1, 1.5, NaN, Infinity, 2 ** 31, 2 ** 53, '3000', null, {}]) {
+        await assert.rejects(calibRunMain(join(HERE, 'Signal.js'), true, undefined, bad), TypeError, String(bad));
+    }
+});
+
+test('FILLER 156: calibrate runMain accepts timeoutMs 2^31 - 1 (not clamped: a missing kernel exits 2 on its own, no signal)', { timeout: 60000 }, async () => {
+    const r = await calibRunMain(join(tmpdir(), 'g2-no-such-dir', 'Signal.js'), true, undefined, 0x7FFFFFFF);
+    assert.deepEqual([r.status, r.signal], [2, null], r.stderr);
+});
+
+test('FILLER 156: mainFinished -- a killed child, a run without its summary, an empty or missing record list are not finished', () => {
+    const cyc = { type: 'cycle' }, sum = { type: 'summary' };
+    assert.equal(mainFinished({ status: null, signal: 'SIGKILL', recs: [cyc] }), false);
+    assert.equal(mainFinished({ status: null, signal: 'SIGKILL', recs: [cyc, sum] }), false);
+    assert.equal(mainFinished({ status: 0, signal: null, recs: [cyc] }), false);
+    assert.equal(mainFinished({ status: 0, signal: null, recs: [] }), false);
+    assert.equal(mainFinished({ status: 0, signal: null, recs: null }), false);
+    assert.equal(mainFinished({ status: 0, recs: [cyc, sum] }), false, 'signal undefined is not null');
+    assert.equal(mainFinished(null), false);
+    assert.equal(mainFinished({ status: 0, signal: null, recs: [cyc, sum] }), true);
+});
+
+test('FILLER 156: write() main cross-check dies on !mainFinished right after the no-records die (wiring)', () => {
+    const src = readFileSync(join(HERE, 'bench/soak/calibration/calibrate.mjs'), 'utf8');
+    const want = "            if (m.recs === null) die('main.mjs ' + sh + ' on ' + k"
+        + " + ' wrote no records (exit ' + m.status + '): ' + m.stderr.slice(0, 400));\n"
+        + "            if (!mainFinished(m)) die(";
+    assert.equal(src.split(want).length - 1, 1, 'write() mainCheck must die on !mainFinished(m)');
 });

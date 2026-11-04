@@ -109,7 +109,9 @@ export const LANE_KERNELS = Object.freeze({
     SCHEDULER: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
     // REGISTRY (R5, b139 B2; D-b139-2 = LIFECYCLE's b111 precedent): tree only. DIV-F10 is closed (b162, fixedIn 1.6.0:
     // an in-flight destroy() throws the D2 guard throw), the test/41 (f) exemption ended; it stays tree only because
-    // the frozen controls predate D2 (an in-flight destroy() returns there: every world would fail-stop on DIV-F10)
+    // the frozen controls predate D2: every world would fail-stop at its first in-flight destroy (the F10 bug). A
+    // REGISTRY run on a pre-1.6.0 control kernel (headpatched / lite-1.5.2) is red by design: 7 known=none BREACH lines
+    // (the in-flight destroy shapes, DIV-F10 before D2), diagnostic only; REGISTRY stays tree-only (b165 G2 ADDENDUM 2)
     REGISTRY: Object.freeze(['tree']),
     // CAPACITY (R5, b139 B2; D-b139-2 = RECYCLE's precedent): tree only: B0-9 shows the same throw point and 0 pinned
     // slots at rest on all 3 kernels, so more kernels lengthen the recut without changing a verdict; P-CAP-TREE passes
@@ -348,7 +350,7 @@ export function foldMainRecords(lane, recs, skipNames) {
 }
 
 /**
- * Spawn `main.mjs --smoke` on one kernel (async), into a fresh temp SOAK_OUT. Resolves { status, recs, stderr }
+ * Spawn `main.mjs --smoke` on one kernel (async), into a fresh temp SOAK_OUT. Resolves { status, signal, recs, stderr }
  * with every JSONL record (recs null when none). Inherited SOAK_* keys are dropped: the run is the default smoke,
  * on SOAK_LANES = lanes.join(',') when `lanes` is given (a kernel's bound lanes, lanesFor).
  */
@@ -357,10 +359,16 @@ export function runMainSmoke(kernelAbs, lanes) {
 }
 
 /**
- * runMain(kernel, smoke, extraEnv): smoke = `--smoke`; otherwise the DEFAULT run (DEFAULT_CYCLES x DEFAULT_OPS, all
- * lanes) unless extraEnv sets SOAK_* keys (applied after the inherited SOAK_* keys are dropped).
+ * runMain(kernel, smoke, extraEnv, timeoutMs): smoke = `--smoke`; otherwise the DEFAULT run (DEFAULT_CYCLES x DEFAULT_OPS,
+ * all lanes) unless extraEnv sets SOAK_* keys (applied after the inherited SOAK_* keys are dropped). The child is bounded
+ * (b165 G2, FILLER 156): after timeoutMs (default RUN_MAIN_TIMEOUT_MS) it gets SIGKILL -- main.mjs traps SIGTERM, and a
+ * child spinning in JS never runs a handler -- and the result carries signal 'SIGKILL'. A timeoutMs that is not an
+ * integer in [1, 2^31 - 1] throws a TypeError before the spawn (a larger timer is clamped to 1 ms by Node).
  */
-export async function runMain(kernelAbs, smoke, extraEnv) {
+export const RUN_MAIN_TIMEOUT_MS = 3600000;
+export async function runMain(kernelAbs, smoke, extraEnv, timeoutMs) {
+    const tmo = timeoutMs === undefined ? RUN_MAIN_TIMEOUT_MS : timeoutMs;
+    if (!Number.isSafeInteger(tmo) || !(tmo > 0) || tmo > 0x7FFFFFFF) throw new TypeError('runMain: timeoutMs must be an integer in [1, 2^31 - 1], got ' + String(timeoutMs));
     const { spawn } = await import('node:child_process');
     const { mkdtempSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
@@ -371,14 +379,25 @@ export async function runMain(kernelAbs, smoke, extraEnv) {
     if (extraEnv !== undefined) for (const k of Object.keys(extraEnv)) env[k] = extraEnv[k];
     env.SOAK_KERNEL = kernelAbs;
     env.SOAK_OUT = out;
-    const p = spawn(process.execPath, ['--expose-gc', join(ROOT, 'bench/soak/main.mjs')].concat(smoke ? ['--smoke'] : []), { cwd: ROOT, env, stdio: ['ignore', 'ignore', 'pipe'] });
+    const p = spawn(process.execPath, ['--expose-gc', join(ROOT, 'bench/soak/main.mjs')].concat(smoke ? ['--smoke'] : []), { cwd: ROOT, env, stdio: ['ignore', 'ignore', 'pipe'], timeout: tmo, killSignal: 'SIGKILL' });
     let err = '';
     p.stderr.on('data', (d) => { err += d; });
-    const status = await new Promise((res) => p.on('close', (c) => res(c)));
+    let signal = null;
+    const status = await new Promise((res) => p.on('close', (c, sig) => { signal = sig; res(c); }));
     let recs = null;
     try { recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l)); } catch { recs = null; }
     rmSync(dir, { recursive: true, force: true });
-    return { status, recs, stderr: err };
+    return { status, signal, recs, stderr: err };
+}
+
+/**
+ * mainFinished(m): a runMain result is a finished run -- no signal (null; a SIGKILLed / timed-out child is unmeasured)
+ * and a non-empty record list whose last record is the summary (main.mjs writes cycle records as it goes). Fails closed.
+ */
+export function mainFinished(m) {
+    if (m === null || typeof m !== 'object' || m.signal !== null || !Array.isArray(m.recs) || m.recs.length === 0) return false;
+    const last = m.recs[m.recs.length - 1];
+    return last !== null && typeof last === 'object' && last.type === 'summary';
 }
 
 /** main.mjs on PROBE (SOAK_LANES / SOAK_CYCLES / SOAK_OPS from PROBE, the PROBE kernel); resolves like runMain. */
@@ -687,6 +706,7 @@ async function write(outPath, timed, importFrom) {
         KS.forEach((k, i) => {
             const m = mainRuns[i];
             if (m.recs === null) die('main.mjs ' + sh + ' on ' + k + ' wrote no records (exit ' + m.status + '): ' + m.stderr.slice(0, 400));
+            if (!mainFinished(m)) die('main.mjs ' + sh + ' on ' + k + ' did not finish (signal ' + m.signal + ', timeout ' + RUN_MAIN_TIMEOUT_MS + ' ms)');
             if (m.recs.some((r) => r.type === 'fatal')) die('main.mjs ' + sh + ' on ' + k + ' crashed');
             const cyc = m.recs.filter((r) => r.type === 'cycle');
             const lanes = [];
