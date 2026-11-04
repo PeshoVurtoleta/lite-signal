@@ -1,7 +1,7 @@
-lite-signal torture suite -- complete set (24 scenarios)
+lite-signal torture suite -- complete set (25 scenarios)
 ========================================================
 
-23 semantic (deterministic, fast, CI) + 1 soak (opt-in). Full superset through 1.10
+24 semantic (deterministic, fast, CI) + 1 soak (opt-in). Full superset through 1.10
 (candidate-line numbering after the 2026-10-10 re-pin: see FEATURE GATES).
 Every scenario feature-detects and skips cleanly below its feature; runs green
 from 1.4.x forward. Skips use exit 77 and the runner enforces version floors:
@@ -76,6 +76,14 @@ SEMANTIC (listed in run.mjs registration order)
   introspect-torture       describe/forEach*/hasObservers/ownerOf + ABA
                            gen-stamp guard
   lifecycle-torture        createRoot detachment + destroy registry reset (1.5.0+)
+  reset-torture            registry.reset(): 0 B/op + 0 minor GC per reset  (1.6.0+)
+                           (256-node graph, the window = reset() alone,
+                           20 warmup + 200 cycles, nursery delta + in-window
+                           GC count) + a {}-per-node must-fail control on the
+                           same gate (>= 16 B/node, every tier) + checkNoGc
+                           maxMajor 0 steady phase + stale-handle retention
+                           (lite-leak, 384 targets x 5 resets -> size 0) +
+                           D-1 stats across each reset
 
 SOAK: wraparound-torture
   wraparound-torture (2026-08 Phase 4, OPT-IN via TORTURE_WRAPAROUND=1, ~30s;
@@ -170,7 +178,7 @@ missing mark lane. Recommendation there: add a "compare lane" (op 11/12) so the
 short-circuit's benefit becomes a counted fact and its regression becomes
 catchable.
 
-FEATURE GATES: box/owner->1.5, snapshot->1.6, scope->1.7, flush->1.8,
+FEATURE GATES: box/owner->1.5, snapshot/reset->1.6, scope->1.7, flush->1.8,
 cleanup-return->1.9, dispose->1.10. (Re-pinned +1 minor on 2026-10-10: 1.6.0
 ships without the candidate-line features, which move to 1.7.0+.)
 retrack-dispose, op-accounting, lifecycle, contract, interop, and all others:
