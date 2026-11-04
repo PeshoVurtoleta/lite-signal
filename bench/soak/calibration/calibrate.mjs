@@ -107,9 +107,9 @@ export const LANE_KERNELS = Object.freeze({
     // SCHEDULER (R4c, b134 B3; D-b128-3 = PLAN-R4 M3): every kernel (the lane does not judge scheduler `this`; B2b
     // census x headpatched / lite-1.5.2 / tree, 0 BREACH); listed so tree cuts it; headpatched first (covOff)
     SCHEDULER: Object.freeze(['headpatched', 'lite-1.5.2', 'tree']),
-    // REGISTRY (R5, b139 B2; D-b139-2 = LIFECYCLE's b111 precedent): tree only while DIV-F10 is open: every world
-    // fail-stops at its first in-flight rdestroy (red-explained DIV-F10, test/41 (f) exemption D-b139-1); cov-off
-    // destroy-in-flight (P-REGISTRY-TRIGGERLESS) is the clean control; ends with the A6 rung
+    // REGISTRY (R5, b139 B2; D-b139-2 = LIFECYCLE's b111 precedent): tree only. DIV-F10 is closed (b162, fixedIn 1.6.0:
+    // an in-flight destroy() throws the D2 guard throw), the test/41 (f) exemption ended; it stays tree only because
+    // the frozen controls predate D2 (an in-flight destroy() returns there: every world would fail-stop on DIV-F10)
     REGISTRY: Object.freeze(['tree']),
     // CAPACITY (R5, b139 B2; D-b139-2 = RECYCLE's precedent): tree only: B0-9 shows the same throw point and 0 pinned
     // slots at rest on all 3 kernels, so more kernels lengthen the recut without changing a verdict; P-CAP-TREE passes

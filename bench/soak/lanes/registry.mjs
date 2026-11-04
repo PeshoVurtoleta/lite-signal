@@ -6,26 +6,34 @@
  *
  * World: GRAPH vocabulary on a small graph (3..5 leaf signals, 2..4 computeds, 2..3 effects over sum / identity
  * bodies, values 1..9), core set / read / create / stop ops (gen.mjs emitters, exec.mjs core handlers). A destroy step
- * emits one rdestroy; the generator's shadow model then drops every node (model.destroyAll) and the next step rebuilds
- * the graph (a seq of core creates closed by rbuilt).
+ * emits one rdestroy. At the top level the generator's shadow model then drops every node (model.destroyAll) and the
+ * next step rebuilds the graph (a seq of core creates closed by rbuilt). In flight the destroy throws and the graph
+ * stays: the shadow model takes only the leaf write (setValue i v) and no rebuild follows.
  *
  * Ops (lane-owned, exec.mjs laneOp):
  *   rdestroy { at: 'top' }                  W.destroy() at rest, guarded (O6, EXPECT_NONE: legal at the top level)
- *   rdestroy { at: 'batch', i, v, n }       batch^n(() => { set(leaf i, v); destroy(); }), n 1 | 2 (nested)
- *   rdestroy { at: 'body', i, v }           a private effect reading leaf i destroys when it reads v; then setTop(i, v)
+ *   rdestroy { at: 'batch', i, v, n }       batch^n(() => { set(leaf i, v); destroy(); }), n 1 | 2 (nested); the set
+ *                                           stays (model.setValue)
+ *   rdestroy { at: 'body', i, v }           a private effect reading leaf i destroys when it reads v; then setTop(i, v);
+ *                                           then the private effect is disposed (guarded, EXPECT_NONE)
  *   rdestroy { at: 'computed', i, v }       a private computed reading leaf i destroys when it reads v, pulled by a
- *                                           private effect; then setTop(i, v)
- *   rbuilt   {}                             the rebuild after a destroy is done: counts reuse-after-destroy when a
- *                                           destroy ran in this world and the model holds live nodes again
+ *                                           private effect; then setTop(i, v); then the private effect and computed
+ *                                           are disposed (guarded, EXPECT_NONE)
+ *   rbuilt   {}                             the rebuild after a top-level destroy is done: counts reuse-after-destroy
+ *                                           when a destroy ran in this world and the model holds live nodes again
  * O6 (v): every IN-FLIGHT destroy's outermost guard is judged against expectFromThrow(DIV-D2-destroy-throws
- * .expectedThrow) (contract D2: destroy() inside batch, flush or any body throws), read ONCE at module load from
- * divergences.json, module-relative (the file divergences.mjs REGISTRY_URL names; no import: divergences.mjs imports
- * the ROSTER, which imports this lane); a missing row throws (fail closed). While expectedThrow is null the list
- * is [EXPECT_NEVER_ENTRY]: no throw -> expected-escape-missing (DIV-F10), an engine throw ->
- * escape-<Ctor> + expected-escape-missing (D-b139-3: the flushEffects TypeError of a cleared queue slot, the CO-SHAPE
- * of DIV-F10). exec.regExpect carries the list into that ONE guard (exec.mjs guard() resets it at entry).
- * After every rdestroy that ran, exec's model drops every node (model.destroyAll): the engine holds none (O5 at rest).
- * The private nodes are never in the model; destroy() removes them, else O5 node-count reports them.
+ * .expectedThrow), read ONCE at module load from divergences.json, module-relative (the file divergences.mjs
+ * REGISTRY_URL names; no import: divergences.mjs imports the ROSTER, which imports this lane); a missing row throws
+ * (fail closed). Contract D2 (since 1.6.0, C-RESET D-4, Signal.js 482a1d98): destroy() inside batch, flush or any
+ * body throws Error '[lite-signal] destroy: graph not settled (<reason>)' and changes nothing; expectedThrow is
+ * { ctor 'Error', messagePrefix '[lite-signal] destroy: graph not settled' }, so the guard throw is absorbed and any
+ * other escape is O6 escape-<Ctor>, a missing throw O6 expected-escape-missing. DIV-F10 is closed (fixedIn 1.6.0):
+ * on the tree its shapes (no throw; the D-b139-3 flushEffects TypeError of a cleared queue slot) are known=none.
+ * A null expectedThrow would give [EXPECT_NEVER_ENTRY] (every in-flight destroy red: the pre-1.6.0 never entry).
+ * exec.regExpect carries the list into that ONE guard (exec.mjs guard() resets it at entry).
+ * After a top-level rdestroy exec's model drops every node (model.destroyAll): the engine holds none (O5 at rest).
+ * An in-flight rdestroy leaves the graph intact (no model.destroyAll); the private nodes are never in the model, so
+ * the op disposes them after the guard, else O5 node-count reports them.
  * An in-flight op on a dead / absent leaf (a shrunk script) is a no-op, as exec.setTop is.
  * covOff destroy-in-flight -> rule in-flight: every rdestroy is at 'top' (P-REGISTRY-TRIGGERLESS).
  * Per-exec state in a WeakMap (exec needs no slot; the entry dies with the world). Fail closed (exec.unmodelled): an
@@ -96,15 +104,16 @@ function setOp(g) {
 
 function destroyOp(g) {
     const at = g.ruleOff('in-flight') ? 'top' : g.weighted(AT);
-    let op;
-    if (at === 'top') op = { o: 'rdestroy', at };
-    else {
-        const i = g.pick(g.leaves());
-        op = { o: 'rdestroy', at, i, v: other(g, i) };
-        if (at === 'batch') op.n = 1 + g.int(2);
+    if (at === 'top') {
+        g.M.destroyAll();
+        shadowOf(g).built = false;
+        return { o: 'rdestroy', at };
     }
-    g.M.destroyAll();
-    shadowOf(g).built = false;
+    // in flight: the D2 guard throw leaves the graph; only the leaf write lands (batch set / setTop)
+    const i = g.pick(g.leaves());
+    const op = { o: 'rdestroy', at, i, v: other(g, i) };
+    if (at === 'batch') op.n = 1 + g.int(2);
+    g.M.setValue(i, op.v);
     return op;
 }
 
@@ -138,7 +147,7 @@ function step(g) {
 
 /* ---- exec side --------------------------------------------------------------------------------------------- */
 
-const STATE = new WeakMap();   // exec -> { destroyed }
+const STATE = new WeakMap();   // exec -> { destroyed: top-level destroys that ran }
 
 function stateOf(x) {
     let s = STATE.get(x);
@@ -156,35 +165,41 @@ function batchN(x, n, h, v) {
     else x.W.batch(() => { x.W.batch(() => { x.W.set(h, v); x.W.destroy(); }); });
 }
 
-function opDestroy(x, op) {
-    const st = stateOf(x);
-    const at = op.at;
-    if (at === 'top') {
-        x.guard(() => x.W.destroy());
+/** An in-flight rdestroy: the guard expects the D2 throw (REG_EXPECT) and the graph stays (no model.destroyAll). */
+function opDestroyInFlight(x, op, at) {
+    if (at !== 'batch' && at !== 'body' && at !== 'computed') unmodelled(x, 'rdestroy at ' + JSON.stringify(at) + ' is not top / batch / body / computed');
+    const i = op.i;
+    const v = op.v;
+    if (!Number.isInteger(i)) unmodelled(x, 'rdestroy leaf ' + JSON.stringify(i) + ' is not an integer');
+    if (!(Number.isInteger(v) && v >= 1 && v <= 9)) unmodelled(x, 'rdestroy value ' + JSON.stringify(v) + ' is not 1..9');
+    const n = at === 'batch' ? op.n : 1;
+    if (n !== 1 && n !== 2) unmodelled(x, 'rdestroy batch nesting ' + JSON.stringify(op.n) + ' is not 1 / 2');
+    const nd = i >= 0 ? x.M.n[i] : undefined;
+    if (nd === undefined || !nd.live || nd.t !== 's' || x.H[i] === undefined) return;   // shrunk away / dead
+    const h = x.H[i];
+    const W = x.W;
+    if (at === 'batch') {
+        x.M.setValue(i, v);
+        x.regExpect = REG_EXPECT;
+        x.guard(() => batchN(x, n, h, v));
     } else {
-        if (at !== 'batch' && at !== 'body' && at !== 'computed') unmodelled(x, 'rdestroy at ' + JSON.stringify(at) + ' is not top / batch / body / computed');
-        const i = op.i;
-        const v = op.v;
-        if (!Number.isInteger(i)) unmodelled(x, 'rdestroy leaf ' + JSON.stringify(i) + ' is not an integer');
-        if (!(Number.isInteger(v) && v >= 1 && v <= 9)) unmodelled(x, 'rdestroy value ' + JSON.stringify(v) + ' is not 1..9');
-        const n = at === 'batch' ? op.n : 1;
-        if (n !== 1 && n !== 2) unmodelled(x, 'rdestroy batch nesting ' + JSON.stringify(op.n) + ' is not 1 / 2');
-        const nd = i >= 0 ? x.M.n[i] : undefined;
-        if (nd === undefined || !nd.live || nd.t !== 's' || x.H[i] === undefined) return;   // shrunk away / dead
-        const h = x.H[i];
-        const W = x.W;
-        if (at === 'batch') {
-            x.M.setValue(i, v);
-            x.regExpect = REG_EXPECT;
-            x.guard(() => batchN(x, n, h, v));
-        } else {
-            if (at === 'body') x.guard(() => { W.effect(() => { if (W.read(h) === v) W.destroy(); }); });
-            else x.guard(() => { const c = W.computed(() => { const r = W.read(h); if (r === v) W.destroy(); return r; }); W.effect(() => { W.read(c); }); });
-            x.regExpect = REG_EXPECT;
-            x.setTop(i, v, false);
-        }
+        let e, c;   // the private nodes (never modelled): disposed after the guard, effect first
+        if (at === 'body') x.guard(() => { e = W.effect(() => { if (W.read(h) === v) W.destroy(); }); });
+        else x.guard(() => { c = W.computed(() => { const r = W.read(h); if (r === v) W.destroy(); return r; }); e = W.effect(() => { W.read(c); }); });
+        x.regExpect = REG_EXPECT;
+        x.setTop(i, v, false);
         x.regExpect = null;
+        x.guard(() => { if (e !== undefined) W.dispose(e); if (c !== undefined) W.dispose(c); });
     }
+    x.regExpect = null;
+    x.D.onRegDestroy(at);
+}
+
+function opDestroy(x, op) {
+    const at = op.at;
+    if (at !== 'top') { opDestroyInFlight(x, op, at); return; }
+    const st = stateOf(x);
+    x.guard(() => x.W.destroy());
     x.M.destroyAll();
     st.destroyed++;
     x.D.onRegDestroy(at);

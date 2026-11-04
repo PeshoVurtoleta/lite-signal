@@ -18,7 +18,7 @@
     "OWNER": "1c089d909991f541affa8818d04e1fa5329d140d4cb0be46fad672f1d49c475c",
     "RECYCLE": "009f6ffb98a8ebd899b74cb9d5759264961e6ac09f1b2344a3fcaf1f55fc862f",
     "SCHEDULER": "e7c34b8e1d4efdf0fd7ac80624ae2adcd537c53a888375457d5d183c7a9848d8",
-    "REGISTRY": "47106932525c46f7f3a3c828a0462316faf79f4c0217fc3483de55f9c251e6a1",
+    "REGISTRY": "d43baccc83d9b2f65be74621fcd07f969afe931b4cf9833c8f8450e30a2cce72",
     "CAPACITY": "23c7fb2f7e2ff6c78ce60dc7bb485e9f19e127e21cc5370e0470651dcbceeadf",
     "BOX": "d08c802dc6f4248f720a92d7b06d2834752616ff3850b8f46afe931d78cc11c8",
     "SNAPSHOT": "bae2dae3e295357a956096ca75699ec02ec3acf07116890251be2877f4f59754"
@@ -30,6 +30,7 @@
   "registryCapacityCut": "2026-10-29, burst 141 R5 B3: REGISTRY (lane index 10, lanes/registry.mjs ddf650bb) and CAPACITY (lane index 12, lanes/capacity.mjs f94162ff) appended, computed with test/42 own digest() over the live generator; the ten other digests byte-identical to their cut.",
   "boxCut": "2026-11-02, burst 152 R7 C3 (C-37): BOX (lane index 9, lanes/box.mjs 348c64fb) appended, computed with node bench/soak/_dev-run.mjs --hash bench/soak/controls/headpatched BOX 1000 (the tree kernel Signal.js ea0b64d1 gives the same digest: scripts never consult the kernel); the twelve other digests byte-identical to their cut.",
   "snapshotCut": "2026-11-02, burst 157 R8 C3: SNAPSHOT (lane index 13, lanes/snapshot.mjs 67dd3fd4) appended, computed with test/42 own digest() over the live generator (scripts never consult the kernel); the thirteen other digests byte-identical to their cut.",
+  "registryRecut": "2026-11-04, burst 162 C-RESET soak S1: REGISTRY (lane index 10) re-cut after the deliberate generator change (an in-flight destroyOp keeps the graph: shadow setValue only, no destroyAll / rebuild; lanes/registry.mjs ddf650bb -> 281da185; was 47106932525c46f7f3a3c828a0462316faf79f4c0217fc3483de55f9c251e6a1); computed with test/42 own digest() over the live generator; the thirteen other digests byte-identical to their cut.",
   "inputsSha256AtCut": {
     "bench/soak/gen.mjs": "2318d2632b3702000278e7e1e0bf2eb5792708240e6ea75b3aad5509825fdda2",
     "bench/soak/kinds.mjs": "47a9dbb92967773d3ad07dcc23d89615ea4625cba65287af4f8994bef5648cfb",

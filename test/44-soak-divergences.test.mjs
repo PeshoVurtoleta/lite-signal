@@ -1163,9 +1163,12 @@ test('DIV-F10: the b1a census shapes -> DIV-F10; near-misses -> null', () => {
     ];
     assert.equal(cases.filter((x) => x[2]).length, 5);
     assert.equal(cases.filter((x) => !x[2]).length, 9);
+    // b162 (C-RESET soak S1): DIV-F10 is FIXED (fixedIn 1.6.0): its shapes explain only under includeFixed (a named
+    // control kernel); on the tree (default) every case, census shape or near-miss, is a regression (known=none)
     for (const [n, rec, want] of cases) {
-        const r = classify(rec);
+        const r = classify(rec, FX());
         assert.deepEqual(r === null ? null : r.ids, want ? ['DIV-F10'] : null, n);
+        assert.equal(classify(rec), null, n + ' (tree: DIV-F10 fixed)');
     }
 });
 

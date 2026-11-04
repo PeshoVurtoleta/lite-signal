@@ -3,9 +3,10 @@
 // the lane generator and the live tree kernel through adapters/lite-s3.mjs. The REGISTRY lane is rostered since R5 B2a (b140); the
 // KERNEL rows still drive it directly through runWorld's opts.laneOps (no main.mjs, no roster lookup).
 // Groups: O6V (oracle), MODEL, DETECT, LANE (descriptor + generator), KERNEL (live Signal.js), RETENTION.
-// Live-tree facts (.handoff/b139-evidence/r5/README.txt (c), b1a census): top-level destroy() is clean; destroy() in flight never
-// throws the D2 contract throw, so every in-flight world fails O6 expected-escape-missing (DIV-F10), and an engine TypeError
-// (a cleared flush-queue slot, D-b139-3) adds escape-TypeError when another effect is queued after the destroyer.
+// Live-tree facts: top-level destroy() is clean; since 1.6.0 (C-RESET D-4, Signal.js 482a1d98) destroy() in flight throws the D2
+// contract throw Error '[lite-signal] destroy: graph not settled (<reason>)' and leaves the graph intact, so every in-flight world
+// is O6-clean against REG_EXPECT (DIV-F10 closed, fixedIn 1.6.0; b162 C-RESET soak S1). Before 1.6.0 (b139 B1a census) every
+// in-flight world failed O6 expected-escape-missing, plus escape-TypeError (a cleared flush-queue slot, D-b139-3).
 // MIT (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -142,14 +143,20 @@ describe('LANE: descriptor + generator', () => {
     it('REG_EXPECT is expectFromThrow(DIV-D2-destroy-throws.expectedThrow), read from divergences.json', () => {
         assert.notEqual(D2, undefined);
         assert.deepEqual(REG_EXPECT, expectFromThrow(D2.expectedThrow));
-        if (D2.expectedThrow === null) assert.equal(REG_EXPECT[0], EXPECT_NEVER_ENTRY);
+        // b162 (C-RESET soak S1): the D2 row carries the guard throw; DIV-F10 is closed
+        assert.deepEqual(D2.expectedThrow, { ctor: 'Error', messagePrefix: '[lite-signal] destroy: graph not settled' });
+        assert.deepEqual(REG_EXPECT, [{ id: 'expectedThrow', ctor: 'Error', prefix: '[lite-signal] destroy: graph not settled' }]);
+        assert.notEqual(REG_EXPECT[0], EXPECT_NEVER_ENTRY);
+        assert.equal(D2.fixedIn, '1.6.0');
+        assert.equal(D2.pending, null);
     });
     it('G0 determinism: the same seed gives the same script; another seed differs', () => {
         assert.equal(scriptJson(gen(3)), scriptJson(gen(3)));
         assert.notEqual(scriptJson(gen(3)), scriptJson(gen(4)));
     });
-    it('60 worlds: every at seen; in-flight ops carry an int leaf + value 1..9 (batch n 1 | 2); each destroy is followed by a rebuild closed by rbuilt', () => {
+    it('60 worlds: every at seen; in-flight ops carry an int leaf + value 1..9 (batch n 1 | 2); each top destroy is followed by a rebuild closed by rbuilt, an in-flight one never (the graph stays)', () => {
         const seen = new Set();
+        let top = 0, inFlight = 0;
         for (let w = 0; w < 60; w++) {
             const ops = gen(w).ops;
             for (let k = 0; k < ops.length; k++) {
@@ -160,14 +167,18 @@ describe('LANE: descriptor + generator', () => {
                     assert.ok(Number.isInteger(op.i) && Number.isInteger(op.v) && op.v >= 1 && op.v <= 9, JSON.stringify(op));
                     if (op.at === 'batch') assert.ok(op.n === 1 || op.n === 2);
                 }
+                if (op.at === 'top') top++; else inFlight++;
                 if (k + 1 < ops.length) {
                     const nx = ops[k + 1];
-                    assert.equal(nx.o, 'seq');
-                    assert.equal(nx.ops[nx.ops.length - 1].o, 'rbuilt');
+                    if (op.at === 'top') {
+                        assert.equal(nx.o, 'seq');
+                        assert.equal(nx.ops[nx.ops.length - 1].o, 'rbuilt');
+                    } else assert.notEqual(nx.o, 'seq', JSON.stringify(op));
                 }
             }
         }
         assert.deepEqual([...seen].sort(), ['batch', 'body', 'computed', 'top']);
+        assert.deepEqual([top, inFlight], [459, 715], 'b162 measured (60 worlds, CYCLE_SEED)');
     });
     it('cov-off destroy-in-flight: 60 worlds hold top destroys only (and some)', () => {
         let top = 0;
@@ -188,26 +199,69 @@ describe('KERNEL: live tree through lite-s3 (direct laneOps wiring)', () => {
             assert.equal(r.scen['destroy-in-flight'], undefined);
         }
         assert.ok(top > 0 && reuse > 0, 'top ' + top + ' reuse ' + reuse);
+        assert.deepEqual([top, reuse], [749, 749], 'b162 measured (40 cov-off worlds)');
     });
-    it('default: 40 worlds each fail-stop at their first in-flight rdestroy with an explained O6 shape (DIV-F10 / D-b139-3)', () => {
+    it('default: 40 worlds pass (every in-flight rdestroy O6-clean vs REG_EXPECT: the D2 guard throw, DIV-F10 closed); exact scenario counts', () => {
+        const tot = {};
         for (let w = 0; w < 40; w++) {
-            const s = gen(w);
-            const r = run(s);
-            assert.notEqual(r.failure, null, 'world ' + w);
-            const op = s.ops[r.failure.step];
-            assert.equal(op.o, 'rdestroy');
-            assert.ok(IN_FLIGHT.includes(op.at), op.at);
-            const got = sigs(r.failure.fails).sort();
-            assert.ok(got.includes('O6:expected-escape-missing'), got.join());
-            for (const g of got) assert.ok(g === 'O6:expected-escape-missing' || (g === 'O6:escape-TypeError' && op.at !== 'batch'), 'world ' + w + ' ' + op.at + ': ' + got.join());
+            const r = run(gen(w));
+            assert.equal(r.failure, null, 'world ' + w + ': ' + JSON.stringify(r.failure));
+            assert.ok(r.checks.O5 > 0 && r.checks.O6 > 0);
+            for (const sc of REG_SCEN) tot[sc] = (tot[sc] || 0) + (r.scen[sc] || 0);
+        }
+        // b162 measured (40 worlds, CYCLE_SEED); in-flight = batch + body + computed
+        assert.deepEqual(tot, { 'destroy-top': 313, 'destroy-in-flight': 485, 'destroy-in-batch': 162, 'destroy-in-body': 157, 'destroy-in-computed': 166, 'reuse-after-destroy': 312 });
+    });
+    it('each in-flight shape (batch n 1 / 2, body, computed) is O6-clean and leaves the graph intact: the next set and read are clean, engine stats unchanged', () => {
+        for (const [at, n] of [['batch', 1], ['batch', 2], ['body', 1], ['computed', 1]]) {
+            let st = null;
+            const laneOps = {
+                rdestroy: (x, op, k) => {
+                    REGISTRY.ops.rdestroy(x, op, k);
+                    const s = x.W.stats();
+                    st = [s.activeNodes, s.activeLinks, s.signals, s.computeds, s.effects, x.W.peek(x.H[0]), x.M.n[0].v, x.M.n[3].live];
+                },
+                rbuilt: REGISTRY.ops.rbuilt,
+            };
+            const r = run(script(BASE.concat([{ o: 'rdestroy', at, i: 0, v: 5, n }, { o: 'set', i: 0, v: 6 }, { o: 'read', is: [2] }, { o: 'rbuilt' }])), { laneOps });
+            assert.equal(r.failure, null, at + ' n' + n + ': ' + JSON.stringify(r.failure));
+            // 5 nodes / 4 links (the BASE graph, the private nodes disposed); leaf 0 holds 5 in the engine and the model
+            assert.deepEqual(st, [5, 4, 2, 1, 2, 5, 5, true], at + ' n' + n);
+            assert.deepEqual({ ...r.scen }, { 'destroy-in-flight': 1, ['destroy-in-' + at]: 1 }, at + ': no reuse-after-destroy (no destroy ran)');
         }
     });
-    it('destroy in batch (n 1 and 2): exactly O6 expected-escape-missing (DIV-F10 shape)', () => {
-        for (const n of [1, 2]) {
-            const r = run(script(BASE.concat([{ o: 'rdestroy', at: 'batch', i: 0, v: 5, n }])));
-            assert.notEqual(r.failure, null);
+    it('must-fail: REG_EXPECT forced to the never entry -> O6 escape-Error (the guard throw, exact reason) + expected-escape-missing', () => {
+        const NEVER = expectFromThrow(null);
+        const laneOps = {
+            rdestroy: (x, op, k) => {
+                x.guard = function (fn, cyc) { if (this.regExpect === REG_EXPECT) this.regExpect = NEVER; return Object.getPrototypeOf(this).guard.call(this, fn, cyc); };
+                try { REGISTRY.ops.rdestroy(x, op, k); } finally { delete x.guard; }
+            },
+            rbuilt: REGISTRY.ops.rbuilt,
+        };
+        for (const [at, why] of [['batch', 'batch in progress'], ['body', 'flush in progress'], ['computed', 'flush in progress']]) {
+            const r = run(script(BASE.concat([{ o: 'rdestroy', at, i: 0, v: 5, n: 1 }])), { laneOps });
+            assert.notEqual(r.failure, null, at);
             assert.equal(r.failure.step, BASE.length);
-            assert.deepEqual(sigs(r.failure.fails), ['O6:expected-escape-missing']);
+            assert.deepEqual(r.failure.fails.map((f) => [f.oracle, f.sig, f.detail]), [
+                ['O6', 'escape-Error', 'engine error escaped: Error: [lite-signal] destroy: graph not settled (' + why + ')'],
+                ['O6', 'expected-escape-missing', 'predicted expectedThrow did not happen'],
+            ], at);
+        }
+    });
+    it('must-fail: the pre-b162 lane (model.destroyAll after an in-flight throw) -> O5 kind-count / node-count / link-count; the private nodes left alive -> O5', () => {
+        const old = { rdestroy: (x, op, k) => { REGISTRY.ops.rdestroy(x, op, k); if (op.at !== 'top') x.M.destroyAll(); }, rbuilt: REGISTRY.ops.rbuilt };
+        for (const at of IN_FLIGHT) {
+            const r = run(script(BASE.concat([{ o: 'rdestroy', at, i: 0, v: 5, n: 1 }])), { laneOps: old });
+            assert.notEqual(r.failure, null, at);
+            assert.deepEqual(sigs(r.failure.fails), ['O5:kind-count', 'O5:node-count', 'O5:link-count'], at);
+        }
+        const keep = { rdestroy: (x, op, k) => { const d = x.W.dispose; x.W.dispose = () => {}; try { REGISTRY.ops.rdestroy(x, op, k); } finally { x.W.dispose = d; } }, rbuilt: REGISTRY.ops.rbuilt };
+        for (const [at, nodes] of [['body', 'activeNodes engine=6 model=5'], ['computed', 'activeNodes engine=7 model=5']]) {
+            const r = run(script(BASE.concat([{ o: 'rdestroy', at, i: 0, v: 5, n: 1 }])), { laneOps: keep });
+            assert.notEqual(r.failure, null, at);
+            assert.deepEqual(sigs(r.failure.fails), ['O5:kind-count', 'O5:node-count', 'O5:link-count'], at);
+            assert.equal(r.failure.fails[1].detail, nodes, at);
         }
     });
     it('top destroy then a rebuild: no failure, reuse-after-destroy counted once', () => {
@@ -242,7 +296,7 @@ describe('KERNEL: live tree through lite-s3 (direct laneOps wiring)', () => {
             assert.throws(() => run(script(BASE.concat([Object.assign({ o: 'rdestroy' }, bad)]))), /unmodelled registry op/, JSON.stringify(bad));
         }
     });
-    it('O6 (v) placement: REG_EXPECT reaches exactly the destroy guard (batch guard; setTop guard, never the creation guard)', () => {
+    it('O6 (v) placement: REG_EXPECT reaches exactly the destroy guard (batch guard; setTop guard, never the creation or the private-dispose guard)', () => {
         const log = [];
         const laneOps = {
             rdestroy: (x, op, k) => {
@@ -256,7 +310,7 @@ describe('KERNEL: live tree through lite-s3 (direct laneOps wiring)', () => {
         };
         for (const at of ['batch', 'body', 'computed']) run(script(BASE.concat([{ o: 'rdestroy', at, i: 0, v: 5, n: 1 }])), { laneOps });
         run(script(BASE.concat([{ o: 'rdestroy', at: 'top' }])), { laneOps });
-        assert.deepEqual(log, ['batch:REG', 'body:null', 'body:REG', 'computed:null', 'computed:REG', 'top:null']);
+        assert.deepEqual(log, ['batch:REG', 'body:null', 'body:REG', 'body:null', 'computed:null', 'computed:REG', 'computed:null', 'top:null']);
     });
     it('guard() resets regExpect at entry: a nested guard and the next guard see null', () => {
         const seen = [];
