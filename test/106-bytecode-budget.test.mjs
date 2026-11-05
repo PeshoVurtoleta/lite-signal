@@ -76,8 +76,10 @@ test('runAsync cap: a hung script and its child are SIGKILLed as a group (no orp
         const sh = join(dir, 'hang.sh');
         writeFileSync(sh, `"${process.execPath}" -e 'for(;;){}' & echo $! >"${pf}"\nwait\n`);
         chmodSync(sh, 0o755);
+        const t0 = Date.now();
         const r = await runAsync(sh, [], dir, 2000);   // resolves { status, signal, stdout, stderr }
         assert.deepEqual([r.status, r.signal], [null, 'SIGKILL']);
+        assert.ok(Date.now() - t0 < 60000, 'cap 2000 honoured: ' + (Date.now() - t0) + ' ms');
         gpid = Number(readFileSync(pf, 'utf8').trim());
         assert.ok(Number.isSafeInteger(gpid) && gpid > 0, 'grandchild pid: ' + gpid);
         let alive = true;

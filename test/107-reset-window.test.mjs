@@ -148,9 +148,10 @@ out.codeBody = await run((j, s) => mk([
 // windows 3..5 tainted (+512 old, code +8): median over CLEAN windows 0..2 stays 0
 out.medTaint = await run((j, s) => mk([
     1000, 5000 + (j >= 3 && s === 2 ? 512 : 0), 300 + (j >= 3 && s === 2 ? 8 : 0), 40]));
-// a real scavenge inside window 2, which the script taints: the minor still counts
+// a real scavenge inside window 2, which the script taints: the minor still counts. A forced scavenge, not an
+// allocation loop: a dead-store loop is escape-eliminated once it OSRs (CI class 15, node 22: 0 minors).
 let bk = 0;
-const scav = () => { if (bk++ === 2) { let x = null; for (let i = 0; i < 2e6; i++) x = { i }; } };
+const scav = () => { if (bk++ === 2) globalThis.gc({ type: 'minor' }); };
 out.minorTainted = await run((j, s) => mk([1000, 5000, 300, 40 + (j === 2 && s === 2 ? 8 : 0)]), undefined, scav);
 // one snapshot with a different space count in window 4 -> unverifiable
 out.lenMismatch = await run((j, s) => (j === 4 && s === 1) ? mk([1000, 5000, 300]) : mk(base));
