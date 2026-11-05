@@ -11,7 +11,7 @@
  *     tracked === witnessed === worlds + events = 718 / 733 / 696 (C1 measured); child rows: default seed, 135 worlds, OS === events.
  * Every row fails on the pre-C1 tree EXCEPT three invariance rows that pin what R8 must not change (seedFor 0..13, remap at cycles 3 / 11, the 13-lane CONFIG control); the two frozen-build rows skip when the freeze is absent.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, cpSync, copyFileSync, symlinkSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
@@ -269,18 +269,53 @@ test('tooth: exec.mjs keeps the last swapped-out world (globalThis.__kept) -> ME
 // ---- FILLER 156 (b165 G2 TASK 6): calibrate runMain bounds its child ----
 // must-fail: the frozen runMain (.handoff/b164-before/gates/calibrate.mjs, no timeout) on this kernel had not resolved after
 // 35 s (bounded once, .handoff/b165-evidence/g2/runmain-frozen-hang.log), past this row's 30 s node:test timeout.
+// FILLER 195 (b169): runMain runs in a DETACHED helper process (its own process group: the helper, main.mjs and
+// the spinning kernel). Before b169 the row called runMain in-process: had runMain lost its bound, the row went red
+// at 30 s but the spinning grandchild kept this test process alive. Now the finally AND an after() hook (which
+// also runs when the 30 s node:test timeout abandons the row) SIGKILL the whole group: no spinner outlives the file.
+// after() also removes the scratch dir an abandoned row's finally never reached.
+const SPIN_GROUPS = [], SPIN_DIRS = [];
+const killGroup = (pid) => { try { process.kill(-pid, 'SIGKILL'); } catch { /* ESRCH: the group is already gone */ } };
+after(() => {
+    for (const pid of SPIN_GROUPS) killGroup(pid);
+    for (const d of SPIN_DIRS) rmSync(d, { recursive: true, force: true });
+});
+const SPIN_HELPER = (kernel) => 'const { runMain } = await import(' +
+    JSON.stringify(pathToFileURL(join(HERE, 'bench/soak/calibration/calibrate.mjs')).href) + ');\n' +
+    'const t0 = Date.now();\n' +
+    'const r = await runMain(' + JSON.stringify(kernel) + ', true, undefined, 3000);\n' +
+    'const ms = Date.now() - t0;\n' +
+    'process.stdout.write(JSON.stringify({ status: r.status, signal: r.signal, recs: r.recs, ms }));\n';
 test('FILLER 156: calibrate runMain on a spin-at-import kernel, timeoutMs 3000 -> resolves with signal SIGKILL in < 15 s', { timeout: 30000 }, async () => {
     assert.equal(RUN_MAIN_TIMEOUT_MS, 3600000);
     const dir = mkdtempSync(join(tmpdir(), 'g2-spin-'));
+    SPIN_DIRS.push(dir);
+    let pid = 0;
     try {
         writeFileSync(join(dir, 'Signal.js'), 'for (;;) {}   // spin at import (FILLER 156 row)\n' + readFileSync(join(HERE, 'Signal.js'), 'utf8'));
         copyFileSync(join(HERE, 'Watch.js'), join(dir, 'Watch.js'));
-        const t0 = Date.now();
-        const r = await calibRunMain(join(dir, 'Signal.js'), true, undefined, 3000);
-        const ms = Date.now() - t0;
+        const env = { ...process.env };
+        delete env.NODE_TEST_CONTEXT;
+        const p = spawn(process.execPath, ['--input-type=module', '-e', SPIN_HELPER(join(dir, 'Signal.js'))],
+            { cwd: HERE, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        pid = p.pid;
+        if (Number.isSafeInteger(pid) && pid > 0) SPIN_GROUPS.push(pid);
+        let out = '', err = '';
+        p.stdout.on('data', (d) => { out += d; });
+        p.stderr.on('data', (d) => { err += d; });
+        const code = await new Promise((res) => { p.on('error', () => res(-1)); p.on('close', (c) => res(c)); });
+        assert.equal(code, 0, 'the helper exits 0: ' + err);
+        const r = JSON.parse(out);
         assert.deepEqual([r.status, r.signal, r.recs], [null, 'SIGKILL', null]);
-        assert.ok(ms >= 2900 && ms < 15000, 'killed after ' + ms + ' ms');
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+        assert.ok(r.ms >= 2900 && r.ms < 15000, 'killed after ' + r.ms + ' ms');
+    } finally {
+        if (Number.isSafeInteger(pid) && pid > 0) {
+            killGroup(pid);
+            const ix = SPIN_GROUPS.indexOf(pid);
+            if (ix >= 0) SPIN_GROUPS.splice(ix, 1);
+        }
+        rmSync(dir, { recursive: true, force: true });
+    }
 });
 
 test('FILLER 156: calibrate runMain refuses a timeoutMs outside the integers [1, 2^31 - 1] (TypeError, no spawn)', async () => {
@@ -289,12 +324,14 @@ test('FILLER 156: calibrate runMain refuses a timeoutMs outside the integers [1,
     }
 });
 
-test('FILLER 156: calibrate runMain accepts timeoutMs 2^31 - 1 (not clamped: a missing kernel exits 2 on its own, no signal)', { timeout: 60000 }, async () => {
+test('FILLER 156: calibrate runMain accepts timeoutMs 2^31 - 1 ' +
+    '(not clamped: a missing kernel exits 2 on its own, no signal)', { timeout: 60000 }, async () => {
     const r = await calibRunMain(join(tmpdir(), 'g2-no-such-dir', 'Signal.js'), true, undefined, 0x7FFFFFFF);
     assert.deepEqual([r.status, r.signal], [2, null], r.stderr);
 });
 
-test('FILLER 156: mainFinished -- a killed child, a run without its summary, an empty or missing record list are not finished', () => {
+test('FILLER 156: mainFinished -- a killed child, a run without its summary, ' +
+    'an empty or missing record list are not finished', () => {
     const cyc = { type: 'cycle' }, sum = { type: 'summary' };
     assert.equal(mainFinished({ status: null, signal: 'SIGKILL', recs: [cyc] }), false);
     assert.equal(mainFinished({ status: null, signal: 'SIGKILL', recs: [cyc, sum] }), false);

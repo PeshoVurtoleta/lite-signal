@@ -395,6 +395,9 @@ function allocLane(attrOnly) {
   }
   // Unmeasured control warm-up (A2 note e: under --no-use-osr a cold qsCtlPairStep spiked batch 0 of
   // control attempt 0), then each control attempt starts from the reset state with an empty ring.
+  // FILLER 199 (b169): the warm-up starts from a fresh mark too (qcMark otherwise trails qsN by every
+  // QS step so far and the first calls each retain a { v }); outside every measured window.
+  qcMark = qsN; qh = 0;
   for (let i = 0; i < QS_WARM && !attrOnly; i++) qsCtlPairStep();
   for (let a = 0; a < QS_K && !attrOnly; a++) {
     qpLeft = 0; qpOdd = 1; qcMark = qsN; qh = 0;
@@ -635,6 +638,8 @@ function alSafe(x) {
 // that stops after a red, sends none or more than k, or runs on past a pass is red).
 function alSeqOk(raws, k, passOf) {
   const n = raws.length;
+  // `n <= k` is an equivalent mutant (FILLER 199): the parent reads only the first k attempts below, so a
+  // child sending more than k needs its first k attempts red here, which the parent reads as a red lane.
   if (!(n >= 1 && n <= k)) return false;
   for (let a = 0; a < n - 1; a++) if (passOf(raws[a])) return false;
   return n === k || passOf(raws[n - 1]);

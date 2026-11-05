@@ -86,6 +86,14 @@ process.exitCode = 3;
 const ENTRY = entrySrc(SOAK_URL);
 
 const KERNEL_ONLY_ENTRY = `await import(${JSON.stringify(SOAK_URL + 'kernel.mjs')});`;
+// FILLER 180 row only: a child that never exits (spins in JS, so no signal handler can run).
+const SPIN_ENTRY = 'for (;;) {}';
+
+// FILLER 180 (b169): the bound on every child this file spawns. A wall-clock bound a loaded host trips is a
+// test bug (DETERMINISTIC tier): the D4 NEARWRAP sign:8 child ran 10.2 s alone but overran the old 60 s bound
+// (exit null at 60015 ms) in the full parallel npm test at load1 15-45. 300 s matches the torture bound; a real
+// hang still fails (status null, signal SIGKILL -- see the FILLER 180 spin row). Must stay in [1, 2^31 - 1] ms.
+const CHILD_TIMEOUT_MS = 300000;
 
 const TMP = mkdtempSync(join(tmpdir(), 'soak-cfg-'));
 after(() => { rmSync(TMP, { recursive: true, force: true }); });
@@ -105,7 +113,11 @@ writeFileSync(join(NO_REG, 'Signal.js'), 'export const notARegistry = 1;\n');
 writeFileSync(join(NO_REG, 'Watch.js'), 'export {};\n');
 
 let outN = 0;
-function run(caseEnv, { gc = true, entry = 'auto', extraEnv = {}, base = null, argv = [] } = {}) {
+function run(caseEnv,
+    { gc = true, entry = 'auto', extraEnv = {}, base = null, argv = [], timeoutMs = CHILD_TIMEOUT_MS } = {}) {
+    if (!Number.isSafeInteger(timeoutMs) || !(timeoutMs > 0) || timeoutMs > 0x7FFFFFFF) {
+        throw new TypeError('run: timeoutMs must be an integer in [1, 2^31 - 1], got ' + String(timeoutMs));
+    }
     const env = {};
     for (const k of Object.keys(process.env)) {
         if (k.toUpperCase().indexOf('SOAK_') === 0 || k.indexOf('GIT_') === 0 || k === 'NODE_OPTIONS' || k === 'NODE_TEST_CONTEXT') continue;
@@ -116,10 +128,12 @@ function run(caseEnv, { gc = true, entry = 'auto', extraEnv = {}, base = null, a
     if (caseEnv.SOAK_OUT === undefined && Object.prototype.hasOwnProperty.call(caseEnv, 'SOAK_OUT')) delete env.SOAK_OUT;
     const flags = gc ? ['--expose-gc'] : [];
     const useMain = entry === 'auto' && base === null ? existsSync(MAIN) : false;
-    const src = entry === 'kernel' ? KERNEL_ONLY_ENTRY : (base !== null ? entrySrc(base) : ENTRY);
+    const src = entry === 'spin' ? SPIN_ENTRY
+        : entry === 'kernel' ? KERNEL_ONLY_ENTRY : (base !== null ? entrySrc(base) : ENTRY);
     const args = useMain ? flags.concat([MAIN], argv) : flags.concat(['--input-type=module', '-e', src, '--'], argv);
     const t0 = Date.now();
-    const r = spawnSync(process.execPath, args, { cwd: ROOT, env, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
+    const r = spawnSync(process.execPath, args,
+        { cwd: ROOT, env, encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL' });
     return { status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr, ms: Date.now() - t0, out: env.SOAK_OUT };
 }
 
@@ -576,7 +590,7 @@ test('T-cfg argv R6 e2e: shrink.mjs takes --emit-test; main / replay / wrap keep
     const go = (entry, argv, extra = {}) => {
         const r = spawnSync(process.execPath, ['--expose-gc', join(SOAK, entry)].concat(argv),
             { cwd: ROOT, env: Object.assign({}, env, { SOAK_LANES: 'NOPE' }, extra), encoding: 'utf8',
-                timeout: 60000, killSignal: 'SIGKILL' });
+                timeout: CHILD_TIMEOUT_MS, killSignal: 'SIGKILL' });
         return { status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr };
     };
     const LANE = "SOAK_LANES: unknown lane 'NOPE'";
@@ -1590,6 +1604,7 @@ test('B6 BOX world floors (C-39): calibrated BOX worlds >= 2 x BOX_WORLD_FLOOR_S
 
 const NW_REPORT = join(SOAK, 'SoakReport.mjs');
 const NW_WRAP = join(SOAK, 'wrap.mjs');
+const nwCompleted = (r) => r.status === 0 || r.status === 1;
 const nwRecs = (out) => readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 
 test('D3 schema: SCHEMA_VERSION is 2; a default header carries schemaVersion 2, nearwrap null, config.SOAK_NEARWRAP {null, default}', () => {
@@ -1627,7 +1642,7 @@ test('D4 SOAK_NEARWRAP: sign:0, sign:65, up:8, sign:08 (and empty, zero:-1, sign
 
 test('D4 NEARWRAP sign:8 end to end: header.nearwrap.derivedSha256 == kernel.files[0].sha256; soak:report exits 1 NOT A RELEASE SOAK -- nearwrap, never 0', () => {
     const r = run({ SOAK_NEARWRAP: 'sign:8', SOAK_LANES: 'GRAPH', SOAK_CYCLES: '11', SOAK_OPS: '20000' }, { extraEnv: {} });
-    assert.ok(r.status === 0 || r.status === 1, 'the run completes (exit ' + r.status + ')\n' + r.stderr);
+    assert.ok(nwCompleted(r), 'the run completes (exit ' + r.status + ')\n' + r.stderr);
     const h = nwRecs(r.out)[0];
     assert.equal(h.schemaVersion, 2);
     assert.equal(h.nearwrap.phase, 'sign');
@@ -1637,9 +1652,26 @@ test('D4 NEARWRAP sign:8 end to end: header.nearwrap.derivedSha256 == kernel.fil
     assert.ok(h.nearwrap.rewrites.length >= 3 && h.nearwrap.rewrites.every((x) => x.to === String(x.arith === 'mask30' ? 2 ** 30 - 8 : 2 ** 31 - 8)), JSON.stringify(h.nearwrap.rewrites));
     assert.equal(h.kernel.override, false);
     assert.deepEqual(h.config.SOAK_NEARWRAP, { value: { phase: 'sign', k: 8 }, source: 'env' });
-    const rep = spawnSync(process.execPath, [NW_REPORT, r.out], { encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
+    const rep = spawnSync(process.execPath, [NW_REPORT, r.out],
+        { encoding: 'utf8', timeout: CHILD_TIMEOUT_MS, killSignal: 'SIGKILL' });
     assert.equal(rep.status, 1, rep.stderr);
     assert.match(rep.stderr, /^soak:report: NOT A RELEASE SOAK -- nearwrap: sign:8 -- /m, 'the NEARWRAP reason fires first (before tree-parity)');
+});
+
+// FILLER 180 (b169): the scaled bound keeps its teeth. run() on a child that never exits, bounded at 2000 ms, comes
+// back killed (status null, signal SIGKILL) and every verdict this file reads off a child rejects it.
+test('FILLER 180: run() on a spinning child, timeoutMs 2000 -> null / SIGKILL; every verdict rejects it', () => {
+    assert.ok(Number.isSafeInteger(CHILD_TIMEOUT_MS) && CHILD_TIMEOUT_MS >= 1 && CHILD_TIMEOUT_MS <= 0x7FFFFFFF,
+        'CHILD_TIMEOUT_MS ' + CHILD_TIMEOUT_MS + ' must be an integer in [1, 2^31 - 1]');
+    assert.equal(CHILD_TIMEOUT_MS, 300000);
+    const r = run({ SOAK_LANES: 'GRAPH' }, { entry: 'spin', timeoutMs: 2000 });
+    assert.deepEqual([r.status, r.signal], [null, 'SIGKILL'], 'a hang is killed, never an exit: ' + r.stderr);
+    assert.ok(r.ms >= 1900 && r.ms < 60000, 'killed after ' + r.ms + ' ms (bound 2000)');
+    assert.equal(nwCompleted(r), false, 'the NEARWRAP sign:8 completion check rejects a hang');
+    assert.throws(() => assertConfigExit(r, []), /exit 2, got null signal=SIGKILL/);
+    for (const bad of [0, -0, -1, 1.5, NaN, Infinity, 2 ** 31, '2000', null]) {
+        assert.throws(() => run({}, { entry: 'spin', timeoutMs: bad }), TypeError, String(bad));
+    }
 });
 
 test('D4 SOAK_NEARWRAP with a non-lite SOAK_ENGINE exits 2 (config, and kernel.mjs on its own)', () => {
@@ -1662,7 +1694,9 @@ test('D4 the wrap job refuses a NEARWRAP kernel: wrap.mjs with SOAK_NEARWRAP=zer
     for (const k of Object.keys(process.env)) if (k.toUpperCase().indexOf('SOAK_') !== 0 && k !== 'NODE_OPTIONS' && k !== 'NODE_TEST_CONTEXT') env[k] = process.env[k];
     const out = join(TMP, 'nw-wrap.jsonl');
     Object.assign(env, { SOAK_NEARWRAP: 'zero:63', SOAK_WRAP: 'W1', SOAK_OUT: out });
-    const w = spawnSync(process.execPath, ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4', NW_WRAP], { cwd: ROOT, env, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
+    const w = spawnSync(process.execPath,
+        ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4', NW_WRAP],
+        { cwd: ROOT, env, encoding: 'utf8', timeout: CHILD_TIMEOUT_MS, killSignal: 'SIGKILL' });
     assert.equal(w.status, 2, w.stderr);
     assert.match(w.stderr, /^soak: CONFIG -- the wrap job drives the real kernel; a NEARWRAP kernel is refused$/m);
     assert.doesNotMatch(w.stderr, /semi-space/, 'the pure-config NEARWRAP refusal fires before the semi-space probe');
@@ -1714,7 +1748,9 @@ test('0b the wrap job refuses SOAK_NEARWRAP before the semi-space probe: NEARWRA
     const derivedDirs = () => (existsSync(NWROOT) ? readdirSync(NWROOT) : []).filter((n) => n.indexOf(d.derivedSha256.slice(0, 7)) === 0);
     for (const n of derivedDirs()) rmSync(join(NWROOT, n), { recursive: true, force: true });
     const out = join(TMP, 'nw-wrap-gconly.jsonl');
-    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP], { cwd: ROOT, env: wrapEnv({ SOAK_NEARWRAP: 'zero:63', SOAK_WRAP: 'W1', SOAK_OUT: out }), encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
+    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP], { cwd: ROOT,
+        env: wrapEnv({ SOAK_NEARWRAP: 'zero:63', SOAK_WRAP: 'W1', SOAK_OUT: out }),
+        encoding: 'utf8', timeout: CHILD_TIMEOUT_MS, killSignal: 'SIGKILL' });
     assert.equal(w.status, 2, w.stderr);
     assert.equal(w.stderr, 'soak: CONFIG -- the wrap job drives the real kernel; a NEARWRAP kernel is refused\n');
     assert.equal((w.stderr.match(/semi-space/g) || []).length, 0, 'no semi-space line');
@@ -1726,7 +1762,9 @@ test('0b the wrap job refuses SOAK_NEARWRAP before the semi-space probe: NEARWRA
 // --expose-gc stays on: without it readConfig refuses first ('--expose-gc is required'), which would not reach the probe
 test('0b control: without SOAK_NEARWRAP and without the semi-space flags the wrap job still exits 2 on the semi-space probe', () => {
     const out = join(TMP, 'wrap-noflags.jsonl');
-    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP], { cwd: ROOT, env: wrapEnv({ SOAK_WRAP: 'W1', SOAK_OUT: out }), encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
+    const w = spawnSync(process.execPath, ['--expose-gc', NW_WRAP],
+        { cwd: ROOT, env: wrapEnv({ SOAK_WRAP: 'W1', SOAK_OUT: out }),
+        encoding: 'utf8', timeout: CHILD_TIMEOUT_MS, killSignal: 'SIGKILL' });
     assert.equal(w.status, 2, w.stderr);
     assert.equal(w.stderr, 'soak: CONFIG -- the wrap job needs the pinned semi-space: --min-semi-space-size=4 is not in execArgv (run: npm run soak:wrap)\n');
     assert.equal(w.stdout, '');

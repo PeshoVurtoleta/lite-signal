@@ -30,8 +30,9 @@
 //   qsrunlie -- a TORTURE mutant (b194 A2 R4b): the child reports qsCounts.runs one too high -> the parent's
 //            childQsFired is false -> `| FAIL` + an `  alloc lane qs counts:` stderr line.
 //   stopred -- a TORTURE mutant (b194 A2 R4b): the child corrupts set attempt 0 (steps -1) and stops the set lane
-//            after that red attempt -> the parent's sequence check (R2) fails the set lane: `| FAIL` + an
-//            `  alloc lane:` line with ` lanes=1/` and ` seq=0`.
+//            after that red attempt. The row pins the R2 DIAGNOSTIC (an `  alloc lane:` line with ` lanes=1/` and
+//            ` seq=0`), not the verdict: a child that stops after a red is already `| FAIL` without R2, since the
+//            parent reads the missing attempts as malformed (FILLER 199).
 // Cascade (b194): slow / lslow / val read the live totals through the pure liveTotalsOf(r): it returns
 // { refs, nTotal, lTotal } as soon as the live GATE line parses (even when the live row itself went red) and,
 // with no GATE line, throws a message carrying status= and the stderr tail (never a bare "no totals").
@@ -61,6 +62,18 @@ const JUDGE = fileURLToPath(new URL('./torture-judge.mjs', import.meta.url));
 const WATCH = existsSync(join(dirname(KPATH), 'Watch.js')) ? join(dirname(KPATH), 'Watch.js') : join(ROOT, 'Watch.js');
 const CHILD_TIMEOUT_MS = 60000;
 const sha8 = (p) => createHash('sha256').update(readFileSync(p)).digest('hex').slice(0, 8);
+
+// FILLER 200 (b169, the b153 / b161 class): every child this file starts runs DETACHED (its own process group)
+// and, once spawnSync returns, the whole group gets SIGKILL. A timed-out torture is blocked in spawnSync on its
+// --alloc-lane / --nest-lane child, so no handler of its own can run, and a signal to the torture pid alone left
+// that child orphaned. The kill runs on every return (an exited torture leaves an empty group: ESRCH, ignored).
+function spawnGroupSync(args, opts) {
+    const r = spawnSync(process.execPath, args, { ...opts, detached: true, killSignal: 'SIGKILL' });
+    if (Number.isSafeInteger(r.pid) && r.pid > 0) {
+        try { process.kill(-r.pid, 'SIGKILL'); } catch { /* ESRCH: the group is already gone */ }
+    }
+    return r;
+}
 
 // ---- mutants (begin) -- .handoff/b122-evidence/load-witness.mjs evaluates this block verbatim (keep it self-contained).
 // The alloc mutants' retainer: a module-free counter on globalThis, one { n } kept per 20 calls (b123; was 1000).
@@ -134,6 +147,33 @@ test('kernel under test', (t) => {
     assert.ok(existsSync(join(ROOT, 'node_modules')), 'package node_modules missing (npm install)');
 });
 
+// FILLER 200 row: a child blocked in spawnSync on its own spinning child (the torture's shape) is timed out by
+// spawnGroupSync; the grandchild must not survive. Bounded: 10 s child timeout, 5 s survivor poll; the finally
+// SIGKILLs the grandchild whatever the verdict, so a red row leaves no orphan either.
+test('FILLER 200: a timed-out child blocked on its own child leaves no surviving process (group kill)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lite-signal-t64-grp-'));
+    const pidFile = join(dir, 'grandchild.pid');
+    let gpid = 0;
+    try {
+        const grand = 'require("node:fs").writeFileSync(' + JSON.stringify(pidFile) +
+            ', String(process.pid)); for (;;) {}';
+        const child = 'require("node:child_process").spawnSync(process.execPath, ' +
+            JSON.stringify(['-e', grand]) + ', { stdio: "ignore" }); for (;;) {}';
+        const r = spawnGroupSync(['-e', child], { encoding: 'utf8', timeout: 10000 });
+        assert.deepEqual([r.status, r.signal], [null, 'SIGKILL'], 'the child is timed out: ' + r.stderr);
+        assert.ok(existsSync(pidFile), 'probe never armed: the grandchild wrote no pid within the 10 s bound');
+        gpid = +readFileSync(pidFile, 'utf8');
+        assert.ok(Number.isSafeInteger(gpid) && gpid > 0, 'grandchild pid ' + gpid);
+        const alive = () => { try { process.kill(gpid, 0); return true; } catch { return false; } };
+        const t0 = Date.now();
+        while (alive() && Date.now() - t0 < 5000) spawnSync('sleep', ['0.1']);
+        assert.equal(alive(), false, 'grandchild ' + gpid + ' survived its timed-out parent (orphan)');
+    } finally {
+        if (gpid > 0) { try { process.kill(gpid, 'SIGKILL'); } catch { /* already gone */ } }
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 // Build the scratch package, mutate, run the torture once. Never throws for a child failure: returns the facts.
 function runLane(kind) {
     const dir = mkdtempSync(join(tmpdir(), 'lite-signal-t64-' + kind + '-'));
@@ -152,7 +192,7 @@ function runLane(kind) {
         symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'), 'dir');
         const env = { ...process.env };
         delete env.NODE_TEST_CONTEXT;
-        const r = spawnSync(process.execPath, ['--expose-gc', join(dir, 'test', 'torture.mjs')],
+        const r = spawnGroupSync(['--expose-gc', join(dir, 'test', 'torture.mjs')],
             { cwd: dir, env, encoding: 'utf8', timeout: CHILD_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 });
         const out = r.stdout ?? '';
         const gate = out.split('\n').find((l) => l.startsWith('GATE ')) ?? null;
@@ -446,6 +486,9 @@ describe('torture must-fail control', () => {
             'stopred signature: no `  alloc lane:` line with lanes=1/ and seq=0 -- ' + describeRun('stopred', r));
     });
 
+    // Known legal false-red (FILLER 199): runpast drops the child's stop-at-first-pass, but a child whose set
+    // attempts 0 AND 1 both read red sends a LEGAL n = 3 sequence, so R2 passes and this row goes red with the
+    // engine sound. Never seen under --no-use-osr.
     it('runpast (torture mutant: child runs the set lane on past its first pass): FAIL via the R2 sequence check',
         (t) => {
             const r = runLane('runpast');

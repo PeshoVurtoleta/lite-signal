@@ -5,9 +5,10 @@
 // THIS node on a tiny driver written to a temp dir. The (c) rows pin properties that hold on every node major
 // (count, the gate boundary at the measured length, the version refusal); the exact lengths are pinned only on
 // v26.8.2, where they equal the LiteUtils fixture census (add 6, dup 6,19). DETERMINISTIC tier.
-import { test } from 'node:test';
+import { test, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -20,6 +21,27 @@ const SPAWN = { encoding: 'utf8', timeout: 120000, killSignal: 'SIGKILL' };
 const skip = process.platform === 'win32' ? 'bash script: POSIX hosts only' : false;
 
 function run(path, args) { return spawnSync('bash', [path, ...args], SPAWN); }
+// Async twin of run(): detached child, whole process group SIGKILLed at the per-spawn cap (no orphans).
+function runAsync(path, args, tmp, capMs = SPAWN.timeout) {
+    return new Promise((resolve) => {
+        const env = tmp ? { ...process.env, TMPDIR: tmp } : process.env;
+        const c = spawn('bash', [path, ...args], { detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = '', stderr = '', done = false;
+        c.stdout.setEncoding('utf8'); c.stderr.setEncoding('utf8');
+        c.stdout.on('data', (d) => { stdout += d; });
+        c.stderr.on('data', (d) => { stderr += d; });
+        const fin = (status, signal) => {
+            if (done) return;
+            done = true; clearTimeout(t); resolve({ status, signal, stdout, stderr });
+        };
+        const t = setTimeout(() => {
+            try { process.kill(-c.pid, 'SIGKILL'); } catch { /* group already gone */ }
+            fin(null, 'SIGKILL');
+        }, capMs);
+        c.on('error', () => fin(null, 'error'));
+        c.on('close', (code, sig) => fin(code, sig));
+    });
+}
 function okCount(out) { return (out.match(/^ok {3}/gm) || []).length; }
 
 // A copy of the script in a temp dir, with ONE exact edit (must match exactly once, else the row is invalid).
@@ -32,6 +54,43 @@ function variant(dir, name, from, to) {
     chmodSync(p, 0o755);
     return p;
 }
+
+// ---- (0) vendored-copy pin: bench/bytecode-budget.sh = LiteUtils c21b4b0; bump on every re-vendor ----
+const SCRIPT_SHA256 = 'c3dc777266d063e643270fbfe8abe20fadecd4d61ca3d5fbd94442541f501166';   // prefix c3dc7772
+function pinOk(buf) { return createHash('sha256').update(buf).digest('hex') === SCRIPT_SHA256; }
+test('bytecode-budget.sh sha256 pin (LiteUtils c21b4b0; bump on every re-vendor)', () => {
+    assert.ok(pinOk(readFileSync(SCRIPT)), 'bench/bytecode-budget.sh differs from the pinned LiteUtils c21b4b0 copy');
+});
+test('bytecode-budget.sh sha256 pin has teeth: a one-byte change to a copy fails the compare', () => {
+    const b = Buffer.from(readFileSync(SCRIPT));
+    b[b.length >> 1] ^= 1;
+    assert.equal(pinOk(b), false);
+    assert.equal(pinOk(Buffer.concat([readFileSync(SCRIPT), Buffer.from('\n')])), false);
+});
+
+test('runAsync cap: a hung script and its child are SIGKILLed as a group (no orphan)', { skip }, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'r1-cap-'));
+    let gpid = 0;
+    try {
+        const pf = join(dir, 'gpid.txt');
+        const sh = join(dir, 'hang.sh');
+        writeFileSync(sh, `"${process.execPath}" -e 'for(;;){}' & echo $! >"${pf}"\nwait\n`);
+        chmodSync(sh, 0o755);
+        const r = await runAsync(sh, [], dir, 2000);   // resolves { status, signal, stdout, stderr }
+        assert.deepEqual([r.status, r.signal], [null, 'SIGKILL']);
+        gpid = Number(readFileSync(pf, 'utf8').trim());
+        assert.ok(Number.isSafeInteger(gpid) && gpid > 0, 'grandchild pid: ' + gpid);
+        let alive = true;
+        for (let i = 0; i < 50 && alive; i++) {
+            try { process.kill(gpid, 0); await new Promise((res) => setTimeout(res, 100)); }
+            catch { alive = false; }   // ESRCH: dead
+        }
+        assert.equal(alive, false, 'grandchild ' + gpid + ' survived the runAsync cap');
+    } finally {
+        if (gpid > 0) { try { process.kill(gpid, 'SIGKILL'); } catch { /* already dead */ } }
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
 
 // ---- (a) self-test ----
 test('bytecode-budget --self-test: every check passes', { skip }, () => {
@@ -64,11 +123,14 @@ const MUTANTS = [
     ['cap-off', ' && length($3) <= 9 {', ' {', 'a length has 1..9 digits'],
     ['fn-regex-allows-dot', "FN_RE='^[A-Za-z_$][A-Za-z0-9_$]*(", "FN_RE='^[A-Za-z_$][A-Za-z0-9_$.]*(", 'fn names: '],
 ];
+function mutantOf(name) { return MUTANTS.find((m) => m[0] === name); }
+// Rows run concurrently (each ~5 s of bash; serial cost grows with host load). TMPDIR is the row's own dir.
+describe('bytecode-budget --self-test mutants', { concurrency: true }, () => {
 for (const [name, from, to, failing] of MUTANTS) {
-    test(`bytecode-budget --self-test MUST FAIL on mutant ${name}`, { skip }, () => {
+    it(`bytecode-budget --self-test MUST FAIL on mutant ${name}`, { skip }, async () => {
         const dir = mkdtempSync(join(tmpdir(), `bb-${name}-`));
         try {
-            const r = run(variant(dir, name, from, to), ['--self-test']);
+            const r = await runAsync(variant(dir, name, from, to), ['--self-test'], dir);
             assert.equal(r.status, 1, `mutant ${name} survived: ${r.stdout}${r.stderr}`);
             assert.match(r.stdout, /^self-test: \d+ check\(s\) FAILED$/m);
             assert.ok(r.stdout.split('\n').some((l) => l.startsWith('FAIL ') && l.includes(failing)),
@@ -76,6 +138,7 @@ for (const [name, from, to, failing] of MUTANTS) {
         } finally { rmSync(dir, { recursive: true, force: true }); }
     });
 }
+});
 
 // ---- (c) real runs of this node on a tiny driver ----
 // bbAdd: one function; bbTwin: two distinct functions of one name (both gated); bbLazy: defined, never called.
@@ -172,7 +235,7 @@ test('bytecode-budget real gate MUST FAIL on mutant gt-to-ge (max = measured len
         const r0 = report(SCRIPT, drv);
         assert.equal(r0.status, 0, r0.stdout + r0.stderr);
         const L = lens(r0.stdout, 'bbAdd').lens[0];
-        const r = gate(variant(dir, 'gt-to-ge', '(( l > max ))', '(( l >= max ))'), drv, `bbAdd=${L}`);
+        const r = gate(variant(dir, 'gt-to-ge', mutantOf('gt-to-ge')[1], mutantOf('gt-to-ge')[2]), drv, `bbAdd=${L}`);
         assert.equal(r.status, 1, r.stdout + r.stderr);
         assert.match(r.stdout, /^VERDICT OVER$/m);
     });
@@ -180,7 +243,8 @@ test('bytecode-budget real gate MUST FAIL on mutant gt-to-ge (max = measured len
 
 test('bytecode-budget real gate MUST FAIL on mutant version-check-off (v0.0.0 maxima gate instead of NO-VERDICT)', { skip }, () => {
     withDriver((dir, drv) => {
-        const p = variant(dir, 'version-check-off', 'if [[ -n "$WANT_VER" && "$GOT_VER" != "$WANT_VER" ]]; then', 'if false; then');
+        const m = mutantOf('version-check-off');
+        const p = variant(dir, m[0], m[1], m[2]);
         const r = gate(p, drv, 'bbAdd=999', 'v0.0.0');
         assert.equal(r.status, 0, r.stdout + r.stderr);
         assert.match(r.stdout, /^VERDICT WITHIN$/m);
