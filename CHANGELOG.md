@@ -62,9 +62,32 @@ lines that said `destroy()` was "safe to call mid-flight" or that counters were 
 - `test/104-destroy-release.test.mjs` -- 19 tests (17 without `--expose-gc`; 2 skip there).
 - `bench/torture/reset-torture.mjs` (`npm run torture`, the 25th scenario) -- DETERMINISTIC tier: `reset()`
   window max 0 B per 256-node window, 0 minor / 0 major GC over 200 windows, on the tiered build AND under
-  `--no-opt --no-maglev`; its must-fail control measured 32 B/node tiered (48 B/node no-opt) and fails the same
-  gate; lite-leak witness 5 reset cycles x 384 targets, `tracker.size()` 0 each cycle.
+  `--no-opt --no-maglev`. The window sums EVERY heap space except the /code|trusted/ spaces (helper
+  `bench/torture/helpers/heap-window.mjs`); a window in which a /code|trusted/ space changes (a JIT code
+  installation) is TAINTED: excluded from the byte statistic, counted, and capped at TAINT_CAP = 4 of 200 (more
+  FAILS; its GC entries still count). Two must-fail controls fail the same gate: `control` (one `{}` per node
+  into overwritten sink slots; its objects live one cycle across the gc, so node 22 / 24 pretenure them) read 8192 B
+  per window tiered (32 B/node) and 12288 B under `--no-opt --no-maglev` (48 B/node); `control-old` (one
+  `Symbol()` per node, old-space by type) read 6144 B per window (24 B/node) on node 22 / 24 / 26; both gate at
+  >= 16 B/node. lite-leak witness 5 reset cycles x 384 targets, `tracker.size()` 0 each cycle.
+- `test/107-reset-window.test.mjs` -- 12 tests: plants per-reset allocations in new / pretenured / old space, a
+  synthetic gate matrix and a wiring row; run on node 22.23.4 / 24.22.1 / 26.8.2.
 - NOT in yet (a later unit): the soak REGISTRY lane's DIV-F10 / DIV-D2 re-judging and the parity re-pin.
+
+### Fixed -- reset-torture window blind on node 22 / 24 (CI class 14)
+
+The window read `new_space` only (measured b198 locally, darwin-arm64, and on CI run 41931680601 at 76dc6d6). The
+control's SINK objects survive the pre-window `gc(); gc()`, so V8 on node 22.23.4 / 24.22.1 pretenures that
+allocation site into old space: the control read 0 B per node (node 22 max 0 / median 0; node 24 median 0, max
+12288), and a real per-reset allocation could hide the same way. `--no-allocation-site-pretenuring` restores the
+new_space read. Sporadic positive reset windows (CI node 22: 336 B; local node 22: 152 B) match JIT code
+installations: locally each positive window coincided with `code_space` / `trusted_space` growth
+(probe-spaces.log). Fix: the all-space window, the taint cap and the
+`control-old` control described in the reset-torture entry above (taint observed: 0-2 windows per 200-window
+run, the largest tainted reset() delta 2888 B). Before the fix, 76dc6d6 was red 5/5 on node 22 and on node 24; after it,
+33 runs (10 tiered per version + 1 `--no-opt --no-maglev` each, node 22 / 24 / 26) were all green. Dev-only:
+`Signal.js` and `Signal.d.ts` are unchanged. REPORTED (b198: local darwin-arm64, load1 4.1-11.8, node 22.23.4 /
+24.22.1 / 26.8.2; CI run 41931680601).
 
 ### Fixed -- stale update(fn) no longer calls fn (LEDGER #51, b136)
 

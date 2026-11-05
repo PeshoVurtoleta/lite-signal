@@ -12,20 +12,36 @@
  *   1. ZERO-GC WINDOW (A4, DETERMINISTIC). A warm 256-node graph (64 signals,
  *      64 computeds, 128 effects, each effect with 1 onCleanup) is rebuilt
  *      before every cycle, OUTSIDE the window; the measured window is reset()
- *      ALONE: 20 warmup + 200 measured cycles. Per window the nursery delta is
- *      (m2 - m1) - (m1 - m0) around reset() (the empty bracket m1 - m0
- *      subtracts the statistics call's own allocation), and the GC entries
- *      whose startTime falls inside a window are counted (kind classification
- *      fail-closed, as zerogc-torture). Gate: the LARGEST window delta <= 0
- *      (0 B/op) AND 0 minor / 0 major GCs inside the windows. The max, not the
- *      median: an empty-bracket read can come out 16 B high (that window then
- *      reads -16), so a real per-reset allocation shows in the max.
- *   2. MUST-FAIL CONTROL (lessons b85 / b104 / b136 / b125). The same window
- *      gate over a reset-shaped body that allocates one {} per node into a SINK
- *      array (slots OVERWRITTEN every cycle: transient, not retained, not a
- *      nesting v => [v] that pretenures to 0 minors). The control must MEASURE
- *      >= 16 B/node and the gate must FAIL on it, or this scenario is red (the
- *      gate has no teeth). The control allocates on every tier, including
+ *      ALONE: 20 warmup + 200 measured cycles, through measureWindows
+ *      (helpers/heap-window.mjs, PLAN-F198 D-b168-1). ALL-SPACE instrument:
+ *      three snapshots a, b, c of every heap space's space_used_size into
+ *      preallocated Float64Arrays; the window delta is the sum over every
+ *      allocating space of (c - b) - (b - a) (the empty bracket b - a
+ *      subtracts the statistics call's own allocation). A new_space-only read
+ *      is blind on node 22 / 24: pretenuring moves the control's objects to
+ *      old_space, and a type-old allocation (Symbol) never touches new_space.
+ *      TAINT signature: a window in which code_space / trusted_space (any
+ *      space named /code|trusted/) changes anywhere across a, b, c is a JIT
+ *      code installation (it drags up to ~3 KB of new / old space along;
+ *      b198: max 2888 B, 0-2 tainted windows per 200-window run observed):
+ *      excluded from the byte statistic, counted, and capped at TAINT_CAP =
+ *      4 of 200; its GC entries still count. The GC entries whose startTime falls inside a window are
+ *      counted (kind classification fail-closed, as zerogc-torture). Gate
+ *      (FLOOR UNIT: per 256-node WINDOW): the LARGEST clean window delta
+ *      <= 0 B AND 0 minor / 0 major GCs inside the windows AND tainted <= 4
+ *      AND no unverifiable (NaN) window. The max, not the median: an
+ *      empty-bracket read can come out high (that window then reads
+ *      negative), so a real per-reset allocation shows in the max.
+ *   2. MUST-FAIL CONTROLS (lessons b85 / b104 / b136 / b125). The same window
+ *      gate over two reset-shaped bodies: "control" allocates one {} per node
+ *      into a SINK array (slots OVERWRITTEN every cycle, so each object lives
+ *      one cycle across the next pre-window gc(): node 22 / 24 pretenure the
+ *      site to old_space, which is why the window sums every space), and
+ *      "control-old" allocates one Symbol() per node (old-space by type on
+ *      every version). Each control must MEASURE >= 16 B per NODE (FLOOR UNIT:
+ *      the median over its CLEAN windows / 256; no NaN window, taint within
+ *      the cap) and the gate must FAIL on it, or this scenario is red (the
+ *      gate has no teeth). Both allocate on every tier, including
  *      --no-opt --no-maglev (an escaping object literal is never elided).
  *      Plus checkNoGc maxMajor 0 over a measureOps steady phase of 200
  *      build + reset cycles (lite-gc-profiler, stabilize "deep").
@@ -48,12 +64,11 @@
  *        node --expose-gc --no-opt --no-maglev bench/torture/reset-torture.mjs
  */
 
-import { PerformanceObserver, constants as perfConstants } from "node:perf_hooks";
-import v8 from "node:v8";
 import { measureOps, checkNoGc } from "@zakkster/lite-gc-profiler";
 import { createLeakTracker } from "@zakkster/lite-leak";
 import * as Signal from "../../Signal.js";
-import { createReport, flushAll } from "./helpers/index.mjs";
+import { createReport } from "./helpers/index.mjs";
+import { measureWindows, windowGate, TAINT_CAP } from "./helpers/heap-window.mjs";
 
 const { createRegistry } = Signal;
 
@@ -75,19 +90,6 @@ const TARGETS = N_S + N_C + N_E + N_E;    // 384 = 256 node-held values + 128 cl
 const WARMUP = 20, CYCLES = 200;
 const CONTROL_MIN_B_PER_NODE = 16;
 
-const GC_MAJOR = perfConstants.NODE_PERFORMANCE_GC_MAJOR;
-const GC_INCREMENTAL = perfConstants.NODE_PERFORMANCE_GC_INCREMENTAL;
-const GC_WEAKCB = perfConstants.NODE_PERFORMANCE_GC_WEAKCB;
-
-/** Bytes live in the nursery, or -1 when the statistic is unavailable (the gate then FAILS). */
-function newSpaceUsed() {
-    const spaces = v8.getHeapSpaceStatistics();
-    for (let i = 0; i < spaces.length; i++) {
-        if (spaces[i].space_name === "new_space") return spaces[i].space_used_size;
-    }
-    return -1;
-}
-
 /* -- the measured graph ----------------------------------------------------- */
 
 const r = createRegistry({ maxNodes: 1024 });          // default "throw" policy: a fixed pool
@@ -101,106 +103,86 @@ function build() {
 }
 const doReset = () => { r.reset(); };
 
-// Control body: one {} per node into overwritten SINK slots (transient garbage, never retained).
+// Control body: one {} per node into overwritten SINK slots (each object lives one cycle, across the
+// next window's pre-window gc(), so node 22 / 24 pretenure the site into old_space: the all-space window sees it).
 const SINK = new Array(NODES).fill(null);
 const control = () => { for (let i = 0; i < NODES; i++) SINK[i] = { i }; };
+// control-old body: one Symbol() per node -- old-space by TYPE on every version (TASK 0 probe: 6144 B per
+// 256 on 22 / 24 / 26, tiered and --no-opt --no-maglev), so a new_space-only window reads it as 0 B.
+const SINK_OLD = new Array(NODES).fill(null);
+const controlOld = () => { for (let i = 0; i < NODES; i++) SINK_OLD[i] = Symbol(); };
 
 const cap0 = r.stats();
 
-/**
- * Run WARMUP + CYCLES windows of `body` (the graph is rebuilt outside every window; a control body
- * is followed by an unmeasured reset). Returns the per-window nursery deltas of the measured cycles
- * and the GC entries whose startTime falls inside a measured window. With `audit`, checks the D-1
- * stats contract across each reset() call.
+/*
+ * Window hooks for measureWindows (helpers/heap-window.mjs): the graph is rebuilt OUTSIDE every window
+ * (before); after a reset() window the D-1 stats contract is audited (auditReset), after a control window
+ * the graph is torn down by an unmeasured reset (resetAfter). Module-level counters: Smi, < 2^30.
  */
-async function windows(body, isReset) {
-    const T = new Float64Array(2 * CYCLES);
-    const D = new Float64Array(CYCLES);
-    const entries = [];
-    const obs = new PerformanceObserver((list) => {
-        for (const e of list.getEntries()) {
-            entries.push({ start: e.startTime, kind: (e.detail !== undefined && e.detail !== null) ? e.detail.kind : e.kind });
-        }
-    });
-    obs.observe({ entryTypes: ["gc"] });
-    let badStats = 0, badCleanups = 0, firstBad = null;
-    for (let k = 0; k < WARMUP + CYCLES; k++) {
-        build();
-        const s0 = r.stats();
-        const c0 = cleanupRuns;
-        globalThis.gc(); globalThis.gc();
-        const t0 = performance.now();
-        const m0 = newSpaceUsed();
-        const m1 = newSpaceUsed();
-        body();
-        const m2 = newSpaceUsed();
-        const t1 = performance.now();
-        if (k >= WARMUP) {
-            const j = k - WARMUP;
-            T[2 * j] = t0; T[2 * j + 1] = t1;
-            D[j] = (m0 < 0 || m1 < 0 || m2 < 0) ? Number.NaN : (m2 - m1) - (m1 - m0);
-        }
-        if (!isReset) { r.reset(); continue; }
-        const s1 = r.stats();
-        const bad =
-            s1.activeNodes !== 0 || s1.activeLinks !== 0 || s1.signals !== 0 || s1.computeds !== 0 || s1.effects !== 0 ||
-            s1.totalAllocations !== s0.totalAllocations || s1.poolGrowths !== s0.poolGrowths ||
-            s1.nodePoolCapacity !== s0.nodePoolCapacity || s1.linkPoolCapacity !== s0.linkPoolCapacity ||
-            s1.nodePoolCapacity !== cap0.nodePoolCapacity || s1.linkPoolCapacity !== cap0.linkPoolCapacity ||
-            s1.totalDisposals - s0.totalDisposals !== NODES || s0.activeNodes !== NODES;
-        if (bad) { badStats++; if (firstBad === null) firstBad = { k, s0, s1 }; }
-        if (cleanupRuns - c0 !== N_E) badCleanups++;
-    }
-    await flushAll(); await flushAll();
-    obs.disconnect();
-    let minor = 0, major = 0, forced = 0;
-    for (const e of entries) {
-        let inside = false;
-        for (let j = 0; j < CYCLES; j++) { if (e.start >= T[2 * j] && e.start <= T[2 * j + 1]) { inside = true; break; } }
-        if (!inside) { if (e.kind === GC_MAJOR) forced++; continue; }
-        if (e.kind === GC_MAJOR) major++;
-        else if (e.kind === GC_INCREMENTAL || e.kind === GC_WEAKCB) continue;
-        else minor++;                                    // minor, MinorMS, unknown: fail closed
-    }
-    const sorted = Array.from(D).sort((a, b) => a - b);  // a NaN window is counted below and fails the gate
-    let nan = 0;
-    for (let j = 0; j < CYCLES; j++) if (D[j] !== D[j]) nan++;
-    return {
-        min: sorted[0], median: sorted[CYCLES >> 1], max: sorted[CYCLES - 1], nan, minor, major, forced,
-        badStats, badCleanups, firstBad,
-    };
-}
+let s0 = null, c0 = 0, badStats = 0, badCleanups = 0, firstBad = null;
+const before = () => { build(); s0 = r.stats(); c0 = cleanupRuns; };
+const auditReset = (k) => {
+    const s1 = r.stats();
+    const bad =
+        s1.activeNodes !== 0 || s1.activeLinks !== 0 || s1.signals !== 0 || s1.computeds !== 0 || s1.effects !== 0 ||
+        s1.totalAllocations !== s0.totalAllocations || s1.poolGrowths !== s0.poolGrowths ||
+        s1.nodePoolCapacity !== s0.nodePoolCapacity || s1.linkPoolCapacity !== s0.linkPoolCapacity ||
+        s1.nodePoolCapacity !== cap0.nodePoolCapacity || s1.linkPoolCapacity !== cap0.linkPoolCapacity ||
+        s1.totalDisposals - s0.totalDisposals !== NODES || s0.activeNodes !== NODES;
+    if (bad) { badStats++; if (firstBad === null) firstBad = { k, s0, s1 }; }
+    if (cleanupRuns - c0 !== N_E) badCleanups++;
+};
+const resetAfter = () => { r.reset(); };
+const RESET_OPTS = { warmup: WARMUP, cycles: CYCLES, before, after: auditReset };
+const CONTROL_OPTS = { warmup: WARMUP, cycles: CYCLES, before, after: resetAfter };
 
-/** The window gate shared by reset() and the control: one function, so the control proves its teeth. */
-const windowGate = (w) => w.nan === 0 && w.max <= 0 && w.minor === 0 && w.major === 0;
-
-const fmtW = (w) => `max ${w.max} B, median ${w.median} B, min ${w.min} B per ${NODES}-node window; ` +
-    `minor ${w.minor}, major ${w.major} in ${CYCLES} windows`;
+const fmtW = (w) => `max ${w.max} B, median ${w.median} B, min ${w.min} B per ${NODES}-node window over ` +
+    `${w.clean} clean; tainted ${w.tainted}${w.tainted > 0 ? ` (max ${w.taintMax} B)` : ""} of cap ${TAINT_CAP}, ` +
+    `nan ${w.nan}; minor ${w.minor}, major ${w.major} in ${CYCLES} windows (forced outside ${w.forced})`;
 
 /* -- 1. A4: reset() alone, 0 B/op + 0 GC ------------------------------------ */
 {
-    const w = await windows(doReset, true);
-    R.eq("a4-window", w.nan, 0, "new_space statistics unavailable -- the window witness is unverifiable");
+    const w = await measureWindows(doReset, RESET_OPTS);
+    R.eq("a4-window", w.nan, 0, "heap space statistics unverifiable (space count changed, NaN, or no new_space / " +
+        "old_space) -- the window witness is unverifiable");
     R.ok("a4-window", w.forced >= 2 * (WARMUP + CYCLES), `the gc observer saw ${w.forced} of the ${2 * (WARMUP + CYCLES)} forced collections: the in-window minor / major count is unmeasured`);
+    R.ok("a4-window", w.tainted <= TAINT_CAP, `${w.tainted} tainted (code / trusted space changed) reset() windows ` +
+        `exceed the cap of ${TAINT_CAP}: too few clean windows to gate (${fmtW(w)})`);
     R.ok("a4-window", w.max <= 0, `reset() allocated in its window: ${fmtW(w)}`);
     R.eq("a4-window", w.minor, 0, `minor GCs inside the reset() windows (${fmtW(w)})`);
     R.eq("a4-window", w.major, 0, `major GCs inside the reset() windows (${fmtW(w)})`);
-    R.ok("a4-window", windowGate(w), "the shared window gate rejected reset()");
-    R.eq("a4-stats", w.badStats, 0, "resets that broke the D-1 stats contract" +
-        (w.firstBad ? ` (first at cycle ${w.firstBad.k}: before ${JSON.stringify(w.firstBad.s0)} after ${JSON.stringify(w.firstBad.s1)})` : ""));
-    R.eq("a4-stats", w.badCleanups, 0, `resets whose cleanup count was not exactly ${N_E}`);
-    R.note(`reset() window: ${fmtW(w)} -> ${Math.max(0, w.max) / NODES} B/node (gate: max <= 0, 0 minor, 0 major)`);
+    R.ok("a4-window", windowGate(w, CYCLES, TAINT_CAP), "the shared window gate rejected reset()");
+    R.eq("a4-stats", badStats, 0, "resets that broke the D-1 stats contract" +
+        (firstBad ? ` (first at cycle ${firstBad.k}: before ${JSON.stringify(firstBad.s0)} ` +
+            `after ${JSON.stringify(firstBad.s1)})` : ""));
+    R.eq("a4-stats", badCleanups, 0, `resets whose cleanup count was not exactly ${N_E}`);
+    R.note(`reset() window: ${fmtW(w)} -> ${Math.max(0, w.max) / NODES} B/node ` +
+        `(gate: max <= 0, 0 minor, 0 major, tainted <= ${TAINT_CAP})`);
 }
 
-/* -- 2. must-fail control + steady-phase majors ----------------------------- */
+/* -- 2. must-fail controls + steady-phase majors ---------------------------- */
+// Two rows per control: it MEASURES >= CONTROL_MIN_B_PER_NODE per node (median over CLEAN windows, no NaN
+// window, taint within the cap) and the shared gate (windowGate, the same call as a4-window) FAILS it.
+const seesAlloc = (w) => w.nan === 0 && w.tainted <= TAINT_CAP && w.median / NODES >= CONTROL_MIN_B_PER_NODE;
+const blindMsg = (what, w) => `the ${what} control measured ${w.median / NODES} B/node (< ${CONTROL_MIN_B_PER_NODE}) ` +
+    `or was unverifiable: the window cannot see an allocation (${fmtW(w)})`;
+const controlNote = (name, w) => R.note(`${name} window: ${fmtW(w)} -> ${w.median / NODES} B/node ` +
+    `(must be >= ${CONTROL_MIN_B_PER_NODE}, gate must fail)`);
 {
-    const w = await windows(control, false);
-    const perNode = w.median / NODES;
-    R.ok("control", w.nan === 0 && perNode >= CONTROL_MIN_B_PER_NODE,
-        `the {}-per-node control measured ${perNode} B/node (< ${CONTROL_MIN_B_PER_NODE}): the window cannot see an allocation`);
-    R.ok("control", windowGate(w) === false, `the window gate PASSED the allocating control -- no teeth (${fmtW(w)})`);
-    R.note(`control window: ${fmtW(w)} -> ${perNode} B/node (must be >= ${CONTROL_MIN_B_PER_NODE}, gate must fail)`);
-
+    const w = await measureWindows(control, CONTROL_OPTS);
+    R.ok("control", seesAlloc(w), blindMsg("{}-per-node", w));
+    R.ok("control", windowGate(w, CYCLES, TAINT_CAP) === false,
+        `the window gate PASSED the allocating {}-per-node control -- no teeth (${fmtW(w)})`);
+    controlNote("control", w);
+}
+{
+    const w = await measureWindows(controlOld, CONTROL_OPTS);
+    R.ok("control-old", seesAlloc(w), blindMsg("Symbol()-per-node", w));
+    R.ok("control-old", windowGate(w, CYCLES, TAINT_CAP) === false,
+        `the window gate PASSED the allocating Symbol()-per-node control -- no teeth (${fmtW(w)})`);
+    controlNote("control-old", w);
+}
+{
     const ops = measureOps(() => { build(); r.reset(); }, { ops: CYCLES, warmup: WARMUP, stabilize: "deep" });
     const g = checkNoGc(ops.summary, { maxMajor: 0 });
     R.ok("steady-major", g.ok, `checkNoGc maxMajor 0 over ${CYCLES} build + reset cycles: major=${ops.summary.gc.major} ` +
@@ -277,4 +259,4 @@ function buildTracked(tracker) {
 }
 
 process.exit(R.finish("reset() allocated 0 B and forced 0 GCs per 256-node reset, the control failed the same gate, " +
-    "stale handles retained nothing", { minAsserts: 15 }));
+    "stale handles retained nothing", { minAsserts: 26 }));

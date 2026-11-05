@@ -78,8 +78,11 @@ SEMANTIC (listed in run.mjs registration order)
   lifecycle-torture        createRoot detachment + destroy registry reset (1.5.0+)
   reset-torture            registry.reset(): 0 B/op + 0 minor GC per reset  (1.6.0+)
                            (256-node graph, the window = reset() alone,
-                           20 warmup + 200 cycles, nursery delta + in-window
-                           GC count) + a {}-per-node must-fail control on the
+                           20 warmup + 200 cycles, all-space delta except
+                           /code|trusted/ (helpers/heap-window.mjs; JIT-tainted
+                           windows excluded, cap 4) + in-window GC count) +
+                           {}-per-node and Symbol()-per-node (control-old)
+                           must-fail controls on the
                            same gate (>= 16 B/node, every tier) + checkNoGc
                            maxMajor 0 steady phase + stale-handle retention
                            (lite-leak, 384 targets x 5 resets -> size 0) +
