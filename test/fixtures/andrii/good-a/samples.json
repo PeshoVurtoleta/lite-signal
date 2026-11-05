@@ -1,0 +1,747 @@
+{
+ "semantics": "timing",
+ "profile": "quick",
+ "policy": {
+  "rounds": 3
+ },
+ "node": "v22.1.0",
+ "v8": "12.4",
+ "platform": "darwin arm64",
+ "cpu": "test cpu",
+ "bundleSha256": "bundle-sha-fixture-0001",
+ "packages": {
+  "lite-signal": {
+   "@zakkster/lite-signal": "1.5.2"
+  },
+  "lite-signal-eager": {
+   "@zakkster/lite-signal": "1.5.2"
+  },
+  "lite-signal-1.6": {
+   "@zakkster/lite-signal": "1.6.0-candidate+ce95c8d.d235e505"
+  },
+  "lite-signal-eager-1.6": {
+   "@zakkster/lite-signal": "1.6.0-candidate+ce95c8d.d235e505"
+  },
+  "lite-signal-reset": {
+   "@zakkster/lite-signal": "1.6.0-candidate+ce95c8d.d235e505"
+  },
+  "lite-signal-eager-reset": {
+   "@zakkster/lite-signal": "1.6.0-candidate+ce95c8d.d235e505"
+  },
+  "alien-signals": {
+   "alien-signals": "3.0.0"
+  }
+ },
+ "sourceCommit": "ce95c8d",
+ "rows": [
+  {
+   "id": "lite-signal :: r1",
+   "framework": "lite-signal",
+   "name": "r1",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 2,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 1,
+    "highMs": 4
+   },
+   "group": "g-r1",
+   "family": "fam",
+   "rounds": [
+    2,
+    2,
+    2
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager :: r1",
+   "framework": "lite-signal-eager",
+   "name": "r1",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 2,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 1,
+    "highMs": 4
+   },
+   "group": "g-r1",
+   "family": "fam",
+   "rounds": [
+    2,
+    2,
+    2
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-1.6 :: r1",
+   "framework": "lite-signal-1.6",
+   "name": "r1",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 4,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2,
+    "highMs": 8
+   },
+   "group": "g-r1",
+   "family": "fam",
+   "rounds": [
+    4,
+    4,
+    4
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-1.6 :: r1",
+   "framework": "lite-signal-eager-1.6",
+   "name": "r1",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 2,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 1,
+    "highMs": 4
+   },
+   "group": "g-r1",
+   "family": "fam",
+   "rounds": [
+    2,
+    2,
+    2
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-reset :: r1",
+   "framework": "lite-signal-reset",
+   "name": "r1",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 6,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 3,
+    "highMs": 12
+   },
+   "group": "g-r1",
+   "family": "fam",
+   "rounds": [
+    6,
+    6,
+    6
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-reset :: r1",
+   "framework": "lite-signal-eager-reset",
+   "name": "r1",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 2,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 1,
+    "highMs": 4
+   },
+   "group": "g-r1",
+   "family": "fam",
+   "rounds": [
+    2,
+    2,
+    2
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "alien-signals :: r1",
+   "framework": "alien-signals",
+   "name": "r1",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 1,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 0.5,
+    "highMs": 2
+   },
+   "group": "g-r1",
+   "family": "fam",
+   "rounds": [
+    1,
+    1,
+    1
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal :: r2",
+   "framework": "lite-signal",
+   "name": "r2",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 2,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 1,
+    "highMs": 4
+   },
+   "group": "g-r2",
+   "family": "fam",
+   "rounds": [
+    2,
+    2,
+    2
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager :: r2",
+   "framework": "lite-signal-eager",
+   "name": "r2",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 2,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 1,
+    "highMs": 4
+   },
+   "group": "g-r2",
+   "family": "fam",
+   "rounds": [
+    2,
+    2,
+    2
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-1.6 :: r2",
+   "framework": "lite-signal-1.6",
+   "name": "r2",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 16,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 8,
+    "highMs": 32
+   },
+   "group": "g-r2",
+   "family": "fam",
+   "rounds": [
+    16,
+    16,
+    16
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-1.6 :: r2",
+   "framework": "lite-signal-eager-1.6",
+   "name": "r2",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 2,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 1,
+    "highMs": 4
+   },
+   "group": "g-r2",
+   "family": "fam",
+   "rounds": [
+    2,
+    2,
+    2
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-reset :: r2",
+   "framework": "lite-signal-reset",
+   "name": "r2",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 8,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 4,
+    "highMs": 16
+   },
+   "group": "g-r2",
+   "family": "fam",
+   "rounds": [
+    8,
+    8,
+    8
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-reset :: r2",
+   "framework": "lite-signal-eager-reset",
+   "name": "r2",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 2,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 1,
+    "highMs": 4
+   },
+   "group": "g-r2",
+   "family": "fam",
+   "rounds": [
+    2,
+    2,
+    2
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "alien-signals :: r2",
+   "framework": "alien-signals",
+   "name": "r2",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 2,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 1,
+    "highMs": 4
+   },
+   "group": "g-r2",
+   "family": "fam",
+   "rounds": [
+    2,
+    2,
+    2
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal :: r3",
+   "framework": "lite-signal",
+   "name": "r3",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r3",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager :: r3",
+   "framework": "lite-signal-eager",
+   "name": "r3",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r3",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-1.6 :: r3",
+   "framework": "lite-signal-1.6",
+   "name": "r3",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r3",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-1.6 :: r3",
+   "framework": "lite-signal-eager-1.6",
+   "name": "r3",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r3",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-reset :: r3",
+   "framework": "lite-signal-eager-reset",
+   "name": "r3",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r3",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "alien-signals :: r3",
+   "framework": "alien-signals",
+   "name": "r3",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r3",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal :: r4",
+   "framework": "lite-signal",
+   "name": "r4",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r4",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager :: r4",
+   "framework": "lite-signal-eager",
+   "name": "r4",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r4",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-1.6 :: r4",
+   "framework": "lite-signal-1.6",
+   "name": "r4",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r4",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-1.6 :: r4",
+   "framework": "lite-signal-eager-1.6",
+   "name": "r4",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r4",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-reset :: r4",
+   "framework": "lite-signal-reset",
+   "name": "r4",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r4",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-reset :: r4",
+   "framework": "lite-signal-eager-reset",
+   "name": "r4",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r4",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "alien-signals :: r4",
+   "framework": "alien-signals",
+   "name": "r4",
+   "validation": "absent",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r4",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal :: r5",
+   "framework": "lite-signal",
+   "name": "r5",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r5",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager :: r5",
+   "framework": "lite-signal-eager",
+   "name": "r5",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r5",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-1.6 :: r5",
+   "framework": "lite-signal-1.6",
+   "name": "r5",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r5",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-1.6 :: r5",
+   "framework": "lite-signal-eager-1.6",
+   "name": "r5",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r5",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-reset :: r5",
+   "framework": "lite-signal-reset",
+   "name": "r5",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r5",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "lite-signal-eager-reset :: r5",
+   "framework": "lite-signal-eager-reset",
+   "name": "r5",
+   "validation": "passed",
+   "capped": false,
+   "estimateMs": 5,
+   "interval": {
+    "kind": "round-median-range",
+    "lowMs": 2.5,
+    "highMs": 10
+   },
+   "group": "g-r5",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  },
+  {
+   "id": "alien-signals :: r5",
+   "framework": "alien-signals",
+   "name": "r5",
+   "validation": "passed",
+   "capped": true,
+   "estimateMs": 5,
+   "group": "g-r5",
+   "family": "fam",
+   "rounds": [
+    5,
+    5,
+    5
+   ],
+   "wallMs": 10
+  }
+ ]
+}
