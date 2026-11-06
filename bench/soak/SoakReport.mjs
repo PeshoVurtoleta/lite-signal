@@ -2,8 +2,25 @@
  * @zakkster/lite-signal soak -- SoakReport: integrity re-derivation of one burn-in JSONL stream
  * (SPEC-B v2 sections 7-9, row R-tamper x10; S1cd TASK 9).
  *
- *   node bench/soak/SoakReport.mjs <stream.jsonl> [--html <out.html>] [--baseline <base.jsonl>]
+ *   node bench/soak/SoakReport.mjs <stream.jsonl> [--html <out.html>] [--baseline <base.jsonl>] [--require-explained]
  *                                                           (npm run soak:report -- <stream.jsonl> ...)
+ *
+ * --require-explained (AUD-H1, ruling D-AUD-1) makes the report VERDICT-AWARE. It is read only once the stream is
+ * consistent (every integrity check passed and the verdict line is reached); an INTEGRITY / CRASH / CONFIG run is
+ * unchanged. The exported PURE explainedProblems(summary) then lists, in this fixed order, each on stderr with the
+ * prefix `soak:report: UNEXPLAINED -- `:
+ *   `reason <r> (want end)`                                          summary.reason is not 'end' (fatal, signal)
+ *   `oracle BREACH known=none: <n>, first <oracle> lane=<L> sig=<s>`  oracle BREACH entries no registry entry explains
+ *   `gate BREACH: <n>, first <gate> lane=<L>`                         any hard-gate BREACH entry
+ *   `INCONCLUSIVE: <n>, first <line>`                                 any summary.inconclusive line
+ * A summary that is not an object, or a breaches / inconclusive field that is not an array, gives a line of its own
+ * (`summary|breaches|inconclusive <value> (want an object|an array)`), never [] (fail closed). Any line -> those lines
+ * after the run's own stderr line (if any), exit max(exit, 1). No line -> stdout gets, just before the verdict line
+ * (which stays last):
+ *   `soak:report: EXPLAINED -- seed=<v>(<source>) oracle=<n> known=<ids|none> gate=0 inconclusive=0 reason=end`
+ * (n = the oracle BREACH entries, all known; ids = their registry ids, first-seen order). The exit code is otherwise
+ * the plain run's: a consistent stream that is NOT A RELEASE SOAK still exits 1. Without the flag the output is
+ * byte-identical to the plain run. The --baseline base is judged without it.
  *
  * --html <out.html> (B-B5) also writes report-html.mjs renderHtml({header, cycles, summary, lines, diff}) of the
  * run to <out.html>, for EVERY outcome (lines = the stdout lines then the stderr lines; header / cycles / summary
@@ -41,7 +58,8 @@
  *   1  `soak:report: NOT A RELEASE SOAK -- <reason>: <detail>`   consistent (the verdict line is printed
  *      first) but not release evidence
  *   1  `soak:report: CRASH -- <stack>`   a report bug (never exit 0, never mistaken for INTEGRITY)
- *   2  `soak:report: CONFIG -- <msg>`   no path, an extra/unknown argument, a flag with no value or given twice,
+ *   2  `soak:report: CONFIG -- <msg>`   no path, an extra/unknown argument, a flag with no value or given twice
+ *      (--require-explained takes no value; twice is CONFIG too),
  *      an --html path that is one of the input streams, a missing or unreadable stream file (a missing --baseline
  *      file is REFUSED base-integrity when the head is consistent and never read when the head is INTEGRITY),
  *      an --html write error, or
@@ -110,8 +128,10 @@
  *     trusted to be derive() of the verified base. Harmless: a nearwrap stream is always refused.
  *   - A TREE NEARWRAP run's baseSha256 and its derived Watch.js sha256 are self-reported (the base is the
  *     recording tree's Signal.js, not re-hashed here). Harmless: a nearwrap stream is always refused.
- *   - Release eligibility reads no verdict: a consistent release-size tree stream exits 0 whatever V it
- *     re-derives (FAIL too); the verdict line says which.
+ *   - Release eligibility reads no verdict: WITHOUT --require-explained a consistent release-size tree stream exits
+ *     0 whatever V it re-derives (FAIL too); the verdict line says which. With it, an unexplained oracle BREACH, any
+ *     gate BREACH, any INCONCLUSIVE line or a non-end reason exits 1 (explainedProblems); the verdict V itself is
+ *     still not read (a known-only FAIL is EXPLAINED).
  *   - A forged BREACH entry with known null on a lane that has a capped cycle, for a family:sig that lane
  *     counted, is admitted: an unstored world could have produced it (the stream keeps FAIL_CAP per cycle).
  *   - Stale vs tampered: gates-block, registry and tree-parity cannot tell an honest stream recorded under
@@ -678,6 +698,46 @@ function fits(e, b) {
     return e.lanes.indexOf(b.lane) !== -1 && e.sigs.indexOf(b.sig) !== -1 && e.oracles.some((o) => okOracle({ oracle: o }) && oracleFamily(o) === b.oracle);
 }
 
+/* ---- --require-explained (AUD-H1, D-AUD-1) ---------------------------------------------------------- */
+
+const UNEXPLAINED = 'soak:report: UNEXPLAINED -- ';
+/** A value in a line: a string as is, anything else JSON (undefined -> 'undefined'). */
+const shown = (v) => (typeof v === 'string' ? v : String(JSON.stringify(v)));
+/** An oracle BREACH entry that a registry id explains: known is a non-empty string (null / absent / other = none). */
+const explained = (b) => isObj(b) && typeof b.known === 'string' && b.known !== '';
+const field = (b, k) => shown(isObj(b) ? b[k] : undefined);
+
+/**
+ * The verdict-aware rule, PURE: summary = a stream's summary record. Returns the UNEXPLAINED stderr lines in the
+ * file header's fixed order (reason, oracle known=none, gate, INCONCLUSIVE), [] when the run is explained. A
+ * malformed summary / breaches / inconclusive gives a line, never [] (fail closed).
+ */
+export function explainedProblems(summary) {
+    if (!isObj(summary)) return [UNEXPLAINED + 'summary ' + shown(summary) + ' (want an object)'];
+    const out = [];
+    if (summary.reason !== 'end') out.push(UNEXPLAINED + 'reason ' + shown(summary.reason) + ' (want end)');
+    const b = summary.breaches;
+    if (!Array.isArray(b)) out.push(UNEXPLAINED + 'breaches ' + shown(b) + ' (want an array)');
+    else {
+        const none = b.filter((x) => !own(x, 'gate') && !explained(x)), gate = b.filter((x) => own(x, 'gate'));
+        if (none.length > 0) out.push(UNEXPLAINED + 'oracle BREACH known=none: ' + none.length + ', first ' + field(none[0], 'oracle') + ' lane=' + field(none[0], 'lane') + ' sig=' + field(none[0], 'sig'));
+        if (gate.length > 0) out.push(UNEXPLAINED + 'gate BREACH: ' + gate.length + ', first ' + field(gate[0], 'gate') + ' lane=' + field(gate[0], 'lane'));
+    }
+    const inc = summary.inconclusive;
+    if (!Array.isArray(inc)) out.push(UNEXPLAINED + 'inconclusive ' + shown(inc) + ' (want an array)');
+    else if (inc.length > 0) out.push(UNEXPLAINED + 'INCONCLUSIVE: ' + inc.length + ', first ' + shown(inc[0]));
+    return out;
+}
+
+/** The EXPLAINED stdout line of a run explainedProblems() passed (header config SOAK_SEED {value, source}). */
+function explainedLine(header, summary) {
+    const seed = header.config.SOAK_SEED, ids = [];
+    const orc = summary.breaches.filter((x) => !own(x, 'gate'));
+    for (const x of orc) for (const id of x.known.split('+')) if (ids.indexOf(id) === -1) ids.push(id);
+    return 'soak:report: EXPLAINED -- seed=' + shown(seed.value) + '(' + shown(seed.source) + ') oracle=' + orc.length +
+        ' known=' + (ids.length > 0 ? ids.join(',') : 'none') + ' gate=0 inconclusive=0 reason=end';
+}
+
 /* ---- release eligibility --------------------------------------------------------------------------- */
 
 /**
@@ -752,9 +812,10 @@ export function report(path) {
 
 /**
  * report() plus st: the stream's { header, cycles, summary } once the structure checks passed (kept on a later
- * INTEGRITY / CRASH, for --html and --baseline), else null. Pure apart from reading files.
+ * INTEGRITY / CRASH, for --html and --baseline), else null. Pure apart from reading files. requireExplained
+ * (--require-explained) applies explainedProblems() on a consistent stream only (file header).
  */
-export function judge(path) {
+export function judge(path, requireExplained = false) {
     const config = (msg) => ({ exitCode: EXIT_CODE.CONFIG, out: [], err: ['soak:report: CONFIG -- ' + msg], st: null });
     if (REGISTRY_PROBLEMS.length > 0) return config('this tree\'s divergences.json is invalid: ' + REGISTRY_PROBLEMS[0]);
     let text, registryText;
@@ -778,9 +839,11 @@ export function judge(path) {
         out.push('soak:report: NOTE -- teeth GAP gate=' + ids(gap.gate) + ' oracle=' + ids(gap.oracle));
         const rel = checkRelease(st.header, st.cycles);
         if (st.header.controls.name !== null) out.push('soak:report: NOTE -- control kernel ' + st.header.controls.name + ', not release evidence');
+        const why = requireExplained === true ? explainedProblems(st.summary) : [];
+        if (requireExplained === true && why.length === 0) out.push(explainedLine(st.header, st.summary));
         out.push('soak:report: verdict ' + v.verdict + ' (consistent)');
-        if (rel !== null) return { exitCode: 1, out, err: ['soak:report: NOT A RELEASE SOAK -- ' + rel.reason + ': ' + rel.detail], st: view };
-        return { exitCode: 0, out, err: [], st: view };
+        const err = rel !== null ? ['soak:report: NOT A RELEASE SOAK -- ' + rel.reason + ': ' + rel.detail] : [];
+        return { exitCode: rel !== null || why.length > 0 ? 1 : 0, out, err: err.concat(why), st: view };
     } catch (e) {
         if (e instanceof Integrity) return { exitCode: 1, out, err: ['soak:report: INTEGRITY -- ' + e.cls + ': ' + e.message], st: view };
         // a malformed value that slipped past the field checks is still a stream defect, never a pass
@@ -791,14 +854,15 @@ export function judge(path) {
 
 /* ---- the command line ------------------------------------------------------------------------------ */
 
-const USAGE = 'usage: node bench/soak/SoakReport.mjs <stream.jsonl> [--html <out.html>] [--baseline <base.jsonl>]';
+const USAGE = 'usage: node bench/soak/SoakReport.mjs <stream.jsonl> [--html <out.html>] [--baseline <base.jsonl>] [--require-explained]';
 const FLAGS = ['--html', '--baseline'];
+const BOOL_FLAGS = ['--require-explained'];   // no value
 /** realpath when the file exists, else the resolved path (an --html target usually does not exist yet). */
 const realOr = (p) => { try { return realpathSync(p); } catch (e) { return resolve(p); } };
 
-/** argv -> { path, html, baseline } (null = not given), or { error: <CONFIG msg> }. Reads no file but realpath. */
+/** argv -> { path, html, baseline (null = not given), requireExplained }, or { error: <CONFIG msg> }. Reads no file but realpath. */
 function parseArgs(args) {
-    const o = { path: null, html: null, baseline: null }, pos = [];
+    const o = { path: null, html: null, baseline: null, requireExplained: false }, pos = [];
     const got = ' (got ' + args.length + ' argument(s)' + (args.length ? ': ' + args.join(' ') : '') + ')';
     for (let i = 0; i < args.length; i++) {
         const a = args[i];
@@ -809,8 +873,11 @@ function parseArgs(args) {
             if (v === null || v === '' || v.indexOf('-') === 0) return { error: a + ' needs a value; ' + USAGE + got };
             o[key] = v;
             i++;
+        } else if (a === '--require-explained') {
+            if (o.requireExplained) return { error: a + ' given twice; ' + USAGE + got };
+            o.requireExplained = true;
         } else if (a.indexOf('-') === 0) {
-            const near = FLAGS.filter((f) => a.length >= 4 && f.slice(0, 4) === a.slice(0, 4));
+            const near = FLAGS.concat(BOOL_FLAGS).filter((f) => a.length >= 4 && f.slice(0, 4) === a.slice(0, 4));
             return { error: 'unknown option ' + a + (near.length ? ' (did you mean ' + near[0] + '?)' : '') + '; ' + USAGE + got };
         } else pos.push(a);
     }
@@ -839,11 +906,11 @@ function writeHtml(r, diff, file) {
     }
 }
 
-/** The CLI run: argv -> { exitCode, out, err } (judge(), then --baseline, then --html). */
+/** The CLI run: argv -> { exitCode, out, err } (judge() [+ --require-explained], then --baseline, then --html). */
 function main(args) {
     const a = parseArgs(args);
     if (own(a, 'error')) return { exitCode: EXIT_CODE.CONFIG, out: [], err: ['soak:report: CONFIG -- ' + a.error], st: null };
-    const r = judge(a.path);
+    const r = judge(a.path, a.requireExplained);
     const diff = a.baseline !== null && consistent(r) ? withBaseline(r, a.baseline) : null;
     if (a.html !== null) writeHtml(r, diff, a.html);
     return r;

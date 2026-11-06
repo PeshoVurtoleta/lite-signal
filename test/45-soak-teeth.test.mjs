@@ -31,7 +31,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { universe, CHECKS, GAPS, UNREACHABLE, TEST_ANCHORS, NOT_TEETH, audit, controlMatches } from '../bench/soak/teeth.mjs';
-import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, buildSoakPatches, runControl, judgeMain, LONG_RE, SHORT_RE, wrapJudge, BASES, verifyControls, LC_ITER_PATCH } from '../bench/soak/_mustfail.mjs';
+import { CONTROLS, CONTROL_NAMES, validSpec, staleAnchors, patch, buildKernel, buildSoakPatches, runControl, judgeMain, unexpectedInconclusive, LONG_RE, SHORT_RE, wrapJudge, BASES, verifyControls, LC_ITER_PATCH } from '../bench/soak/_mustfail.mjs';
 import { GATES, oracleFamily, INCONCLUSIVE_CAUSES } from '../bench/soak/gates.mjs';
 import { GATE_N, WARMUP_CYCLES, MIN_ACTIVE_CYCLES } from '../bench/soak/config.mjs';
 import { SIGS } from '../bench/soak/oracles.mjs';
@@ -1728,6 +1728,10 @@ const F144_PROBLEMS = [
     'CRASH line',
 ].concat(LITEBOX_SPECS.map((s) => 'no line matches spec [' + s + ']'), [
     'explained control saw no BREACH',
+    // AUD-H1 TASK 3 (b177 B2, MEASURED on 17ac945 + this diff, evidence/AUD-H1/b2/t45-ov.txt): the crashed run's two INCONCLUSIVE
+    // causes, now judged for an 'explained' control (unexpectedInconclusive)
+    'unexpected INCONCLUSIVE: soak: INCONCLUSIVE -- run interrupted before its end',
+    'unexpected INCONCLUSIVE: soak: INCONCLUSIVE -- no lane ran (all skipped)',
     'boundaries 0 != 42',
     'SoakReport did not print "soak:report: verdict FAIL (consistent)": soak:report: INTEGRITY -- gates-block: header gates differ from this code\'s gatesBlock() at LATENCY_UNTIMED (tampered, or recorded under different code)',
 ]);
@@ -1832,4 +1836,80 @@ test('teeth w: F144 must-fail -- P-LITEBOX-TREE on a scratch config.mjs without 
     assert.deepEqual([r.ok, r.invalid, r.status], [false, false, 1]);
     assert.deepEqual(r.problems, F144_PROBLEMS);
     assert.equal(createHash('sha256').update(readFileSync(cfgPath)).digest('hex'), before, 'the live config.mjs is untouched');
+});
+
+/* ---- x. AUD-H1 TASK 4 (audit N2): an 'explained' main control never rides an unexpected INCONCLUSIVE line ---- */
+
+// The N2 witness line (audit/2026-11-06 opus-5.5-nightly n2.mjs deep-pull: P-LITEBOX-TREE + SOAK_MUSTFAIL=cov-off:deep-pull)
+const N2_INC = 'soak: INCONCLUSIVE -- scenario lane=GRAPH missing=deep-pull';
+const N2_SUM = (inconclusive) => ({ type: 'summary', reason: 'end', inconclusive });
+
+test('teeth x: unexpectedInconclusive -- the union of stderr + summary.inconclusive, judged by wrapJudge\'s expected rule', () => {
+    const lb = CONTROLS.find((x) => x.name === 'P-LITEBOX-TREE').expect;
+    const want = ['unexpected INCONCLUSIVE: ' + N2_INC];
+    // stderr-only hit (the summary carries nothing)
+    assert.deepEqual(unexpectedInconclusive(lb, [N2_INC], N2_SUM([])), want);
+    // summary-only hit (nothing on stderr): kills a drop-the-union mutant
+    assert.deepEqual(unexpectedInconclusive(lb, [], N2_SUM([N2_INC])), want);
+    // on both: reported once
+    assert.deepEqual(unexpectedInconclusive(lb, [N2_INC], N2_SUM([N2_INC])), want);
+    // clean: no INCONCLUSIVE anywhere; BREACH / NOTE lines are never candidates
+    assert.deepEqual(unexpectedInconclusive(lb, ['soak: BREACH ' + LITEBOX_SPECS[0], 'soak: NOTE -- x'], N2_SUM([])), []);
+    // a line an INCONCLUSIVE spec matches is expected (T-cov-ERROR), on stderr and in the summary
+    const cov = CONTROLS.find((x) => x.name === 'T-cov-ERROR').expect;
+    const covInc = 'soak: INCONCLUSIVE -- scenario lane=ERROR missing=throw-dep-effect-prewalk';
+    assert.ok(cov.specs.includes('INCONCLUSIVE scenario lane=ERROR missing=throw-dep-effect-prewalk'), 'T-cov-ERROR expects its line by spec');
+    assert.deepEqual(unexpectedInconclusive(cov, [covInc], N2_SUM([covInc])), []);
+    // ... but only that line: the N2 line beside it is still unexpected
+    assert.deepEqual(unexpectedInconclusive(cov, [covInc, N2_INC], N2_SUM([covInc])), want);
+    // a line in expect.lines is expected
+    const byLine = copy(lb);
+    byLine.lines = [N2_INC];
+    assert.deepEqual(unexpectedInconclusive(byLine, [N2_INC], N2_SUM([N2_INC])), []);
+    // fail closed: a summary without an inconclusive array, a non-string entry; no summary at all reads stderr only
+    assert.deepEqual(unexpectedInconclusive(lb, [], { type: 'summary' }), ['summary.inconclusive is not an array']);
+    assert.deepEqual(unexpectedInconclusive(lb, [], 'summary'), ['summary.inconclusive is not an array']);
+    assert.deepEqual(unexpectedInconclusive(lb, [], N2_SUM([7])), ['unexpected INCONCLUSIVE: 7']);
+    assert.deepEqual(unexpectedInconclusive(lb, [N2_INC], null), want);
+    // the 140-character cut
+    const long = N2_INC + ',' + 'x'.repeat(200);
+    assert.deepEqual(unexpectedInconclusive(lb, [long], N2_SUM([])), ['unexpected INCONCLUSIVE: ' + long.slice(0, 140)]);
+});
+
+test('teeth x: judgeMain applies unexpectedInconclusive to kind \'explained\' only, after the summary read (forged stream)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'teeth-x-'));
+    try {
+        const out = join(dir, 'run.jsonl');
+        const breach = LITEBOX_SPECS.map((s) => 'soak: BREACH ' + s);
+        const judge = (c, err, sumInc) => {
+            writeFileSync(out, JSON.stringify({ type: 'header' }) + '\n' + JSON.stringify(N2_SUM(sumInc)) + '\n');
+            const problems = [], matched = [];
+            judgeMain(c, { status: 1 }, err, ['soak: END verdict=FAIL exit=1 records=2'], out, problems, matched);
+            return problems;
+        };
+        const lb = copy(CONTROLS.find((x) => x.name === 'P-LITEBOX-TREE'));
+        lb.expect.extra = null;   // the forged stream has no cycle records (boundaries is the real run's check)
+        const hit = 'unexpected INCONCLUSIVE: ' + N2_INC;
+        assert.ok(judge(lb, breach.concat([N2_INC]), []).includes(hit), 'stderr line');
+        assert.ok(judge(lb, breach, [N2_INC]).includes(hit), 'summary-only line');
+        assert.ok(!judge(lb, breach, []).some((q) => q.startsWith('unexpected INCONCLUSIVE')), 'clean');
+        // kind 'match' keeps its own rule (judgeMain kind 'match' only requires its specs)
+        const m = copy(lb);
+        m.expect.kind = 'match';
+        delete m.expect.known;
+        assert.ok(!judge(m, breach.concat([N2_INC]), [N2_INC]).some((q) => q.startsWith('unexpected INCONCLUSIVE')), 'kind match');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('teeth x: T-cov-ERROR expects exactly its knock-on aggregate line (O-b177-1; scenarios.mjs:648 counts aggregate only at >= 2 thrown)', () => {
+    const c = CONTROLS.find((x) => x.name === 'T-cov-ERROR');
+    assert.deepEqual(c.expect.lines, ['soak: INCONCLUSIVE -- scenario lane=ERROR missing=aggregate']);
+    assert.deepEqual(c.expect.specs, ['INCONCLUSIVE scenario lane=ERROR missing=throw-dep-effect-prewalk']);
+    assert.deepEqual([c.expect.kind, c.expect.exit], ['explained', 1]);
+    // MEASURED b177 B2 (17ac945, census/tcov-rerun.jsonl): the run prints both lines; with the knock-on dropped it MISSes
+    const both = ['soak: INCONCLUSIVE -- scenario lane=ERROR missing=throw-dep-effect-prewalk', 'soak: INCONCLUSIVE -- scenario lane=ERROR missing=aggregate'];
+    assert.deepEqual(unexpectedInconclusive(c.expect, both, N2_SUM(both)), []);
+    const dropped = copy(c.expect);
+    dropped.lines = [];
+    assert.deepEqual(unexpectedInconclusive(dropped, both, N2_SUM(both)), ['unexpected INCONCLUSIVE: ' + both[1]]);
 });

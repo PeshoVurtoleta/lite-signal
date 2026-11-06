@@ -38,7 +38,9 @@
  *     its non-`>=` tokens select: >= 1 line, as many lines as the stream has cycle records for its lane
  *     (shape[<LANE>] or lane=<LANE>; every cycle record when it names none), and EVERY line passes every token;
  *     every exact line is present; kind 'nobreach' sees ZERO BREACH lines; kind 'explained' sees >= 1 BREACH line
- *     and every one is an oracle BREACH whose known tag (split on '+') lies inside expect.known;
+ *     and every one is an oracle BREACH whose known tag (split on '+') lies inside expect.known, and (AUD-H1, N2)
+ *     no INCONCLUSIVE line -- stderr or summary.inconclusive -- that the control does not expect (wrapJudge's rule:
+ *     an INCONCLUSIVE spec matches it, or it is in expect.lines; unexpectedInconclusive);
  *   - no `soak: CRASH` line anywhere;
  *   - the END sentinel is the last stdout line, its exit equals the child's, its records equal the stream's;
  *   - SoakReport re-derives the stream to `soak:report: verdict <V> (consistent)` with V = the END verdict
@@ -69,6 +71,7 @@
  *   parseHead       one protocol line -> { kind, words, pairs } (the head hasToken matches)
  *   judgeMain       the main-run judgement of one finished child (problem strings pushed into `problems`)
  *   wrapJudge       the wrap-control stream checks (pure: problem strings of a parsed wrap stream)
+ *   unexpectedInconclusive  the unexpected-INCONCLUSIVE problems of an 'explained' main control (pure; judgeMain)
  *   runControl      run ONE control: verifies its base pins itself unless the caller passes the problems map
  *                   of a verifyControls() it already ran; removes its scratch dir (and zero-commit copy) on return;
  *                   { invalid: true } when a soakPatch does not apply (the CLI prints INVALID, exit 1)
@@ -811,8 +814,10 @@ export const CONTROLS = deepFreeze([
     M('T-cov-GRAPH', 'headpatched', { SOAK_LANES: 'GRAPH', SOAK_MUSTFAIL: 'cov-off:dep-set-flip' }, ['--smoke'], {
         exit: 3, kind: 'nobreach', lines: [], specs: ['INCONCLUSIVE scenario lane=GRAPH missing=dep-set-flip'],
     }),
+    // lines: the knock-on aggregate line (O-b177-1, as T-cov-LIFECYCLE): scenarios.mjs:648 counts aggregate only at g.thrown.length >= 2
     M('T-cov-ERROR', 'headpatched', { SOAK_LANES: 'ERROR', SOAK_MUSTFAIL: 'cov-off:throw-dep-effect-prewalk' }, ['--smoke'], {
-        exit: 1, kind: 'explained', known: KNOWN_INTERIM, lines: [], specs: ['INCONCLUSIVE scenario lane=ERROR missing=throw-dep-effect-prewalk'],
+        exit: 1, kind: 'explained', known: KNOWN_INTERIM, lines: ['soak: INCONCLUSIVE -- scenario lane=ERROR missing=aggregate'],
+        specs: ['INCONCLUSIVE scenario lane=ERROR missing=throw-dep-effect-prewalk'],
     }),
     // T-floor-BATCH: 11 x OPS_MIN performs BATCH OB 8295 < CHECK_FLOOR 10000 (config.mjs B6 note) -> gates.mjs:385.
     M('T-floor-BATCH', 'headpatched', { SOAK_LANES: 'BATCH', SOAK_CYCLES: CYC, SOAK_OPS: String(OPS_MIN) }, [], {
@@ -1602,6 +1607,36 @@ function judgeNote(sp, err, problems, matched, notes) {
 /** A protocol line's head: the text before ` detail=` (the part hasToken matches). */
 const headOf = (l) => { const d = l.indexOf(' detail='); return d === -1 ? l : l.slice(0, d); };
 
+/**
+ * wrapJudge's expected-INCONCLUSIVE rule, shared with unexpectedInconclusive (AUD-H1 TASK 3): a line is expected by
+ * the control expect `e` when it is one of e.lines, or an INCONCLUSIVE spec of e.specs matches it (hasToken).
+ */
+function incExpected(e) {
+    const incSpecs = e.specs.filter((sp) => sp.split(' ')[0] === 'INCONCLUSIVE');
+    return (l) => e.lines.indexOf(l) !== -1 || incSpecs.some((sp) => hasToken(l, sp));
+}
+
+/**
+ * The unexpected-INCONCLUSIVE problems of a main-run control (AUD-H1 TASK 3, audit N2; judgeMain applies it to kind
+ * 'explained'). Pure: e = c.expect, err = the child's stderr lines, summary = the stream's last record (null or
+ * undefined when there is none: judgeMain reports a missing summary itself). The candidates are the UNION of every
+ * stderr `soak: INCONCLUSIVE -- ` line and every summary.inconclusive entry (a cause only the summary carries still
+ * counts); each one incExpected(e) does not expect is `unexpected INCONCLUSIVE: <line, first 140 chars>`. Fail closed:
+ * a summary whose inconclusive is not an array, or an entry that is not a string, is a problem, never skipped.
+ * [] = every INCONCLUSIVE line the run printed or recorded is one the control expects.
+ */
+export function unexpectedInconclusive(e, err, summary) {
+    const p = [];
+    const expected = incExpected(e);
+    const inc = (Array.isArray(err) ? err : []).filter((l) => typeof l === 'string' && l.startsWith(INC_PFX));
+    if (summary !== null && summary !== undefined) {
+        if (!(typeof summary === 'object' && Array.isArray(summary.inconclusive))) p.push('summary.inconclusive is not an array');
+        else for (const l of summary.inconclusive) if (inc.indexOf(l) === -1) inc.push(l);
+    }
+    for (const l of inc) if (typeof l !== 'string' || !expected(l)) p.push('unexpected INCONCLUSIVE: ' + String(l).slice(0, 140));
+    return p;
+}
+
 export function judgeMain(c, r, err, so, out, problems, matched) {
     const e = c.expect;
     const notes = [];   // [{ spec, lane, n }]: each NOTE spec's selected-line count, checked against the stream below
@@ -1639,6 +1674,8 @@ export function judgeMain(c, r, err, so, out, problems, matched) {
     }
     const summary = recs.length ? recs[recs.length - 1] : null;
     if (!summary || summary.type !== 'summary') problems.push('stream does not end with its summary');
+    // AUD-H1 TASK 3 (N2): an explained pass control never rides an INCONCLUSIVE line it does not expect (stderr + summary)
+    if (e.kind === 'explained') for (const q of unexpectedInconclusive(e, err, summary)) problems.push(q);
     const x = e.extra;
     if (x && x.reason !== undefined && !(summary && summary.reason === x.reason)) problems.push('summary reason ' + String(summary && summary.reason) + ' != ' + x.reason);
     if (x && x.verdict !== undefined && m[1] !== x.verdict) problems.push('END verdict ' + m[1] + ' != ' + x.verdict);
@@ -1709,8 +1746,7 @@ export function wrapJudge(c, recs, endVerdict, err) {
             p.push('wrap ' + String(r.check) + '/' + String(r.counter) + ' boundary trackerSize=' + String(b && b.trackerSize) + ' weakAlive=' + String(b && b.weakAlive) + ' (want 0 / 0)');
         }
     }
-    const incSpecs = e.specs.filter((sp) => sp.split(' ')[0] === 'INCONCLUSIVE');
-    const expected = (l) => e.lines.indexOf(l) !== -1 || incSpecs.some((sp) => hasToken(l, sp));
+    const expected = incExpected(e);
     const inc = (Array.isArray(err) ? err : []).filter((l) => l.startsWith(INC_PFX));
     if (sum && Array.isArray(sum.inconclusive)) for (const l of sum.inconclusive) if (inc.indexOf(l) === -1) inc.push(l);
     for (const l of derived) {

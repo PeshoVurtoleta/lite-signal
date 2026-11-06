@@ -33,7 +33,7 @@ import { GATE_NAMES } from '../bench/soak/gates.mjs';
 import { ORACLES } from '../bench/soak/oracles.mjs';
 import { GAPS, CHECKS } from '../bench/soak/teeth.mjs';
 import { BreachLog } from '../bench/soak/main.mjs';   // b103: the relabelled-tree row re-derives its BREACH entries
-import { releaseRefusal, rssStride } from '../bench/soak/SoakReport.mjs';   // import runs no CLI: isEntry() guard
+import { releaseRefusal, rssStride, explainedProblems } from '../bench/soak/SoakReport.mjs';   // import runs no CLI: isEntry() guard
 import { RssSampler } from '../bench/soak/rss.mjs';
 import { failureRecord } from '../bench/soak/main.mjs';   // kernel-free on import (main.mjs header): no Signal.js loads
 import { classify } from '../bench/soak/divergences.mjs';
@@ -989,4 +989,160 @@ test('CONFIG: no path, two paths, an option, a missing file -> exit 2 with one `
         assert.ok(r.err[0].startsWith('soak:report: CONFIG -- '), r.err[0]);
         assert.deepEqual(r.out, []);
     }
+});
+
+/* ---- --require-explained (AUD-H1 TASK 2, ruling D-AUD-1): the verdict-aware door ---------------------------------
+ * explainedProblems(summary) is PURE: one row per rule (exact lines, fixed order), all four together, and the
+ * fail-closed malformed shapes (a non-array field gives a line, never []). The CLI rows run the flag on the honest
+ * gen streams: wantUnexplained() below is this test's OWN reading of the rule (not the export), and every stream's
+ * flag run must equal its plain run plus exactly those lines (or the EXPLAINED line just before the verdict).
+ * Red on: a rule dropped, the order changed, a non-array treated as [], gate entries counted as oracle entries,
+ * the flag read before the integrity checks, the EXPLAINED line misplaced or printed with problems. */
+const UNX = 'soak:report: UNEXPLAINED -- ';
+const KN = (oracle, lane, sig, known) => ({ oracle, lane, sig, known, replay: lane + ':0:0x1', scen: [], detail: 'd' });
+const GT = (gate, lane) => ({ gate, lane, detail: 'd' });
+const okSummary = () => ({ reason: 'end', breaches: [KN('O6', 'ERROR', 'expected-escape-missing', 'DIV-F22')], inconclusive: [] });
+const EXPLAINED_ROWS = [
+    ['explained: known-only oracle entries, no gate, no INCONCLUSIVE, reason end', okSummary(), []],
+    ['explained: no breach at all', { reason: 'end', breaches: [], inconclusive: [] }, []],
+    ['reason fatal', Object.assign(okSummary(), { reason: 'fatal' }), [UNX + 'reason fatal (want end)']],
+    ['reason signal', Object.assign(okSummary(), { reason: 'signal' }), [UNX + 'reason signal (want end)']],
+    ['reason absent (absent is never end)', { breaches: [], inconclusive: [] }, [UNX + 'reason undefined (want end)']],
+    ['reason null', { reason: null, breaches: [], inconclusive: [] }, [UNX + 'reason null (want end)']],
+    ['oracle known=none: counted, the FIRST one named; known entries and gate entries not counted',
+        { reason: 'end', breaches: [KN('O6', 'ERROR', 'x', 'DIV-F22'), KN('O9', 'RECYCLE', 'stale-write', null), GT('heap', 'GRAPH'), KN('OT', 'BOX', 'trace-diff', null)], inconclusive: [] },
+        [UNX + 'oracle BREACH known=none: 2, first O9 lane=RECYCLE sig=stale-write', UNX + 'gate BREACH: 1, first heap lane=GRAPH']],
+    ['oracle known "" / absent / non-string are none (fail closed)',
+        { reason: 'end', breaches: [KN('O1', 'GRAPH', 'a', ''), { oracle: 'O2', lane: 'GRAPH', sig: 'b' }, KN('O3', 'GRAPH', 'c', 7)], inconclusive: [] },
+        [UNX + 'oracle BREACH known=none: 3, first O1 lane=GRAPH sig=a']],
+    ['a non-object breaches element is an unexplained oracle entry', { reason: 'end', breaches: [null, 5], inconclusive: [] },
+        [UNX + 'oracle BREACH known=none: 2, first undefined lane=undefined sig=undefined']],
+    ['gate BREACH alone', { reason: 'end', breaches: [GT('rss', 'CAPACITY'), GT('heap', 'BATCH')], inconclusive: [] },
+        [UNX + 'gate BREACH: 2, first rss lane=CAPACITY']],
+    ['INCONCLUSIVE alone', { reason: 'end', breaches: [], inconclusive: ['soak: INCONCLUSIVE -- scenario lane=GRAPH missing=deep-pull', 'soak: INCONCLUSIVE -- b'] },
+        [UNX + 'INCONCLUSIVE: 2, first soak: INCONCLUSIVE -- scenario lane=GRAPH missing=deep-pull']],
+    ['all four together, in the fixed order (reason, oracle, gate, INCONCLUSIVE)',
+        { reason: 'fatal', breaches: [GT('heap', 'GRAPH'), KN('O9', 'RECYCLE', 'stale-write', null)], inconclusive: ['soak: INCONCLUSIVE -- c'] },
+        [UNX + 'reason fatal (want end)', UNX + 'oracle BREACH known=none: 1, first O9 lane=RECYCLE sig=stale-write',
+            UNX + 'gate BREACH: 1, first heap lane=GRAPH', UNX + 'INCONCLUSIVE: 1, first soak: INCONCLUSIVE -- c']],
+    ['malformed: summary null', null, [UNX + 'summary null (want an object)']],
+    ['malformed: summary an array', [], [UNX + 'summary [] (want an object)']],
+    ['malformed: summary a string', 'x', [UNX + 'summary x (want an object)']],
+    ['malformed: breaches absent', { reason: 'end', inconclusive: [] }, [UNX + 'breaches undefined (want an array)']],
+    ['malformed: breaches an object', { reason: 'end', breaches: {}, inconclusive: [] }, [UNX + 'breaches {} (want an array)']],
+    ['malformed: breaches null', { reason: 'end', breaches: null, inconclusive: [] }, [UNX + 'breaches null (want an array)']],
+    ['malformed: inconclusive absent', { reason: 'end', breaches: [] }, [UNX + 'inconclusive undefined (want an array)']],
+    ['malformed: inconclusive a string', { reason: 'end', breaches: [], inconclusive: 'soak: INCONCLUSIVE -- x' }, [UNX + 'inconclusive soak: INCONCLUSIVE -- x (want an array)']],
+    ['malformed: inconclusive an object', { reason: 'end', breaches: [], inconclusive: { length: 0 } }, [UNX + 'inconclusive {"length":0} (want an array)']],
+    ['malformed: every field, in order', { reason: 'signal', breaches: 'none', inconclusive: null },
+        [UNX + 'reason signal (want end)', UNX + 'breaches none (want an array)', UNX + 'inconclusive null (want an array)']],
+];
+for (const [name, summary, want] of EXPLAINED_ROWS) {
+    test('explainedProblems: ' + name + ' -> ' + (want.length ? want.length + ' line(s)' : '[]'), () => {
+        const before = clone(summary === undefined ? null : summary);
+        assert.deepEqual(explainedProblems(summary), want);
+        assert.deepEqual(summary === undefined ? null : summary, before, 'pure: the summary is not mutated');
+    });
+}
+
+/** This test's own reading of the rule (D-AUD-1), for a summary that passed the integrity checks. */
+function wantUnexplained(s) {
+    const L = [];
+    if (s.reason !== 'end') L.push(UNX + 'reason ' + s.reason + ' (want end)');
+    let none = 0, n0 = null, gates = 0, g0 = null;
+    for (const b of s.breaches) {
+        if (Object.prototype.hasOwnProperty.call(b, 'gate')) { gates++; if (g0 === null) g0 = b; } else if (b.known === null) { none++; if (n0 === null) n0 = b; }
+    }
+    if (none) L.push(UNX + 'oracle BREACH known=none: ' + none + ', first ' + n0.oracle + ' lane=' + n0.lane + ' sig=' + n0.sig);
+    if (gates) L.push(UNX + 'gate BREACH: ' + gates + ', first ' + g0.gate + ' lane=' + g0.lane);
+    if (s.inconclusive.length) L.push(UNX + 'INCONCLUSIVE: ' + s.inconclusive.length + ', first ' + s.inconclusive[0]);
+    return L;
+}
+function wantExplainedLine(recs) {
+    const seed = recs[0].config.SOAK_SEED, orc = summaryOf(recs).breaches.filter((b) => !('gate' in b)), ids = [];
+    for (const b of orc) for (const id of b.known.split('+')) if (!ids.includes(id)) ids.push(id);
+    return 'soak:report: EXPLAINED -- seed=' + seed.value + '(' + seed.source + ') oracle=' + orc.length + ' known=' + (ids.join(',') || 'none') + ' gate=0 inconclusive=0 reason=end';
+}
+/** The flag run of `path` (recs = its records) == the plain run plus exactly the rule's lines; returns the flag run. */
+function expectFlag(path, recs) {
+    const plain = report([path]), r = report([path, '--require-explained']);
+    const want = wantUnexplained(summaryOf(recs));
+    assert.ok(verdictLast(plain), 'the plain run is consistent: ' + JSON.stringify(plain));
+    if (want.length === 0) {
+        assert.deepEqual(r.out, plain.out.slice(0, -1).concat([wantExplainedLine(recs), plain.out[plain.out.length - 1]]));
+        assert.deepEqual(r.err, plain.err);
+        assert.equal(r.status, plain.status);
+    } else {
+        assert.deepEqual(r.out, plain.out, 'no EXPLAINED line when a rule fires');
+        assert.deepEqual(r.err, plain.err.concat(want));
+        assert.equal(r.status, Math.max(plain.status, 1));
+    }
+    return { r, want };
+}
+const GEN_NAMES = ['rev', 'hp', 'hperr', 'scratch', 'nwscratch', 'mustfail', 'smoke', 'treesmoke', 'boxsmoke', 'treesmall', 'fatal', 'sigint'];
+test('--require-explained on every honest gen stream: the flag run == the plain run + exactly the rule\'s lines (or the EXPLAINED line before the verdict)', () => {
+    for (const name of GEN_NAMES) expectFlag(S[name].path, S[name].recs);
+});
+test('--require-explained: the BOX tree --smoke stream (DIV-F22 known only; smoke has no heap gate) -> EXPLAINED, exact, before the verdict; exit 1 (smoke)', () => {
+    const { r, want } = expectFlag(S.boxsmoke.path, S.boxsmoke.recs);
+    assert.deepEqual(want, [], 'the BOX smoke stream is explained: ' + JSON.stringify(want));
+    assert.equal(r.status, 1);
+    assert.match(r.out[r.out.length - 2], /^soak:report: EXPLAINED -- seed=12648430\(default\) oracle=\d+ known=(DIV-F22|none) gate=0 inconclusive=0 reason=end$/);
+    assert.equal(r.err.length, 1);
+    assert.ok(!r.err.some((l) => l.startsWith(UNX)));
+});
+// AUD-H1 finding: the plan expected hperr -> EXPLAINED, but at 11 x OPS_MIN its ERROR lane sits below the OB check
+// floor (INCONCLUSIVE), so the flag refuses it; the EXPLAINED CLI row is the BOX smoke stream above.
+test('--require-explained: the hperr stream (control kernel, oracle entries all DIV-F21/F22 known) -> no known=none line, UNEXPLAINED INCONCLUSIVE (OB check floor at 11 x OPS_MIN), exit 1', () => {
+    const s = summaryOf(S.hperr.recs);
+    assert.ok(s.breaches.filter((b) => !('gate' in b)).length > 0 && s.breaches.every((b) => 'gate' in b || b.known !== null), 'hperr: oracle entries, all known');
+    const { r } = expectFlag(S.hperr.path, S.hperr.recs);
+    assert.equal(r.status, 1);
+    assert.ok(!r.err.some((l) => l.indexOf('known=none') !== -1), JSON.stringify(r.err));
+    assert.match(r.err[r.err.length - 1], /^soak:report: UNEXPLAINED -- INCONCLUSIVE: 1, first soak: INCONCLUSIVE -- checks lane=ERROR oracle=OB performed=\d+ < 10000$/);
+    assert.ok(!r.out.some((l) => l.indexOf('EXPLAINED') !== -1));
+});
+test('--require-explained: the NON-control F21 stream tagged null (scratch-F21-null) -> UNEXPLAINED oracle BREACH known=none after the refusal, exit 1', () => {
+    const p = f21Stream(null, null, true), recs = readFileSync(p, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const { r } = expectFlag(p, recs);
+    assert.match(r.err[0], /^soak:report: NOT A RELEASE SOAK -- overridden-kernel: /);
+    assert.equal(r.err[1], UNX + 'oracle BREACH known=none: 1, first O6 lane=ERROR sig=escape-CycleError');
+    assert.ok(!r.out.some((l) => l.indexOf('EXPLAINED') !== -1));
+});
+test('--require-explained: FATAL -> `reason fatal (want end)`, SIGINT -> `reason signal (want end)` (the first UNEXPLAINED line)', () => {
+    for (const [name, reason] of [['fatal', 'fatal'], ['sigint', 'signal']]) {
+        const { r } = expectFlag(S[name].path, S[name].recs);
+        assert.equal(r.err[1], UNX + 'reason ' + reason + ' (want end)', name);
+        assert.equal(r.status, 1);
+    }
+});
+test('--require-explained: the SOAK_MUSTFAIL cov-off stream -> UNEXPLAINED INCONCLUSIVE naming its missing scenario', () => {
+    const { r } = expectFlag(S.mustfail.path, S.mustfail.recs);
+    const inc = summaryOf(S.mustfail.recs).inconclusive;
+    assert.ok(inc.includes('soak: INCONCLUSIVE -- scenario lane=GRAPH missing=' + COV_OFF_SUPPORTED.GRAPH[0]), JSON.stringify(inc));
+    assert.equal(r.err[r.err.length - 1], UNX + 'INCONCLUSIVE: ' + inc.length + ', first ' + inc[0]);
+});
+test('--require-explained is read only after the integrity checks: the EXPLAINED boxsmoke stream truncated (summary-missing) or with a cycle rss deleted (missing-key, the last stage) -> INTEGRITY alone, no EXPLAINED / UNEXPLAINED line', () => {
+    for (const [fn, cls] of [[(recs) => recs.slice(0, -1), 'summary-missing'], [(recs) => { delete cyclesOf(recs)[0].rss; }, 'missing-key']]) {
+        const p = tamper('boxsmoke', fn);
+        expectIntegrity(p, cls);
+        const r = report([p, '--require-explained']);
+        assert.deepEqual(r, report([p]));
+        assert.ok(!r.out.concat(r.err).some((l) => l.indexOf('EXPLAINED') !== -1), cls + ' ' + JSON.stringify(r));
+    }
+});
+test('--require-explained argv: no value taken, given twice / with a value / misspelled -> CONFIG exit 2; before the path works', () => {
+    const p = S.boxsmoke.path;
+    expectConfig([p, '--require-explained', '--require-explained'], /--require-explained given twice/);
+    expectConfig([p, '--require-explained=1'], /did you mean --require-explained\?/);
+    expectConfig([p, '--require-explaind'], /did you mean --require-explained\?/);
+    expectConfig([p, '--html', '--require-explained'], /--html needs a value/);
+    expectConfig(['--require-explained'], /exactly one path/);
+    assert.deepEqual(report(['--require-explained', p]), report([p, '--require-explained']));
+});
+test('--require-explained + --baseline: the head lines only (the base is judged without the flag), the verdict stays last', () => {
+    const r = report([S.boxsmoke.path, '--baseline', S.boxsmoke.path, '--require-explained']);
+    assert.ok(verdictLast(r), JSON.stringify(r));
+    assert.equal(r.out.filter((l) => l.indexOf('soak:report: EXPLAINED -- ') === 0).length, 1, JSON.stringify(r.out));
+    assert.ok(r.out.findIndex((l) => l.indexOf('soak:report: EXPLAINED -- ') === 0) < r.out.findIndex((l) => l.indexOf('soak:report: baseline ') === 0));
 });
