@@ -23,13 +23,18 @@
  *   node bench/torture/run.mjs --seconds 30     # override soak duration
  *   node bench/torture/run.mjs --bail           # stop at the first failure
  *
- * Exit code: 0 iff every selected scenario exited 0.
+ * Exit code: 0 iff every selected scenario passed (exit 0 AND a "  PASS: " line
+ * on its stdout) or skipped legitimately; 1 = any FAIL; 2 = usage error, or the
+ * engine surface cannot be derived (package.json version or Signal.d.ts
+ * unreadable -- fail closed, never "floors disabled").
  */
 
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, openSync, closeSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { declaredKey } from "./helpers/surface.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -90,19 +95,40 @@ const SCENARIOS = [
 
 /** major.minor.patch as a comparable number; prerelease tags are IGNORED on
  *  purpose — a 1.6.0-beta engine carries the 1.6.0 surface, so its floors
- *  apply. Returns -1 when the version cannot be read (floors then disabled,
- *  loudly). */
+ *  apply. Returns -1 when the version cannot be read (the runner then fails
+ *  closed with exit 2). */
 function versionKey(v) {
     const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(v || ""));
     if (!m) return -1;
     return (+m[1]) * 1e6 + (+m[2]) * 1e3 + (+m[3]);
 }
 
+/** key -> "M.m.p" for messages; "none" for 0 (no surface row matched),
+ *  "unreadable" for -1. */
+function keyLabel(k) {
+    if (k < 0) return "unreadable";
+    if (k === 0) return "none";
+    return `${Math.floor(k / 1e6)}.${Math.floor(k / 1e3) % 1e3}.${k % 1e3}`;
+}
+
+// The floor key is max(package.json version, the surface Signal.d.ts DECLARES).
+// package.json stays at the last release for a whole dev cycle (1.5.2 while
+// 1.6.0 is built), so keyed to it alone a 1.6.0-floor scenario whose export was
+// dropped skipped GREEN for the whole cycle (audit 2026-11-06, B5). The .d.ts
+// moves with the code: its declared surface lifts the key the day the API lands.
+// Either input unreadable -> exit 2 below (fail closed), never floors-disabled.
 let engineVersion = null;
 try {
     engineVersion = JSON.parse(readFileSync(join(HERE, "../../package.json"), "utf8")).version;
 } catch (_) { /* handled below */ }
-const engineKey = versionKey(engineVersion);
+let dtsText = null;
+try {
+    dtsText = readFileSync(join(HERE, "../../Signal.d.ts"), "utf8");
+} catch (_) { /* handled below */ }
+const pkgKey = versionKey(engineVersion);
+const declKey = declaredKey(dtsText);
+const engineKey = pkgKey < 0 || declKey < 0 ? -1 : Math.max(pkgKey, declKey);
+const engineLabel = `package ${engineVersion}, declared ${keyLabel(declKey)} (Signal.d.ts)`;
 
 /* ── argv ─────────────────────────────────────────────────────────────────── */
 
@@ -191,18 +217,42 @@ const SOAK_MS = seconds !== null && Number(seconds) > 0 ? Number(seconds) * 1000
 const TIMEOUT_MS = SOAK_MS > 0 ? Math.max(BASE_TIMEOUT_MS, SOAK_MS * 2 + 60_000) : BASE_TIMEOUT_MS;
 
 if (engineKey < 0) {
-    console.error("  warning: could not read the engine version from package.json — floor enforcement disabled");
+    console.error(`  cannot derive engine surface; failing closed (package.json version: ${keyLabel(pkgKey)}, Signal.d.ts: ${keyLabel(declKey)})`);
+    process.exit(2);
 }
+console.log(`  floors: package ${engineVersion}, declared ${keyLabel(declKey)} (Signal.d.ts)`);
 
 const results = [];
 const t0 = performance.now();
 
+// Child stdout goes to a temp FILE, echoed after the child exits. Not a pipe: on
+// macOS a child's stdout pipe is asynchronous, so a process.exit() right after
+// the PASS line can drop it, and the pass rule below needs that line. A file fd
+// is written synchronously. stderr stays inherited (live diagnostics).
+// PASS rule: exit 0 alone is not a pass -- a scenario that exits 0 before
+// finish() (early return, un-awaited main, top-level process.exit(0)) asserted
+// nothing (audit 2026-11-06, S10). finish() and the three scenarios that print
+// their own verdict (oracle-fuzzer, glitch-hunter, work-accounting) all emit it.
+const PASS_LINE = /^  PASS: \S/m;
+const OUT_DIR = mkdtempSync(join(tmpdir(), "lite-torture-"));
+
+try {
 for (const scenario of selected) {
-    const child = spawnSync(
-        process.execPath,
-        ["--expose-gc", join(HERE, scenario.file)],
-        { stdio: "inherit", env, timeout: TIMEOUT_MS, killSignal: "SIGKILL" }
-    );
+    const outPath = join(OUT_DIR, `${scenario.name}.out`);
+    const outFd = openSync(outPath, "w");
+    let child;
+    try {
+        child = spawnSync(
+            process.execPath,
+            ["--expose-gc", join(HERE, scenario.file)],
+            { stdio: ["inherit", outFd, "inherit"], env, timeout: TIMEOUT_MS, killSignal: "SIGKILL" }
+        );
+    } finally {
+        closeSync(outFd);
+    }
+    let childOut = "";
+    try { childOut = readFileSync(outPath, "utf8"); } catch (_) { childOut = ""; }
+    if (childOut.length > 0) process.stdout.write(childOut);
 
     // Three-state protocol: 0 = pass, SKIP_EXIT = skip, anything else = fail.
     // A timeout (spawnSync kills the child; status null, signal set) is a fail.
@@ -223,14 +273,19 @@ for (const scenario of selected) {
         const floorKey = versionKey(scenario.floor);
         if (engineKey >= 0 && floorKey >= 0 && engineKey >= floorKey && !lenient) {
             status = "fail";
-            detail = `skipped, but engine ${engineVersion} >= floor ${scenario.floor} — ` +
+            detail = `skipped, but engine ${engineLabel} >= floor ${scenario.floor} -- ` +
                 `the surface should exist; a dropped export cannot be a green skip`;
         } else {
             status = "skip";
             detail = `floor ${scenario.floor}`;
         }
     } else if (child.status === 0) {
-        status = "pass";
+        if (PASS_LINE.test(childOut)) {
+            status = "pass";
+        } else {
+            status = "fail";
+            detail = "exit 0 without a PASS: line";
+        }
     } else {
         status = "fail";
         detail = child.status === null
@@ -243,6 +298,9 @@ for (const scenario of selected) {
         console.error(`\n  bailing: ${scenario.name} — ${detail}`);
         break;
     }
+}
+} finally {
+    rmSync(OUT_DIR, { recursive: true, force: true });
 }
 
 const dt = ((performance.now() - t0) / 1000).toFixed(1);
@@ -261,4 +319,6 @@ console.log(
     (notRun > 0 ? ` (${notRun} not run — bailed)` : "")
 );
 
-process.exit(failed.length === 0 ? 0 : 1);
+// exitCode, not process.exit(): the echoed child output may still be queued on
+// an asynchronous stdout pipe (macOS), and process.exit() would truncate it.
+process.exitCode = failed.length === 0 ? 0 : 1;

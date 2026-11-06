@@ -6,9 +6,16 @@ lite-signal torture suite -- complete set (25 scenarios)
 Every scenario feature-detects and skips cleanly below its feature; runs green
 from 1.4.x forward. Skips use exit 77 and the runner enforces version floors:
 a scenario that skips while the engine is AT or ABOVE its floor FAILS the run
-(a dropped export cannot be a green skip); the runner also caps each scenario's
-wall clock (TORTURE_TIMEOUT_MS, default 300s -> FAIL, not a hang) and finish()
-fails any scenario that reaches PASS having asserted nothing.
+(a dropped export cannot be a green skip). The engine key is max(package.json
+version, the surface Signal.d.ts declares -- helpers/surface.mjs), so an
+in-development surface (1.6.0 reset/snapshot/restore while package.json still
+says 1.5.2) is floored the day it is declared; either file unreadable -> exit 2
+(fail closed). A pass is exit 0 AND a "  PASS: " line on the child's stdout
+(captured to a temp file, echoed after exit): a scenario that exits 0 without
+reaching its verdict FAILs ("exit 0 without a PASS: line"). The runner also
+caps each scenario's wall clock (TORTURE_TIMEOUT_MS, default 300s -> FAIL, not
+a hang) and finish() fails any scenario that reaches PASS having asserted
+nothing. Teeth: test/111-torture-runner-teeth.test.mjs.
 
     npm run torture ; npm run torture:semantic ; npm run torture:soak
     node bench/torture/run.mjs --list
@@ -186,7 +193,8 @@ cleanup-return->1.9, dispose->1.10. (Re-pinned +1 minor on 2026-10-10: 1.6.0
 ships without the candidate-line features, which move to 1.7.0+.)
 retrack-dispose, op-accounting, lifecycle, contract, interop, and all others:
 1.4.0+. Floors are declared per scenario in
-run.mjs and ENFORCED: at/above its floor a skip is a FAIL (--lenient downgrades).
+run.mjs and ENFORCED: at/above its floor a skip is a FAIL (--lenient downgrades);
+"the engine" = max(package.json version, Signal.d.ts declared surface).
 
 oracle-fuzzer (2026-08 audit): checking is now PROBABILISTIC (p=0.4 per op +
 always at seed end) so staleness accumulates across writes before validation;

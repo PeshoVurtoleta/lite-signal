@@ -28,8 +28,12 @@
 // ENV   REACTIVE_SUITE_PATH (default ~/Work/reactive-framework-test-suite-master)
 //
 // EXIT  0 = no per-test difference (or single-engine run with 0 conformance
-//       failures beyond KNOWN_FAIL); 1 = any difference / unexpected failure;
-//       2 = the suite or an engine is missing (fail closed, never a quiet pass).
+//       failures beyond KNOWN_FAIL); 1 = any difference / unexpected failure /
+//       (single-engine) a KNOWN_FAIL case that now passes (CONTRACT CHANGE);
+//       2 = the suite or an engine is missing, an engine run executed fewer
+//       than CONF_MIN conformance (pass + fail) or BEH_MIN behavioral cases, or
+//       a KNOWN_FAIL case is absent from, or skipped in, a run (fail closed, never a quiet pass:
+//       an empty or truncated suite is not "0 failures").
 
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {dirname, join, resolve} from "node:path";
@@ -43,6 +47,13 @@ const REPO_ENGINE = resolve(HERE, "..", "Signal.js");
 // is the absorption contract -- LEDGER #15. A candidate that PASSES it changed
 // the contract and must say so; one that fails anything else is a regression.
 const KNOWN_FAIL = new Set(["Inner Write :: #179 computed self-increment: intra-run read-after-write values correct"]);
+// Case-count floors per engine run (audit 2026-11-06 S9: an empty suite printed
+// "RESULT: PASS"). Real counts of the suite at ~/Work/reactive-framework-test-suite-master,
+// measured 2026-11-06 against 17ac945's Signal.js: conformance 177 pass + 1 fail
+// (#179) = 178 executed, 18 behavioral recorded. Executed = not skipped. A suite
+// that grows passes; one that shrinks or fails to load is exit 2.
+const CONF_MIN = 178;
+const BEH_MIN = 18;
 
 // ------------------------------------------------------------------ child mode
 if (process.argv[2] === "--child") {
@@ -107,7 +118,7 @@ function tally(res) {
     let pass = 0, fail = 0, skip = 0, beh = 0;
     const unexpected = [];
     for (const [k, v] of Object.entries(res)) {
-        if (v.kind === "behavioral") { beh++; continue; }
+        if (v.kind === "behavioral") { if (v.value !== "skip") beh++; continue; }
         if (v.value === "pass") pass++; else if (v.value === "skip") skip++; else { fail++; if (!KNOWN_FAIL.has(k)) unexpected.push(k); }
     }
     return {pass, fail, skip, beh, unexpected};
@@ -115,13 +126,30 @@ function tally(res) {
 
 console.log(`suite   ${SUITE}`);
 let bad = 0;
+let floorBad = 0;
 for (const {engine, res} of runs) {
     const t = tally(res);
     console.log(`engine  ${engine}`);
     console.log(`        conformance ${t.pass} pass / ${t.fail} fail / ${t.skip} skip, behavioral ${t.beh} recorded`);
+    const executed = t.pass + t.fail;
+    if (executed < CONF_MIN) { floorBad++; console.log(`        FLOOR  conformance executed ${executed} < CONF_MIN ${CONF_MIN}`); }
+    if (t.beh < BEH_MIN) { floorBad++; console.log(`        FLOOR  behavioral recorded ${t.beh} < BEH_MIN ${BEH_MIN}`); }
+    for (const k of KNOWN_FAIL) {
+        if (!res[k]) { floorBad++; console.log(`        FLOOR  KNOWN_FAIL case missing from the run: ${k}`); }
+        else if (res[k].value === "skip") { floorBad++; console.log(`        FLOOR  KNOWN_FAIL case skipped in the run: ${k}`); }
+    }
     for (const k of t.unexpected) console.log(`        UNEXPECTED FAIL  ${k}`);
-    for (const k of KNOWN_FAIL) if (res[k] && res[k].value === "pass") console.log(`        CONTRACT CHANGE  ${k} now passes (LEDGER #15 absorption contract)`);
+    for (const k of KNOWN_FAIL) {
+        if (res[k] && res[k].value === "pass") {
+            console.log(`        CONTRACT CHANGE  ${k} now passes (LEDGER #15 absorption contract)`);
+            if (runs.length === 1) bad++;
+        }
+    }
     if (runs.length === 1) bad += t.unexpected.length;
+}
+if (floorBad > 0) {
+    console.log("RESULT: FAIL (case-count floor; failing closed)");
+    process.exit(2);
 }
 if (runs.length === 2) {
     const [a, b] = runs;

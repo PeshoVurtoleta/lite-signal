@@ -489,6 +489,15 @@ node bench/torture/run.mjs oracle glitch      # substring match
 node bench/torture/run.mjs -g soak -b         # soak group, bail on first failure
 ```
 
+Verdict rules (pinned by `test/111-torture-runner-teeth.test.mjs`): a scenario
+passes only with exit 0 AND a `  PASS: ` line on its stdout (the runner captures
+child stdout to a temp file and echoes it after exit), so a scenario that exits 0
+before its verdict fails as "exit 0 without a PASS: line". Exit 77 is a skip only
+below the scenario's floor; at or above it the skip FAILS. The engine key for
+that comparison is max(package.json version, the surface `Signal.d.ts` declares
+-- `helpers/surface.mjs`), printed as `floors: package X, declared Y`; if
+either file is unreadable the runner exits 2 instead of disabling floors.
+
 The runner spawns each scenario as a child process rather than importing it.
 That is deliberate: several scenarios assert on global pool accounting and on
 the default registry, so running two in one process would let the first one's
