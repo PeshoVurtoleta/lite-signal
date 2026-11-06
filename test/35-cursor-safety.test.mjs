@@ -477,8 +477,25 @@ describe("suspects S1-S5, S8", () => {
         assert.equal(nodes(r), 3);
     });
 
-    // S6 (a throwing cleanup leaves FLAG_COMPUTING set) belongs to group A2.
-    it.todo("S6: a throwing cleanup must not kill its effect (group A2)");
+    // S6 (a throwing cleanup left FLAG_COMPUTING set) belonged to group A2; FIXED by FIX-CL (LEDGER #55).
+    // This row is the minimal pointer: the full re-run contract is test/110-cleanup-throw.test.mjs A1.
+    it("S6: a throwing cleanup must not kill its effect (LEDGER #55; full contract test/110 A1)", () => {
+        const r = mk();
+        const s = r.signal(0);
+        const E = new Error("S6");
+        const runs = [];
+        let armed = true;
+        r.effect(() => { runs.push(s()); r.onCleanup(() => { if (armed) { armed = false; throw E; } }); });
+        // Derivation (test/110 A1): the throwing cleanup rethrows its error from the write and that body is skipped...
+        let e1 = null;
+        try { s.set(1); } catch (e) { e1 = e; }
+        assert.equal(e1, E);
+        assert.deepEqual(runs, [0]);
+        // ...and the effect is not killed: the throw consumed the cleanup, the next write runs the body.
+        assert.doesNotThrow(() => s.set(2));
+        assert.deepEqual(runs, [0, 2]);
+        assert.equal(links(r), 1);
+    });
 });
 
 // ---------------------------------------------------------------------------

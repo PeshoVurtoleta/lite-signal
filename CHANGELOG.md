@@ -74,6 +74,37 @@ lines that said `destroy()` was "safe to call mid-flight" or that counters were 
   synthetic gate matrix and a wiring row; run on node 22.23.4 / 24.22.1 / 26.8.2.
 - NOT in yet (a later unit): the soak REGISTRY lane's DIV-F10 / DIV-D2 re-judging and the parity re-pin.
 
+### Fixed -- a cleanup that throws at a re-run no longer wedges its node (LEDGER #55, FIX-CL-D, b176)
+
+A cleanup (an `onCleanup` function, or the dispose of an owned child) that threw when its effect or computed was about to
+re-run left the node stuck. Before (Signal.js sha256/8 d235e505; the wedge and the false CycleError are also in the published 1.5.2, Signal.js f8dd50f8,
+which has no snapshot() or reset()): the effect kept `FLAG_COMPUTING`,
+ran on no later write, kept its link (`activeLinks` stayed 1) and made `snapshot()` refuse "graph not settled" until
+`reset()`; a computed reported a false `CycleError` on every later read, even after the cleanup stopped throwing.
+Now (Signal.js c8f6cd1e):
+- **Re-run rule.** Effect: the body is skipped, the cleanup's error is rethrown from the write / flush like a body error,
+  `evalVersion` is not stamped and the links stay as the last completed run left them, so the next dependency change
+  re-runs it. Computed: the error is cached (`FLAG_HAS_ERROR`) and rethrown by each read, until its next dependency
+  change; a refresh never throws it (the cached-error rule). A cleanup that disposes the node itself is swallowed for a
+  computed and rethrown for an effect.
+- **Body-first rule (a cleanup attached before the node's first run).** `runWithOwner` can attach a cleanup or an owned
+  child to a computed never read, or to an effect whose first run a scheduler still holds. If one throws, the owned
+  children still attached are disposed (repeated only after a child threw, at most `maxFlushPasses` passes), the node's own
+  cleanups after the throwing one are dropped (as at every re-run), and the first run still runs its body. The error is
+  then that run's error: an effect rethrows it, a computed caches it. More than one error is an `AggregateError`
+  (message `cleanups threw before the first run`): the cleanup errors in disposal order (an owned child's cleanup before
+  the node's own list), the body's error last.
+- **Cap.** At the `maxFlushPasses` cap the error `CycleError: owned cleanups kept throwing before the first run` joins
+  the errors; the children still attached and the node's own list wait for the next run, one throwing child per write.
+- **Residuals.** A never-evaluated computed with no dependencies keeps its error until disposed (as a constant computed
+  whose body threw does). A child whose cleanup throws is popped before disposal and stays live (LEDGER #56, OPEN).
+Evidence of this cycle (b176; untimed, deterministic, host loaded: load1 10.9-32.0 against a 2.21 baseline, Node v26.8.2):
+the hot bodies are byte-equal to the re-run-only core (r3, Signal.js sha256/8 9cf9518f, unpublished) (`executeEffect` 454 B, `refreshComputed` 770 B (781 B at d235e505), `flushEffects` 440 B, `pullComputed` 77 B); the new code is in cold functions (`rerunCleanupEffect` 161 B,
+`rerunCleanupComputed` 140 B, plus five new cold helpers); inlining decisions are SAME on TurboFan and Maglev; the recursion
+depth gate (max statistic, 5 lanes, 3 interleaved runs) reads 1.0000 at its worst cell against both references; `npm run
+torture` exit 0 (gc major 0 / minor 0, 0 B/op). `snapshot()` is unchanged. No timing claim. Tests:
+`test/110-cleanup-throw.test.mjs` (82 rows; on the d235e505 build 65 of them fail).
+
 ### Fixed -- reset-torture window blind on node 22 / 24 (CI class 14)
 
 The window read `new_space` only (measured b198 locally, darwin-arm64, and on CI run 41931680601 at 76dc6d6). The

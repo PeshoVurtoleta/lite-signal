@@ -26,7 +26,7 @@
  *       Owns the ReactiveLink pool and the dep/sub doubly-linked lists.
  *       INVARIANT: never touches `owner`/`firstOwned`. Pure edge mechanics.
  *
- *   L2  OWNERSHIP / LIFECYCLE   createNode, disposeNode, runCleanup
+ *   L2  OWNERSHIP / LIFECYCLE   createNode, disposeNode, runCleanup (+ runCleanupE / runCleanupC)
  *       Owns the owner tree and node death + user cleanup.
  *       INVARIANT: never touches the `activeObserverCurrentDep` cursor.
  *       Sanctioned downward edge -> L1: disposeNode walks a dying node's own
@@ -37,11 +37,12 @@
  *       (a pure propagation primitive). executeEffect/pullComputed are the
  *       ORCHESTRATORS: they drive the cursor + severTail (L1) AND, before a
  *       re-run, call runCleanup (L2) to cascade-dispose owned children.
- *       Sanctioned upward call -> L2: executeEffect/pullComputed -> runCleanup.
+ *       Sanctioned upward call -> L2: executeEffect/pullComputed -> runCleanup
+ *       (through the re-run dispatchers runCleanupE / runCleanupC).
  *
  *   API  signal, computed, effect, dispose, batch, untrack, onCleanup, stats, destroy, reset
  *
- *   The only cross-layer edges are L3->runCleanup and L2->freeLink. The graph of
+ *   The only cross-layer edges are L3->runCleanup(E|C) and L2->freeLink. The graph of
  *   dependencies is acyclic; nothing in L1 reaches up, nothing in L2 touches
  *   the cursor, and the engine is the single place the two subsystems meet.
  *
@@ -1497,12 +1498,198 @@ export function createRegistry(config) {
         // F-b33-1: the body has read nothing yet and will read these writes -> not stale.
         if (node.gen === g) node.flags &= ~FLAG_STALE_READ;
     }
+    // FIX-CL (LEDGER #55): the RE-RUN cleanup dispatchers. executeEffect / refreshComputed
+    // call these with FLAG_COMPUTING already set; a throwing cleanup used to escape past the
+    // finally that clears it and wedge the node. One combined test keeps the zero-call fast
+    // path (small enough to inline into the frames); the cold half wraps the unchanged
+    // runCleanup in try/catch with its own gen snapshot, so a cascade throw (disposeOwned)
+    // still skips the node's own cleanups, as on the dispose path. disposeNode keeps the
+    // plain runCleanup: a throwing dispose cleanup rethrows and the node stays live (#56).
+    function runCleanupE(node) {
+        if (node.firstOwned !== null || node.cleanupFn !== undefined) rerunCleanupEffect(node);
+    }
+    /**
+     * Re-run dispatcher for refreshComputed (A1b-2). Returns a boolean "stop": true iff a
+     * cleanup threw (the error is cached as the node's error, or swallowed when the node was
+     * disposed) or the node's gen moved during the cleanups; false when there was nothing to
+     * run, or the cleanups completed with gen unchanged. Only a boolean crosses the call.
+     * @private
+     */
+    function runCleanupC(node) {
+        return (node.firstOwned !== null || node.cleanupFn !== undefined) && rerunCleanupComputed(node);
+    }
+    // FIX-CL D (LEDGER #55, D-b175-1..3, body-first): cleanups attached before a node's FIRST run
+    // (runWithOwner onto a never-run effect / computed). Cold only: each re-run cold half diverts a
+    // never-run node here with one test; the hot bodies and the dispatchers are unchanged.
+    let skipPreRunCleanup = null;   // one shot: the node whose next run-start cold half runs no cleanup
+    /**
+     * Drain the cleanups attached to a never-run node, catching every throw. Owned children
+     * first (disposeOwned), repeated only after a child threw, at most maxFlushPasses passes;
+     * at the cap a CycleError joins the errors and the children still attached and the own
+     * list wait for the next run. Otherwise the node's own list runs once (entries after a
+     * throwing one are dropped, as at every re-run). Takes its own gen snapshot: a cleanup
+     * that disposes / recycles the node stops the drain at once. Returns null when nothing
+     * threw, else the errors in disposal order. Only the node crosses the call; the errors
+     * array and the CycleError allocate on the error path only.
+     * @private
+     */
+    function drainPreRun(node) {
+        const g = node.gen;
+        let errs = null;
+        for (let n = 1; ; n++) {
+            if (node.firstOwned !== null) {
+                try { disposeOwned(node); } catch (e) {
+                    (errs ??= []).push(e);
+                    if (node.gen !== g) return errs;
+                    if (n >= maxFlushPasses) { errs.push(new Error("CycleError: owned cleanups kept throwing before the first run")); return errs; }
+                    continue;
+                }
+                if (node.gen !== g) return errs;
+            }
+            if (node.cleanupFn !== undefined) {
+                try { runOwnCleanup(node); } catch (e) { (errs ??= []).push(e); }
+            }
+            return errs;
+        }
+    }
+    /**
+     * Run a never-run node's first body after a drain that threw (COMPUTING | STALE_READ
+     * already cleared). Anything still attached was attached during the drain and belongs to
+     * the next run, so the one-shot skip is set. No user code runs between the set and the
+     * body's run-start dispatcher; the drain gave the node no links and no stamp (COMPUTING
+     * blocked nested runs, runOwnCleanup nulls currentObserver), so the dispatcher's test
+     * holds, the cold half diverts to firstRunCleanupE / firstRunCleanupC again, and that
+     * consumes the skip and runs no cleanup. The finally clears a skip the run never reached;
+     * a slot disposed at depth > 0 is not recycled before it.
+     * @private
+     */
+    function runFirstBody(node, isEffect) {
+        if (node.firstOwned !== null || node.cleanupFn !== undefined) skipPreRunCleanup = node;
+        try { if (isEffect) executeEffect(node); else refreshComputed(node, 0); }
+        finally { if (skipPreRunCleanup === node) skipPreRunCleanup = null; }
+    }
+    /**
+     * The first run's error: one error as itself, several as an AggregateError in disposal
+     * order with the body's error last. Error path only.
+     * @private
+     */
+    function firstRunErrors(errs) {
+        return errs.length === 1 ? errs[0] : new AggregateError(errs, "cleanups threw before the first run");
+    }
+    /**
+     * Never-run half of rerunCleanupEffect (D-b175-1 / -2): evalVersion 0 with no links means
+     * the effect never ran and nothing can wake it, so a throwing pre-run cleanup does not
+     * skip its body. Consumes runFirstBody's skip first (return: the first body runs with no
+     * cleanup). Drains (drainPreRun); nothing threw -> return, the normal path runs the body
+     * (d235e505 / r3 behaviour). The node disposed / recycled by a cleanup -> throw the
+     * errors, touch nothing. Else clear COMPUTING | STALE_READ, run the first body
+     * (runFirstBody) and throw E, or an AggregateError of the cleanup errors and the body's
+     * error, from the run.
+     * @private
+     */
+    function firstRunCleanupE(node) {
+        if (skipPreRunCleanup === node) { skipPreRunCleanup = null; return; }
+        const g = node.gen;
+        const errs = drainPreRun(node);
+        if (errs === null) return;
+        if (node.gen !== g) throw firstRunErrors(errs);
+        node.flags &= ~(FLAG_COMPUTING | FLAG_STALE_READ);
+        try { runFirstBody(node, true); } catch (e2) { errs.push(e2); }
+        throw firstRunErrors(errs);
+    }
+    /**
+     * Never-run half of rerunCleanupComputed (D-b175-1 / -3): version 0 means the computed was
+     * never evaluated. Same skip and drain as firstRunCleanupE; returns runCleanupC's "stop"
+     * boolean. Nothing threw -> false (the normal path runs the body). The node disposed /
+     * recycled by a cleanup or by its first body -> true (swallowed, as the body's catch
+     * does). Else clear COMPUTING | STALE_READ, run the first body (runFirstBody) and cache E,
+     * or AggregateError [cleanup errors..., body error], as the node's error (FLAG_HAS_ERROR,
+     * version = evalVersion = globalVersion) -> true. A computed with no dependencies keeps
+     * that error until disposed (D-b175-3), as a constant computed whose body threw does.
+     * @private
+     */
+    function firstRunCleanupC(node) {
+        if (skipPreRunCleanup === node) { skipPreRunCleanup = null; return false; }
+        const g = node.gen;
+        const errs = drainPreRun(node);
+        if (node.gen !== g) return true;
+        if (errs === null) return false;
+        node.flags &= ~(FLAG_COMPUTING | FLAG_STALE_READ);
+        runFirstBody(node, false);
+        if (node.gen !== g) return true;
+        if ((node.flags & FLAG_HAS_ERROR) !== 0) errs.push(node.value);
+        node.value = firstRunErrors(errs);
+        node.flags |= FLAG_HAS_ERROR;
+        node.version = globalVersion;
+        node.evalVersion = globalVersion;
+        return true;
+    }
+    /**
+     * Cold half of runCleanupE. On a throw with gen unchanged: clear COMPUTING | STALE_READ and
+     * rethrow, so the write / flush fails like a body error; the body does not run, evalVersion
+     * is not stamped and the links stay as the last completed run left them (D-b170-3 (a)).
+     * D-b171-1 (LEDGER #55), narrowed by D-b171-3: an evalVersion of 0 WITH links (headDep not
+     * null) is requeueStaleEffect's stale-read re-queue (links from a completed run; its QUEUED
+     * was cleared when this run began; nothing is scheduled now), so it is replaced by the
+     * needs-run marker computedRunTail uses: (globalVersion - 0x3FFFFFFF) | 0, -1 if that is 0.
+     * Not a stamp -- nothing is claimed evaluated, a far floor below every recent version, so the
+     * next wake's pre-walk still runs the body -- and snapshot() no longer reads the effect as a
+     * pending scheduled run. An evalVersion of 0 with NO links never ran (e.g. a deferred-
+     * scheduler first run whose cleanup was attached by runWithOwner(effect handle, ...)
+     * before it): the head test sends it to firstRunCleanupE (body-first, D-b175-2). An
+     * evalVersion other than 0 is left as it is.
+     * Disposed / recycled by the cleanup (gen moved): rethrow and touch nothing.
+     * @private
+     */
+    function rerunCleanupEffect(node) {
+        if (node.evalVersion === 0 && node.headDep === null) { firstRunCleanupE(node); return; }
+        const g = node.gen;
+        try {
+            runCleanup(node);
+        } catch (err) {
+            if (node.gen === g) {
+                node.flags &= ~(FLAG_COMPUTING | FLAG_STALE_READ);
+                if (node.evalVersion === 0 && node.headDep !== null) {
+                    const f = (globalVersion - 0x3FFFFFFF) | 0;
+                    node.evalVersion = f === 0 ? -1 : f;
+                }
+            }
+            throw err;
+        }
+    }
+    /**
+     * Cold half of runCleanupC. On a throw with gen unchanged: cache the error as the node's
+     * error (value, FLAG_HAS_ERROR, version = evalVersion = globalVersion, as the body's catch
+     * does) and clear COMPUTING | STALE_READ; never rethrow (refreshComputed never throws a
+     * cached error, D-H). Disposed / recycled by the cleanup (gen moved): swallow, as the
+     * body's catch does for a disposed node. Returns runCleanupC's "stop" boolean from its own
+     * gen snapshot: true on a throw or a gen move, false when the cleanups completed. A
+     * never-evaluated node (version 0) goes to firstRunCleanupC (body-first, D-b175-1).
+     * @private
+     */
+    function rerunCleanupComputed(node) {
+        if (node.version === 0) return firstRunCleanupC(node);
+        const g = node.gen;
+        try {
+            runCleanup(node);
+        } catch (err) {
+            if (node.gen === g) {
+                node.value = err;
+                node.flags = (node.flags | FLAG_HAS_ERROR) & ~(FLAG_COMPUTING | FLAG_STALE_READ);
+                node.version = globalVersion;
+                node.evalVersion = globalVersion;
+            }
+            return true;
+        }
+        return node.gen !== g;
+    }
 
     // === L3 * PROPAGATION / EXECUTION =============================
     // markDownstream is owner-free AND cursor-free (a pure propagation
     // primitive). executeEffect/pullComputed are the orchestrators: they drive
     // the cursor + severTail (L1) and, before a re-run, call runCleanup (L2) to
-    // cascade-dispose owned children. Sanctioned upward call -> L2: runCleanup.
+    // cascade-dispose owned children. Sanctioned upward call -> L2: runCleanup
+    // (through runCleanupE / runCleanupC).
 
     // --- EXECUTION ENGINE -----------------------------------------
 
@@ -1780,6 +1967,14 @@ export function createRegistry(config) {
      * If the body self-disposes (node.gen advances during the body), skips the
      * post-body bookkeeping (severTail, flag clear, evalVersion bump) -- that
      * gen-snapshot guard is the v1.2 conformance fix for #141.
+     *
+     * A re-run cleanup (onCleanup or an owned child's) that throws (FIX-CL, LEDGER #55):
+     * the body does not run, FLAG_COMPUTING is cleared, evalVersion is not stamped, the
+     * links stay as the last completed run left them, and the error is rethrown from the
+     * write / flush like a body error. The next change to a dependency re-runs the body.
+     * An effect that never ran (no links, evalVersion 0) whose pre-run cleanup throws is
+     * body-first instead (firstRunCleanupE, D-b175-2): its first run still runs the body,
+     * then rethrows.
      * @private
      */
     function executeEffect(node) {
@@ -1816,7 +2011,7 @@ export function createRegistry(config) {
         }
 
         node.flags = (node.flags & ~FLAG_QUEUED_STALE) | FLAG_COMPUTING;
-        runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before re-run
+        runCleanupE(node);   // CROSS-EDGE L3->L2: dispose owned children before re-run (a throw un-wedges, rethrows)
         if (node.gen !== savedGen) return;   // B1 (r3): a cleanup disposed it; never run a stranger
 
         const prevObserver = currentObserver;
@@ -1890,7 +2085,10 @@ export function createRegistry(config) {
      * subtree.
      *
      * Returns void and never throws the node's cached error (pullComputed and the
-     * read closure do).
+     * read closure do). A re-run cleanup that throws (FIX-CL, LEDGER #55) is cached as
+     * the node's error (the body does not run; FLAG_COMPUTING is cleared), so it is still
+     * never thrown from here and the next read sees the error, not a false CycleError.
+     * A never-evaluated node still runs its first body (body-first, firstRunCleanupC).
      * Throws only on a cycle: the node re-entered while computing, or (#42) `depth`,
      * the pre-walk recursion depth (a Smi), past nodePool.length -- an acyclic dep
      * chain is never deeper than the pool, so a cyclic dep graph throws CycleError
@@ -1938,8 +2136,9 @@ export function createRegistry(config) {
         if (shouldRun) {
             if ((node.flags & FLAG_COMPUTING) !== 0) throwComputedCycle();
             node.flags |= FLAG_COMPUTING;
-            runCleanup(node);   // CROSS-EDGE L3->L2: dispose owned children before recompute
-            if (node.gen !== savedGen) return;   // B1 (r3): disposed by a cleanup
+            // B1 (r3) + FIX-CL (#55): stop if a cleanup disposed the node or threw (error cached). runCleanupC's
+            // gen snapshot equals savedGen: no user code runs since the snapshot or the pre-walk's gen test.
+            if (runCleanupC(node)) return;   // CROSS-EDGE L3->L2: dispose owned children before recompute
 
             const prevObserver = currentObserver;
             const prevOwner = currentOwner;
@@ -2531,6 +2730,23 @@ export function createRegistry(config) {
         }
     }
 
+    function getOwner() {
+        return currentOwner !== null ? describeNode(currentOwner) : undefined;
+    }
+    function runWithOwner(ownerHandle, fn) {
+        const node = liveNode(ownerHandle);
+        const pw = currentOwner, pwg = pw !== null ? pw.gen : 0;
+        const po = currentObserver, pg = po !== null ? po.gen : 0;
+        currentOwner = (node !== undefined && (node.flags & (FLAG_COMPUTED | FLAG_EFFECT)) !== 0) ? node : null;
+        currentObserver = null;
+        try {
+            return fn();
+        } finally {
+            // S10: gen-safe restore (the #30 idiom) -- fn may dispose the saved owner/observer.
+            currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
+            currentObserver = (po !== null && po.gen === pg) ? po : null;
+        }
+    }
     /**
      * Run `fn` in a detached ownership scope: nodes (effects / computeds)
      * created inside `fn` are NOT adopted by the enclosing owner, so they
@@ -2549,23 +2765,6 @@ export function createRegistry(config) {
      * Mirrors Solid's `createRoot` for the lifecycle axis. Returns whatever
      * `fn` returns (typically a disposer or the created handle).
      */
-    function getOwner() {
-        return currentOwner !== null ? describeNode(currentOwner) : undefined;
-    }
-    function runWithOwner(ownerHandle, fn) {
-        const node = liveNode(ownerHandle);
-        const pw = currentOwner, pwg = pw !== null ? pw.gen : 0;
-        const po = currentObserver, pg = po !== null ? po.gen : 0;
-        currentOwner = (node !== undefined && (node.flags & (FLAG_COMPUTED | FLAG_EFFECT)) !== 0) ? node : null;
-        currentObserver = null;
-        try {
-            return fn();
-        } finally {
-            // S10: gen-safe restore (the #30 idiom) -- fn may dispose the saved owner/observer.
-            currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
-            currentObserver = (po !== null && po.gen === pg) ? po : null;
-        }
-    }
     function createRoot(fn) {
         const pw = currentOwner, pwg = pw !== null ? pw.gen : 0;
         const po = currentObserver, pg = po !== null ? po.gen : 0;
@@ -2586,6 +2785,12 @@ export function createRegistry(config) {
      * children's cleanups run BEFORE this one (#238 / #241 / #243).
      *
      * No-op if called outside an effect / computed body.
+     *
+     * A cleanup attached with runWithOwner to a node that has not run yet runs before that
+     * node's first run, as today. If one throws, the owned children still attached are disposed, the cleanups
+     * after the throwing one in that list are dropped (as at every re-run), and the first run still runs its
+     * body; the error is then that run's error: a computed caches it (AggregateError [cleanup errors..., body
+     * error] when more than one) until its next dependency change, an effect rethrows it from the run.
      *
      * @param {() => void} fn
      */
@@ -3069,9 +3274,14 @@ export function createRegistry(config) {
             }
             // D-D2 (1.6.0): a pending scheduled run would be lost (restore carries no scheduler).
             // QUEUED outside a flush/batch = a scheduled re-run handed to its scheduler, not yet run
-            // (executeEffect clears it). An effect with evalVersion 0 has never finished a run:
-            // effect() handed its first run to the scheduler without QUEUED. executeEffect stamps
-            // evalVersion (never 0: globalVersion skips 0) on every completed run, so no new write.
+            // (executeEffect clears it). An effect with evalVersion 0 and no QUEUED has never
+            // finished a run: effect() handed its first run to the scheduler without QUEUED.
+            // executeEffect stamps evalVersion (never 0: globalVersion skips 0) on every completed
+            // run, so no new write. requeueStaleEffect's evalVersion 0 always comes with QUEUED;
+            // if that re-run's cleanup throws, rerunCleanupEffect replaces the 0 with the needs-run
+            // marker (D-b171-1, LEDGER #55), so nothing unscheduled is refused here. An effect whose
+            // first run's pre-run cleanup threw still runs its body (body-first, D-b175-2), so it is
+            // stamped and not refused here.
             if ((n.flags & FLAG_QUEUED) !== 0 || ((n.flags & FLAG_EFFECT) !== 0 && n.evalVersion === 0)) {
                 throw new Error("[lite-signal] snapshot: graph not settled (scheduled effect run pending)");
             }
