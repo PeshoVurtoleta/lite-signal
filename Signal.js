@@ -1541,7 +1541,7 @@ export function createRegistry(config) {
                 try { disposeOwned(node); } catch (e) {
                     (errs ??= []).push(e);
                     if (node.gen !== g) return errs;
-                    if (n >= maxFlushPasses) { errs.push(new Error("CycleError: owned cleanups kept throwing before the first run")); return errs; }
+                    if (n >= maxFlushPasses) { errs.push(new Error("CycleError: owned cleanups kept throwing before the body ran")); return errs; }
                     continue;
                 }
                 if (node.gen !== g) return errs;
@@ -1570,16 +1570,17 @@ export function createRegistry(config) {
     }
     /**
      * The first run's error: one error as itself, several as an AggregateError in disposal
-     * order with the body's error last. Error path only.
+     * order with the body's error last when the body ran. Error path only.
      * @private
      */
     function firstRunErrors(errs) {
-        return errs.length === 1 ? errs[0] : new AggregateError(errs, "cleanups threw before the first run");
+        return errs.length === 1 ? errs[0] : new AggregateError(errs, "cleanups threw before the body could run");
     }
     /**
      * Never-run half of rerunCleanupEffect (D-b175-1 / -2): evalVersion 0 with no links means
-     * the effect never ran and nothing can wake it, so a throwing pre-run cleanup does not
-     * skip its body. Consumes runFirstBody's skip first (return: the first body runs with no
+     * no completed run left links -- the effect never ran, or a stale re-queue severed them
+     * all (B3, D-AUD-2: behaviour kept) -- and nothing can wake it, so a throwing pre-run
+     * cleanup does not skip its body. Consumes runFirstBody's skip first (return: the first body runs with no
      * cleanup). Drains (drainPreRun); nothing threw -> return, the normal path runs the body
      * (d235e505 / r3 behaviour). The node disposed / recycled by a cleanup -> throw the
      * errors, touch nothing. Else clear COMPUTING | STALE_READ, run the first body
@@ -1634,22 +1635,29 @@ export function createRegistry(config) {
      * needs-run marker computedRunTail uses: (globalVersion - 0x3FFFFFFF) | 0, -1 if that is 0.
      * Not a stamp -- nothing is claimed evaluated, a far floor below every recent version, so the
      * next wake's pre-walk still runs the body -- and snapshot() no longer reads the effect as a
-     * pending scheduled run. An evalVersion of 0 with NO links never ran (e.g. a deferred-
-     * scheduler first run whose cleanup was attached by runWithOwner(effect handle, ...)
-     * before it): the head test sends it to firstRunCleanupE (body-first, D-b175-2). An
-     * evalVersion other than 0 is left as it is.
+     * pending scheduled run. An evalVersion of 0 with NO links means no completed run left
+     * links: the effect never ran (e.g. a deferred-scheduler first run whose cleanup was
+     * attached by runWithOwner(effect handle, ...) before it), or a stale re-queue severed
+     * them all; the head test sends both to firstRunCleanupE (body-first, D-b175-2; kept by
+     * D-AUD-2 B3). An evalVersion other than 0 is left as it is.
+     * S1 (D-AUD-2): a write that reached the node while its cleanups ran (markEpoch moved
+     * from the snapshot taken before runCleanup; COMPUTING kept the walk from queueing it)
+     * is not absorbed: the node is re-queued (requeueStaleEffect) before the rethrow, so the
+     * next pass runs the body with the new values; the needs-run marker is then not needed.
      * Disposed / recycled by the cleanup (gen moved): rethrow and touch nothing.
      * @private
      */
     function rerunCleanupEffect(node) {
         if (node.evalVersion === 0 && node.headDep === null) { firstRunCleanupE(node); return; }
-        const g = node.gen;
+        const g = node.gen, m = node.markEpoch;
         try {
             runCleanup(node);
         } catch (err) {
             if (node.gen === g) {
                 node.flags &= ~(FLAG_COMPUTING | FLAG_STALE_READ);
-                if (node.evalVersion === 0 && node.headDep !== null) {
+                // S1: every walk that reaches the node (and every STALE_READ flag) stamps markEpoch.
+                if (node.markEpoch !== m) requeueStaleEffect(node);
+                else if (node.evalVersion === 0 && node.headDep !== null) {
                     const f = (globalVersion - 0x3FFFFFFF) | 0;
                     node.evalVersion = f === 0 ? -1 : f;
                 }
@@ -1661,7 +1669,11 @@ export function createRegistry(config) {
      * Cold half of runCleanupC. On a throw with gen unchanged: cache the error as the node's
      * error (value, FLAG_HAS_ERROR, version = evalVersion = globalVersion, as the body's catch
      * does) and clear COMPUTING | STALE_READ; never rethrow (refreshComputed never throws a
-     * cached error, D-H). Disposed / recycled by the cleanup (gen moved): swallow, as the
+     * cached error, D-H). S1 (D-AUD-2): if a write reached the node while its cleanups ran
+     * (markEpoch moved from the snapshot taken before runCleanup), evalVersion gets the far
+     * floor computedRunTail uses ((globalVersion - 0x3FFFFFFF) | 0, -1 if that is 0) instead
+     * of globalVersion: this read still throws the cleanup's error, the next read re-runs the
+     * body with the new values. Disposed / recycled by the cleanup (gen moved): swallow, as the
      * body's catch does for a disposed node. Returns runCleanupC's "stop" boolean from its own
      * gen snapshot: true on a throw or a gen move, false when the cleanups completed. A
      * never-evaluated node (version 0) goes to firstRunCleanupC (body-first, D-b175-1).
@@ -1669,7 +1681,7 @@ export function createRegistry(config) {
      */
     function rerunCleanupComputed(node) {
         if (node.version === 0) return firstRunCleanupC(node);
-        const g = node.gen;
+        const g = node.gen, m = node.markEpoch;
         try {
             runCleanup(node);
         } catch (err) {
@@ -1677,7 +1689,10 @@ export function createRegistry(config) {
                 node.value = err;
                 node.flags = (node.flags | FLAG_HAS_ERROR) & ~(FLAG_COMPUTING | FLAG_STALE_READ);
                 node.version = globalVersion;
-                node.evalVersion = globalVersion;
+                // S1: a write reached this computed while its cleanups ran -> this read throws err, the next
+                // read re-runs the body (far-floor evalVersion, as computedRunTail); else cache as before.
+                if (node.markEpoch !== m) { const f = (globalVersion - 0x3FFFFFFF) | 0; node.evalVersion = f === 0 ? -1 : f; }
+                else node.evalVersion = globalVersion;
             }
             return true;
         }
@@ -1765,8 +1780,10 @@ export function createRegistry(config) {
 
     /**
      * F-b33-1: re-queue an effect whose run read a value a write in the same evaluation
-     * changed. Called by effectTail only after the run start cleared QUEUED and
-     * executeEffect's `finally` cleared COMPUTING, with no user code in between. evalVersion = 0
+     * changed, or whose throwing re-run cleanups a write reached (S1, D-AUD-2). Called by
+     * effectTail (the last statement of executeEffect's `finally`, S3) and by
+     * rerunCleanupEffect's catch, only after the run start cleared QUEUED and COMPUTING was
+     * cleared (that `finally`, or the catch), with no user code in between. evalVersion = 0
      * makes the next run skip the pre-walk. Inside a flush the nested flushEffects()
      * returns at once and the entry runs in the next pass of the same flush (counted
      * against maxFlushPasses -> "CycleError: flush passes exceeded"); outside a flush
@@ -1954,7 +1971,8 @@ export function createRegistry(config) {
     // so the evalCount bump lives HERE, before the hook call (a throwing op-5 hook still counts as
     // a run): inside executeEffect it would push that body past V8's 460 B inline limit.
     function fireRecompute(node) { evalCount = (evalCount + 1) & 0x3fffffff; if (mutationHook !== null) mutationHook(5, node.id, 0); }
-    // F-b33-1: executeEffect's post-run tail, out of line for its inlining budget (small: inlines back).
+    // F-b33-1: executeEffect's post-run tail, the last statement of its `finally` (S3, D-AUD-5: a body
+    // that throws after a stale read is re-queued too), out of line for its inlining budget (small: inlines back).
     // Truthiness test, not `!== 0` (D4): 25 B vs 31 keeps it under the small-function inline caps
     // (Maglev 27 B, TurboFan 30 B); flags is a Smi bit set, so the two forms are the same test.
     function effectTail(node) { if (node.flags & FLAG_STALE_READ) requeueStaleEffect(node); }
@@ -1971,10 +1989,16 @@ export function createRegistry(config) {
      * A re-run cleanup (onCleanup or an owned child's) that throws (FIX-CL, LEDGER #55):
      * the body does not run, FLAG_COMPUTING is cleared, evalVersion is not stamped, the
      * links stay as the last completed run left them, and the error is rethrown from the
-     * write / flush like a body error. The next change to a dependency re-runs the body.
-     * An effect that never ran (no links, evalVersion 0) whose pre-run cleanup throws is
-     * body-first instead (firstRunCleanupE, D-b175-2): its first run still runs the body,
-     * then rethrows.
+     * write / flush like a body error. The next change to a dependency re-runs the body;
+     * a dependency written while the cleanups ran re-queues it at once (S1, D-AUD-2). An
+     * effect with no links and evalVersion 0 (it never ran, or a stale re-queue severed
+     * every link) whose pre-run cleanup throws is body-first instead (firstRunCleanupE,
+     * D-b175-2): that run still runs the body, then rethrows.
+     *
+     * effectTail is the last statement of the `finally` (S3, D-AUD-5): a body that read a
+     * value a write in the same evaluation changed is re-queued even when it throws (or a
+     * throwing op-5 hook ends the run); the re-queued run's error, if any, then replaces
+     * the first one when it runs at once (outside a flush and a batch).
      * @private
      */
     function executeEffect(node) {
@@ -2045,8 +2069,8 @@ export function createRegistry(config) {
             currentOwner = prevOwner;
             cursorDepth = d;
             activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
+            effectTail(node);   // S3 (D-AUD-5): in the finally, so a throwing body still re-queues a stale read
         }
-        effectTail(node);
     }
 
     /**

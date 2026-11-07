@@ -21,6 +21,8 @@
 // RED on a5c64df9 also includes KC-XP, KC-PX, KC-NEST, KC-NEST0 (added rows; see helper-56-redsets.txt for the measured set).
 // RED on the B1 engine f2dd6edc (R1-REJECTED: false STALE from the node's own cleanups): P2, P2c, P4, PC, W0, DR, ANC, ANC-2, ANC2H, P2-eRuns, IF, KC, NC2, NEST (14).
 // F6K was a KNOWN pin (DIV-F6, runs 1); FIXED by FIX-T A2 (b102, D1(b) + D4, PLAN-0s-fixt ADDENDUM 8.1): runs 3.
+// AUD-E1 (b177): TS is RE-RULED (fable-5.1 engine-3: an effect body that throws after a stale read keeps its F-b33-1 re-queue; was a
+// rule that it did not) and TC (creation) + TY (sync scheduler) are added; all three are RED on 17ac945 / c8f6cd1e and green on the AUD-E1 engine (todo removed).
 // KNOWN (N8) pins (maintainer 2026-10-14 "accept all three"): EQ (D-M1), P1 / P1b (D-M2). Each asserts CURRENT behaviour.
 // ANC + P2-eRuns (D-R3) are FIXED by DELTA 4a and assert the fixed value (= a5c64df9's). KC is exact (D5-2 (a), N13.1:
 // fr 1; 400a655e re-runs F). KC-NEST0 is a KNOWN residual pin (N13.2, accepted for 1.6.0).
@@ -224,22 +226,70 @@ describe('F-b33-1 write during evaluation', () => {
         assert.strictEqual(runs, 2);
     }));
 
-    // TS: an effect body that throws after a stale read does not re-run; after the throwing run the body is
-    // disarmed and the next unrelated set gives exactly +1 run (a leftover STALE flag would give +2).
+    // TS (re-ruled by AUD-E1, fable-5.1 engine-3 / PLAN-AUD-E1 A1): an effect body that throws after a stale read IS re-run:
+    // the F-b33-1 re-queue happens even when the body throws (the effect tail runs in the finally). Armed run, triggered by u:
+    // reads a, first-evaluates C (writes a=10 -> stale), reads u, throws 'boom'. Hand-derived: u.set(1) -> run 2 throws boom with a
+    // stale read -> re-queued -> run 3 (C is cached, no new write) throws boom again -> the flush surfaces both:
+    // AggregateError "Effects threw during flush" with 2 errors (runs 1 -> 3). Disarmed, u.set(2) -> exactly +1 run (runs 4; a
+    // leftover STALE flag would give +2). Frozen (measured, the old rule): runs 2 after u.set(1), 3 after u.set(2).
     // (A throw during effect() creation disposes the effect, so the throwing run is a later one.)
-    // Armed run, triggered by u: reads a, first-evaluates C (writes a=10 -> stale), reads u, throws.
-    it('TS body throws after a stale read: no re-run, then +1 per set', () => withReg((r) => {
+    it('TS body throws after a stale read: re-queued (runs 1 -> 3, AggregateError of 2), then +1 per set', () => withReg((r) => {
         const a = r.signal(0), u = r.signal(0);
         let arm = false, runs = 0;
         const C = r.computed(() => { a.set(10); return 1; });
         r.effect(() => { runs++; a(); u(); if (arm) { C(); throw new Error('boom'); } });
         assert.strictEqual(runs, 1);
         arm = true;
-        try { u.set(1); } catch (e) { /* the body error surfaces */ }
-        assert.strictEqual(runs, 2);
+        let err = null;
+        try { u.set(1); } catch (e) { err = e; }
+        assert.strictEqual(runs, 3);
+        assert.ok(err instanceof AggregateError, 'threw ' + String(err));
+        assert.strictEqual(err.message, 'Effects threw during flush');
+        assert.strictEqual(err.errors.length, 2);
+        assert.deepStrictEqual(err.errors.map((x) => x.message), ['boom', 'boom']);
         arm = false;
         u.set(2);
+        assert.strictEqual(runs, 4);
+    }));
+
+    // TC (AUD-E1, creation variant): the same shape at creation. Run 1 reads a, first-evaluates C (writes a=10 -> stale), throws
+    // 'run1'; the stale read re-queues the effect, so run 2 happens (a is 10, C cached) and throws 'run2'. Spec (A1): 2 runs, the
+    // run-2 error surfaces from effect(), and the effect is disposed (a throw during creation disposes it; no further run).
+    // Frozen: 1 run, 'run1' surfaces.
+    it('TC creation: body throws after a stale read -> 2 runs, the run-2 error surfaces, the effect is disposed', () => withReg((r) => {
+        const a = r.signal(0);
+        let runs = 0;
+        const C = r.computed(() => { a.set(10); return 1; });
+        const before = r.stats().effects;
+        let err = null;
+        try { r.effect(() => { runs++; a(); C(); throw new Error('run' + runs); }); } catch (e) { err = e; }
+        assert.strictEqual(runs, 2);
+        assert.ok(err instanceof Error, 'threw ' + String(err));
+        assert.strictEqual(err.message, 'run2');
+        assert.strictEqual(r.stats().effects, before);
+        a.set(20);
+        assert.strictEqual(runs, 2);
+    }));
+
+    // TY (AUD-E1, sync scheduler): the TS shape under { scheduler: (t) => t() } (the write dispatches the run itself). Same
+    // hand derivation: u.set(1) -> run 2 throws boom after a stale read -> re-queued -> run 3 throws boom; the write throws
+    // (an AggregateError 'Effects threw during flush' of two 'boom' Errors); then disarmed, u.set(2) -> exactly +1 run (runs 4). Frozen: runs 2, then 3.
+    it('TY sync scheduler: body throws after a stale read -> re-queued (runs 1 -> 3), the write throws boom, then +1 per set', () => withReg((r) => {
+        const a = r.signal(0), u = r.signal(0);
+        let arm = false, runs = 0;
+        const C = r.computed(() => { a.set(10); return 1; });
+        r.effect(() => { runs++; a(); u(); if (arm) { C(); throw new Error('boom'); } }, { scheduler: (t) => t() });
+        assert.strictEqual(runs, 1);
+        arm = true;
+        let err = null;
+        try { u.set(1); } catch (e) { err = e; }
         assert.strictEqual(runs, 3);
+        // exact tuple, PROBED on the live tree (fad445be, b178): the flush collects the run-2 and the run-3 errors
+        assert.deepEqual([err && err.constructor.name, err && err.message, err && err.errors && err.errors.map((x) => [x.constructor.name, x.message])],
+            ['AggregateError', 'Effects threw during flush', [['Error', 'boom'], ['Error', 'boom']]]);
+        arm = false;
+        u.set(2);
+        assert.strictEqual(runs, 4);
     }));
 
     // S-dispose: a computed disposes itself mid-repull (and writes a stale-making signal first). Hand-derived:

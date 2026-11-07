@@ -25,13 +25,24 @@
  *
  * LEDGER #55 (FIXED by this shape) and #56 (OPEN, D-b170-4: a child whose cleanup throws is popped before its disposal
  * and stays live; rows A4, A6, P3, PE, CAP, CAPN3 pin the orphan counts as they are).
+ * AUD-E1 (b177, r2 b178) adds 13 rows at the end (S1 x4, B3 message + B3 disposed-branch message, F0-E pin, F0-C, P2
+ * snapshot/restore x2, A4 x2, A5 x1; header above the "AUD-E1 S1" describe). Each row's tag in its title says RED / PIN /
+ * PARITY against the frozen 17ac945 / c8f6cd1e build; no row is deferred (the rows that assert the new
+ * never-ran message text are red on a tree that still has the old text, by design). The A4 row is a KNOWN pin (ruling
+ * Q-b177-1). One more r2 row, S1e2 (T5, [PARITY]), sits in the FIX-CL-D section beside S1e. The 82-row count above is the
+ * FIX-CL-D count.
  * A8 / NR-GC run in a child process (--expose-gc). Not ported: S5b (a sync scheduler runs the first body at creation,
  * the cleanup attaches afterwards: not a never-run attach).
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createRegistry } from "../Signal.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+// Engine under test: F_B33_ENGINE (absolute path or file: URL; the same switch as test/56), default ../Signal.js.
+const ENGINE = process.env.F_B33_ENGINE ?? new URL("../Signal.js", import.meta.url).href;
+const ENGINE_URL = ENGINE.startsWith("file:") ? ENGINE : pathToFileURL(ENGINE).href;
+const { createRegistry } = await import(ENGINE_URL);
 
 const E = new Error("E");
 
@@ -207,7 +218,7 @@ describe("FIX-CL: orphan of a throwing cascade / dispose cleanup stays open (LED
 // semi-space pinned BOTH ways (--min + --max = 1 MB), and refuses to measure when any of those flags is missing.
 
 const HEAP_WINDOW = new URL("../bench/torture/helpers/heap-window.mjs", import.meta.url).href;
-const SIGNAL_URL = new URL("../Signal.js", import.meta.url).href;
+const SIGNAL_URL = ENGINE_URL;
 
 const A8_FLAGS = ["--expose-gc", "--single-threaded", "--min-semi-space-size=1", "--max-semi-space-size=1"];
 
@@ -443,7 +454,7 @@ describe("FIX-CL r2: teeth for the ruled clauses", () => {
 
 const E2 = new Error("E2");
 const FLAGS_QUEUED_STALE = 68;   // FLAG_QUEUED 4 | FLAG_STALE_READ 64
-const CYCLE_TEXT = "CycleError: owned cleanups kept throwing before the first run";
+const CYCLE_TEXT = "CycleError: owned cleanups kept throwing before the body ran";   // B3 (D-AUD-2), was "... before the first run"
 
 function rec(r, h) { const id = r.nodeId(h); return r.snapshot().nodes.find((n) => n.id === id); }
 function snapOk(r) { try { r.snapshot(); return true; } catch { return false; } }
@@ -939,6 +950,33 @@ describe("FIX-CL-D: a cleanup that throws before the first run (body-first, D-b1
         assert.equal(snapOk(r), true);
     });
 
+    // AUD-E1 r2 T5 (kills mutant effUngated: rerunCleanupEffect's gen gate forced true; the S1e row above does not write the
+    // dependency, so it never reached the gate). Shape = the b177 witness DEADe: a RE-RUN cleanup that WRITES the effect's own
+    // dependency, DISPOSES its own effect, then throws E. Contract: the write surfaces E itself (not an AggregateError, no
+    // "computeFn is not a function" from a body-less re-queue), the body ran once (creation) and never again, stats().effects
+    // 0, and later writes run nothing. Values PROBED on r2 (ca39e1f4) and on frozen 17ac945 -- identical there, so [PARITY]
+    // (a regression pin on a gate the S1 fix added): s 6 (5 + the cleanup's write 5 + 1), a fresh effect on the recycled slot
+    // runs exactly once per write (creation + one t.set = 2) and the registry holds s, t and that effect only (nodes 3, links 2).
+    it("[PARITY] S1e2 a re-run cleanup that writes its own dep, disposes its own effect, then throws: the write throws E itself, body runs 1, effects 0, later writes run nothing, a new effect runs once per write", () => {
+        const r = createRegistry(); const s = r.signal(0); let h = null, bodies = 0;
+        h = r.effect(() => { bodies++; s(); r.onCleanup(() => { s.set(s.peek() + 1); r.dispose(h); throw E; }); });
+        assert.equal(bodies, 1);
+        assert.equal(thrown(() => s.set(5)), E);
+        assert.equal(bodies, 1);
+        assert.equal(r.stats().effects, 0);
+        assert.equal(s.peek(), 6);
+        assert.equal(thrown(() => s.set(9)), NOBODY);
+        assert.equal(bodies, 1);
+        let runs = 0; const t = r.signal(0);
+        r.effect(() => { runs++; t(); s(); });
+        t.set(1);
+        assert.equal(runs, 2);
+        const st = r.stats();
+        assert.equal(st.effects, 1);
+        assert.equal(st.activeNodes, 3);
+        assert.equal(st.activeLinks, 2);
+    });
+
     it("[RED] SD a reader that disposes itself then reads c (computed half): d() undefined, c() E (cached); effect half: eR 2, cR 1, effects delta 0", () => {
         const r = createRegistry(); const s = r.signal(1); let cR = 0, dR = 0;
         const c = r.computed(() => { cR++; return s() * 10; });
@@ -1155,16 +1193,21 @@ describe("FIX-CL-D: a cleanup that throws before the first run (body-first, D-b1
         assert.deepEqual(log, ["pre", "body"]);
     });
 
-    // F1 is unchanged from r5 (probed r4 + r5: xR 2, a 1); green on every build.
-    it("[PARITY] F1 PARITY (unchanged r5 row) body-error contract: a throwing body that writes via a child effect is not requeued (g.set throws E2, xR 2, a 1)", () => {
-        const r = createRegistry(); const a = r.signal(0), g = r.signal(0); let xR = 0;   // probed r4 + r5: xR 2, a 1
+    // F1 RE-RULED by D-AUD-5 (S3, b177; was a PARITY row: g.set throws E2, xR 2, a 1 on r4 / r5 / 17ac945 c8f6cd1e, so this
+    // row is RED there). "A throwing effect body that saw a mid-run write is re-queued": every run creates a child that writes
+    // a (stale read) and throws E2, so every run re-queues itself; the flush stops at maxFlushPasses (100) with its CycleError
+    // (the buffered E2s are dropped, as at every pass cap). Measured on c0c123a1: xR 101 (1 creation + 100 passes), a 100.
+    it("[RED] F1 D-AUD-5 body-error contract: a throwing body that writes via a child effect is re-queued every run -> g.set throws CycleError 'flush passes exceeded', xR 101, a 100", () => {
+        const r = createRegistry(); const a = r.signal(0), g = r.signal(0); let xR = 0;
         r.effect(() => {
             xR++; a();
             if (g() > 0) { r.effect(() => a.set(a.peek() + 1)); throw E2; }
         });
-        assert.equal(thrown(() => g.set(1)), E2);
-        assert.equal(xR, 2);                   // errTailNoDepWalk: differs
-        assert.equal(a.peek(), 1);
+        const e = thrown(() => g.set(1));
+        assert.ok(e instanceof Error && !(e instanceof AggregateError), "thrown " + e);
+        assert.equal(e.message, "CycleError: flush passes exceeded");   // frozen 17ac945: E2
+        assert.equal(xR, 101);                 // frozen: 2; errTailNoDepWalk: differs
+        assert.equal(a.peek(), 100);           // frozen: 1
     });
 
     // ---- PARITY rows: non-throwing pre-run attaches behave exactly as before (fc-props Pa Pb Pc Pi Pj) ----
@@ -1216,6 +1259,9 @@ describe("FIX-CL-D: a cleanup that throws before the first run (body-first, D-b1
 const CHILD_NR = `
 import { measureWindows } from ${JSON.stringify(HEAP_WINDOW)};
 import { createRegistry } from ${JSON.stringify(SIGNAL_URL)};
+for (const f of ${JSON.stringify(A8_FLAGS)}) {
+    if (!process.execArgv.includes(f)) { console.error("NR-GC child: " + f + " is not in execArgv"); process.exit(3); }
+}
 const N = 100000, WARM = 4, CYC = 12;
 const cb = () => {};
 const boom = new Error("boom");
@@ -1238,8 +1284,11 @@ const ctl = await measureWindows(make(true), { warmup: WARM, cycles: CYC });
 console.log("RESULT " + JSON.stringify({ N, real, ctl, sinkSet: SINK !== null }));
 `;
 
+// CI class 16 (b178, FILLER 222): this child used to spawn with only --expose-gc + --max-semi-space-size=1; on CI 42291560302 (43d2fa3)
+// ubuntu node 24 and macOS node 24, and macOS node 24 on 42177925587 (17ac945), it failed `clean windows 0` while the A8 row (A8_FLAGS)
+// stayed green. Same flags and the same fail-closed execArgv self-check (exit 3) as A8 / CHILD_S1.
 function runChildNr(flags) {
-    const res = spawnSync(process.execPath, ["--expose-gc", "--max-semi-space-size=1", ...flags, "--input-type=module", "-e", CHILD_NR], {
+    const res = spawnSync(process.execPath, [...A8_FLAGS, ...flags, "--input-type=module", "-e", CHILD_NR], {
         encoding: "utf8", timeout: 120000, killSignal: "SIGKILL",
     });
     assert.equal(res.error, undefined, "spawn error: " + (res.error && res.error.message));
@@ -1340,5 +1389,378 @@ describe("FIX-CL-D retention: throwing pre-run cleanups return the graph to the 
         assert.equal(o.bad, 0);
         assert.equal(o.marks[9][0], o.base[0] + 30000);
         assert.equal(o.marks[9][1], o.base[1] + 30000);
+    });
+});
+
+// ======================================================================================================
+// AUD-E1 (b177) batch B3: rows from PLAN-AUD-E1.md ASSERTIONS A1 / A4 / A5 (an oracle independent of the engine coder).
+//   S1: a re-run cleanup that WRITES one of the node's own dependencies and then throws must not lose the write
+//   (fable-5.1 engine-2); B3: the never-ran message text (fable-5.1 engine-4). Every row is [RED] on the frozen build
+//   17ac945 / c8f6cd1e unless it says PIN. No row is deferred. Engine under
+//   test: F_B33_ENGINE or ../Signal.js.
+//   Expected values are the ASSERTIONS' (A1: effect [0,11] / [0,11,15], computed 'ccl' then 11 with 2 body runs,
+//   runs [1,2,3], "cleanups threw before the body could run", evalVersion -1) or hand-derived in the row comment.
+// ======================================================================================================
+
+describe("AUD-E1 S1: a throwing re-run cleanup that wrote a dependency keeps the write (re-queue / far floor)", () => {
+
+    // Hand-derived: run 1 sees s=0. s.set(1) -> cleanup writes s = 1 + 10 = 11 and throws 'cl' (the write rethrows it as itself).
+    // The write made during the cleanup must not be absorbed: the node is re-queued and its body sees 11 -> [0, 11].
+    // Run 2 registers the same cleanup. s.set(5) -> cleanup writes 5 + 10 = 15 and throws; body sees 15 -> [0, 11, 15].
+    // Frozen (measured): [0] then [0, 5] (the write of 11 is lost, the node wedges).
+    it("[RED] S1 effect: set(1) throws Error 'cl' as itself, seen [0,11]; set(5) throws 'cl', seen [0,11,15]", () => {
+        const r = createRegistry();
+        const s = r.signal(0); const seen = [];
+        r.effect(() => { seen.push(s()); r.onCleanup(() => { s.set(s.peek() + 10); throw new Error("cl"); }); });
+        assert.deepEqual(seen, [0]);
+        const e1 = thrown(() => s.set(1));
+        assert.ok(e1 instanceof Error && !(e1 instanceof AggregateError), "set(1) threw " + String(e1));
+        assert.equal(e1.message, "cl");
+        assert.deepEqual(seen, [0, 11]);
+        assert.equal(s.peek(), 11);
+        const e2 = thrown(() => s.set(5));
+        assert.ok(e2 instanceof Error && !(e2 instanceof AggregateError), "set(5) threw " + String(e2));
+        assert.equal(e2.message, "cl");
+        assert.deepEqual(seen, [0, 11, 15]);
+    });
+
+    // Hand-derived: c() = 0, runs 1. s.set(1). Read 1: the cleanup writes s = 11, throws 'ccl': cached, read 1 throws 'ccl'
+    // (the body is skipped). The write must stay visible: read 2 re-runs the body, which reads 11 -> returns 11, 2 body runs.
+    // Frozen (measured): read 2 throws 'ccl' again, runs 1.
+    it("[RED] S1 computed: read 1 throws 'ccl', read 2 === 11, 2 body runs", () => {
+        const r = createRegistry();
+        const s = r.signal(0); let runs = 0;
+        const c = r.computed(() => { runs++; const v = s(); r.onCleanup(() => { s.set(s.peek() + 10); throw new Error("ccl"); }); return v; });
+        assert.equal(c(), 0);
+        s.set(1);
+        const e1 = thrown(() => c());
+        assert.ok(e1 instanceof Error, "read 1 threw " + String(e1));
+        assert.equal(e1.message, "ccl");
+        assert.equal(runs, 1);
+        assert.equal(c(), 11);
+        assert.equal(runs, 2);
+    });
+
+    // Nested writer: the write is made by a computed W pulled from the cleanup (so it takes the write-during-evaluation walk,
+    // not the plain-write path). Hand-derived as S1 effect: s.set(1) -> cleanup pulls W (writes s = 1 + 10 = 11), throws 'cl';
+    // the node is re-queued and its body sees 11 -> [0, 11]. W has no deps so it is evaluated exactly once.
+    it("[RED] S1 nested writer, effect: the cleanup pulls a computed that writes the dep and throws 'cl' -> the effect is re-queued, seen [0,11]", () => {
+        const r = createRegistry();
+        const s = r.signal(0); const seen = []; let wRuns = 0;
+        const W = r.computed(() => { wRuns++; s.set(s.peek() + 10); return 1; });
+        r.effect(() => { seen.push(s()); r.onCleanup(() => { W(); throw new Error("cl"); }); });
+        const e1 = thrown(() => s.set(1));
+        assert.ok(e1 instanceof Error && e1.message === "cl", "set(1) threw " + String(e1));
+        assert.equal(wRuns, 1);
+        assert.deepEqual(seen, [0, 11]);
+    });
+
+    // Computed analogue of the nested writer: c's cleanup pulls W (writes s = 11) and throws 'ccl'; read 1 throws 'ccl',
+    // read 2 re-runs the body on 11.
+    it("[RED] S1 nested writer, computed: the cleanup pulls a computed that writes the dep and throws 'ccl' -> read 1 throws, read 2 === 11", () => {
+        const r = createRegistry();
+        const s = r.signal(0); let runs = 0;
+        const W = r.computed(() => { s.set(s.peek() + 10); return 1; });
+        const c = r.computed(() => { runs++; const v = s(); r.onCleanup(() => { W(); throw new Error("ccl"); }); return v; });
+        assert.equal(c(), 0);
+        s.set(1);
+        const e1 = thrown(() => c());
+        assert.ok(e1 instanceof Error && e1.message === "ccl", "read 1 threw " + String(e1));
+        assert.equal(c(), 11);
+        assert.equal(runs, 2);
+    });
+});
+
+describe("AUD-E1 B3: the never-ran message and the far-floor marker at f === 0", () => {
+
+    // engine-4 shape (fable-5.1 reproductions shapeC / opus p3-neverran): run 1 tracks s. Run 2 (triggered by s.set(1)) pulls a
+    // computed that writes s (so the effect is stale-read re-queued), registers a cleanup that throws 'E-cleanup', and returns.
+    // The re-queued run 3 runs that cleanup first and then the body, which throws 'E-body-run3'. Runs [1,2,3]; the errors are
+    // the cleanup error then the body error in an AggregateError whose message says what is true here: the cleanups threw
+    // before the body could run (not "before the first run": the effect had run twice).
+    it("[RED] B3 re-queued effect, throwing cleanup + throwing body: runs [1,2,3], AggregateError 'cleanups threw before the body could run' [E-cleanup, E-body-run3]", () => {
+        const r = createRegistry();
+        const s = r.signal(0); const runs = []; let phase = 0;
+        r.effect(() => {
+            const myRun = runs.length + 1; runs.push(myRun);
+            if (phase === 0) { s(); return; }
+            r.untrack(() => { const w = r.computed(() => { s.set(99); return 1; }); w(); });
+            r.onCleanup(() => { throw new Error("E-cleanup"); });
+            if (myRun >= 3) throw new Error("E-body-run" + myRun);
+        });
+        phase = 1;
+        const e = thrown(() => s.set(1));
+        assert.deepEqual(runs, [1, 2, 3]);
+        assert.ok(e instanceof AggregateError, "threw " + String(e));
+        assert.equal(e.message, "cleanups threw before the body could run");
+        assert.deepEqual(e.errors.map((x) => x.message), ["E-cleanup", "E-body-run3"]);
+    });
+
+    // Disposed branch of firstRunCleanupE (`if (node.gen !== g) throw firstRunErrors(errs)`, the body never runs). A never-run
+    // effect (deferred scheduler, task not yet called) owns a child effect whose cleanup throws 'A' and has its own pre-run
+    // cleanup attached by runWithOwner, which disposes the effect and throws 'B'. Task call: the drain disposes the child
+    // (A), then runs the own cleanup (B; the effect is disposed) -> AggregateError [A, B] in DISPOSAL order (the child
+    // first), message "cleanups threw before the body could run"; the body never runs (0). stats().effects 2 -> 1: the
+    // parent is gone; the 1 left is the child, a live orphan (LEDGER #56: a child whose cleanup throws is popped before its
+    // disposal and stays live). Order and counts PROBED on the live tree (fad445be) and on the frozen 17ac945 / c8f6cd1e build
+    // (identical there except the message text "... before the first run"). [RED]: red on the frozen build by the message
+    // alone, and red on a live tree that still has the old text.
+    it("[RED] B3 disposed branch: never-run effect, a pre-run cleanup disposes it after a child's cleanup threw: AggregateError 'cleanups threw before the body could run' [A, B], body runs 0, parent gone from stats()", () => {
+        const r = createRegistry();
+        let task = null, bodies = 0;
+        const A = new Error("A"), B = new Error("B");
+        const stop = r.effect(() => { bodies++; }, { scheduler: (f) => { task = f; } });
+        r.runWithOwner(stop, () => {
+            r.effect(() => { r.onCleanup(() => { throw A; }); });
+            r.onCleanup(() => { r.dispose(stop); throw B; });
+        });
+        assert.equal(r.stats().effects, 2);
+        assert.equal(bodies, 0);
+        const e = thrown(() => task());
+        assert.ok(e instanceof AggregateError, "threw " + String(e));
+        assert.equal(e.message, "cleanups threw before the body could run");
+        assert.equal(e.errors.length, 2);
+        assert.equal(e.errors[0], A);
+        assert.equal(e.errors[1], B);
+        assert.equal(bodies, 0, "the body of a disposed never-run effect must not run");
+        assert.equal(r.stats().effects, 1);   // the child orphan (#56)
+    });
+
+    // Effect far-floor site. R6 shape (above): a re-queued effect (evalVersion 0 with links) whose re-run cleanup throws gets a
+    // needs-run marker f = (globalVersion - 0x3FFFFFFF) | 0, and f === 0 must become -1 (0 would read as a pending scheduled
+    // run). Seed 0x3FFFFFFA: the batch's writes (s, trig, the k computed's write, the cleanup's two w writes) leave
+    // globalVersion exactly 0x3FFFFFFF at the catch, so f === 0 (precondition asserted via snapshot().gv). PIN: green on
+    // the frozen build (the marker already exists there); kills the mutant `f === 0 ? -1 : f` -> `f`.
+    it("[PIN] F0-E effect marker: gv 0x3FFFFFFF at the catch -> snapshot evalVersion === -1 (not 0), snapshot works, the next wake runs the body", () => {
+        const r = seeded(0x3FFFFFFA);
+        const s = r.signal(0), trig = r.signal(0), x = r.signal(0), u = r.signal(0), w = r.signal(0); const cu = r.computed(() => u() & 0);
+        let arm = false, runs = 0;
+        const k = r.computed(() => { if (trig() > 0) { arm = true; s.set(s.peek() + 1); } return trig(); });
+        const ef = r.effect(() => {
+            x(); s(); k(); cu();
+            runs++;
+            r.onCleanup(() => { if (arm) { arm = false; w.set(w.peek() + 1); w.set(w.peek() + 1); throw E; } });
+        });
+        assert.equal(thrown(() => r.batch(() => { s.set(10); trig.set(1); })), E);
+        const snap = r.snapshot();
+        assert.equal(snap.gv, 0x3FFFFFFF, "precondition: globalVersion at the catch");
+        assert.equal(snap.nodes.find((n) => n.id === r.nodeId(ef)).evalVersion, -1);
+        const before = runs;
+        u.set(1);
+        assert.equal(runs, before + 1);
+    });
+
+    // Computed far-floor site. Seed 0x3FFFFFFD: s.set(1) and the cleanup's write are the two writes between the seed and the
+    // catch, so globalVersion is exactly 0x3FFFFFFF at the catch (precondition: the node's cached-error version). The
+    // write moved markEpoch, so the error is stamped at the far floor: f = (0x3FFFFFFF - 0x3FFFFFFF) | 0 = 0 -> -1.
+    // Frozen: evalVersion = globalVersion = 0x3FFFFFFF.
+    it("[RED] F0-C computed far floor: gv 0x3FFFFFFF at the catch -> snapshot evalVersion === -1", () => {
+        const r = seeded(0x3FFFFFFD);
+        const s = r.signal(0);
+        const c = r.computed(() => { const v = s(); r.onCleanup(() => { s.set(s.peek() + 10); throw new Error("ccl"); }); return v; });
+        c(); s.set(1);
+        assert.equal(thrown(() => c()).message, "ccl");
+        const rec = r.snapshot().nodes.find((n) => n.id === r.nodeId(c));
+        assert.equal(rec.version, 0x3FFFFFFF, "precondition: globalVersion at the catch");
+        assert.equal(rec.evalVersion, -1);
+    });
+
+    // P2 computed state survives snapshot / restore: after read 1 threw 'ccl' (s is 11), the snapshot restores into a registry
+    // whose next read of c re-runs the body and returns 11 (the far floor is below every recent version). Both the default
+    // band and the f === 0 band.
+    for (const gv of [null, 0x3FFFFFFD]) {
+        it("[RED] P2 computed snapshot/restore (gv " + (gv === null ? "default" : "0x3FFFFFFD") + "): after the throwing read, snapshot ok, the restored computed's next read is 11", () => {
+            const r = seeded(gv);
+            const s = r.signal(0);
+            const c = r.computed(() => { const v = s(); r.onCleanup(() => { s.set(s.peek() + 10); throw new Error("ccl"); }); return v; });
+            c(); s.set(1);
+            assert.equal(thrown(() => c()).message, "ccl");
+            const snap = r.snapshot();
+            const sId = r.nodeId(s), cId = r.nodeId(c);
+            const H = {};
+            const rr = r.restore(snap, { fnsById: { [cId]: () => H[sId]() }, handles: H });
+            assert.equal(H[cId](), 11);
+            assert.equal(snapOk(rr), true);
+        });
+    }
+});
+
+// ---- A4: 10,000 S1 cycles with a pre-allocated thrown error cost one rethrow each, nothing else (KNOWN pin; A8_FLAGS child) ----
+
+const CHILD_S1 = `
+import { measureWindows } from ${JSON.stringify(HEAP_WINDOW)};
+import { createRegistry } from ${JSON.stringify(ENGINE_URL)};
+for (const f of ${JSON.stringify(A8_FLAGS)}) {
+    if (!process.execArgv.includes(f)) { console.error("S1 child: " + f + " is not in execArgv"); process.exit(3); }
+}
+const N = 10000, WARM = 4, CYC = 12;
+const boom = new Error("boom");        // pre-allocated: the thrown error object itself costs nothing per cycle
+const CNT = new Int32Array(4);         // [body runs, cycles, wrong errors, boom caught]
+let SINK = null;                       // module scope: a dead local would be escape-eliminated
+function make(control) {
+    const r = createRegistry();
+    const p = r.signal(0);
+    const cl = () => { p.set(p.peek() + 1); throw boom; };   // hoisted: ONE closure per make(), none per run
+    r.effect(() => { p(); CNT[0]++; r.onCleanup(cl); });
+    let k = 2;
+    return () => {
+        for (let i = 0; i < N; i++) {
+            k += 2;                    // never equal to p (the cleanup writes k + 1), so every set is a real change
+            try { p.set(k); } catch (e) { if (e !== boom) CNT[2]++; else CNT[3]++; }
+            CNT[1]++;
+            if (control === 1) SINK = {};                                                // BYTES control: 1 empty object per cycle
+            else if (control === 2) SINK = { a: i, b: k, c: i, d: k, e: i, f: k, g: i, h: k };   // SCAVENGE control: 1 bigger object per cycle
+        }
+    };
+}
+// Reference: N one-level catch-and-rethrows of the same pre-allocated error (what the engine's rerunCleanupEffect
+// "catch (err) { ...; throw err; }" does), caught one level up, with no engine involved.
+function oneLevel() { try { throw boom; } catch (err) { throw err; } }
+function makeRef() {
+    return () => {
+        for (let i = 0; i < N; i++) {
+            try { oneLevel(); } catch (e) { if (e !== boom) CNT[2]++; }
+        }
+    };
+}
+const ref = await measureWindows(makeRef(), { warmup: WARM, cycles: CYC });
+CNT.fill(0);
+const real = await measureWindows(make(0), { warmup: WARM, cycles: CYC });
+const realCnt = [CNT[0], CNT[1], CNT[2], CNT[3]];
+CNT.fill(0);
+const ctlB = await measureWindows(make(1), { warmup: WARM, cycles: CYC });
+const ctl = await measureWindows(make(2), { warmup: WARM, cycles: CYC });
+console.log("RESULT " + JSON.stringify({ N, ref, real, ctlB, ctl, realCnt, sinkSet: SINK !== null }));
+`;
+
+function runChildS1(flags) {
+    const res = spawnSync(process.execPath, [...A8_FLAGS, ...flags, "--input-type=module", "-e", CHILD_S1], {
+        encoding: "utf8", timeout: 120000, killSignal: "SIGKILL",
+    });
+    assert.equal(res.error, undefined, "spawn error: " + (res.error && res.error.message));
+    assert.equal(res.signal, null, "child killed by " + res.signal);
+    assert.equal(res.status, 0, "child status " + res.status + "\n" + res.stderr);
+    const line = res.stdout.split("\n").find((l) => l.startsWith("RESULT "));
+    assert.ok(line, "no RESULT line:\n" + res.stdout + res.stderr);
+    return JSON.parse(line.slice(7));
+}
+
+// KNOWN pin, not zero (maintainer ruling Q-b177-1, "Known pin (Rec.)", b177): the engine's re-run cleanup path is
+// rerunCleanupEffect's committed `catch (err) { ...; throw err; }`, and V8 allocates 40 B on every catch-and-rethrow of an
+// already-allocated error (node 26, b177 probes e1/gates/a4-throw-probe.txt: reference loop `try { throw boom } catch (e)
+// { throw e }` caught one level up = 400032 / 400000 B per window of N = 10000 cycles = 40 B per throw; two levels = 80 B;
+// throw + catch only = 0; try/finally = 0). The error path is cold, so the pin is: the engine loop costs exactly what the
+// reference rethrow costs, and nothing else (the row's own cleanup closure is hoisted: 56 B/cycle of it was the
+// as-is row's other cost). The expected value is measured IN THE SAME CHILD with the same measureWindows settings on a
+// reference loop, so another Node major that allocates differently per rethrow moves both sides together.
+// Tolerance: |engine - reference| <= 64 B per window (min and max each), i.e. 0.0064 B/cycle. Basis (node 26, 3 child runs, host
+// load ~40): reference min 400000 max 400032; engine min 400008 max 400032 -- the window bracket constant is 0..32 B and
+// the engine/reference offset at most 8 B. Must-fail controls (see the row): bytes control +{} = 960128 B/window (>= 8 B/cycle above
+// the reference min; it scavenges under --no-opt --no-maglev, so it is asserted in the default-tier row only), scavenge control
+// (+8-field object) minor 12 -- minor only, its bytes read low (264552) once a scavenge lands in the window.
+const S1_TOL = 64;
+function s1MatchesRef(w, ref) {
+    return Math.abs(w.max - ref.max) <= S1_TOL && Math.abs(w.min - ref.min) <= S1_TOL;
+}
+
+describe("AUD-E1 A4: S1 cycles cost exactly one catch-and-rethrow each (KNOWN pin)", () => {
+    it("[RED] A4 S1 loop (10,000 cycles per window): one body re-run and one rethrow of the pre-allocated error per cycle; window bytes == the rethrow reference (+-64 B); minor 0, major 0; bytes control (+{}) >= 8 B/cycle above it, scavenge control (+8-field object) scavenges", () => {
+        const o = runChildS1([]);
+        const [bodyRuns, cycles, wrong] = o.realCnt;
+        assert.equal(wrong, 0, "a write threw something other than the cleanup's error");
+        assert.equal(o.realCnt[3], o.realCnt[1], "every write must rethrow the cleanup's error");
+        assert.equal(bodyRuns, cycles + 1, "body runs " + bodyRuns + " vs cycles " + cycles);   // creation + one per cycle (frozen: 1)
+        assert.equal(o.ref.nan, 0);
+        assert.ok(o.ref.clean >= 12 - 4, "reference clean windows " + o.ref.clean);
+        assert.equal(o.real.nan, 0);
+        assert.ok(o.real.clean >= 12 - 4, "clean windows " + o.real.clean);
+        assert.equal(o.real.minor, 0);
+        assert.equal(o.real.major, 0);
+        assert.ok(s1MatchesRef(o.real, o.ref), "engine min/max " + o.real.min + "/" + o.real.max + " vs reference " + o.ref.min + "/" + o.ref.max);
+        // must-fail controls (the engine loop plus one object per cycle), two separate claims:
+        // (A) BYTES control: + one module-scope {} per cycle (measured 96 B/cycle = 960128 B/window, under the 1 MiB semi-space, so
+        //     no scavenge and the window bytes are a real measurement): minor 0, and min exceeds the reference min by >= 8 B/cycle.
+        assert.equal(o.sinkSet, true);
+        assert.equal(o.ctlB.minor, 0, "bytes control scavenged: its window bytes would not be comparable");
+        assert.ok(!s1MatchesRef(o.ctlB, o.ref), "bytes control matched the reference: " + o.ctlB.min + "/" + o.ctlB.max);
+        assert.ok(o.ctlB.min - o.ref.min >= 8 * o.N, "bytes control exceeds the reference by only " + (o.ctlB.min - o.ref.min));
+        // (B) SCAVENGE control: + one 8-field object per cycle crosses the semi-space, so it scavenges (bytes are NOT claimed: a
+        //     window with a scavenge reads low).
+        assert.ok(o.ctl.minor > 0, "scavenge control minor " + o.ctl.minor);
+    });
+
+    it("[RED] A4 S1 control teeth hold under --no-opt --no-maglev (the scavenge control must scavenge at every tier; the bytes control is asserted in the default-tier row only: it scavenges here)", () => {
+        const o = runChildS1(["--no-opt", "--no-maglev"]);
+        assert.equal(o.realCnt[0], o.realCnt[1] + 1);
+        assert.equal(o.sinkSet, true);
+        assert.ok(o.ctl.minor > 0, "control minor " + o.ctl.minor);
+    });
+});
+
+// ---- A5: retention over 100 create / set x2 / dispose cycles of an S1 effect (child, --expose-gc) ----
+
+const RETENTION_S1 = `
+import { createLeakTracker } from '@zakkster/lite-leak';
+import { createRegistry } from ${JSON.stringify(ENGINE_URL)};
+const tr = createLeakTracker({ name: 'e1', onLeak() {}, onWarning() {} });
+const settle = async () => {
+    for (let t = 0; t < 40 && tr.size() !== 0; t++) { gc(); await new Promise((r) => setTimeout(r, 10)); }
+    return tr.size();
+};
+const r = createRegistry();
+const held = [];
+// Tracked values are created inside the helper so no frame of this loop holds the last one.
+function cycle(i, keep) {
+    const err = new Error('c' + i), pay = { i };
+    tr.track(err, null, 'err' + i); tr.track(pay, null, 'pay' + i);
+    if (keep) held.push(err);
+    const p = r.signal(0); let runs = 0, disposing = false;
+    // the write is made by the re-run cleanups only: a cleanup that writes its own signal while its effect is being DISPOSED
+    // retains err + pay (2 tracked objects per cycle) on the frozen AND the c0c123a1 builds -- reported, not pinned here
+    const e = r.effect(() => { p(); runs++; r.onCleanup(() => { pay.i++; if (!disposing) p.set(p.peek() + 10); throw err; }); });
+    let t1 = null, t2 = null;
+    try { p.set(1); } catch (x) { t1 = x; }
+    try { p.set(100); } catch (x) { t2 = x; }
+    // the dispose runs the (still armed) throwing cleanup: the 1st dispose throws err, a later one completes (A6)
+    disposing = true;
+    for (let d = 0; d < 3; d++) { try { r.dispose(e); break; } catch (x) { /* retry */ } }
+    r.dispose(p);
+    return runs + ':' + (t1 === err) + ':' + (t2 === err);
+}
+const sizes = [], shapes = [], gauges = [];
+for (let i = 0; i < 100; i++) {
+    shapes.push(cycle(i, false));
+    sizes.push(await settle());
+    const st = r.stats(); gauges.push(st.activeNodes + st.activeLinks);
+}
+// the recycled slots: a later effect runs exactly once at creation and once per write
+const q = r.signal(0); let gRuns = 0;
+r.effect(() => { q(); gRuns++; });
+const afterCreate = gRuns;
+q.set(1);
+const afterWrite = gRuns;
+// control: one held error keeps the tracker above 0
+cycle(1000, true);
+const control = await settle();
+console.log(JSON.stringify({ sizes, shapes, gauges, afterCreate, afterWrite, control }));
+`;
+
+describe("AUD-E1 A5: retention across S1 create / set / set / dispose cycles", () => {
+    it("[RED] A5 100 cycles: tracker.size() 0 after each, activeNodes + activeLinks 0, every cycle re-ran the body (3 runs) and rethrew its error; a later effect on a recycled slot runs once; held control > 0", () => {
+        const root = fileURLToPath(new URL("../", import.meta.url));
+        const res = spawnSync(process.execPath, ["--expose-gc", "--max-old-space-size=256", "--input-type=module", "-e", RETENTION_S1], {
+            cwd: root, encoding: "utf8", timeout: 120000, killSignal: "SIGKILL",
+        });
+        const tail = String(res.stderr || "").split("\n").slice(-12).join("\n");
+        assert.ok(res.status === 0 && res.signal === null, "child exit " + res.status + " sig " + res.signal + "\n" + tail);
+        const o = JSON.parse(res.stdout.trim().split("\n").pop());
+        assert.equal(o.sizes.length, 100);
+        assert.ok(o.sizes.every((n) => n === 0), "tracker.size() per cycle: " + o.sizes.filter((n) => n !== 0).join());
+        assert.ok(o.gauges.every((n) => n === 0), "activeNodes + activeLinks per cycle");
+        // creation run + set(1) re-run + set(100) re-run = 3 body runs; both writes rethrow the cleanup's error itself (frozen: 1 run)
+        assert.ok(o.shapes.every((x) => x === "3:true:true"), "cycle shapes: " + [...new Set(o.shapes)].join());
+        assert.equal(o.afterCreate, 1);
+        assert.equal(o.afterWrite, 2);
+        assert.equal(o.control, 1, "control: the held error stays tracked");
     });
 });

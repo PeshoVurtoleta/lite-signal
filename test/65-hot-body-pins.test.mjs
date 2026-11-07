@@ -35,9 +35,10 @@ const SRC = readFileSync(KPATH, 'utf8');
 // allocateLink + freeLink pinned on aa51b2f5 (b115, A5a; byte-identical to the B0 values on 767f808 / 0f75866f);
 // executeEffect + refreshComputed re-pinned on ec6d7156 (b120, LEDGER #48, D-b120-2 `(0, fn)()` form);
 // executeEffect + refreshComputed re-pinned on c8f6cd1e (b176, FIX-CL-D, LEDGER #55; source = r3 9cf9518f, other 12 unchanged).
+// executeEffect re-pinned on ca39e1f4 (b177, AUD-E1 S3, D-AUD-5: effectTail inside the finally; LEDGER #55; other 13 unchanged).
 const PINS = {
     flushEffects: { sha16: 'b4b77b7b0a6a8e2f', bytes: 2270 },
-    executeEffect: { sha16: 'b7aba2d33e1ba3c8', bytes: 3511 },
+    executeEffect: { sha16: '07ee5b7a428a200b', bytes: 3598 },
     createNode: { sha16: '7a8c545056853c6a', bytes: 3780 },
     nodeMiss: { sha16: 'c6aa7fbe2f7077f0', bytes: 1535 },
     disposeNode: { sha16: 'a79e91b70041f7eb', bytes: 6599 },
