@@ -145,14 +145,13 @@ The free lists are singly-linked through a `nextFree` field on each pool object 
 
 #### Counter widths and wrap limits
 
-There is no 64-bit or BigInt counter mode, and none is planned: every engine counter is a 32-bit (or narrower) integer except the two lifetime `stats()` totals (row below); on Node (32-bit Smis) an int32 never boxes, but on pointer-compressed V8 (Chrome, Electron: 31-bit Smis) only the 30-bit `evalCount` is Smi-bound -- `globalVersion`, `batchEpoch` and `nodeSeq` box a HeapNumber per bump once they leave [-2^30, 2^30 - 1] (no browser lane gates this), and the table below states what each one costs when it wraps. Wrap conditions are exact arithmetic on the source (`Signal.js`), not probabilities; the "pin" column names the test or soak lane that guards the row, or says "not pinned".
+There is no 64-bit or BigInt counter mode, and none is planned: every engine counter is a 32-bit (or narrower) integer except the two lifetime `stats()` totals (row below); the 30-bit FIX-R `evalCount` run counter no longer exists (AUD-E2: the batch revert check compares int32 version stamps instead). On Node (32-bit Smis) an int32 never boxes, but on pointer-compressed V8 (Chrome, Electron: 31-bit Smis) `globalVersion`, `batchEpoch` and `nodeSeq` box a HeapNumber per bump once they leave [-2^30, 2^30 - 1] (no browser lane gates this), and the table below states what each one costs when it wraps. Wrap conditions are exact arithmetic on the source (`Signal.js`), not probabilities; the "pin" column names the test or soak lane that guards the row, or says "not pinned".
 
 | Counter | Width / arithmetic | Exact wrap condition | At wrap | Status | Pin / soak lane |
 | ------- | ------------------ | -------------------- | ------- | ------ | --------------- |
 | `globalVersion` (stamps `node.version`, `evalVersion`, `markEpoch`) | int32 increment in `read.set` / `boxSet`, 0 skipped (F29); period 2^32 - 1; `destroy()` resets to 1 (`reset()` does not rewind it) | the counter itself wraps after 2^32 - 1 writes (harmless: every compare is the modular `(a - b) \| 0`). The hazard is a node whose stamp lags the clock by g writes, g mod (2^32 - 1) in [2^31 - 1, 2^32 - 2] (lower end 2^31 - 2 when the window crosses 0) | the 2^31 dormancy band: the FIRST dependency write after the dormancy is absorbed (computed serves its stale cache; an observed effect is queued but its dep walk skips the body); the next write is exact (one-shot self-heal) | KNOWN residual (live). The 0 "unset" sentinel is handled (F29, fixed 1.6.0) | `test/51-version-zero-sentinel.test.mjs` (0 skipped); `bench/torture/wraparound-torture.mjs` (opt-in `TORTURE_WRAPAROUND=1`, full-distance band pins); soak W1 (`npm run soak:wrap`), whose control L-WRAP-TREE expects the breach. No numbered LEDGER row; the band is described in the torture header |
 | `node.gen` | int32 increment per dispose and per `destroy()` | a handle captured at gen g is fooled only if its slot is gen-bumped (dispose or destroy()) exactly k * 2^32 times (k >= 1) between capture and check | a stale `off()` / read / `set()` handle passes the gen check on a recycled slot (ABA) | KNOWN residual, practically unreachable (2^32 recycles of one slot) | not pinned by a unit test; soak W3 (2^32 - 1 recycles after the first dispose), L-WRAP-TREE expects the breach; the `off()` gen guard is LEDGER #40, read-path gen checks LEDGER #44 |
-| `evalCount` (FIX-R run counter) | `(x + 1) & 0x3fffffff`, 30-bit Smi, equality only | exactly k * 2^30 body runs (k >= 1) between a batch's first write to a signal and its revert, inside one batch | that revert is not blocked: pre-FIX-R behavior (stale computed / glitch) for that one revert | KNOWN residual (LEDGER #47, residual b) | `test/82-f5-fixr.test.mjs` (source pin: exactly one masked bump, 8-bit boundary row); `test/48-soak-wrap.test.mjs` near-wrap derive class (mask30); soak W5 `evalCount` |
-| `batchEpoch` | int32 increment per top-level `batch()` only, 0 skipped; period 2^32 - 1; `destroy()` resets to 1 | the epoch equals a captured value again after 2^32 - 2 intervening top-level batches (the next one reuses it) | the revert-capture looks current; FIX-R still blocks the stale revert unless the `evalCount` alias above also holds | handled (bounded by the `evalCount` residual) | soak W2; must-fail control L-WRAP-W2-PREFIXR (pre-FIX-R kernel breaches) |
+| `batchEpoch` | int32 increment per top-level `batch()` only, 0 skipped; period 2^32 - 1; `destroy()` resets to 1 | the epoch equals a captured value again after 2^32 - 2 intervening top-level batches (the next one reuses it) | the revert-capture looks current (`revertEpoch` equals the epoch); the set back is then blocked iff `revertBlocked` finds a direct subscriber mid-run or evaluated after the capture-time `globalVersion` (int32 serial compare of `evalVersion`, exact only while the subscriber's stamp is within 2^31 version bumps of the capture) | bounded by `revertBlocked` (the old `evalCount` alias is gone) | soak W2; must-fail control L-WRAP-W2-PREFIXR (pre-FIX-R kernel breaches) |
 | `nodeSeq` (node id) | int32 increment per node allocation, no skip; ids start at 1 | allocation number 2^31 receives a negative id (-2^31); 0 at allocation 2^32; ids repeat after 2^32 allocations | ids leave [1, 2^31 - 1] (op streams, `nodeId()`); `restore()` accepts only snapshot ids in [1, 2^30 - 1] but copies `nextId` as any int32. At allocation k * 2^32 the id is 0: `onGraphMutation` reports node 0 as 0 (`intA`, or `intB` as a link target in opcodes 3 / 4), the same value opcode 5 (recompute) passes as its constant `intB`, so only a listener that reads `intB === 0` as "no second id" without checking the opcode misreads a link to node 0; `restore()` encodes a null or undefined `ownerId` internally as 0 ("no owner"), which is sound only because it rejects id 0: a snapshot holding a node id or `ownerId` of 0 (or any id outside [1, 2^30 - 1]) throws a `TypeError` instead of restoring. Neither `destroy()` nor `reset()` resets `nodeSeq` | KNOWN residual (live) | soak W4 (2^31 allocations), L-WRAP-TREE expects the breach; no unit pin of the wrap itself |
 | live gauges and counts | `activeLinks`, `activeNodes`, `batchDepth`, lifecycle count: int32, move +/- 1; other `stat*` counts | bounded by pool capacity / the link ceiling, nesting depth, live objects | none | not reachable | none needed |
 | `statTotalAllocations`, `statTotalDisposals` (`stats().totalAllocations` / `totalDisposals`) | plain `++` on a closure `let`, no mask | exact to 2^53, but leaves the Smi range after 2^31 node allocations / disposals (2^30 on pointer-compressed V8: Chrome, Electron) | every later create / dispose boxes a HeapNumber (that path is no longer zero-allocation); counts stay exact | KNOWN residual (audit F19, not fixed) | soak W5[nodeSeq] (create+dispose class); no unit pin |
@@ -813,7 +812,7 @@ These are the questions you'd ask in a code review, with the answers:
 - **Writing to a signal during its own effect (self-feedback loop).** The new value re-queues the effect into the alternate buffer. After 100 flush passes (configurable), `CycleError` is thrown -- you have a real loop, not just a deep update.
 - **Writing to a signal *inside its computed*.** Throws `CycleError` immediately at the inner `set` -- this is a structural cycle, not a deep update, and the engine refuses to attempt it.
 - **Nested effects (v1.2 owner tree).** An effect or computed that creates nested observers (effect/computed) **owns** them. When the owner re-runs or is disposed, those owned children cascade-dispose before the new run -- no leaked nested subscriptions, no manual bookkeeping. Plain signals are deliberately NOT owner-adopted so lazy-allocation wrappers (lite-store keys, lite-form fields) continue to survive their allocating computed's re-runs.
-- **Pre-batch revert (v1.2; narrowed in 1.6.0 by FIX-R / F5).** Rule: inside `batch(...)`, setting a signal back to its pre-batch value (under its `equals`) restores the old version and fires nothing ONLY IF no reactive body (computed or effect) has run since that signal's first write in the batch; if one ran, the set back is a normal write (downstream re-runs and sees the reverted value). KNOWN residuals: (a) a body (effect or computed) already running when `s` is first written in the batch (it, or a computed it reads, writes `s`) that then reads `s` in the same run does not block the revert, so it keeps the intermediate value (test/37 (c): `[5]`, ideal `[5,0]`); (b) the body-run counter is 30 bits, so a revert slips through only after exactly k*2^30 body runs between the capture and the revert inside one batch, falling back to the pre-fix behavior (same class as the 2^31 dormancy band and #44's gen wrap). Eliminates a class of spurious re-runs from temporary state mutations.
+- **Pre-batch revert (v1.2; narrowed in 1.6.0 by FIX-R / F5).** Rule: inside `batch(...)`, setting a signal back to its pre-batch value (under its `equals`) restores the old version and fires nothing ONLY IF none of the signal's current subscribers is running at the set back and none was re-evaluated since the signal's first write in the batch (the check, `revertBlocked`, runs at the set back and walks the signal's direct subscribers: `FLAG_COMPUTING`, or `evalVersion` past the `globalVersion` captured at that first write); otherwise the set back is a normal write (downstream re-runs and sees the reverted value). A body that ran in the batch but does not read the signal does not block its revert (since AUD-E2; test/37 (g')). A body that writes `s` and then reads `s` in the same run blocks the revert: through `FLAG_COMPUTING` while it runs, through its `evalVersion` (stamped past the capture) once it has returned (test/37 (c), the second case: `[5,0]`). The earlier KNOWN residuals (a) (a running body's read after its own write was invisible) and (b) (the 30-bit body-run counter: a revert slipped through after exactly k*2^30 runs) are closed: the counter no longer exists (LEDGER #47). The check compares int32 version stamps by serial compare, exact only while the subscriber's stamp is within 2^31 version bumps of the capture. Past that it errs both ways: a stamp more than 2^31 bumps older than the capture falsely blocks (an extra re-run); a re-evaluation 2^31 or more bumps after the capture, inside that batch, is missed (the revert proceeds: the pre-fix stale read). Eliminates a class of spurious re-runs from temporary state mutations.
 - **Multi-throw in one flush (v1.2).** Two or more effects throwing in the same flush pass aggregate to `AggregateError` at the triggering `set()` / batch boundary; effects that don't throw still run. A single thrown error is rethrown unwrapped (no API change for the common case).
 - **NaN, -0, +0.** Default `equals` is `Object.is`. `NaN === NaN` is true for our purposes (so setting NaN twice doesn't re-fire). `-0` and `+0` are distinct.
 - **First-run effect throws.** The half-initialised node is disposed cleanly, deps unlinked, then the error propagates to the caller. No leaked dangling subscriptions.
@@ -908,7 +907,7 @@ npm test
 
 ### Tier 2 -- Memory (allocation-free verification)
 
-`npm run test:gc` runs `test/04-zero-gc.test.mjs` with `--expose-gc`:
+`npm run test:gc` runs the whole `test/*.test.mjs` suite under `--expose-gc` (`node --expose-gc --test --test-reporter=spec 'test/*.test.mjs'`); its allocation-focused file is `test/04-zero-gc.test.mjs`, which checks:
 
 - 100,000 `set()` calls on a graph with effects retain **< 200 KB** of heap.
 - 1,000 create/dispose cycles retain **< 50 KB**.
@@ -950,11 +949,10 @@ allocator and the documented 264 B/op `signal()`+`dispose` churn -- MUST trip
 the gate, so a lane that has gone blind fails loudly instead of passing.
 
 The file guards on **both** `--expose-gc` and `--max-semi-space-size=4`; without
-them it emits one loud named skip. This lane adds **exactly one loud named skip
-over 1.5.1 (pass count unchanged)** -- `node:test`'s absolute leaf tally is
-node-version-sensitive, so on node v26.8.2 plain `npm test` reports **513 pass /
-2 skip** (the second skip is the architecturally-N/A SSR case). The 16MB
-`npm run test:gc` lane never false-reds on the control floor. Thresholds are
+them it emits one loud named skip. `node:test`'s absolute leaf tally is
+node-version-sensitive. Measured on the unreleased 1.6.0-dev tree, not the 1.5.2 release, on node v26.8.2, 2026-11-08 (b181): plain `npm test` =
+3520 tests / 3505 pass / 0 fail / 15 skip; `npm run test:gc` = 3588 tests / 3586 pass / 0 fail /
+2 skip (the count of a green run: one of five runs on that tree failed one row). Thresholds are
 lite-perf-gate defaults, untouched -- a claimed-zero path that cannot meet them
 is a finding, not a config knob.
 
@@ -991,6 +989,18 @@ semantic scenarios** -- `snapshot-torture` and `reset-torture` (both 1.6.0) plus
 time via signalBox and the getOwner/runWithOwner/createRoot surface -- and
 reports a clean SKIP for the four later-version ones (`scope-torture` 1.7.0,
 `flush-torture` 1.8.0, `cleanup-return-torture` 1.9.0, `dispose-torture` 1.10.0).
+
+Runner verdict rules (AUD-H2, pinned by `test/111`): a scenario passes only with exit 0 AND a
+`  PASS: ` line on its stdout (an exit 0 without one fails as "exit 0 without a PASS: line"). Exit 77 is a
+skip only below the scenario's version floor; at or above it the skip FAILS. The engine key for that
+comparison is the higher of the `package.json` version and the surface `Signal.d.ts` declares
+(`bench/torture/helpers/surface.mjs`; the runner prints `floors: package X, declared Y`), so a 1.6.0-floor
+scenario cannot skip green while `package.json` still says the last release; if either input is unreadable
+the runner exits 2 instead of disabling the floors. The conformance runner (`harness/conformance.mjs`,
+`test/112`) likewise fails closed: it exits 2 when a run executes fewer than 178 conformance or records fewer
+than 18 behavioral cases, or when a KNOWN_FAIL case is absent from or skipped in a run; in single-engine mode
+a KNOWN_FAIL case that now passes exits 1.
+
 The retired `scheduler-bench` carried an `Int32Array` value-correctness oracle: one allocation up
 front, a rotating sampled window per tick (zero per-tick allocation), a full
 sweep at teardown. At the 1.5.0 RC, when the suite was 22 scenarios (19 semantic + 3 soak: `graph-fuzzer`,
@@ -1067,14 +1077,14 @@ See the RETIRED blocks in `bench/torture/MANIFEST.txt` and section 16 of
 `decisions/0001-soak-design.md` for the coverage table and the accepted loss.
 
 ```bash
-npm run verify   # test + test:gc + a sanity bench
+npm run verify   # npm test, then npm run bench (package.json: `npm test && npm run bench`)
 ```
 
 ---
 
 ## Test harnesses
 
-Beyond the engine's own test tiers above, `@zakkster/lite-signal` ships **dedicated harnesses** that live in their own subdirectories with their own `package.json` and setup story. They are version-portable, integration-grade, or otherwise too specialised to belong in the in-tree engine suite -- and they are explicitly opt-in for the two run-on-demand harnesses; the VersionMatrix regression gate is wired into `prepublishOnly` so it runs automatically on `npm publish`. Each is a self-contained artifact you can run against any installed engine, or carry into a different repo to verify a claim independently.
+Beyond the engine's own test tiers above, `@zakkster/lite-signal` ships **dedicated harnesses** that live in their own subdirectories with their own `package.json` and setup story. They are version-portable, integration-grade, or otherwise too specialised to belong in the in-tree engine suite -- and they are explicitly opt-in for the two run-on-demand harnesses; the VersionMatrix regression gate is run by hand with `npm run gate` (it is not wired into any publish hook). Each is a self-contained artifact you can run against any installed engine, or carry into a different repo to verify a claim independently.
 
 This section will grow. As future versions ship publications that need specific defensive validation (e.g. a `flushStrategy` ship, a TC39-polyfill ship, a zero-GC public gate, a profiler/observability ship), the corresponding harness lands here.
 
@@ -1115,7 +1125,7 @@ The matrix is **ratcheted stricter every release**: a regression in a future ver
 
 ### `harness/VersionMatrix/` -- cold-process performance gate
 
-A **same-host, cold-process regression gate** for the engine. Turns "did this release regress?" from a judgment call into a checkpoint: the driver swaps each engine version into `node_modules` in its own `node` invocation (so V8 never carries inline caches or JIT state from one version into another), feeds every version an identical LCG write sequence (so a delta is the engine changing, not the input), and reduces N cold samples per version-x-workload to a per-metric median. Wired as `prepublishOnly` -- a regression aborts `npm publish` before it starts.
+A **same-host, cold-process regression gate** for the engine. Turns "did this release regress?" from a judgment call into a checkpoint: the driver swaps each engine version into `node_modules` in its own `node` invocation (so V8 never carries inline caches or JIT state from one version into another), feeds every version an identical LCG write sequence (so a delta is the engine changing, not the input), and reduces N cold samples per version-x-workload to a per-metric median. Run by hand with `npm run gate`; it is not wired into a publish hook (the `prepublishOnly` hook of 1.4.0-next.0 was dropped in the 1.4.0 commit, 872fa1b).
 
 **Two baselines.** A candidate must clear BOTH a **floor** (never moves -- "we shall not regress below this line") AND a **rolling** baseline (the previous published version). Tolerances are calibrated against measured self-noise (`npm run calibrate`): `frame.avg` is the stable anchor (self-noise <=~3%, gated tight at 5% vs rolling / 10% vs floor); `frame.p99` and `phase.write.p99` are jitter-prone (self-noise up to ~14%), so their tolerances sit above that floor (18% rolling / 30% floor) and a p99 fail should be confirmed with a re-run. The two-baseline design catches the blind spot of a fixed floor -- an engine that improves 1.4 -> 1.6 then regresses back to 1.4 levels still clears a 1.3 floor, but fails the rolling gate.
 
@@ -1141,7 +1151,7 @@ bash matrix.sh gate <candidate-version>   # published candidate vs floor + rolli
 bash matrix.sh gate-self <label> <path>   # current-tree candidate (engine path) vs floor + rolling
 node diff.mjs                             # diagnostic over committed baselines -> matrix-report.json
 node gate.mjs <label>                     # gate over already-captured baselines (exit 1 on regression)
-npm run gate                              # what prepublish runs -- gate-self against the current tree
+npm run gate                              # run by hand (no publish hook) -- gate-self against the current tree
 ```
 
 Committed median baselines live under `harness/VersionMatrix/baselines/<version>/*.json` (each carrying `env` metadata: CPU, node, date, and the `engine.sha256`). These are the **public evidence surface** -- anyone can rerun and diff -- but the gate always re-captures floor / rolling / candidate in the same job so it never diffs across hosts. Details, including how to add a new version to the matrix, in [`harness/VersionMatrix/README.md`](./harness/VersionMatrix/README.md).
@@ -1168,7 +1178,7 @@ The setup script pins specific package versions via tarball install so the harne
 ### Notes
 
 - The hardening suite and the profiler integration do **not** run on `npm test` from the root. They opt in through the `test:hardening` / `test:harness` scripts (and `test:all`, which chains everything).
-- The **VersionMatrix gate**, by contrast, IS wired into `prepublishOnly` -- a regression on any of the seven reference workloads blocks `npm publish`. Diagnostic runs (`node diff.mjs`) are opt-in from the harness directory.
+- The **VersionMatrix gate**, by contrast, is a checkpoint you run by hand (`npm run gate`) -- a regression on any of the seven reference workloads fails the gate; no publish hook runs it. Diagnostic runs (`node diff.mjs`) are opt-in from the harness directory.
 - All three subdirectories have their own `package.json` with local scripts, so you can also `cd` in and run `npm test` directly -- the root scripts are just shortcuts.
 - The `npm --prefix <dir> test` form used in the root scripts is the cross-platform replacement for `cd && npm test` -- works identically on Linux, macOS, and Windows.
 
@@ -1231,7 +1241,7 @@ The mirror sweep ([`bench/r.txt`](bench/r.txt), Andrii's canonical adapter verba
 - **1.1.5** -- additions in service of `lite-devtools` (node identity/traversability on the introspection walkers, for full auto-discovered graph rendering). *Shipped.*
 - **1.2.0** -- the **ownership hybrid**: an owner tree so nested effects/computeds auto-dispose with their parent (closes conformance #209 / #210, matching Solid's `createRoot` ergonomics). Plus three additive features built on the same internal split: pre-batch revert (`batch(() => { a.set(99); a.set(10); })` doesn't re-fire), multi-throw `AggregateError`, and scheduler-thunk caching with an ABA gen guard. *Shipped.*
 - **1.3.0** -- the **pool minor**: node and link pools become growable and incrementally populated. New `prealloc` config (`"eager"` default | `"lazy"`) chooses up-front vs on-demand construction; `onCapacityExceeded: "grow"` extends pools via chunked refill (runs of up to 1024 links / 256 nodes, ledger doubles) bounded by the 16x link ceiling; `maxFlushPasses` is now a public config. Internally the propagation mark phase moved to an intrusive linked-list stack (a `nextMark` field) -- the only node-shape change. The hot paths and public callable API are byte-identical to 1.2.2; steady-state zero-GC is unchanged. *Shipped.*
-- **1.4.0** -- the **observability minor**: `stats()` gains three cumulative lifecycle counters (`totalAllocations`, `totalDisposals`, `poolGrowths`), the surface reserved for it in the 1.2.x/1.3.0 notes. Monotonic over the registry's life, reset by `destroy()`, bumped on the existing acquire/dispose/grow edges -- no hot-path change, no public callable API change. This is what lite-devtools / lite-studio read to chart allocation rate, pool-reuse ratio, and graph churn. Also adds the `harness/VersionMatrix/` regression gate (cold-process, same-host, two baselines) as a `prepublish` step, so a release that regresses `frame.avg` on the four reference workloads (reactive-graph-mix, deep-chain, broadcast-fanout, dynamic-dep-churn) fails the publish. Drop-in over 1.3.0. *Shipped.*
+- **1.4.0** -- the **observability minor**: `stats()` gains three cumulative lifecycle counters (`totalAllocations`, `totalDisposals`, `poolGrowths`), the surface reserved for it in the 1.2.x/1.3.0 notes. Monotonic over the registry's life, reset by `destroy()`, bumped on the existing acquire/dispose/grow edges -- no hot-path change, no public callable API change. This is what lite-devtools / lite-studio read to chart allocation rate, pool-reuse ratio, and graph churn. Also adds the `harness/VersionMatrix/` regression gate (cold-process, same-host, two baselines) as a `prepublish` step (that hook existed only in 1.4.0-next.0 and was dropped in the 1.4.0 commit, 872fa1b; the gate is run by hand with `npm run gate`); a candidate that regresses `frame.avg` on the four reference workloads (reactive-graph-mix, deep-chain, broadcast-fanout, dynamic-dep-churn) fails that gate. Drop-in over 1.3.0. *Shipped.*
 - **1.5.0** -- the **API-surface minor**: two non-callable, allocation-light primitives `signalBox` / `computedBox` land alongside the callable `signal` / `computed` (same `ReactiveNode`, full interop, ~1.7x cheaper construction), and **`createRoot`** lands as the ownership escape hatch the owner tree was designed for (detached scope for lazily spawning long-lived nodes from inside a consumer effect -- the pattern `lite-query` needs). The callable API, hot paths, and `stats()` shape are unchanged; the `24-signalbox` suite (staged since 1.3.0) now runs and passes. VersionMatrix gains an **identical-code guard** (SHA-256 of the engine source per baseline): a re-versioned publish with byte-identical `Signal.js` is marked `SKIP` structurally rather than flagged by noisy median variance. *Shipped (beta).* **1.5.0-beta.2** adds the re-attach companions **`getOwner` / `runWithOwner`** (gen-stamped handles that degrade to rooted execution when the captured owner has been recycled -- the raw-pointer alternative would silently adopt continuations into the recycled slot's new resident, or crash the engine with unbounded cleanup recursion on a corpse handle; both hazards pinned in `test/28-run-with-owner.test.mjs`). Hot paths remain byte-identical to 1.5.0-beta.1 -- verified via sha256 over extracted function bodies (`pullComputed`, `markDownstream`, `executeEffect`, `flushEffects`, `allocateLink`, `severTail`, `createNode`, `runCleanup`, `disposeNode`).
 - **Next** -- the pull-mode recursion depth limit (about 2,400 cold-read or 5,000 re-walk chained computeds, measured; see "Deep chain depth") remains the main outstanding architectural item. Watching lite-query's real-world adoption of `createRoot` + `runWithOwner` for what the next escape hatch needs to be.
 
@@ -1481,8 +1491,8 @@ Yes, if your computeFn reads its deps in the same order each invocation. The `cu
 ## npm scripts
 
 ```bash
-npm test          # behavior suite, ~1.3s
-npm run test:gc   # zero-gc suite, requires --expose-gc, ~3s
+npm test          # behavior suite
+npm run test:gc   # whole test/*.test.mjs suite under --expose-gc
 npm run bench     # microscope + mirror comparative benches (rb.txt / r.txt), ~5min
 npm run torture          # full torture suite, all 25 scenarios (24 semantic + 1 opt-in soak)
 npm run torture:semantic # correctness scenarios only, ~10s
@@ -1490,8 +1500,8 @@ npm run torture:soak     # opt-in wraparound soak (0 passed, 1 skipped by defaul
 node --expose-gc bench/benchmarkReactive.mjs  # DEPRECATED pre-v3 reactivity suite (removed after 1.5.1)
 npm run harness:field   # verify + cold-child A/B bench (fieldkit)
 npm run harness:all     # field + dispose + churn probes, in sequence
-npm run gate            # cold-process version-matrix regression gate (also runs on prepublish)
-npm run verify    # test + test:gc + sanity bench; gate for publish
+npm run gate            # cold-process version-matrix regression gate (run by hand; no publish hook)
+npm run verify    # npm test, then npm run bench (not test:gc; not a publish hook)
 ```
 
 ---

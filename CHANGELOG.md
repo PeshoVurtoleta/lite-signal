@@ -74,6 +74,61 @@ lines that said `destroy()` was "safe to call mid-flight" or that counters were 
   synthetic gate matrix and a wiring row; run on node 22.23.4 / 24.22.1 / 26.8.2.
 - NOT in yet (a later unit): the soak REGISTRY lane's DIV-F10 / DIV-D2 re-judging and the parity re-pin.
 
+### Changed -- CI and soak harness gates (AUD-H1, AUD-H2, AUD-N, D-b179-1, D-b181-1; dev-only, not shipped)
+
+Dual audit 2026-11-06 follow-ups. Harness and workflow files only; `Signal.js` and `Watch.js` are unchanged by every item here.
+- **Torture steps run after a red unit-test step (D-b179-1).** In `ci.yml` the "semantic torture" and "torture gate" steps carry
+  `if: ${{ !cancelled() }}`, so a red "unit tests" step no longer skips them (they skipped on every cell after FIX-CL, because
+  the two test/41 B6 drift-guard rows were red). A failing torture step still fails the job; the steps skip only on a cancel.
+  test/47 requires that exact `if:` on those two steps.
+- **A gc-tier unit step (D-b181-1).** `ci.yml` (sha256/8 e8718dd5) gains the step `unit tests (gc tier)` (`npm run test:gc`, i.e.
+  `node --expose-gc --test --test-reporter=spec 'test/*.test.mjs'`: the whole suite again) after "unit tests", with the same
+  `if: ${{ !cancelled() }}` so a red "unit tests" step does not skip it (test/47 requires it). The job now holds the suite twice, so the
+  test job `timeout-minutes` goes 30 -> 45 (the macOS `unit tests` step took 10m21s-14m21s over the last 6 CI runs, 12m08s on f2fccf3).
+  `test:gc` has not yet run on any CI cell: the first CI run is pending.
+- **Verdict-aware soak report (AUD-H1 B1 / B2, D-AUD-1).** `bench/soak/SoakReport.mjs` takes `--require-explained` (no value;
+  twice is CONFIG) and exports the pure `explainedProblems(summary)`. Read only after every integrity check passes, it exits
+  >= 1 with one `soak:report: UNEXPLAINED -- ` line per cause on a non-end reason, an oracle BREACH with known=none, any gate
+  BREACH, or any INCONCLUSIVE; otherwise it prints `soak:report: EXPLAINED -- ...` before the verdict line. Without the flag
+  a consistent release-size tree stream still exits 0 whatever verdict it re-derives. `bench/soak/_mustfail.mjs` applies the
+  same rule to "explained" main-run controls: an unexpected INCONCLUSIVE line there is now a failure (it was ignored).
+- **Workflows use it (AUD-H1 B3).** Both `soak:report` steps (`ci.yml` smoke report, `soak-nightly.yml` burn-in report) pass
+  `--require-explained`. The `ci.yml` smoke-report step rejects any `INTEGRITY` / `CRASH` / `CONFIG` / `UNEXPLAINED` line on every
+  exit code, and accepts exit 0, or the exit-1 smoke refusal, only together with an `EXPLAINED` line. The nightly burn-in
+  takes `SOAK_SEED: ${{ inputs.seed || github.run_number }}` (a new `seed` dispatch input, default empty), so the seed differs
+  per run; a non-uint32 seed is a CONFIG error and the report step goes red.
+- **Torture floors from the engine surface (AUD-H2 B1).** `bench/torture/run.mjs` keys its floors to
+  max(`package.json` version, the version declared by `Signal.d.ts` markers) (new `helpers/surface.mjs`), so dropping
+  `snapshot` / `restore` / `reset` can no longer turn snapshot-torture / reset-torture into a green skip; an unreadable input
+  exits 2 ("cannot derive engine surface; failing closed"). A scenario passes only on exit 0 AND a `  PASS: ` line.
+- **Conformance floors (AUD-H2 B2).** `harness/conformance.mjs` exits 2 when a run executes fewer than 178 conformance or 18
+  behavioral cases, or when a KNOWN_FAIL case is absent from or skipped in a run; in single-engine mode a KNOWN_FAIL case that
+  passes exits 1. Tests: test/111 and test/112.
+- **soak-nightly ready for main (AUD-N, D-AUD-6, D-b180-1).** GitHub fires `schedule:` only from the default branch, so the
+  nightly cron on 1.6.0-dev never ran. `soak-nightly.yml` is now meant to be byte-identical on main and 1.6.0-dev: each of its
+  three checkouts uses `ref: ${{ github.event_name == 'schedule' && '1.6.0-dev' || '' }}` (only a scheduled run checks out
+  1.6.0-dev; push and dispatch keep the event's commit, so a dispatch on main runs main's tree, which has no
+  lockfile or `soak:parity`, and fails closed). A "workflow sync" step after each checkout runs
+  `git diff --exit-code "$GITHUB_WORKFLOW_SHA" HEAD -- .github/workflows/soak-nightly.yml`: on a scheduled run it fails when
+  main's copy and the checked-out dev file differ; on push / dispatch it is a no-op. The cron starts only after the
+  maintainer copies the file to main (`.handoff/aud-n/MAIN-STEPS.md`); until then nothing here claims a scheduled run.
+  test/47 ties the literal branch to the package version: at a strict-semver version >= 1.6.0 (pre-release below) or a
+  malformed one the check retires the literal `ref`, so `/release 1.6.0` must drop or retarget it.
+
+### Changed -- soak: TIMED calibration recut on engine e26168ce (b180)
+
+`bench/soak/calibration/soak-calibration.json` was cut before FIX-CL, so the test/41 B6 drift guard failed on every CI cell. Recut
+with `calibrate.mjs --write ... --timed` under `quiet-lock run --strict` (host QUIET at the start: load1 2.04 vs baseline 2.21, no
+busy node; Node v26.8.2; 1564 s; main smoke and full cross-check equal on headpatched, lite-1.5.2 and tree). The file's sha256/8
+92db23fb -> cc3cbf4c. 25 of 4831 numeric values moved outside provenance and throughput, all in tree BOX cells and the hollow BOX volume (plus the Signal.js sha d235e505 -> e26168ce, provenance and
+throughput): box-interop 10024588 -> 10013951, equality-cutoff 306784 -> 303087 (-1.2%), second-invalidation 687352 -> 687784,
+and performed O2 / O4 / OB and the hollow BOX volume follow. Cause: BOX is the only tree cell that runs batch-revert worlds
+through `read.set` / `boxSet`, and AUD-E2 lets more reverts succeed, so fewer downstream recomputes. BOX OT, worlds 2793 / 150,
+failingWorlds and every headpatched / lite-1.5.2 count are byte-identical; constants and binding cells are unchanged.
+Throughput is PRELIMINARY: the host got busy mid-cut (load1 3.62 at the end of the cut, 6.29 at the finish) and every median
+fell 2-13% on the unchanged engines too, so that movement is host load, not an engine change. This is a calibration data
+recut; `Signal.js` is not changed by it.
+
 ### Fixed -- a cleanup that throws at a re-run no longer wedges its node (LEDGER #55, FIX-CL-D, b176)
 
 A cleanup (an `onCleanup` function, or the dispose of an owned child) that threw when its effect or computed was about to
@@ -92,18 +147,33 @@ Now (Signal.js c8f6cd1e):
   children still attached are disposed (repeated only after a child threw, at most `maxFlushPasses` passes), the node's own
   cleanups after the throwing one are dropped (as at every re-run), and the first run still runs its body. The error is
   then that run's error: an effect rethrows it, a computed caches it. More than one error is an `AggregateError`
-  (message `cleanups threw before the first run`): the cleanup errors in disposal order (an owned child's cleanup before
+  (message `cleanups threw before the body could run`; AUD-E1 reworded it, the old text was false when a cleanup disposes the node and the body never runs): the cleanup errors in disposal order (an owned child's cleanup before
   the node's own list), the body's error last.
-- **Cap.** At the `maxFlushPasses` cap the error `CycleError: owned cleanups kept throwing before the first run` joins
+- **Cap.** At the `maxFlushPasses` cap the error `CycleError: owned cleanups kept throwing before the body ran` joins
   the errors; the children still attached and the node's own list wait for the next run, one throwing child per write.
+- **A write made by the throwing cleanup (AUD-E1, D-AUD-2 / D-AUD-5).** A re-run cleanup that wrote a dependency of its own
+  node and then threw no longer leaves the node stale: `rerunCleanupEffect` / `rerunCleanupComputed` compare the node's
+  `markEpoch` across the cleanup, and when it moved an effect is re-queued and a computed takes the far-floor `evalVersion`,
+  so the next flush or read re-runs it (cold path only). An effect whose body throws after a write it read the old value
+  of is now re-queued too: `effectTail` is the last statement of `executeEffect`'s `finally`, so the re-queue no longer
+  skips a throwing body (the F-b33-1 entry below).
 - **Residuals.** A never-evaluated computed with no dependencies keeps its error until disposed (as a constant computed
   whose body threw does). A child whose cleanup throws is popped before disposal and stays live (LEDGER #56, OPEN).
 Evidence of this cycle (b176; untimed, deterministic, host loaded: load1 10.9-32.0 against a 2.21 baseline, Node v26.8.2):
 the hot bodies are byte-equal to the re-run-only core (r3, Signal.js sha256/8 9cf9518f, unpublished) (`executeEffect` 454 B, `refreshComputed` 770 B (781 B at d235e505), `flushEffects` 440 B, `pullComputed` 77 B); the new code is in cold functions (`rerunCleanupEffect` 161 B,
-`rerunCleanupComputed` 140 B, plus five new cold helpers); inlining decisions are SAME on TurboFan and Maglev; the recursion
+`rerunCleanupComputed` 140 B, plus five new cold helpers; AUD-E1, Signal.js ca39e1f4, Node v26.8.2: `rerunCleanupEffect` 190 B,
+`rerunCleanupComputed` 198 B, `effectTail` 25 B and the hot bodies unchanged, inlining decisions SAME on TurboFan and Maglev); inlining decisions are SAME on TurboFan and Maglev; the recursion
 depth gate (max statistic, 5 lanes, 3 interleaved runs) reads 1.0000 at its worst cell against both references; `npm run
 torture` exit 0 (gc major 0 / minor 0, 0 B/op). `snapshot()` is unchanged. No timing claim. Tests:
-`test/110-cleanup-throw.test.mjs` (82 rows; on the d235e505 build 65 of them fail).
+`test/110-cleanup-throw.test.mjs` (82 rows; on the d235e505 build 65 of them fail; AUD-E1 added 13 rows plus S1e2); test/56 rows TS / TC / TY
+flipped to the re-queue contract.
+
+Inlining note (dual audit 2026-11-06, finding opus-5.5-engine-2; measured at the audit's tree and NOT re-measured on the current engine,
+Signal.js sha256/8 e26168ce). With `node --trace-turbo-inlining`, 4 runs per build, flushEffects' TurboFan trees with executeEffect inlined
+had runOwnCleanup inlined in 4 of 4 runs on the base and 0 of 4 on FIX-CL. Budget arithmetic from bytecode lengths: base 914 of 920 B
+(6 B spare), FIX-CL 893 B; runOwnCleanup (203 B) would need 1096 B. The hot bodies do not grow; the cost is one real call per cleanup
+re-run on a warm effect that registered an onCleanup, and its size was not timed. The audit's advice is to accept it (no variant that
+keeps runOwnCleanup inlined fits) and record it. The "inlining decisions SAME" statements above compare FIX-CL-D with the r3 core (and AUD-E1 with FIX-CL-D), builds that already carry the split; against the pre-FIX-CL build d235e505, which this note measures, the decisions do differ (default driver: TurboFan 6 lines, Maglev 4, runCleanup -> runCleanupE / runCleanupC).
 
 ### Fixed -- reset-torture window blind on node 22 / 24 (CI class 14)
 
@@ -955,24 +1025,43 @@ kept the intermediate value after the revert; (2) a reader created before the ba
 mid-batch re-evaluation dropped a conditional dependency and the revert then hid a later write to the dropped source
 (effect dead).
 
-Fix (Signal.js 0628127b -> 0f75866f): inside `batch()`, setting a signal back to its pre-batch value (under its `equals`)
-restores the old version and fires nothing ONLY IF no reactive body (computed or effect) ran since that signal's first write
-in the batch; if one ran, the set back is a normal write (downstream re-runs and sees the reverted value). A node gains a
-`preBatchEvals` capture of the body-run counter at its first batch write.
+Fix (first landed 0628127b -> 0f75866f; rule as re-based by AUD-E2): inside `batch()`, setting a signal back to its pre-batch value (under its `equals`)
+restores the old version and fires nothing ONLY IF no direct subscriber is mid-run and none was evaluated since that
+signal's first write in the batch; otherwise the set back is a normal write (downstream re-runs and sees the reverted value).
+A node gains a `preBatchEvals` capture at its first batch write.
 
-Cost (untimed, node v26.8.2; a statistical A/B is a PENDING release-gate step): bytecode fireRecompute 26 -> 45 (+19),
+AUD-E2 / E2b (D-AUD-3, D-AUD-4; Signal.js e26168ce) re-based the check; the rule above is the current one. The hot body-run
+counter `evalCount` is gone (0 occurrences in Signal.js): `preBatchEvals` now captures `globalVersion`, and the check runs
+at revert time in the cold `revertBlocked(node)`, which `read.set` / `boxSet` call only after a set back that equals the
+capture. It walks the node's direct subscribers: blocked iff one is `FLAG_COMPUTING` or its `evalVersion` is past the capture
+(an int32 serial compare, exact only while the subscriber's stamp is within 2^31 version bumps of the capture). A body that did
+not read the signal no longer blocks the revert. `fireRecompute` is now `if (mutationHook !== null) fireOp5(node);`; the
+cold `fireOp5` clears `activeObserverCurrentDep` when a graph-mutation listener throws and rethrows, so the run is abandoned
+with its links kept, the listener's error surfaces, the triggering write is absorbed and the node recovers on the next write.
+
+Cost as first landed (0f75866f; superseded by AUD-E2 below; untimed, node v26.8.2; a statistical A/B is a PENDING release-gate step): bytecode fireRecompute 26 -> 45 (+19),
 read.set 252 -> 285 (+33), boxSet 204 -> 227 (+23); executeEffect 455, refreshComputed 782, the readers 106/200/96/99,
 allocateLink 572, flushEffects 440 and batch 108 unchanged; inlining census unchanged (executeEffect inlined into
 flushEffects in 8/8 lanes, 0 deopts); +8.00 B per node (eager 233.28 -> ~241.3 B/node at maxNodes 1e5); GC over a 1e6 batch
 set/read/revert loop: minor 0, major 0. Soak: shrinks ERROR:7:0x8999219f, BATCH:1:0xb08f012b and BATCH:2:0xfd8b9606 exit 1 -> 0;
 BATCH failingWorlds 2000 -> 0, ERROR 1523 -> 1516 (DIV-F5 lines dropped; 10 worlds now reach DIV-F22).
 
-KNOWN residuals: (a) a body (effect or computed) already running when `s` is first written in the batch (it, or a computed it reads, writes `s`) that then reads `s` in the same run does not block the revert, so it keeps the intermediate value
-(test/37 (c): `[5]`, ideal `[5,0]`); (b) the body-run counter is 30 bits, so a revert slips through only after exactly
-k*2^30 body runs between the capture and the revert inside one batch, falling back to the pre-fix behavior (same class as
-the 2^31 dormancy band and #44's gen wrap).
+KNOWN residuals as first landed (0f75866f; both superseded by AUD-E2): (a) a body (effect or computed) already running when `s` is first written in the batch (it, or a computed it reads, writes `s`) that then reads `s` in the same run did not block the revert, so it kept the intermediate value
+(test/37 (c): `[5]`, ideal `[5,0]`); (b) the body-run counter was 30 bits, so a revert slipped through only after exactly
+k*2^30 body runs between the capture and the revert inside one batch.
+AUD-E2 now: (a) is closed (a subscriber mid-run, or finished with `evalVersion` past the capture, blocks the revert; test/37 (c) is `[5,0]`, and (g') delta 1 -> 0 is the new
+contract); (b) no longer exists as a 30-bit counter (the capture is an int32 serial compare, see above; test/82 gains int32
+wrap rows, e.g. a restore at `globalVersion` 0x7FFFFFFE).
 
-Tests: test/82-f5-fixr.test.mjs (33 rows: R1-R7 on signal and box, G1-G4, source pin, 8-bit boundary, GC / retention),
+AUD-E2 bytecode (node v26.8.2; the figures above are the 0f75866f ones and are not current): `read.set` 285 -> 279, `boxSet`
+227 -> 221, `fireRecompute` 45 -> 15, new cold `revertBlocked` 75 and `fireOp5` 55; `executeEffect` 454, `refreshComputed` 770,
+`flushEffects` 440 and `markDownstream` 194 unchanged. TurboFan inlines `revertBlocked` into `read.set` / `boxSet`; Maglev
+never inlined `fireRecompute`, before or after. The "+8.00 B per node" figure above was measured at 0f75866f and has not been
+re-measured on e26168ce (`preBatchEvals` still exists as a per-node field); no per-node byte figure is claimed as current.
+BATCH soak cross-check (2607 worlds, 0 BREACH, revert-after-mid-read hit 246712 times; W1 BREACH byte-identical on ca39e1f4,
+known DIV-F1-band) and the 7 planned mutants plus the plain-compare mutant killed: from the AUD-E2 commit message.
+
+Tests (as first landed; AUD-E2 rewrote the test/82 source pin and the test/37 (c) / (g') rows, see above): test/82-f5-fixr.test.mjs (33 rows: R1-R7 on signal and box, G1-G4, source pin, 8-bit boundary, GC / retention),
 test/37 todos resolved ((c) KNOWN [5]), test/48 mask30 rows. Full suite: npm test 2196 tests / 2184 pass / 0 fail / 11 skip / 1 todo; npm run test:gc 2244 / 2241 pass / 0 fail / 2 skip / 1 todo (node v26.8.2, b108). Soak closure of #36: done in b109 (see "### Changed -- soak b109: DIV-F5 fixed in the registry, LEDGER #36 closed" below).
 
 ### Changed -- LEDGER #36 (F-MB) triaged: folded into DIV-F5 (docs only, not shipped)
@@ -1161,6 +1250,8 @@ Behavior now, as in the `Signal.js` header "WRITE DURING AN EVALUATION":
 - KC: whether a reader gets the flag no longer depends on subscription order (a reader reached first through
   an absorbed path and later through a clean edge still gets it; each node pops at most twice, O(V+E), no
   allocation). This fixed a lost update.
+- A stale effect is re-queued even when its body throws (AUD-E1, S3 / D-AUD-5: `effectTail` runs in `executeEffect`'s `finally`);
+  the re-queued run's error, if any, replaces the first one when it runs at once (outside a flush and a batch).
 - A never-settling loop throws `CycleError:` where it forms: effects through `flushEffects`' `maxFlushPasses`,
   computeds when the nested re-pull count reaches `maxFlushPasses` ("CycleError: computed keeps invalidating
   its own reads"), including from `effect()` creation (its first run) and from reads.
@@ -2344,8 +2435,8 @@ survives consumer re-runs.
 
 ### Added -- VersionMatrix identical-code guard (harness/VersionMatrix/)
 
-The regression gate (`harness/VersionMatrix/`, wired into `prepublishOnly` since
-1.4.0) gains an **identical-code guard**: each capture records the sha256 of the
+The regression gate (`harness/VersionMatrix/`; its `prepublishOnly` hook existed only in 1.4.0-next.0 and was dropped in the 1.4.0
+commit 872fa1b, so it is run by hand with `npm run gate`) gains an **identical-code guard**: each capture records the sha256 of the
 engine source (`baselines/<label>/engine.sha256`). If the candidate's hash matches
 a baseline's, that axis is running the *same bytes* -- any measured delta is host
 noise, not a regression -- so the gate marks it `SKIP` rather than let variance
@@ -2482,8 +2573,8 @@ as before (the reset keeps the arena warm); only the cumulative counts reset.
 ### Added -- VersionMatrix regression gate (harness/VersionMatrix/)
 
 A **same-host, cold-process regression gate** for the engine ships alongside the
-observability counters, wired into `prepublishOnly` -- a candidate that regresses
-beyond calibrated tolerances aborts `npm publish` before it starts. Each
+observability counters, as a `prepublishOnly` step in 1.4.0-next.0 (dropped in the 1.4.0 commit 872fa1b before release; run by hand with
+`npm run gate`) -- a candidate that regresses beyond calibrated tolerances fails the gate. Each
 version-x-workload is profiled in its own `node` invocation (V8 never carries
 inline caches or JIT state across versions), fed an identical LCG write sequence
 (delta = engine change, not input), and reduced to a per-metric median-of-N

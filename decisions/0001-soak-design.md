@@ -307,7 +307,10 @@ BREACH on a lane with a capped cycle is admitted (FAIL_CAP keeps only 16 failure
 tree-parity cannot tell a stale stream from a forged one and refuse both; extra config keys, engine.version,
 controls.error, parity.error, gateHits names and header sub-objects are not judged. The record-key tables are COPIES
 (main/provenance export no shapes); the honest-stream tests are the drift guard.
-Release eligibility reads no verdict: a consistent release-size tree stream exits 0 whatever V it re-derives (FAIL too).
+Release eligibility reads no verdict WITHOUT `--require-explained`: a consistent release-size tree stream exits 0 whatever V it
+re-derives (FAIL too; the verdict line says which). With `--require-explained` (AUD-H1, D-AUD-1; read only after every integrity
+check passes) `explainedProblems` makes a non-end reason, an oracle BREACH with known=none, any gate BREACH or any INCONCLUSIVE
+exit >= 1; the verdict V itself is still not what it reads. Both workflows pass the flag (section 13).
 
 ### 10. The teeth registry (a gate that cannot fail is not a gate)
 
@@ -407,15 +410,17 @@ gV rewrite"; its spec is not keyed on known= / sig=, so a DIV-F29 entry leaves i
 
 ### 13. CI (S4-min, SPEC-B addendum item 11; dated 2026-10-13)
 
-- Files: `.github/workflows/ci.yml` (test cells on Node 22 / 24 / 26 and macOS Node 24: npm ci, npm test,
-  torture:semantic, torture.mjs; a `gates` job on the pinned Node: soak:parity, test:gate, a P-TREE probe step, a soak
-  smoke checked by soak:report) and `soak-nightly.yml` (burn-in, teeth, teeth-long). `package-lock.json` is committed
+- Files: `.github/workflows/ci.yml` (test cells on Node 22 / 24 / 26 and macOS Node 24: npm ci, npm test, test:gc,
+  torture:semantic, torture.mjs; since D-b179-1 / D-b181-1 the gc-tier step and the two torture steps carry `if: ${{ !cancelled() }}` so a red unit-test
+  step does not skip them; a `gates` job on the pinned Node: soak:parity, test:gate, a P-TREE probe step, a soak smoke
+  checked by `soak:report --require-explained`) and `soak-nightly.yml` (burn-in, teeth, teeth-long). `package-lock.json` is committed
   (`npm ci`).
 - P-TREE switch: the tree soak steps are report-only while teeth.mjs GAPS lists P-TREE. A `ptree` step reads GAPS and
   keys `continue-on-error` on it (a red step then prints a `::warning::`); deleting the GAP makes the same steps gate
   with no workflow edit.
 - Volume and floors: the burn-in is release-shaped (33 cycles x 200000 ops, full roster, SOAK_REQUIRE_PROVENANCE=1,
-  no LANES / KERNEL / SMOKE / MUSTFAIL), and `soak:report` judges it. Dispatch inputs are read only through `env:` and
+  no LANES / KERNEL / SMOKE / MUSTFAIL), and `soak:report --require-explained` judges it (since AUD-H1 B3
+  the burn-in seed is `inputs.seed || github.run_number`, per run, not a fixed one). Dispatch inputs are read only through `env:` and
   a volume guard fails closed below DEFAULT_OPS / DEFAULT_CYCLES. Must-fail confirmed on CI (2026-10-13): a dispatch
   with ops=50000 failed at the volume guard (`SOAK_OPS="50000" is not a decimal integer >= DEFAULT_OPS 100000`).
 - CI streams as release-shaped evidence: a clean-checkout burn-in stream carries gitSha with gitDirty false, so the
@@ -428,6 +433,17 @@ gV rewrite"; its spec is not keyed on known= / sig=, so a DIV-F29 entry leaves i
   upload-artifact are pinned at v7 (all node24; upload-artifact v5 is still node20). The soak steps use the pinned
   PIN_NODE (26.8.2, renamed from SOAK_NODE because config rejects unknown SOAK_* env keys).
 - Known limits: Node 22 / 24 cells could not be run locally when the workflows were written (only Node 26 installed).
+- Amendment 2026-11-08 (b180, AUD-N, D-AUD-6, ruling D-b180-1): the sentence "The cron fires only from the default branch."
+  above stays as the record. It had a consequence: a `schedule:` trigger on 1.6.0-dev never ran. `soak-nightly.yml` is now
+  one file meant to be byte-identical on main and 1.6.0-dev. Each of its three checkouts sets
+  `ref: ${{ github.event_name == 'schedule' && '1.6.0-dev' || '' }}` (schedule-keyed, the maintainer's answer to Q-N1): only a
+  scheduled run checks out 1.6.0-dev; push and dispatch use the event's commit, so a dispatch on main runs main's tree and
+  fails closed (main has no lockfile or soak:parity). A "workflow sync" step after each checkout runs
+  `git diff --exit-code "$GITHUB_WORKFLOW_SHA" HEAD -- .github/workflows/soak-nightly.yml`: on a scheduled run it fails when
+  main's copy and the checked-out dev file differ; on push / dispatch it is a no-op. The cron starts only after the maintainer
+  copies the file to main (.handoff/aud-n/MAIN-STEPS.md); this amendment does not record a scheduled run. test/47 pins the
+  `ref` literal and the sync step, and retires the literal branch at a package version >= 1.6.0, so `/release 1.6.0` must
+  drop or retarget it.
 
 ### 14. Amendment 2026-10-25 (b109): DIV-F5 fixed, soak closure
 

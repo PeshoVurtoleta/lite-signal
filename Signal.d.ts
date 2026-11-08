@@ -336,8 +336,13 @@ export type GraphMutationOpcode = 1 | 2 | 3 | 4 | 5;
  * inside each mutation point with three integers -- no objects allocated.
  *
  * **Contract: observe only.** Listeners MUST NOT throw and MUST NOT mutate the
- * graph from inside the callback. Both will corrupt the engine's state. Wrap any
+ * graph from inside the callback. Either can corrupt the engine's state unless an outcome is stated. Wrap any
  * downstream work in a microtask if it could touch the registry.
+ *
+ * A listener that throws on opcode 5 (recompute) throws before the
+ * body runs; the run is abandoned with its dependency links kept, the listener's error
+ * surfaces to the caller, the write that triggered the run is absorbed, and the node
+ * recovers on the next write to a source it still links (1.6.0).
  */
 export type GraphMutationListener = (opcode: GraphMutationOpcode, intA: number, intB: number) => void;
 
@@ -465,10 +470,12 @@ export interface Registry {
     /**
      * Pre-batch revert: setting a signal back to its pre-batch value (under its
      * equals) inside a batch restores the old version and fires nothing ONLY IF no
-     * computed or effect body ran since that signal's first write in the batch;
-     * otherwise the set back is a normal write. Known residuals: a body already running at the
-     * signal's first batch write that reads it later in that run (the revert is not blocked), and a 30-bit body-run counter
-     * (exactly k*2^30 runs between capture and revert).
+     * subscriber of that signal is running at the set back and none was re-evaluated
+     * since the signal's first write in the batch (checked at the set back, 1.6.0);
+     * otherwise the set back is a normal write. A body that ran in the batch but does
+     * not read the signal does not block its revert. The check compares int32 version
+     * stamps: exact only while the subscriber's stamp is within 2^31 version
+     * bumps of the capture.
      */
     batch<T>(fn: () => T): T;
     untrack<T>(fn: () => T): T;
@@ -723,10 +730,12 @@ export function dispose(api: Disposable): void;
 /**
  * Pre-batch revert: setting a signal back to its pre-batch value (under its
  * equals) inside a batch restores the old version and fires nothing ONLY IF no
- * computed or effect body ran since that signal's first write in the batch;
- * otherwise the set back is a normal write. Known residuals: a body already running at the
- * signal's first batch write that reads it later in that run (the revert is not blocked), and a 30-bit body-run counter
- * (exactly k*2^30 runs between capture and revert).
+ * subscriber of that signal is running at the set back and none was re-evaluated
+ * since the signal's first write in the batch (checked at the set back, 1.6.0);
+ * otherwise the set back is a normal write. A body that ran in the batch but does
+ * not read the signal does not block its revert. The check compares int32 version
+ * stamps: exact only while the subscriber's stamp is within 2^31 version
+ * bumps of the capture.
  */
 export function batch<T>(fn: () => T): T;
 export function untrack<T>(fn: () => T): T;

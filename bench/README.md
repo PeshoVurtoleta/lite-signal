@@ -150,7 +150,7 @@ ITERATIONS=200000 node --expose-gc bench/benchmark.mjs
 
 ## Legacy: `benchmarkReactive.mjs` and the smoke runner
 
-`benchmarkReactive.mjs` and `run-all-reactive.sh` (five engines in one process) are the **superseded** reactive path. That shared-process protocol is the origin of the retired "lite is ahead on the dyn family / large web app / wide dense" claim, which the mirror, the microscope, and Andrii's own log all contradict once measured under an isolated protocol. The smoke runner is demoted: its output is stamped `shared-process-smoke`, and the aggregator **hard-refuses** those files for any publishable table. Keep it only as a fast smoke check; never cite its numbers. New reactive standing comes from `sweep.mjs`.
+`benchmarkReactive.mjs` (five engines in one process) is the **superseded** reactive path; the shell runner `run-all-reactive.sh` that drove it has been removed. That shared-process protocol is the origin of the retired "lite is ahead on the dyn family / large web app / wide dense" claim, which the mirror, the microscope, and Andrii's own log all contradict once measured under an isolated protocol. Both are retired: `benchmarkReactive.mjs` is now a stub that prints a retirement notice and exits 2. Files stamped `shared-process-smoke` (`bench/lib/stamp.mjs`) are still **hard-refused** by `bench/aggregate.mjs` for any publishable table; never cite their numbers. New reactive standing comes from `sweep.mjs`.
 
 `run-all-bench.sh` (microscope, one engine per cold process) is retained but should schedule round-robin rather than `for eng; for rep` — engine-major ordering pins the last engine to the hottest chassis (the bias that faked a monotonic trend across sha-identical engines). `sweep.mjs` already does this for the mirror.
 
