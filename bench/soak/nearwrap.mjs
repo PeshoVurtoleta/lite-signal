@@ -45,8 +45,8 @@
  *   batchEpoch     int32, 0 skipped          409 / 1760 + guard 1765         402 / 1646 + guard 1651
  *   nodeSeq        int32                     437 / 877                       410 / 834
  *   evalCount      float64, equality-only    absent                          401 / 1115, 1193 `++`
- *                  (A3 FIX-R, b108: the tree now carries it as mask30 `(evalCount + 1) & 0x3fffffff`, fireRecompute;
- *                  census tree 6 -> 7)
+ *                  (A3 FIX-R, b108: the tree carried it as mask30 `(evalCount + 1) & 0x3fffffff`, census 6 -> 7;
+ *                  AUD-E2 / D-AUD-3 removed it again: tree census back to 6, mask30 a class with no shipped user)
  *   statTotalAllocations  float64 `++`       398 / 857                       390 / 814
  *   statTotalDisposals    float64 `++`       399 / 835                       391 / 771
  *   gen (ReactiveNode field)                 112 / 817, 1947 `(gen+1)|0`     102 / 767, 1837 `gen+1` float64 (FIX-G)
@@ -112,7 +112,7 @@ const BOUNDED = Object.freeze(['activeLinks', 'activeNodes', 'batchDepth', 'curs
 
 function fail(msg) { throw new SoakConfigError('NEARWRAP: ' + msg); }
 
-/** The arithmetic classes, in witness-list order. mask30 = the 30-bit Smi counter (A3 FIX-R evalCount). */
+/** The arithmetic classes, in witness-list order. mask30 = the 30-bit Smi counter (A3 FIX-R evalCount; no shipped user since AUD-E2 / D-AUD-3). */
 const ARITHS = Object.freeze(['int32', 'float64', 'mask30']);
 
 /** Bump witnesses of the counter expressions `xs` (every bump site's spelling): which arithmetic class it uses. */
@@ -134,14 +134,14 @@ function entry(o) {
 /**
  * The census counters (TASK 1). Each entry rewrites ONE initializer: `anchor` (= lhs + ' = ' + init + ';') must
  * occur exactly once (0 or 2+ -> SoakConfigError) and becomes lhs + ' = ' + start + ';'. `required: false`
- * (evalCount) may be absent from a kernel, but only if its identifier appears NOWHERE in the source; a kernel that uses the counter without the anchor
+ * (evalCount; headpatched only since AUD-E2 / D-AUD-3) may be absent from a kernel, but only if its identifier appears NOWHERE in the source; a kernel that uses the counter without the anchor
  * is a stale census, not a skip. The bump witnesses decide int32 / float64 / mask30: exactly one class must be present.
  */
 export const REWRITES = Object.freeze([
     entry({ counter: 'globalVersion', required: true, lhs: 'let globalVersion', init: '1', ident: 'globalVersion', bumps: bumps('globalVersion') }),
     entry({ counter: 'batchEpoch', required: true, lhs: 'let batchEpoch', init: '1', ident: 'batchEpoch', bumps: bumps('batchEpoch') }),
     entry({ counter: 'nodeSeq', required: true, lhs: 'let nodeSeq', init: '1 | 0', ident: 'nodeSeq', bumps: bumps('nodeSeq') }),
-    // FIX-R: headpatched float64 `++`; tree mask30 (A3, b108); a kernel without it (pre-A3) must not name it at all
+    // FIX-R: headpatched float64 `++`; the tree's mask30 (A3, b108) left with AUD-E2 / D-AUD-3; a kernel without it must not name it at all
     entry({ counter: 'evalCount', required: false, lhs: 'let evalCount', init: '0', ident: 'evalCount', bumps: bumps('evalCount') }),
     entry({ counter: 'statTotalAllocations', required: true, lhs: 'let statTotalAllocations', init: '0', ident: 'statTotalAllocations', bumps: bumps('statTotalAllocations') }),
     entry({ counter: 'statTotalDisposals', required: true, lhs: 'let statTotalDisposals', init: '0', ident: 'statTotalDisposals', bumps: bumps('statTotalDisposals') }),

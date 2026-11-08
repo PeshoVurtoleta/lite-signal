@@ -292,7 +292,7 @@ test('trace: hook listener payloads are not traced (only the hook call line); na
 // [lane, world 0 seed, world 0 lines, world 1 seed, world 1 lines, failing] on plain lite-s3 (see header).
 const REPLAY = [
     ['GRAPH', 0x9bddefbd, 20393, 0x27ff23be, 11766, 0],
-    ['BATCH', 0x7a95f1a3, 24491, 0x3c2c64ca, 27457, 0],
+    ['BATCH', 0x7a95f1a3, 24397, 0x3c2c64ca, 27401, 0],      // D-AUD-3 revert-time check: a mid-batch body that did not read the signal no longer blocks the revert
     ['ERROR', 0x53491534, 827, 0xed80354d, 7799, 2],      // DIV-F22 under lite-s3 too (README: 17/20 fail on all three)
     ['NEST', 0x8e62601c, 10095, 0xa4371d05, 10517, 0],
     ['WIE', 0x7f161d31, 53803, 0x7872ec5e, 38162, 0],

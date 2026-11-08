@@ -166,7 +166,9 @@ class ReactiveNode {
         this.preBatchVersion = 0;
         /** batchEpoch that owns the capture; 0 = no capture. */
         this.revertEpoch = 0;
-        /** FIX-R (A3, F5): evalCount at the capture; the revert is blocked iff it moved. Smi. */
+        /** FIX-R (A3, F5; D-AUD-3): globalVersion at the capture (the name predates D-AUD-3); revertBlocked
+         *  compares each subscriber's evalVersion against it. An int32 like version / evalVersion: past 2^30
+         *  it leaves the 31-bit Smi range of pointer-compressed V8. */
         this.preBatchEvals = 0;
 
         // Doubly-linked dependency list (this node depends on these sources).
@@ -769,10 +771,6 @@ export function createRegistry(config) {
 
     // 0 is reserved for "unset" (evalVersion / markEpoch stamps): the read.set / boxSet bumps skip it via `|| 1` (F29).
     let globalVersion = 1;
-    // FIX-R (A3, F5): body-run counter, bumped once per computed / effect body run (fireRecompute).
-    // Masked to 30 bits so the context slot stays a Smi (zero-box); compared for equality only.
-    // KNOWN ABA: exactly k*2^30 body runs between a capture and its revert -> the pre-fix revert.
-    let evalCount = 0;
     let batchEpoch = 1;
     let currentObserver = null;           // tracking context: whose reads link deps
     let currentOwner = null;              // lifecycle context: who owns nodes created now
@@ -1965,12 +1963,31 @@ export function createRegistry(config) {
         const e = node.markEpoch;
         return (e !== m && e !== 0) || link.source !== dep || link.target !== node;
     }
-    // Op 5 (recompute), out of line for the frames' inlining budget (TurboFan inlines it back,
-    // so the no-hook path is one Smi bump + one compare).
-    // FIX-R (A3, F5): every body run (executeEffect, refreshComputed) calls this first in its `try`,
-    // so the evalCount bump lives HERE, before the hook call (a throwing op-5 hook still counts as
-    // a run): inside executeEffect it would push that body past V8's 460 B inline limit.
-    function fireRecompute(node) { evalCount = (evalCount + 1) & 0x3fffffff; if (mutationHook !== null) mutationHook(5, node.id, 0); }
+    // Op 5 (recompute). Every body run (executeEffect, refreshComputed) calls fireRecompute first in its
+    // `try`; it is small, so TurboFan inlines it back and the no-hook path is one load + one compare.
+    // fireOp5 (D-AUD-4) keeps the hook call and its try/catch out of line, off the frames' inlining
+    // budget; it runs only while an onGraphMutation listener is installed. A listener that throws on
+    // op 5 throws before the body runs, with the dependency cursor still on the first link: the catch
+    // clears activeObserverCurrentDep, so the run's `finally` severs nothing. The run is abandoned with
+    // every link kept, the listener's error surfaces to the caller, the write that triggered the run
+    // is absorbed (its value stays stored; this node does not re-run for it), and the node recovers on
+    // the next write to a source it still links.
+    function fireRecompute(node) { if (mutationHook !== null) fireOp5(node); }
+    function fireOp5(node) { try { mutationHook(5, node.id, 0); } catch (e) { activeObserverCurrentDep = null; throw e; } }
+    // FIX-R (A3, F5; D-AUD-3): checked at revert time, cold -- read.set / boxSet call it only after a set
+    // back that equals the capture, so no body run pays for FIX-R. A set back must not revert while a
+    // reader saw the intermediate value: true iff a current subscriber of `node` is running now
+    // (FLAG_COMPUTING) or was re-evaluated after the capture (evalVersion past preBatchEvals, the
+    // capture-time globalVersion; an int32 serial compare, exact while the capture and the set back
+    // are fewer than 2^31 version bumps apart). A body that does not read `node` does not block it.
+    function revertBlocked(node) {
+        const g0 = node.preBatchEvals;
+        for (let l = node.headSub; l !== null; l = l.nextSub) {
+            const t = l.target;
+            if ((t.flags & FLAG_COMPUTING) !== 0 || ((t.evalVersion - g0) | 0) > 0) return true;
+        }
+        return false;
+    }
     // F-b33-1: executeEffect's post-run tail, the last statement of its `finally` (S3, D-AUD-5: a body
     // that throws after a stale read is re-queued too), out of line for its inlining budget (small: inlines back).
     // Truthiness test, not `!== 0` (D4): 25 B vs 31 keeps it under the small-function inline caps
@@ -2316,13 +2333,13 @@ export function createRegistry(config) {
             if (batchDepth > 0 && node.revertEpoch !== batchEpoch) {
                 node.preBatchValue = node.value;
                 node.preBatchVersion = node.version;
-                node.preBatchEvals = evalCount;   // FIX-R (A3, F5): body-run count at the capture
+                node.preBatchEvals = globalVersion;   // FIX-R (A3, F5; D-AUD-3): globalVersion at the capture
                 node.revertEpoch = batchEpoch;
             }
             node.value = value;
-            // FIX-R (A3, F5): revert only if no body ran since this node's capture (else a body
-            // that saw the intermediate value would look current and never re-run).
-            if (batchDepth > 0 && node.revertEpoch === batchEpoch && node.preBatchEvals === evalCount && eq && eq(node.preBatchValue, value)) {
+            // FIX-R (A3, F5; D-AUD-3): revert only if no reader of this node saw the intermediate value
+            // (else it would look current and never re-run); revertBlocked is the cold check, called last.
+            if (batchDepth > 0 && node.revertEpoch === batchEpoch && eq && eq(node.preBatchValue, value) && !revertBlocked(node)) {
                 node.version = node.preBatchVersion;
                 return;
             }
@@ -2441,12 +2458,12 @@ export function createRegistry(config) {
         if (batchDepth > 0 && node.revertEpoch !== batchEpoch) {
             node.preBatchValue = node.value;
             node.preBatchVersion = node.version;
-            node.preBatchEvals = evalCount;   // FIX-R (A3, F5): body-run count at the capture
+            node.preBatchEvals = globalVersion;   // FIX-R (A3, F5; D-AUD-3): globalVersion at the capture
             node.revertEpoch = batchEpoch;
         }
         node.value = value;
         // FIX-R (A3, F5): same guard as read.set.
-        if (batchDepth > 0 && node.revertEpoch === batchEpoch && node.preBatchEvals === evalCount && eq && eq(node.preBatchValue, value)) {
+        if (batchDepth > 0 && node.revertEpoch === batchEpoch && eq && eq(node.preBatchValue, value) && !revertBlocked(node)) {
             node.version = node.preBatchVersion;
             return;
         }
@@ -2683,18 +2700,18 @@ export function createRegistry(config) {
      * Coalesce multiple synchronous writes into a single effect-flush pass.
      * Nested batches are merged -- only the outermost close triggers the flush.
      *
-     * Pre-batch revert (1.2.0; narrowed by FIX-R, A3 / F5): if a signal is set,
-     * then set back to its pre-batch value (under its `equals`) before the outer
-     * close, the version bump is reverted and downstream effects/computeds do not
-     * fire -- ONLY if no computed or effect body ran since that signal's first
-     * write in the batch (its capture). If one ran (a computed read mid-batch,
-     * an effect created mid-batch), the set back is a normal write: it bumps the
-     * version and marks downstream, so no reader keeps the intermediate value.
-     * A body (effect or computed) already running when the signal is first
-     * written in the batch (it, or a computed it reads, writes the signal) that
-     * then reads it in the same run does not block the revert (KNOWN
-     * residual (a)). The body-run counter is 30-bit: exactly k*2^30 body runs
-     * between the capture and the set back fall back to the pre-fix revert (KNOWN).
+     * Pre-batch revert (1.2.0; narrowed by FIX-R, A3 / F5, checked at the set
+     * back since D-AUD-3): if a signal is set, then set back to its pre-batch
+     * value (under its `equals`) before the outer close, the version bump is
+     * reverted and downstream effects/computeds do not fire -- ONLY if no reader
+     * of that signal saw the intermediate value: none of its current subscribers
+     * is running at the set back, and none was re-evaluated since the signal's
+     * first write in the batch (its capture). If one was (a computed read
+     * mid-batch, an effect created mid-batch), the set back is a normal write: it
+     * bumps the version and marks downstream, so no reader keeps the intermediate
+     * value. A body that ran in the batch but does not read the signal does not
+     * block its revert. The check compares int32 version stamps: exact while the
+     * capture and the set back are fewer than 2^31 version bumps apart.
      *
      * NOT transactional: an exception inside the body does NOT roll back applied
      * writes. Effects that have not yet fired for the pending writes do still

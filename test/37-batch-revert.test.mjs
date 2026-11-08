@@ -5,10 +5,12 @@
 // Kernel: LITE_SIGNAL_KERNEL (absolute path to a Signal.js with a sibling Watch.js), default ../Signal.js.
 //
 // RED-CHECK STATUS (b108, A3 FIX-R): cases (a)(b)(d)(e) are red on the 0628127b build (.handoff/b107-before) and green
-// with the FIX-R bump; their todo is removed. (c) is a KNOWN row (maintainer Q3): an effect that writes s and then reads
-// s in the SAME run is invisible to the per-node eval counter (the capture follows that run's bump), so the revert is
-// suppressed -> [5]; the p2 ideal is [5,0]. (g') uses a direct reader of a (the old (g) fixture hid the blocked revert
-// behind c's equality cutoff). Cases (f), GC budget and retention are regression pins (green on before; no todo).
+// with the FIX-R bump; their todo is removed. AUD-E2 (D-AUD-3, D-AUD-4): the per-body counter is gone; a revert is blocked
+// iff a DIRECT subscriber of s is mid-run or was evaluated after the capture (revertBlocked). So (c) is now [5,0] (the
+// old counter could not see the in-body read after the effect's own write), (g') direct delta is 0 (a body independent of
+// a no longer blocks a's revert), and two rows (two-subscriber, COMPUTING-subscriber) are new. (g') uses a direct reader
+// of a (the old (g) fixture hid the blocked revert behind c's equality cutoff). Cases (f), GC budget and retention are
+// regression pins (green on before; no todo).
 // Existing pins that must stay green and are NOT copied here: test/19-v12-additions.test.mjs
 // "pre-batch revert (v1.2.0)" (lines ~132-180) and test/17-reactivity.test.mjs line ~99.
 // Run with --expose-gc for the GC and retention tests; without it they SKIP (never pass).
@@ -61,10 +63,9 @@ describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
         stop();
     });
 
-    // KNOWN (maintainer Q3, LEDGER line pending): p2 ideal is [5, 0]; the R-node counter cannot see the in-body read of s
-    // that follows the effect's own write (the capture happens after that run's bump), so the revert is suppressed.
-    // Pinned as the full observed list (deepEqual); if this turns [5,0] the residual was fixed: re-rule the row.
-    it('(c) KNOWN: effect writes then reads inside batch, then revert: log is [5] (ideal [5, 0])', () => {
+    // AUD-E2: the effect is a COMPUTING direct subscriber of a when the revert happens (it re-ran inside the batch after
+    // its own write), so the revert is blocked and the revert-as-write re-runs it: p2 ideal [5, 0]. Red on the old build ([5]).
+    it('(c) effect writes then reads inside batch, then revert: log is [5, 0]', () => {
         const r = createRegistry();
         const a = r.signal(0);
         const log = [];
@@ -73,7 +74,7 @@ describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
             stop = r.effect(() => { if (!w) { w = 1; a.set(5); } log.push(a()); });
             a.set(0);
         });
-        assert.deepEqual(log, [5]);
+        assert.deepEqual(log, [5, 0]);
         stop();
     });
 
@@ -114,11 +115,10 @@ describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
         f.stop();
     });
 
-    // DV-F5 coarseness: any body that ran in the batch disables later reverts, even an unrelated one (the p2 rule is
-    // per node: a body that ran AFTER the node's capture blocks that node's revert). A DIRECT reader of a shows it: the
-    // blocked revert re-runs it once (delta 1; before the fix the revert is silent: 0). The fixture effect reads a only
-    // through c = a*10, whose equality cutoff hides the blocked revert (c recomputes 0 == 0): fixture delta 0.
-    it("(g') DV-F5: batch{a.set(1); u(); a.set(0)} with u independent of a: direct reader delta 1, fixture delta 0", () => {
+    // AUD-E2 re-ruling (D-AUD-3): the block is per DIRECT subscriber of a. u is independent of a, so its run no longer
+    // blocks a's revert: the revert stays silent (direct reader delta 0; was 1 under the global body counter). The fixture
+    // effect reads a only through c = a*10 (equality cutoff): fixture delta 0 as before. Red on the old build (delta 1).
+    it("(g') D-AUD-3: batch{a.set(1); u(); a.set(0)} with u independent of a: direct reader delta 0, fixture delta 0", () => {
         const f = fixture();
         const z = f.r.signal(0);
         const u = f.r.computed(() => z() + 1);
@@ -126,12 +126,49 @@ describe('A3 F5: revert must not outlive a body that ran in the batch', () => {
         const stopD = f.r.effect(() => { direct++; f.a(); });
         const before = f.runs, dBefore = direct;
         f.r.batch(() => { f.a.set(1); u(); f.a.set(0); });
-        assert.equal(direct - dBefore, 1, 'direct reader re-runs once (blocked revert)');
+        assert.equal(direct - dBefore, 0, 'direct reader does not re-run (revert not blocked by an unrelated body)');
         assert.equal(f.runs - before, 0, 'fixture effect hidden by c equality cutoff');
         assert.equal(f.seen, 0);
         stopD();
         f.stop();
     });
+
+    // Two direct subscribers of s: E1 (effect, linked first) and c = s*10 (linked later). c() runs mid-batch and sees 2.
+    // The walk must reach c past E1 (E1 itself was not re-evaluated): revert blocked -> c() === 10. Honest-path on the
+    // old build (its counter also blocks); the teeth are the headSub-only walk mutant (c() would stay 20).
+    for (const [name, box] of [['signal', false], ['box', true]]) {
+        it('two-subscriber [' + name + ']: E1 on s then c = s*10; batch{s.set(2); c(); s.set(1)}: inside 20, c() 10, E1 log [1,1]', () => {
+            const r = createRegistry();
+            const s = box ? r.signalBox(1) : r.signal(1);
+            const get = box ? () => s.get() : s;
+            const L1 = [];
+            r.effect(() => { L1.push(get()); });
+            const c = box ? (() => { const x = r.computedBox(() => get() * 10); return () => x.get(); })() : r.computed(() => get() * 10);
+            let inside;
+            r.batch(() => { s.set(2); inside = c(); s.set(1); });
+            assert.equal(inside, 20);
+            assert.equal(c(), 10);
+            assert.deepEqual(L1, [1, 1]);
+        });
+    }
+
+    // COMPUTING subscriber: E1 reads a, then inside its own run does batch{a.set(5); read a; a.set(0)}. E1 is mid-run
+    // (FLAG_COMPUTING) and saw 5, so a's revert is blocked and the revert-as-write re-runs the OUTSIDE reader E2: [0,0].
+    // E1 does not re-run itself (self-write while computing). Red on the old build (E2 [0]).
+    for (const [name, box] of [['signal', false], ['box', true]]) {
+        it('COMPUTING-subscriber [' + name + ']: batch inside the reading effect\'s own run: E2 log [0,0], E1 log [0,"mid5"], a 0', () => {
+            const r = createRegistry();
+            const a = box ? r.signalBox(0) : r.signal(0);
+            const g = box ? () => a.get() : a;
+            const L1 = [], L2 = [];
+            let w = 0;
+            r.effect(() => { L2.push(g()); });
+            r.effect(() => { const v = g(); L1.push(v); if (!w) { w = 1; r.batch(() => { a.set(5); L1.push('mid' + g()); a.set(0); }); } });
+            assert.deepEqual(L2, [0, 0]);
+            assert.deepEqual(L1, [0, 'mid5']);
+            assert.equal(g(), 0);
+        });
+    }
 });
 
 // ---- GC (assertion 3, in-process part) -----------------------------------

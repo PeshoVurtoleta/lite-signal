@@ -20,6 +20,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
 import { createRegistry } from "../Signal.js";
+import { createLeakTracker } from "@zakkster/lite-leak";
 
 const mk = () => createRegistry();
 const links = (r) => r.stats().activeLinks;
@@ -434,6 +435,70 @@ describe("suspects S1-S5, S8", () => {
         assert.equal(seen, 3);
     });
 
+    // AUD-E2 (S2 / D-AUD-4): an op-5 listener that throws ONCE on a recompute abandons the run with its links KEPT (fireOp5
+    // restores the context), surfaces the listener error to the triggering write's caller's reader, and the node recovers on
+    // the next write. World = audit p4-op5sever: effect E on s, computed c = s*10 (read once), listener throws on the first
+    // two op-5 events (E's re-run, c's recompute) during s.set(1). Expected from the semantics: both links survive (2 edges
+    // s->E, s->c), E recorded its first run [0] and re-runs on s.set(2), s.set(3) -> [0,2,3]; c recomputes cleanly -> 30 on
+    // the 2nd run (cRuns 2). Red on the old build (links 0, effRuns [0], c2 'threw hook5', cRuns 1).
+    for (const [name, box] of [["signal", false], ["box", true]]) {
+        it("S5 recovery [" + name + "]: throwing op-5 listener keeps the links and the node recovers on the next write", () => {
+            const r = mk();
+            const s = box ? r.signalBox(0) : r.signal(0);
+            const gs = box ? () => s.get() : s;
+            const effRuns = [];
+            r.effect(() => { effRuns.push(gs()); });
+            let cRuns = 0;
+            const c0 = box ? r.computedBox(() => { cRuns++; return gs() * 10; }) : r.computed(() => { cRuns++; return gs() * 10; });
+            const c = box ? () => c0.get() : c0;
+            c();
+            let armed = 2;
+            const off = r.onGraphMutation((op) => { if (op === 5 && armed > 0) { armed--; throw new Error("hook5"); } });
+            let e1 = null;
+            try { s.set(1); } catch (e) { e1 = e.message; }
+            let c1; try { c1 = c(); } catch (e) { c1 = "threw " + e.message; }
+            off();
+            const linksAfterThrow = r.stats().activeLinks;
+            s.set(2); s.set(3);
+            let c2; try { c2 = c(); } catch (e) { c2 = "threw " + e.message; }
+            assert.deepEqual({ e1, c1, linksAfterThrow, effRuns, c2, cRuns },
+                { e1: "hook5", c1: "threw hook5", linksAfterThrow: 2, effRuns: [0, 2, 3], c2: 30, cRuns: 2 });
+        });
+    }
+
+    // Nested-frame parity: E reads a, then try { c() } where c's recompute has its op-5 listener throw once, then reads b.
+    // The abandoned INNER frame must not disturb E's cursor: E keeps its 3 sources (a, c, b) and re-runs on b.set / a.set.
+    // E's part (src 3, re-runs) is honest-path (same on the old build); the total link count (c keeps its x link: 4) is
+    // red on the old build (3). c's cached error persists (x unchanged) -> 'err:hook5' in every later E run.
+    for (const [name, box] of [["signal", false], ["box", true]]) {
+        it("S5 nested frame [" + name + "]: E keeps 3 sources across an inner op-5 throw and re-runs on b.set", () => {
+            const r = mk();
+            const mkS = (v) => box ? r.signalBox(v) : r.signal(v);
+            const gt = (q) => box ? q.get() : q();
+            const a = mkS(0), b = mkS(0), x = mkS(1);
+            const c0 = box ? r.computedBox(() => gt(x) * 2) : r.computed(() => gt(x) * 2);
+            const c = box ? () => c0.get() : c0;
+            const runs = [];
+            const stop = r.effect(() => {
+                const va = gt(a);
+                let cv; try { cv = c(); } catch (e) { cv = "err:" + e.message; }
+                const vb = gt(b);
+                runs.push([va, cv, vb]);
+            });
+            assert.equal(r.stats().activeLinks, 4);
+            let armed = true;
+            const off = r.onGraphMutation((op) => { if (op === 5 && armed) { armed = false; throw new Error("hook5"); } });
+            x.set(2);
+            off();
+            let src = 0; r.forEachSource(stop, () => { src++; });
+            const linksAfter = r.stats().activeLinks;
+            b.set(7); a.set(3);
+            assert.equal(src, 3);
+            assert.equal(linksAfter, 4);
+            assert.deepEqual(runs, [[0, 2, 0], [0, "err:hook5", 0], [0, "err:hook5", 7], [3, "err:hook5", 7]]);
+        });
+    }
+
     it("S8: onDisconnect disposes the very computed being disposed (3 deps)", () => {
         const r = mk();
         const a = r.signal(1), b = r.signal(2), d = r.signal(3);
@@ -721,6 +786,54 @@ describe("retention", () => {
         assert.equal(s.effects, 0);
         assert.equal(s.nodePoolPopulation, popNodes, "node pool did not grow after the first cycle");
         assert.equal(s.linkPoolPopulation, popLinks, "link pool did not grow after the first cycle");
+    });
+});
+
+// AUD-E2 A3 retention: 1000 x { createRegistry; p4 op-5 world (throwing listener, abandoned runs); off(); destroy }. The
+// effect body captures obj_i, so a registry that leaked its abandoned frame would keep obj_i alive. After destroy and gc
+// the leak tracker must be empty and no obj_i reachable; the CONTROL holds one registry and must read 1 / 1.
+describe("retention (AUD-E2): op-5 throw world x 1000", { skip: typeof globalThis.gc === "function" ? false : "needs --expose-gc" }, () => {
+    const nap = (ms) => new Promise((res) => setTimeout(res, ms));
+    const settle = async () => { globalThis.gc(); await nap(0); globalThis.gc(); };
+    async function run(hold) {
+        const tracker = createLeakTracker({ name: "t35e2", onLeak() {}, onWarning() {} });
+        const refs = [];
+        let held = null;
+        const cycle = (i) => {
+            const obj = { i };
+            refs.push(new WeakRef(obj));
+            tracker.track(obj, null, i);
+            const r = createRegistry();
+            const s = r.signal(0);
+            let sink = null;
+            r.effect(() => { sink = obj; s(); });
+            const c = r.computed(() => s() * 10);
+            c();
+            let armed = 2;
+            const off = r.onGraphMutation((op) => { if (op === 5 && armed > 0) { armed--; throw new Error("hook5"); } });
+            try { s.set(1); } catch (e) { /* hook5 */ }
+            try { c(); } catch (e) { /* hook5 */ }
+            off();
+            s.set(2);
+            if (sink !== obj || c() !== 20) throw new Error("p4 world wrong in cycle " + i);
+            if (hold && i === 0) held = r; else { r.destroy(); }
+        };
+        for (let i = 0; i < 1000; i++) cycle(i);
+        const alive = () => { let n = 0; for (let i = 0; i < refs.length; i++) if (refs[i].deref() !== undefined) n++; return n; };
+        for (let i = 0; i < 20 && (tracker.size() > (hold ? 1 : 0) || alive() > (hold ? 1 : 0)); i++) { await settle(); await nap(10); }
+        await settle(); await settle();
+        return { size: tracker.size(), alive: alive(), held };
+    }
+    it("destroy releases everything: tracker.size() === 0 and weakAlive 0", async () => {
+        const o = await run(false);
+        assert.equal(o.size, 0, "tracker.size()");
+        assert.equal(o.alive, 0, "weakAlive");
+    });
+    it("CONTROL: holding one registry -> tracker.size() === 1, weakAlive 1", async () => {
+        const o = await run(true);
+        assert.equal(o.size, 1);
+        assert.equal(o.alive, 1);
+        assert.ok(o.held);
     });
 });
 

@@ -155,7 +155,7 @@
     },
     {
       "id": "DIV-F16", "kind": "fix", "finding": "F16", "since": "1.5.2+audit-patch", "fixedIn": null, "fixBy": "A3",
-      "decision": "fix: Smi evalCount compared by equality (VERIFICATION section 4, FIX-R)",
+      "decision": "fix: no counter (revert-time check, AUD-E2 / D-AUD-3)",
       "engines": ["lite", "lite-box"], "lanes": [], "oracles": [], "sigs": [], "ops": [], "scen": [], "worldScen": [], "priorScen": [], "shapes": [], "attribution": null,
       "pending": "S2 W5, L-REV-AUDIT-W5 on headpatched (gate=wrap check=W5); the published 1.5.2 does not carry it",
       "conformanceCases": [], "expectedThrow": null,
