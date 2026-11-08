@@ -28,6 +28,10 @@
  *    timeout-minutes <= 10. Required commands (C8): test job npm ci / npm test / torture:semantic / torture.mjs,
  *    gates test:gate, burn-in soak:report, teeth soak:teeth, teeth-long soak:teeth:long; gates holds a
  *    `::warning::` echo.
+ *  - AUD-N (D-AUD-6, schedule-keyed): every soak-nightly.yml checkout carries exactly fetch-depth, persist-credentials and
+ *    `ref: NIGHTLY_REF` (ci.yml checkouts never carry a ref), and is followed at once by the WFSYNC step (kind 'wfsync',
+ *    gating, exact text); the ref stays valid only while package.json `version` is strict semver below NIGHTLY_CEIL
+ *    (a pre-release of the ceiling is below it). The WFSYNC exit codes are judged by behaviour in a temp git repo.
  */
 
 import { test } from 'node:test';
@@ -228,14 +232,34 @@ const NEEDPAR_RE = /npm run soak:teeth(?::long)?(?![\w:.-])/;
 // C16 floors: v5 of upload-artifact still runs on node20; maintainer requirement 2026-10-13: no Node-20 actions.
 const ACTION_FLOORS = { 'actions/checkout': 5, 'actions/setup-node': 5, 'actions/upload-artifact': 6 };
 const GATING = [cmdRe('npm test'), cmdRe('npm run torture:semantic'), cmdRe('node --expose-gc test/torture.mjs'), cmdRe('npm run soak:parity'),
-    cmdRe('npm run test:gate'), cmdRe('npm run soak:teeth'), cmdRe('npm run soak:teeth:long'), cmdRe('npm run soak:report')];
+    cmdRe('npm run test:gate'), cmdRe('npm run soak:teeth'), cmdRe('npm run soak:teeth:long'), cmdRe('npm run soak:report'), cmdRe('git diff')];
 const FALLBACK_CYCLES = "${{ inputs.cycles || '33' }}";
 const FALLBACK_OPS = "${{ inputs.ops || '200000' }}";
 // AUD-H1 B3: the burn-in seed is per run (github.run_number) unless the dispatch input overrides it; never a literal.
 const SEED_PIN = '${{ inputs.seed || github.run_number }}';
+// AUD-N (D-AUD-6, Q-N1 ruled schedule-keyed): soak-nightly.yml is byte-identical on main and 1.6.0-dev; only `schedule`
+// checks out NIGHTLY_BRANCH, push / dispatch keep the action default (the event's commit). The literal branch is tied to the
+// package.json version (C18): once the version reaches NIGHTLY_CEIL the ref is stale and must be dropped or retargeted.
+const NIGHTLY_BRANCH = '1.6.0-dev';
+const NIGHTLY_CEIL = [1, 6, 0];
+const NIGHTLY_REF = "${{ github.event_name == 'schedule' && '" + NIGHTLY_BRANCH + "' || '' }}";
+// The sync step after every nightly checkout: main's copy (the scheduled run's workflow sha) vs the checked-out file.
+const WFSYNC = 'git diff --exit-code "$GITHUB_WORKFLOW_SHA" HEAD -- .github/workflows/soak-nightly.yml';
+const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*)?$/;
+/** true when `v` is strict semver AND sorts below NIGHTLY_CEIL (numeric compare; a pre-release of the ceiling is below it). */
+function nightlyRefLive(v) {
+    const m = typeof v === 'string' ? SEMVER_RE.exec(v) : null;
+    if (!m) return false;
+    for (let i = 0; i < 3; i++) {
+        const a = Number(m[i + 1]);
+        if (!Number.isSafeInteger(a)) return false;
+        if (a !== NIGHTLY_CEIL[i]) return a < NIGHTLY_CEIL[i];
+    }
+    return m[4] !== undefined;
+}
 const SNIPPET_IDS = new Set(['ptree', 'volume', 'smoke-report']);
 const CANON = new Set(['npm test', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs', 'npm run soak:parity', 'npm run test:gate',
-    'npm run soak:report -- "$SOAK_OUT" --require-explained', 'npm run soak']);
+    'npm run soak:report -- "$SOAK_OUT" --require-explained', 'npm run soak', WFSYNC]);
 const TEETH = {
     teeth: 'mkdir -p "$RUNNER_TEMP/teeth"\nnpm run soak:teeth 2>&1 | tee "$RUNNER_TEMP/teeth/soak-teeth.log"',
     'teeth-long': 'mkdir -p "$RUNNER_TEMP/teeth-long"\nnpm run soak:teeth:long 2>&1 | tee "$RUNNER_TEMP/teeth-long/soak-teeth-long.log"',
@@ -261,7 +285,7 @@ const WARN_RE = /^echo "::warning::[^"$`\\\n]*"$/;
 // re-pins these (same policy as SCRIPT_PINS); the semantic checks C1-C18 then judge the new content.
 const WORKFLOW_PINS = {
     'ci.yml': 'd2f0a31168cbeebc04b13f00f3e2199e4191942753ff7a98fdaed1f2cfc5c88a',
-    'soak-nightly.yml': '72c2161e709bc63c0b3f929d5cff645235bcc9cffa60a6f95b5208ae5830b7ba',
+    'soak-nightly.yml': '803ce2175955f86aeb86b98566ac0b5349295ddfdc416950ccf3de957efbc4af',
 };
 const sha256 = (t) => createHash('sha256').update(t, 'utf8').digest('hex');
 const SOAK_OUT_PIN = { 'ci.yml': '${{ runner.temp }}/soak-out/smoke.jsonl', 'soak-nightly.yml': '${{ runner.temp }}/soak-out/burn-in.jsonl' };
@@ -274,9 +298,9 @@ const SEQ = {
         gates: ['checkout', 'setup', 'install', 'npm run soak:parity', 'npm run test:gate', 'ptree', 'soak', 'smoke-report', 'upload'],
     },
     'soak-nightly.yml': {
-        'burn-in': ['checkout', 'setup', 'install', 'npm run soak:parity', ['ptree', 'volume'], 'soak', 'report', 'upload'],
-        teeth: ['checkout', 'setup', 'install', 'npm run soak:parity', 'teeth', 'upload'],
-        'teeth-long': ['checkout', 'setup', 'install', 'npm run soak:parity', 'teeth', 'upload'],
+        'burn-in': ['checkout', 'wfsync', 'setup', 'install', 'npm run soak:parity', ['ptree', 'volume'], 'soak', 'report', 'upload'],
+        teeth: ['checkout', 'wfsync', 'setup', 'install', 'npm run soak:parity', 'teeth', 'upload'],
+        'teeth-long': ['checkout', 'wfsync', 'setup', 'install', 'npm run soak:parity', 'teeth', 'upload'],
     },
 };
 const SOAK_ID = { 'ci.yml': { gates: 'smoke' }, 'soak-nightly.yml': { 'burn-in': 'soak' } };
@@ -292,6 +316,7 @@ function kindOf(s) {
     if (isSoak(s)) return 'soak';
     if (isReport(s)) return 'report';
     if (NEEDPAR_RE.test(r)) return 'teeth';
+    if (cmdRe('git diff').test(r)) return 'wfsync';
     for (const c of GATE_CMDS) if (cmdRe(c).test(r)) return c;
     if (r.trim() === 'npm ci') return 'install';
     if (WARN_RE.test(r.trim())) return 'warning';
@@ -453,6 +478,7 @@ export function volumeMeaning(snippet) {
 export function workflowProblems(files, opts = {}) {
     const scripts = opts.scripts || PKG.scripts;
     const npmrc = opts.npmrc !== undefined ? opts.npmrc : existsSync(join(ROOT, '.npmrc'));
+    const version = 'version' in opts ? opts.version : PKG.version;
     const P = [];
     const names = Object.keys(files).sort();
     for (const n of EXPECTED_FILES) if (!names.includes(n)) P.push('C1: missing workflow file ' + n);
@@ -739,7 +765,11 @@ export function workflowProblems(files, opts = {}) {
                         continue;
                     }
                     kinds.push(k);
-                    if (k === 'checkout' && Object.keys(w).sort().join() !== 'fetch-depth,persist-credentials') t18('job ' + jn + ' checkout with must be exactly fetch-depth + persist-credentials');
+                    if (k === 'checkout') {
+                        const nt = n === 'soak-nightly.yml';
+                        if (Object.keys(w).sort().join() !== (nt ? 'fetch-depth,persist-credentials,ref' : 'fetch-depth,persist-credentials')) t18('job ' + jn + ' checkout with must be exactly fetch-depth + persist-credentials' + (nt ? ' + ref' : ''));
+                        else if (nt && w.ref !== NIGHTLY_REF) t18('job ' + jn + ' checkout ref ' + JSON.stringify(w.ref) + ' is not exactly ' + NIGHTLY_REF);
+                    }
                     if (k === 'setup') {
                         for (const x of Object.keys(w)) if (!['node-version', 'cache'].includes(x)) t18('job ' + jn + ' setup-node with.' + x + ' not allowed');
                         if ('cache' in w && w.cache !== 'npm') t18('job ' + jn + ' setup-node cache must be npm');
@@ -777,6 +807,7 @@ export function workflowProblems(files, opts = {}) {
                 const exp = (SEQ[n] || {})[jn];
                 if (exp && !seqMatch(kinds, exp)) t18('job ' + jn + ' step sequence [' + kinds + '] != pinned [' + exp.map((e) => (Array.isArray(e) ? '{' + e + '}' : e)) + ']');
             }
+            if (n === 'soak-nightly.yml' && !nightlyRefLive(version)) t18('nightly ref ' + NIGHTLY_BRANCH + ' is stale or unverifiable: package.json ' + JSON.stringify(version) + ' is not strict semver below ' + NIGHTLY_CEIL.join('.') + ' (drop or retarget the schedule-keyed ref)');
         }
 
         // C14 parity before every soak step
@@ -898,6 +929,11 @@ const CHECKOUT = `      - uses: actions/checkout@v7
           fetch-depth: 0
           persist-credentials: false
 `;
+// AUD-N: the nightly checkout (schedule-keyed ref) + the workflow sync step, written out literally (not from the constants).
+const NREF_LINE = "          ref: ${{ github.event_name == 'schedule' && '1.6.0-dev' || '' }}\n";
+const NSYNC_RUN = '        run: git diff --exit-code "$GITHUB_WORKFLOW_SHA" HEAD -- .github/workflows/soak-nightly.yml\n';
+const NSYNC_STEP = '      - name: workflow sync\n' + NSYNC_RUN;
+const NT_CHECKOUT = CHECKOUT + NREF_LINE + NSYNC_STEP;
 const SETUP = (v) => `      - uses: actions/setup-node@v7
         with:
           node-version: ${v}
@@ -1029,7 +1065,7 @@ jobs:
     env:
       SOAK_OUT: \${{ runner.temp }}/soak-out/burn-in.jsonl
     steps:
-${CHECKOUT}${SETUP('${{ env.PIN_NODE }}')}      - name: install
+${NT_CHECKOUT}${SETUP('${{ env.PIN_NODE }}')}      - name: install
         run: npm ci
         timeout-minutes: 10
       - run: npm run soak:parity
@@ -1059,7 +1095,7 @@ ${ind(VOLUME, 10)}      - id: soak
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-${CHECKOUT}${SETUP('${{ env.PIN_NODE }}')}      - name: install
+${NT_CHECKOUT}${SETUP('${{ env.PIN_NODE }}')}      - name: install
         run: npm ci
         timeout-minutes: 10
       - run: npm run soak:parity
@@ -1075,7 +1111,7 @@ ${CHECKOUT}${SETUP('${{ env.PIN_NODE }}')}      - name: install
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-${CHECKOUT}${SETUP('${{ env.PIN_NODE }}')}      - name: install
+${NT_CHECKOUT}${SETUP('${{ env.PIN_NODE }}')}      - name: install
         run: npm ci
         timeout-minutes: 10
       - run: npm run soak:parity
@@ -1275,6 +1311,20 @@ const CASES = [
     ['C11', "ops fallback changed in guard only", (f) => withFile(f, NT, (t) => rep(t, "inputs.ops || '200000'", "inputs.ops || '2000'", 2))],
     ['C11', 'volume guard missing', (f) => withFile(f, NT, (t) => rep(t, t.slice(t.indexOf('      - id: volume\n'), t.indexOf('      - id: soak\n')), ''))],
     ['C11', 'volume guard after the soak step', (f) => withFile(f, NT, (t) => { const g = t.slice(t.indexOf('      - id: volume\n'), t.indexOf('      - id: soak\n')); return rep(rep(t, g, ''), '      - name: report\n', g + '      - name: report\n'); })],
+    // AUD-N (D-AUD-6, schedule-keyed): the nightly checkout ref and the workflow sync step.
+    ['C18', 'nightly ref: main (all 3 checkouts)', (f) => withFile(f, NT, (t) => rep(t, NREF_LINE, '          ref: main\n', 3))],
+    ['C18', 'nightly ref falls back to github.ref', (f) => withFile(f, NT, (t) => rep(t, "|| '' }}", '|| github.ref }}', 3))],
+    ['C18', 'nightly ref keyed on workflow_dispatch', (f) => withFile(f, NT, (t) => rep(t, "== 'schedule'", "== 'workflow_dispatch'", 3))],
+    ['C18', "nightly ref keyed on != 'schedule'", (f) => withFile(f, NT, (t) => rep(t, "== 'schedule'", "!= 'schedule'", 3))],
+    ['C18', 'nightly ref missing on teeth-long only', (f) => withFile(f, NT, (t) => inJob(t, 'teeth-long', null, NREF_LINE, ''))],
+    ['C18', 'nightly ref from a repo variable', (f) => withFile(f, NT, (t) => rep(t, NREF_LINE, '          ref: ${{ vars.NIGHTLY_REF }}\n', 3))],
+    ['C18', 'workflow sync removed from burn-in', (f) => withFile(f, NT, (t) => inJob(t, 'burn-in', 'teeth', NSYNC_STEP, ''))],
+    ['C18', 'workflow sync after setup-node in teeth', (f) => withFile(f, NT, (t) => inJob(t, 'teeth', 'teeth-long', NSYNC_STEP + SETUP('${{ env.PIN_NODE }}'), SETUP('${{ env.PIN_NODE }}') + NSYNC_STEP))],
+    ['C17', 'workflow sync || true', (f) => withFile(f, NT, (t) => rep(t, NSYNC_RUN, NSYNC_RUN.replace('\n', ' || true\n'), 3))],
+    ['C17', 'workflow sync continue-on-error (also trips C9: non-soak step)', (f) => withFile(f, NT, (t) => rep(t, NSYNC_STEP, NSYNC_STEP + '        continue-on-error: true\n', 3)), ['C17', 'C9']],
+    ['C17', 'workflow sync --exit-code dropped', (f) => withFile(f, NT, (t) => rep(t, 'git diff --exit-code ', 'git diff ', 3))],
+    ['C17', 'workflow sync path -> ci.yml', (f) => withFile(f, NT, (t) => rep(t, 'HEAD -- .github/workflows/soak-nightly.yml\n', 'HEAD -- .github/workflows/ci.yml\n', 3))],
+    ['C17', 'workflow sync if: always() (also C18: if: on a non-warning / upload / report step)', (f) => withFile(f, NT, (t) => rep(t, NSYNC_STEP, '      - name: workflow sync\n        if: always()\n' + NSYNC_RUN, 3)), ['C17', 'C18']],
 ];
 
 for (const [fam, label, mutate, fams] of CASES) {
@@ -1347,6 +1397,59 @@ for (const [label, file, mutate, want, msg] of REAL_B3_CASES) {
         assert.ok(p.some((x) => msg.test(x)), 'expected ' + msg + ', got: ' + JSON.stringify(p));
     });
 }
+
+// AUD-N (D-AUD-6): the nightly ref is tied to package.json `version` (C18): live while strict semver below 1.6.0 (a
+// pre-release of 1.6.0 is below it, numeric compare); 1.6.0 and later, or a malformed version, retire it.
+const VERSION_ROWS = [['1.5.2', true], ['1.6.0-rc.1', true], ['1.6.0', false], ['1.6.1', false], ['1.10.0', false], ['2.0.0', false], ['x', false], ['1.6', false], ['v1.5.2', false], ['1.5.2.1', false]];
+for (const [v, live] of VERSION_ROWS) {
+    test('C18 version tie (AUD-N): package.json ' + v + (live ? ' keeps' : ' retires') + ' the nightly ref', () => {
+        const p = workflowProblems(fixture(), { version: v });
+        if (live) assert.deepEqual(p, []);
+        else {
+            assert.equal(p.length, 1, JSON.stringify(p));
+            assert.match(p[0], /^C18: soak-nightly\.yml: nightly ref 1\.6\.0-dev is stale or unverifiable: package\.json "/);
+            assert.ok(p[0].includes(JSON.stringify(v)), p[0]);
+        }
+    });
+}
+
+// AUD-N A2: WFSYNC by behaviour in a temp git repo (the sync step's real text is C17-pinned to WFSYNC).
+test('WFSYNC behaviour (AUD-N): exit codes in a temp git repo', () => {
+    const env0 = {};
+    for (const [k, v] of Object.entries(process.env)) if (!/^GIT_/.test(k) && k !== 'GITHUB_WORKFLOW_SHA') env0[k] = v;
+    env0.GIT_CONFIG_NOSYSTEM = '1';
+    env0.GIT_CONFIG_GLOBAL = '/dev/null';
+    inTemp((dir) => {
+        const repo = join(dir, 'repo');
+        mkdirSync(join(repo, '.github', 'workflows'), { recursive: true });
+        const script = join(dir, 'wfsync.sh');
+        writeFileSync(script, WFSYNC + '\n');
+        const sp = (cmd, args, extra) => spawnSync(cmd, args, { cwd: repo, encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL', env: { ...env0, ...extra } });
+        const git = (...a) => {
+            const r = sp('git', ['-c', 'user.name=wf47', '-c', 'user.email=wf47@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...a]);
+            assert.equal(r.status, 0, 'git ' + a.join(' ') + ': ' + r.stderr + (r.error ? ' ' + r.error.message : ''));
+            return r.stdout.trim();
+        };
+        const snap = (wf, other, msg) => {
+            writeFileSync(join(repo, '.github', 'workflows', 'soak-nightly.yml'), wf);
+            writeFileSync(join(repo, 'other.txt'), other);
+            git('add', '-A');
+            git('commit', '-q', '-m', msg);
+            return git('rev-parse', 'HEAD');
+        };
+        const run = (sha) => { const r = sp('bash', ['-eo', 'pipefail', script], sha === undefined ? {} : { GITHUB_WORKFLOW_SHA: sha }); return r.signal ? 'signal ' + r.signal : r.status; };
+        git('init', '-q');
+        const a = snap('name: a\n', 'x\n', 'a');
+        assert.equal(run(a), 0, 'same sha');
+        assert.equal(run(undefined), 128, 'GITHUB_WORKFLOW_SHA unset');
+        assert.equal(run('0123456789abcdef0123456789abcdef01234567'), 128, 'unknown 40-hex sha');
+        const b = snap('name: b\n', 'x\n', 'b');
+        assert.equal(run(a), 1, 'workflow file changed (workflow sha a, HEAD b)');
+        snap('name: b\n', 'y\n', 'c');
+        assert.equal(run(b), 0, 'only another file changed (workflow sha b, HEAD c)');
+        assert.equal(run(a), 1, 'workflow file changed two commits back (workflow sha a, HEAD c)');
+    });
+});
 
 // R8-24 (b157 C3): the budget edge itself is accepted -- burn-in timeout exactly 180 is no problem (pairs with the 181 row).
 test('C3 accepts: burn-in timeout exactly 180 (C-36 budget 180, R8-24) is no problem', () => {
