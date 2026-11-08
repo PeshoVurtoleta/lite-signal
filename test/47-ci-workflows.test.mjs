@@ -254,7 +254,7 @@ const WARN_RE = /^echo "::warning::[^"$`\\\n]*"$/;
 // sha256 of the two real workflow files (11e). Any workflow edit turns the real-files test red until a REVIEWED test/47 edit
 // re-pins these (same policy as SCRIPT_PINS); the semantic checks C1-C18 then judge the new content.
 const WORKFLOW_PINS = {
-    'ci.yml': '6af9960dc998b89c9ac0ef16c38c5fc68919da14d2633b976f2e856885e55c12',
+    'ci.yml': 'ece0f6e6baed2feb7588ba2476427bcadc10cdf2d2afdf5aa1c2f6e2cfdd3d85',
     'soak-nightly.yml': 'fe6934e1cde5009ce79d36f4a134687ecb6cf9b945ddfa1f592d1e545c534f94',
 };
 const sha256 = (t) => createHash('sha256').update(t, 'utf8').digest('hex');
@@ -305,6 +305,11 @@ const needsParity = (s) => isSoak(s) || NEEDPAR_RE.test(runOf(s));
 const isSoak = (s) => SOAK_RE.test(runOf(s)) || 'SOAK_SMOKE' in envOf(s);
 const norm = (v) => String(v).replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/\s+/g, '');
 const alwaysIf = (s) => s.if !== undefined && norm(s.if) === 'always()';
+// D-b179-1: the ci.yml test-job torture steps run after a red unit-test step. Their `if:` is REQUIRED and must be exactly
+// NOT_CANCELLED_IF (C17; a revert to no-if is red); every other gating step keeps "no if:". Keyed file/job/kind (no proto lookup).
+const NEED_NOT_CANCELLED = new Set(['ci.yml/test/npm run torture:semantic', 'ci.yml/test/node --expose-gc test/torture.mjs']);
+const NOT_CANCELLED_IF = '${{ !cancelled() }}';
+const needNotCancelled = (n, jn, s) => NEED_NOT_CANCELLED.has(n + '/' + jn + '/' + kindOf(s));
 const asList = (x) => (Array.isArray(x) ? x : x === undefined || x === null ? [] : [x]);
 
 const ptreeCache = new Map();
@@ -643,6 +648,7 @@ export function workflowProblems(files, opts = {}) {
                 if (!ok) tag('C17', 'job ' + jn + ' gating step text is not canonical: ' + JSON.stringify(t.slice(0, 80)));
             }
             if (isReport(s)) { if (!alwaysIf(s)) tag('C17', 'job ' + jn + ' soak:report step must be exactly if: always()'); }
+            else if (needNotCancelled(n, jn, s)) { if (s.if !== NOT_CANCELLED_IF) tag('C17', 'job ' + jn + ' step (' + r.split('\n')[0] + ') must be exactly if: ' + NOT_CANCELLED_IF + ', got ' + JSON.stringify(s.if)); }
             else if ('if' in s) tag('C17', 'job ' + jn + ' gating step has an if: (' + r.split('\n')[0] + ')');
             if ('continue-on-error' in s && !soakStep) tag('C17', 'job ' + jn + ' gating step has continue-on-error');
             if (/\|\|\s*(true|:)(?![\w])/.test(r) || /set \+e|set \+o pipefail/.test(r)) tag('C17', 'job ' + jn + ' gating step swallows failure (' + r.split('\n')[0] + ')');
@@ -717,8 +723,8 @@ export function workflowProblems(files, opts = {}) {
                     if (k === 'soak' && (SOAK_ID[n] || {})[jn] !== undefined && st.id !== SOAK_ID[n][jn]) t18('job ' + jn + ' soak step id must be ' + SOAK_ID[n][jn]);
                     if (/GITHUB_(ENV|PATH)/.test(runOf(st))) t18('job ' + jn + ' run mentions GITHUB_ENV / GITHUB_PATH');
                 }
-                // `if:` only on warning, upload and soak:report steps
-                job.steps.forEach((st) => { if (isObj(st) && 'if' in st && !['warning', 'upload', 'report', 'smoke-report'].includes(kindOf(st))) t18('job ' + jn + ' step has an if: but is not a warning / upload / soak:report step'); });
+                // `if:` only on warning, upload and soak:report steps, plus the NEED_NOT_CANCELLED steps (their text is C17's)
+                job.steps.forEach((st) => { if (isObj(st) && 'if' in st && !['warning', 'upload', 'report', 'smoke-report'].includes(kindOf(st)) && !needNotCancelled(n, jn, st)) t18('job ' + jn + ' step has an if: but is not a warning / upload / soak:report step'); });
                 // warning sits between its soak step and that soak's report step
                 const allKinds = job.steps.filter(isObj).map(kindOf);
                 const wi = allKinds.indexOf('warning');
@@ -920,7 +926,9 @@ ${CHECKOUT}${SETUP('${{ matrix.node }}')}      - name: install
         timeout-minutes: 10
       - run: npm test
       - run: npm run torture:semantic
+        if: \${{ !cancelled() }}
       - run: node --expose-gc test/torture.mjs
+        if: \${{ !cancelled() }}
   gates:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1237,6 +1245,33 @@ for (const [fam, label, mutate, fams] of CASES) {
         const want = fams || [fam];
         const got = want.includes('C18') ? families(p) : families(p).filter((x) => x !== 'C18');
         assert.deepEqual(got, want, 'only ' + fam + ' may fire: ' + JSON.stringify(p));
+    });
+}
+
+// D-b179-1 (C17): mutants of the REAL ci.yml around the required torture-step `if: ${{ !cancelled() }}`. Each names its
+// exact families AND the C17 message that must kill it (required-if text vs forbidden-if), so a C18 echo cannot pass it.
+const NC = '        if: ${{ !cancelled() }}\n';
+const SEM = '      - name: semantic torture\n';
+const TG = '      - name: torture gate\n';
+const REQ = /^C17: ci\.yml: job test step \(.*\) must be exactly if: \$\{\{ !cancelled\(\) \}\}, got /;
+const FORBID = /^C17: ci\.yml: job (test|gates) gating step has an if: /;
+const REAL_IF_CASES = [
+    ['(a) if dropped from semantic torture', (t) => rep(t, SEM + NC, SEM), ['C17'], REQ],
+    ['(b) if dropped from torture gate', (t) => rep(t, TG + NC, TG), ['C17'], REQ],
+    ['(c) semantic torture if: ${{ cancelled() }}', (t) => rep(t, SEM + NC, SEM + '        if: ${{ cancelled() }}\n'), ['C17'], REQ],
+    ['(d) torture gate if: false', (t) => rep(t, TG + NC, TG + '        if: false\n'), ['C17'], REQ],
+    ['(e) semantic torture if: success()', (t) => rep(t, SEM + NC, SEM + '        if: success()\n'), ['C17'], REQ],
+    ['(f) torture gate if: always()', (t) => rep(t, TG + NC, TG + '        if: always()\n'), ['C17'], REQ],
+    ['(g) the same if on unit tests (npm test)', (t) => rep(t, '      - name: unit tests\n', '      - name: unit tests\n' + NC), ['C17', 'C18'], FORBID],
+    ['(h) the same if on a gates-job gating step (test:gate)', (t) => rep(t, '      - name: perf gate\n', '      - name: perf gate\n' + NC), ['C17', 'C18'], FORBID],
+];
+for (const [label, mutate, want, msg] of REAL_IF_CASES) {
+    test('C17 must-fail (real ci.yml, D-b179-1): ' + label, () => {
+        const real = loadReal();
+        assert.deepEqual(workflowProblems(real), [], 'real files must be clean first');
+        const p = workflowProblems(withFile(real, CI, mutate));
+        assert.deepEqual(families(p), want, JSON.stringify(p));
+        assert.ok(p.some((x) => msg.test(x)), 'expected ' + msg + ', got: ' + JSON.stringify(p));
     });
 }
 

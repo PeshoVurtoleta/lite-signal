@@ -63,8 +63,10 @@ jobs:
       - name: unit tests
         run: npm test
       - name: semantic torture
+        if: ${{ !cancelled() }}
         run: npm run torture:semantic
       - name: torture gate
+        if: ${{ !cancelled() }}
         run: node --expose-gc test/torture.mjs
 
   gates:
