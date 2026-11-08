@@ -25,7 +25,7 @@
  *    soak step's effective SOAK_SEED is exactly SEED_PIN (C11) and the dispatch inputs are exactly cycles, ops, seed
  *    (C13; the seed input default is absent or empty).
  *  - Job-level `permissions` is tolerated only when every value is `read`. The `npm ci` step carries
- *    timeout-minutes <= 10. Required commands (C8): test job npm ci / npm test / torture:semantic / torture.mjs,
+ *    timeout-minutes <= 10. Required commands (C8): test job npm ci / npm test / test:gc / torture:semantic / torture.mjs,
  *    gates test:gate, burn-in soak:report, teeth soak:teeth, teeth-long soak:teeth:long; gates holds a
  *    `::warning::` echo.
  *  - AUD-N (D-AUD-6, schedule-keyed): every soak-nightly.yml checkout carries exactly fetch-depth, persist-credentials and
@@ -217,7 +217,8 @@ export function parseYaml(text) {
 
 const EXPECTED_FILES = ['ci.yml', 'soak-nightly.yml'];
 const EXPECTED_JOBS = { 'ci.yml': ['gates', 'test'], 'soak-nightly.yml': ['burn-in', 'teeth', 'teeth-long'] };
-const BUDGET = { 'ci.yml': { test: 30, gates: 30 }, 'soak-nightly.yml': { 'burn-in': 180, teeth: 60, 'teeth-long': 120 } };
+// D-b181-2: the ci test job runs the unit suite twice (plain, then the gc tier), hence 45; gates stays 30.
+const BUDGET = { 'ci.yml': { test: 45, gates: 30 }, 'soak-nightly.yml': { 'burn-in': 180, teeth: 60, 'teeth-long': 120 } };
 const DECLARED_CELLS = ['macos-latest|24', 'ubuntu|22', 'ubuntu|24', 'ubuntu|26'];
 const DECLARED_NODE = '26.8.2';
 const KEYED = "${{ steps.ptree.outputs.gap == 'true' }}";
@@ -231,7 +232,7 @@ const envOf = (x) => (isObj(x) && isObj(x.env) ? x.env : {});
 const NEEDPAR_RE = /npm run soak:teeth(?::long)?(?![\w:.-])/;
 // C16 floors: v5 of upload-artifact still runs on node20; maintainer requirement 2026-10-13: no Node-20 actions.
 const ACTION_FLOORS = { 'actions/checkout': 5, 'actions/setup-node': 5, 'actions/upload-artifact': 6 };
-const GATING = [cmdRe('npm test'), cmdRe('npm run torture:semantic'), cmdRe('node --expose-gc test/torture.mjs'), cmdRe('npm run soak:parity'),
+const GATING = [cmdRe('npm test'), cmdRe('npm run test:gc'), cmdRe('npm run torture:semantic'), cmdRe('node --expose-gc test/torture.mjs'), cmdRe('npm run soak:parity'),
     cmdRe('npm run test:gate'), cmdRe('npm run soak:teeth'), cmdRe('npm run soak:teeth:long'), cmdRe('npm run soak:report'), cmdRe('git diff')];
 const FALLBACK_CYCLES = "${{ inputs.cycles || '33' }}";
 const FALLBACK_OPS = "${{ inputs.ops || '200000' }}";
@@ -258,7 +259,7 @@ function nightlyRefLive(v) {
     return m[4] !== undefined;
 }
 const SNIPPET_IDS = new Set(['ptree', 'volume', 'smoke-report']);
-const CANON = new Set(['npm test', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs', 'npm run soak:parity', 'npm run test:gate',
+const CANON = new Set(['npm test', 'npm run test:gc', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs', 'npm run soak:parity', 'npm run test:gate',
     'npm run soak:report -- "$SOAK_OUT" --require-explained', 'npm run soak', WFSYNC]);
 const TEETH = {
     teeth: 'mkdir -p "$RUNNER_TEMP/teeth"\nnpm run soak:teeth 2>&1 | tee "$RUNNER_TEMP/teeth/soak-teeth.log"',
@@ -268,6 +269,7 @@ const TEETH = {
 // reviewed test/47 edit; do not "fix" this table to follow package.json without that review.
 const SCRIPT_PINS = {
     'test': "node --test --test-reporter=spec 'test/*.test.mjs'",
+    'test:gc': "node --expose-gc --test --test-reporter=spec 'test/*.test.mjs'",
     'torture:semantic': 'node bench/torture/run.mjs --group semantic',
     'soak:parity': 'node bench/soak/parity.mjs',
     'test:gate': 'node --expose-gc --max-semi-space-size=4 --test test/32-perf-gate.test.mjs',
@@ -284,17 +286,17 @@ const WARN_RE = /^echo "::warning::[^"$`\\\n]*"$/;
 // sha256 of the two real workflow files (11e). Any workflow edit turns the real-files test red until a REVIEWED test/47 edit
 // re-pins these (same policy as SCRIPT_PINS); the semantic checks C1-C18 then judge the new content.
 const WORKFLOW_PINS = {
-    'ci.yml': 'd2f0a31168cbeebc04b13f00f3e2199e4191942753ff7a98fdaed1f2cfc5c88a',
+    'ci.yml': 'e8718dd5cfd40040ed27ad46f59b49cb3412b3bf25c7e9774661954011fe6a58',
     'soak-nightly.yml': '803ce2175955f86aeb86b98566ac0b5349295ddfdc416950ccf3de957efbc4af',
 };
 const sha256 = (t) => createHash('sha256').update(t, 'utf8').digest('hex');
 const SOAK_OUT_PIN = { 'ci.yml': '${{ runner.temp }}/soak-out/smoke.jsonl', 'soak-nightly.yml': '${{ runner.temp }}/soak-out/burn-in.jsonl' };
-const GATE_CMDS = ['npm test', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs', 'npm run soak:parity', 'npm run test:gate'];
+const GATE_CMDS = ['npm test', 'npm run test:gc', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs', 'npm run soak:parity', 'npm run test:gate'];
 // Pinned step sequence per job, by kind (11d; order derived from 11 / 11a / 11b). Warning steps are position-free (spec silent),
 // at most one, only in ci gates / burn-in. ptree and volume are an unordered pair (11a only says volume precedes the soak step).
 const SEQ = {
     'ci.yml': {
-        test: ['checkout', 'setup', 'install', 'npm test', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs'],
+        test: ['checkout', 'setup', 'install', 'npm test', 'npm run test:gc', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs'],
         gates: ['checkout', 'setup', 'install', 'npm run soak:parity', 'npm run test:gate', 'ptree', 'soak', 'smoke-report', 'upload'],
     },
     'soak-nightly.yml': {
@@ -336,9 +338,9 @@ const needsParity = (s) => isSoak(s) || NEEDPAR_RE.test(runOf(s));
 const isSoak = (s) => SOAK_RE.test(runOf(s)) || 'SOAK_SMOKE' in envOf(s);
 const norm = (v) => String(v).replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/\s+/g, '');
 const alwaysIf = (s) => s.if !== undefined && norm(s.if) === 'always()';
-// D-b179-1: the ci.yml test-job torture steps run after a red unit-test step. Their `if:` is REQUIRED and must be exactly
+// D-b179-1 / D-b181-1: the ci.yml test-job torture steps and the gc-tier unit step run after a red unit-test step. Their `if:` is REQUIRED and must be exactly
 // NOT_CANCELLED_IF (C17; a revert to no-if is red); every other gating step keeps "no if:". Keyed file/job/kind (no proto lookup).
-const NEED_NOT_CANCELLED = new Set(['ci.yml/test/npm run torture:semantic', 'ci.yml/test/node --expose-gc test/torture.mjs']);
+const NEED_NOT_CANCELLED = new Set(['ci.yml/test/npm run test:gc', 'ci.yml/test/npm run torture:semantic', 'ci.yml/test/node --expose-gc test/torture.mjs']);
 const NOT_CANCELLED_IF = '${{ !cancelled() }}';
 const needNotCancelled = (n, jn, s) => NEED_NOT_CANCELLED.has(n + '/' + jn + '/' + kindOf(s));
 const asList = (x) => (Array.isArray(x) ? x : x === undefined || x === null ? [] : [x]);
@@ -566,7 +568,7 @@ export function workflowProblems(files, opts = {}) {
             }
         }
         const need = n === 'ci.yml'
-            ? { test: ['npm ci', 'npm test', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs'], gates: ['npm run test:gate'] }
+            ? { test: ['npm ci', 'npm test', 'npm run test:gc', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs'], gates: ['npm run test:gate'] }
             : { 'burn-in': ['npm run soak:report'], teeth: ['npm run soak:teeth'], 'teeth-long': ['npm run soak:teeth:long'] };
         for (const [jn, cmds] of Object.entries(need)) if (jn in jobs) for (const c of cmds) if (!cmdRe(c).test(jobRuns[jn])) tag('C8', 'job ' + jn + ' lacks required command ' + c);
 
@@ -973,7 +975,7 @@ concurrency:
 jobs:
   test:
     runs-on: \${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -991,6 +993,8 @@ ${CHECKOUT}${SETUP('${{ matrix.node }}')}      - name: install
         run: npm ci
         timeout-minutes: 10
       - run: npm test
+      - run: npm run test:gc
+        if: \${{ !cancelled() }}
       - run: npm run torture:semantic
         if: \${{ !cancelled() }}
       - run: node --expose-gc test/torture.mjs
@@ -1167,7 +1171,7 @@ const CASES = [
     ['C2', 'extra wrap job', (f) => withFile(f, CI, (t) => t + '  wrap:\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - run: echo hi\n')],
     ['C2', 'teeth-long job renamed', (f) => withFile(f, NT, (t) => rep(t, '  teeth-long:\n', '  teeth-longer:\n'))],
     ['C2', 'ci gates job dropped to a different name', (f) => withFile(f, CI, (t) => rep(t, '  gates:\n', '  gate:\n'))],
-    ['C3', 'ci test timeout 31', (f) => withFile(f, CI, (t) => rep(t, '    runs-on: ${{ matrix.os }}\n    timeout-minutes: 30\n', '    runs-on: ${{ matrix.os }}\n    timeout-minutes: 31\n'))],
+    ['C3', 'ci test timeout 46', (f) => withFile(f, CI, (t) => rep(t, '    runs-on: ${{ matrix.os }}\n    timeout-minutes: 45\n', '    runs-on: ${{ matrix.os }}\n    timeout-minutes: 46\n'))],
     ['C3', 'burn-in timeout removed', (f) => withFile(f, NT, (t) => rep(t, '    timeout-minutes: 90\n', ''))],
     ['C3', 'burn-in timeout 181 (C-36 budget 180, R8-24)', (f) => withFile(f, NT, (t) => rep(t, '    timeout-minutes: 90\n', '    timeout-minutes: 181\n'))],
     ['C3', 'teeth-long timeout 121', (f) => withFile(f, NT, (t) => rep(t, '    timeout-minutes: 120\n', '    timeout-minutes: 121\n'))],
@@ -1188,6 +1192,7 @@ const CASES = [
     ['C8', 'unknown npm script', (f) => withFile(f, CI, (t) => rep(t, 'while P-TREE is a GAP"', 'while P-TREE is a GAP"; npm run bogus:script'))],
     ['C8', 'MUSTFAIL_ONLY present', (f) => withFile(f, CI, (t) => rep(t, 'while P-TREE is a GAP"', 'while P-TREE is a GAP"; echo MUSTFAIL_ONLY'))],
     ['C8', 'npm test step removed', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm test\n', ''))],
+    ['C8', 'test:gc step dropped', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm run test:gc\n        if: ${{ !cancelled() }}\n', ''))],
     ['C9', 'continue-on-error on a non-soak step (npm test is also gating: C17)', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm test\n', '      - run: npm test\n        continue-on-error: true\n')), ['C17', 'C9']],
     ['C9', 'continue-on-error not keyed (true)', (f) => withFile(f, CI, (t) => rep(t, "${{ steps.ptree.outputs.gap == 'true' }}", 'true'))],
     ['C9', 'burn-in soak step loses its continue-on-error', (f) => withFile(f, NT, (t) => rep(t, "        continue-on-error: ${{ steps.ptree.outputs.gap == 'true' }}\n", ''))],
@@ -1237,6 +1242,7 @@ const CASES = [
     ['C17', 'set +e in a gating run', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm test\n', '      - run: set +e; npm test\n'))],
     ['C17', 'set +o pipefail in teeth-long', (f) => withFile(f, NT, (t) => rep(t, '          npm run soak:teeth:long 2>&1', '          set +o pipefail; npm run soak:teeth:long 2>&1'))],
     ['C17', '|| : on torture', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm run torture:semantic\n', '      - run: "npm run torture:semantic || :"\n'))],
+    ['C17', 'npm run test:gc || :', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm run test:gc\n', '      - run: "npm run test:gc || :"\n'))],
     ['C17', 'soak:report not always (burn-in)', (f) => withFile(f, NT, (t) => rep(t, '      - name: report\n        if: always()\n', '      - name: report\n'))],
     ['C17', 'continue-on-error on soak:parity (also trips C9: non-soak step)', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm run soak:parity\n', '      - run: npm run soak:parity\n        continue-on-error: true\n')), ['C17', 'C9']],
     ['C17', 'smoke-report accepts bare text without the soak:report: prefix', (f) => withFile(f, CI, (t) => rep(t, "'soak:report: NOT A RELEASE SOAK -- smoke:'", "'NOT A RELEASE SOAK -- smoke'"))],
@@ -1250,7 +1256,7 @@ const CASES = [
     ['C11', "burn-in SOAK_SEED literal '7' (fixture)", (f) => withFile(f, NT, (t) => rep(t, 'SOAK_SEED: ${{ inputs.seed || github.run_number }}', "SOAK_SEED: '7'"))],
     ['C13', 'nightly seed dispatch input removed', (f) => withFile(f, NT, (t) => rep(t, '      seed:\n        description: seed\n        type: string\n', ''))],
     ['C13', "nightly seed dispatch input default '7'", (f) => withFile(f, NT, (t) => rep(t, '        description: seed\n        type: string\n', "        description: seed\n        type: string\n        default: '7'\n"))],
-    ['C17', 'job-level if on ci test job', (f) => withFile(f, CI, (t) => rep(t, '    runs-on: ${{ matrix.os }}\n    timeout-minutes: 30\n', "    runs-on: ${{ matrix.os }}\n    if: github.event_name == 'never'\n    timeout-minutes: 30\n"))],
+    ['C17', 'job-level if on ci test job', (f) => withFile(f, CI, (t) => rep(t, '    runs-on: ${{ matrix.os }}\n    timeout-minutes: 45\n', "    runs-on: ${{ matrix.os }}\n    if: github.event_name == 'never'\n    timeout-minutes: 45\n"))],
     ['C17', 'job-level if on nightly teeth job', (f) => withFile(f, NT, (t) => rep(t, '  teeth:\n    runs-on: ubuntu-latest\n', "  teeth:\n    runs-on: ubuntu-latest\n    if: github.event_name == 'never'\n"))],
     ['C15', 'workflow env NODE_OPTIONS', (f) => withFile(f, CI, (t) => rep(t, "env:\n  PIN_NODE: '26.8.2'\n", "env:\n  PIN_NODE: '26.8.2'\n  NODE_OPTIONS: '--test-skip-pattern=.'\n"))],
     ['C15', 'step env npm_config_script_shell on npm test', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm test\n', '      - env:\n          npm_config_script_shell: /usr/bin/true\n        run: npm test\n'))],
@@ -1345,6 +1351,7 @@ for (const [fam, label, mutate, fams] of CASES) {
 const NC = '        if: ${{ !cancelled() }}\n';
 const SEM = '      - name: semantic torture\n';
 const TG = '      - name: torture gate\n';
+const GCT = '      - name: unit tests (gc tier)\n';
 const REQ = /^C17: ci\.yml: job test step \(.*\) must be exactly if: \$\{\{ !cancelled\(\) \}\}, got /;
 const FORBID = /^C17: ci\.yml: job (test|gates) gating step has an if: /;
 const REAL_IF_CASES = [
@@ -1356,6 +1363,7 @@ const REAL_IF_CASES = [
     ['(f) torture gate if: always()', (t) => rep(t, TG + NC, TG + '        if: always()\n'), ['C17'], REQ],
     ['(g) the same if on unit tests (npm test)', (t) => rep(t, '      - name: unit tests\n', '      - name: unit tests\n' + NC), ['C17', 'C18'], FORBID],
     ['(h) the same if on a gates-job gating step (test:gate)', (t) => rep(t, '      - name: perf gate\n', '      - name: perf gate\n' + NC), ['C17', 'C18'], FORBID],
+    ['(i) D-b181-1: if dropped from unit tests (gc tier)', (t) => rep(t, GCT + NC, GCT), ['C17'], REQ],
 ];
 for (const [label, mutate, want, msg] of REAL_IF_CASES) {
     test('C17 must-fail (real ci.yml, D-b179-1): ' + label, () => {
@@ -1473,6 +1481,7 @@ test('C8: a changed package.json script text is a problem (pinned literals)', ()
     assert.match(p[0], /script test is/);
 });
 
+test('C8: test:gc without --expose-gc is a problem (tooth for the SCRIPT_PINS member)', () => { const p = workflowProblems(fixture(), { scripts: { ...PKG.scripts, 'test:gc': "node --test --test-reporter=spec 'test/*.test.mjs'" } }); assert.deepEqual(families(p), ['C8']); assert.match(p[0], /script test:gc is/); });
 test('C15: a repo .npmrc is a problem', () => {
     assert.deepEqual(families(workflowProblems(fixture(), { npmrc: true })), ['C15']);
 });

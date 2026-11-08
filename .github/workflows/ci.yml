@@ -1,5 +1,5 @@
 # ci.yml -- lite-signal per-push / per-PR gate (SPEC-B addendum 11 = program addendum 17).
-# test: the unit suite + torture on every supported Node (22 / 24 / 26, macOS on 24).
+# test: the unit suite (plain, then the --expose-gc tier) + torture on every supported Node (22 / 24 / 26, macOS on 24).
 # gates: parity pins, the zero-GC perf gate, then the soak smoke and its verdict-aware report on the exact PIN_NODE.
 # The soak smoke is report-only ONLY while bench/soak/teeth.mjs GAPS lists P-TREE (the tree is
 # expected red until A1-A3 land, SPEC-B 10.3/10.4). The ptree probe fails closed: if it cannot
@@ -36,7 +36,7 @@ jobs:
   test:
     name: test (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -65,6 +65,9 @@ jobs:
         run: npm ci
       - name: unit tests
         run: npm test
+      - name: unit tests (gc tier)
+        if: ${{ !cancelled() }}
+        run: npm run test:gc
       - name: semantic torture
         if: ${{ !cancelled() }}
         run: npm run torture:semantic
