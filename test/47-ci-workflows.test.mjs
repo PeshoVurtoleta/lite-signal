@@ -20,6 +20,10 @@
  *  - "Soak step" = a step whose run matches `npm run soak` / `npm run soak:smoke` / SOAK_SMOKE / bench/soak/main.mjs.
  *  - The burn-in soak step must read SOAK_CYCLES / SOAK_OPS from `inputs.cycles` / `inputs.ops` via env (any
  *    fallback expression is tolerated).
+ *  - AUD-H1 B3: both soak:report steps pass --require-explained (burn-in: CANON text; ci smoke-report: by behaviour,
+ *    the stub exits 2 without the flag, and each accept path needs a `^soak:report: EXPLAINED -- ` line); the burn-in
+ *    soak step's effective SOAK_SEED is exactly SEED_PIN (C11) and the dispatch inputs are exactly cycles, ops, seed
+ *    (C13; the seed input default is absent or empty).
  *  - Job-level `permissions` is tolerated only when every value is `read`. The `npm ci` step carries
  *    timeout-minutes <= 10. Required commands (C8): test job npm ci / npm test / torture:semantic / torture.mjs,
  *    gates test:gate, burn-in soak:report, teeth soak:teeth, teeth-long soak:teeth:long; gates holds a
@@ -227,9 +231,11 @@ const GATING = [cmdRe('npm test'), cmdRe('npm run torture:semantic'), cmdRe('nod
     cmdRe('npm run test:gate'), cmdRe('npm run soak:teeth'), cmdRe('npm run soak:teeth:long'), cmdRe('npm run soak:report')];
 const FALLBACK_CYCLES = "${{ inputs.cycles || '33' }}";
 const FALLBACK_OPS = "${{ inputs.ops || '200000' }}";
+// AUD-H1 B3: the burn-in seed is per run (github.run_number) unless the dispatch input overrides it; never a literal.
+const SEED_PIN = '${{ inputs.seed || github.run_number }}';
 const SNIPPET_IDS = new Set(['ptree', 'volume', 'smoke-report']);
 const CANON = new Set(['npm test', 'npm run torture:semantic', 'node --expose-gc test/torture.mjs', 'npm run soak:parity', 'npm run test:gate',
-    'npm run soak:report -- "$SOAK_OUT"', 'npm run soak']);
+    'npm run soak:report -- "$SOAK_OUT" --require-explained', 'npm run soak']);
 const TEETH = {
     teeth: 'mkdir -p "$RUNNER_TEMP/teeth"\nnpm run soak:teeth 2>&1 | tee "$RUNNER_TEMP/teeth/soak-teeth.log"',
     'teeth-long': 'mkdir -p "$RUNNER_TEMP/teeth-long"\nnpm run soak:teeth:long 2>&1 | tee "$RUNNER_TEMP/teeth-long/soak-teeth-long.log"',
@@ -254,8 +260,8 @@ const WARN_RE = /^echo "::warning::[^"$`\\\n]*"$/;
 // sha256 of the two real workflow files (11e). Any workflow edit turns the real-files test red until a REVIEWED test/47 edit
 // re-pins these (same policy as SCRIPT_PINS); the semantic checks C1-C18 then judge the new content.
 const WORKFLOW_PINS = {
-    'ci.yml': 'ece0f6e6baed2feb7588ba2476427bcadc10cdf2d2afdf5aa1c2f6e2cfdd3d85',
-    'soak-nightly.yml': 'fe6934e1cde5009ce79d36f4a134687ecb6cf9b945ddfa1f592d1e545c534f94',
+    'ci.yml': 'd2f0a31168cbeebc04b13f00f3e2199e4191942753ff7a98fdaed1f2cfc5c88a',
+    'soak-nightly.yml': '72c2161e709bc63c0b3f929d5cff645235bcc9cffa60a6f95b5208ae5830b7ba',
 };
 const sha256 = (t) => createHash('sha256').update(t, 'utf8').digest('hex');
 const SOAK_OUT_PIN = { 'ci.yml': '${{ runner.temp }}/soak-out/smoke.jsonl', 'soak-nightly.yml': '${{ runner.temp }}/soak-out/burn-in.jsonl' };
@@ -355,30 +361,51 @@ function inTemp(fn) { const dir = mkdtempSync(join(tmpdir(), 'wf47-')); try { re
 const cleanEnv = () => { const e = { ...process.env }; for (const k of Object.keys(e)) if (/^SOAK_/i.test(k)) delete e[k]; return e; };
 
 /** C17 smoke-report meaning (11b). Stub `npm` first on PATH prints REAL SoakReport line formats (SoakReport.mjs:18-25, 575-579:
- *  verdict line on stdout; NOT A RELEASE SOAK / INTEGRITY / CONFIG lines on stderr) and exits with a given code. */
+ *  verdict line on stdout; NOT A RELEASE SOAK / INTEGRITY / CONFIG lines on stderr) and exits with a given code.
+ *  AUD-H1 B3: the stub exits 2 (CONFIG) unless --require-explained is in its argv, and an accept needs the EXPLAINED
+ *  stdout line (SoakReport.mjs explainedLine); every reject row carries that line so it rejects for its own reason. */
 export function smokeReportMeaning(snippet) {
     const key = 'smoke\0' + snippet;
     if (memo.has(key)) return memo.get(key);
     const V = 'soak:report: verdict PASS (consistent)';
+    const VF = 'soak:report: verdict FAIL (consistent)';
+    const EX = 'soak:report: EXPLAINED -- seed=305419896(default) oracle=2 known=DIV-F22 gate=0 inconclusive=0 reason=end';
+    const EV = EX + '\n' + V;
+    const SM = 'soak:report: NOT A RELEASE SOAK -- smoke: SOAK_SMOKE=1 run';
+    const UX = 'soak:report: UNEXPLAINED -- oracle BREACH known=none: 2, first OT lane=BOX sig=trace-diff';
     const cases = [
-        ['exit 0 PASS verdict', V, '', 0, true],
-        ['exit 0 FAIL verdict (consistent)', 'soak:report: verdict FAIL (consistent)', '', 0, true],
-        ['exit 1 NOT A RELEASE SOAK -- smoke', V, 'soak:report: NOT A RELEASE SOAK -- smoke: SOAK_SMOKE=1 run', 1, true],
-        ['exit 1 INTEGRITY', V, 'soak:report: INTEGRITY -- summary-missing: no summary record', 1, false],
-        ['exit 1 NOT A RELEASE SOAK -- volume', V, 'soak:report: NOT A RELEASE SOAK -- volume: cycles 3 < 11', 1, false],
-        ['exit 1 CRASH', '', 'soak:report: CRASH -- Error: x', 1, false],
-        ['exit 1 smoke text without the soak:report: prefix', V, 'NOT A RELEASE SOAK -- smoke: SOAK_SMOKE=1 run', 1, false],
-        ['exit 1 a different reason sharing the prefix (smokey)', V, 'soak:report: NOT A RELEASE SOAK -- smokey: x', 1, false],
-        ['exit 2 CONFIG', '', 'soak:report: CONFIG -- no path', 2, false],
-        ['exit 2 with the smoke line', V, 'soak:report: NOT A RELEASE SOAK -- smoke: x', 2, false],
-        ['exit 3', '', '', 3, false],
-        ['exit 1 smoke refusal AND an INTEGRITY line', V, 'soak:report: NOT A RELEASE SOAK -- smoke: x\nsoak:report: INTEGRITY -- summary-missing: y', 1, false],
+        // AUD-H1 B3 ruled flip: no EXPLAINED line -> reject on BOTH accept paths; each twin carries the marker and accepts
+        ['exit 0 PASS verdict, no EXPLAINED marker', V, '', 0, false],
+        ['exit 0 PASS verdict + EXPLAINED', EV, '', 0, true],
+        ['exit 0 FAIL verdict (consistent), no EXPLAINED marker', VF, '', 0, false],
+        ['exit 0 FAIL verdict (consistent) + EXPLAINED', EX + '\n' + VF, '', 0, true],
+        ['exit 1 smoke refusal, no EXPLAINED marker', V, SM, 1, false],
+        ['exit 1 smoke refusal + EXPLAINED', EV, SM, 1, true],
+        ['exit 1 smoke refusal + EXPLAINED + UNEXPLAINED', EV, SM + '\n' + UX, 1, false],
+        // fail closed on EVERY path (orchestrator decision, AUD-H1 B3 r2): the reject lines also bind the rc 0 path
+        ['exit 0 PASS verdict + EXPLAINED + UNEXPLAINED', EV, UX, 0, false],
+        ['exit 0 PASS verdict + EXPLAINED + CRASH', EV, 'soak:report: CRASH -- Error: x', 0, false],
+        ['exit 0 PASS verdict + EXPLAINED + CONFIG', EV, 'soak:report: CONFIG -- x', 0, false],
+        ['exit 0 PASS verdict + EXPLAINED + INTEGRITY', EV, 'soak:report: INTEGRITY -- summary-missing: y', 0, false],
+        ['exit 0 EXPLAINED marker without the soak:report: prefix', 'EXPLAINED -- seed=1(env) oracle=0 known=none gate=0 inconclusive=0 reason=end\n' + V, '', 0, false],
+        ['exit 0 EXPLAINED marker not at line start', 'x ' + EX + '\n' + V, '', 0, false],
+        ['exit 1 smoke refusal + EXPLAINED marker without the soak:report: prefix', 'EXPLAINED -- seed=1(env) oracle=0 known=none gate=0 inconclusive=0 reason=end\n' + V, SM, 1, false],
+        ['exit 1 smoke refusal + EXPLAINED marker not at line start', 'x ' + EX + '\n' + V, SM, 1, false],
+        ['exit 1 INTEGRITY', EV, 'soak:report: INTEGRITY -- summary-missing: no summary record', 1, false],
+        ['exit 1 NOT A RELEASE SOAK -- volume', EV, 'soak:report: NOT A RELEASE SOAK -- volume: cycles 3 < 11', 1, false],
+        ['exit 1 CRASH', EX, 'soak:report: CRASH -- Error: x', 1, false],
+        ['exit 1 smoke text without the soak:report: prefix', EV, 'NOT A RELEASE SOAK -- smoke: SOAK_SMOKE=1 run', 1, false],
+        ['exit 1 a different reason sharing the prefix (smokey)', EV, 'soak:report: NOT A RELEASE SOAK -- smokey: x', 1, false],
+        ['exit 2 CONFIG', EX, 'soak:report: CONFIG -- no path', 2, false],
+        ['exit 2 with the smoke line', EV, 'soak:report: NOT A RELEASE SOAK -- smoke: x', 2, false],
+        ['exit 3', EX, '', 3, false],
+        ['exit 1 smoke refusal AND an INTEGRITY line', EV, 'soak:report: NOT A RELEASE SOAK -- smoke: x\nsoak:report: INTEGRITY -- summary-missing: y', 1, false],
     ];
     const out = [];
     for (const [label, so, se, code, pass] of cases) {
         inTemp((dir) => {
             mkdirSync(join(dir, 'bin'));
-            writeFileSync(join(dir, 'bin', 'npm'), '#!/bin/sh\n[ -n "$STUB_OUT" ] && printf \'%s\\n\' "$STUB_OUT"\n[ -n "$STUB_ERR" ] && printf \'%s\\n\' "$STUB_ERR" >&2\nexit "$STUB_CODE"\n', { mode: 0o755 });
+            writeFileSync(join(dir, 'bin', 'npm'), '#!/bin/sh\nf=\nfor a in "$@"; do [ "$a" = --require-explained ] && f=1; done\nif [ -z "$f" ]; then echo \'soak:report: CONFIG -- stub: --require-explained missing\' >&2; exit 2; fi\n[ -n "$STUB_OUT" ] && printf \'%s\\n\' "$STUB_OUT"\n[ -n "$STUB_ERR" ] && printf \'%s\\n\' "$STUB_ERR" >&2\nexit "$STUB_CODE"\n', { mode: 0o755 });
             writeFileSync(join(dir, 'snippet.sh'), snippet);
             const r = spawnSync('bash', ['-eo', 'pipefail', join(dir, 'snippet.sh')], {
                 cwd: dir, encoding: 'utf8', timeout: 30000,
@@ -565,6 +592,7 @@ export function workflowProblems(files, opts = {}) {
                     const e = envOf(x);
                     if ('SOAK_CYCLES' in e && String(e.SOAK_CYCLES) !== FALLBACK_CYCLES) tag('C11', 'burn-in step env SOAK_CYCLES must be exactly ' + FALLBACK_CYCLES);
                     if ('SOAK_OPS' in e && String(e.SOAK_OPS) !== FALLBACK_OPS) tag('C11', 'burn-in step env SOAK_OPS must be exactly ' + FALLBACK_OPS);
+                    if ('SOAK_SEED' in e && String(e.SOAK_SEED) !== SEED_PIN) tag('C11', 'burn-in step env SOAK_SEED must be exactly ' + SEED_PIN);
                 }
                 if (!(33 >= DEFAULT_CYCLES) || !(200000 >= DEFAULT_OPS)) tag('C11', 'fallbacks 33 / 200000 are below config DEFAULT_CYCLES / DEFAULT_OPS');
                 const gi = st.findIndex((x) => x.id === 'volume');
@@ -583,6 +611,7 @@ export function workflowProblems(files, opts = {}) {
                 if (/SOAK_(LANES|KERNEL|SMOKE|MUSTFAIL)/.test(runOf(s))) tag('C11', 'burn-in soak step run mentions a non-release variable');
                 if (String(env.SOAK_CYCLES) !== FALLBACK_CYCLES) tag('C11', 'burn-in SOAK_CYCLES must be exactly ' + FALLBACK_CYCLES);
                 if (String(env.SOAK_OPS) !== FALLBACK_OPS) tag('C11', 'burn-in SOAK_OPS must be exactly ' + FALLBACK_OPS);
+                if (String(env.SOAK_SEED) !== SEED_PIN) tag('C11', 'burn-in SOAK_SEED must be exactly ' + SEED_PIN);
             }
             const inp = isObj(d.on) && isObj(d.on.workflow_dispatch) && isObj(d.on.workflow_dispatch.inputs) ? d.on.workflow_dispatch.inputs : {};
             for (const [k, floor, nm] of [['cycles', DEFAULT_CYCLES, 'DEFAULT_CYCLES'], ['ops', DEFAULT_OPS, 'DEFAULT_OPS']]) {
@@ -672,7 +701,8 @@ export function workflowProblems(files, opts = {}) {
             const wd = d.on.workflow_dispatch;
             if (isObj(wd)) {
                 for (const k of Object.keys(wd)) if (k !== 'inputs' || n === 'ci.yml') tag('C13', 'workflow_dispatch.' + k + ' is not allowed');
-                if (isObj(wd.inputs) && Object.keys(wd.inputs).sort().join() !== 'cycles,ops') tag('C13', 'workflow_dispatch inputs must be exactly cycles and ops');
+                if (isObj(wd.inputs) && Object.keys(wd.inputs).sort().join() !== 'cycles,ops,seed') tag('C13', 'workflow_dispatch inputs must be exactly cycles, ops and seed');
+                if (isObj(wd.inputs) && isObj(wd.inputs.seed) && 'default' in wd.inputs.seed && wd.inputs.seed.default !== '') tag('C13', 'workflow_dispatch input seed default must be absent or empty (a default replaces the per-run github.run_number seed)');
             }
         }
 
@@ -951,10 +981,11 @@ ${PTREE_STEP}      - id: smoke
       - id: smoke-report
         if: always()
         run: |
-          out=$(npm run soak:report -- "$SOAK_OUT" 2>&1) && rc=0 || rc=$?
+          out=$(npm run soak:report -- "$SOAK_OUT" --require-explained 2>&1) && rc=0 || rc=$?
           echo "$out"
+          if printf '%s' "$out" | grep -qE 'soak:report: (INTEGRITY|CRASH|CONFIG|UNEXPLAINED) --'; then exit 1; fi
+          if ! printf '%s' "$out" | grep -qE '^soak:report: EXPLAINED -- '; then exit 1; fi
           if [ "$rc" -eq 0 ]; then exit 0; fi
-          if printf '%s' "$out" | grep -qE 'soak:report: (INTEGRITY|CRASH|CONFIG) --'; then exit 1; fi
           if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF 'soak:report: NOT A RELEASE SOAK -- smoke:'; then exit 0; fi
           exit 1
       - uses: actions/upload-artifact@v7
@@ -975,6 +1006,9 @@ on:
       ops:
         description: ops
         default: '200000'
+      seed:
+        description: seed
+        type: string
   push:
     branches:
       - 1.6.0-dev
@@ -1008,12 +1042,13 @@ ${ind(VOLUME, 10)}      - id: soak
         continue-on-error: \${{ steps.ptree.outputs.gap == 'true' }}
         env:
           SOAK_REQUIRE_PROVENANCE: '1'
+          SOAK_SEED: \${{ inputs.seed || github.run_number }}
           SOAK_CYCLES: \${{ inputs.cycles || '33' }}
           SOAK_OPS: \${{ inputs.ops || '200000' }}
         run: npm run soak
       - name: report
         if: always()
-        run: npm run soak:report -- "$SOAK_OUT"
+        run: npm run soak:report -- "$SOAK_OUT" --require-explained
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -1159,7 +1194,7 @@ const CASES = [
     ['C16', 'upload-artifact@v5', (f) => withFile(f, CI, (t) => rep(t, 'actions/upload-artifact@v7', 'actions/upload-artifact@v5'))],
     ['C16', 'setup-node@v4 (nightly)', (f) => withFile(f, NT, (t) => rep(t, 'actions/setup-node@v7', 'actions/setup-node@v4', 3))],
     ['C16', 'unknown action actions/cache', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm test\n', '      - uses: actions/cache@v7\n      - run: npm test\n'))],
-    ['C17', 'soak:report || true (burn-in)', (f) => withFile(f, NT, (t) => rep(t, 'run: npm run soak:report -- "$SOAK_OUT"', 'run: npm run soak:report -- "$SOAK_OUT" || true'))],
+    ['C17', 'soak:report || true (burn-in)', (f) => withFile(f, NT, (t) => rep(t, 'run: npm run soak:report -- "$SOAK_OUT" --require-explained', 'run: npm run soak:report -- "$SOAK_OUT" --require-explained || true'))],
     ['C17', 'teeth tee || true', (f) => withFile(f, NT, (t) => rep(t, 'tee "$RUNNER_TEMP/teeth/soak-teeth.log"', 'tee "$RUNNER_TEMP/teeth/soak-teeth.log" || true'))],
     ['C17', 'if: never on npm test', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm test\n', "      - run: npm test\n        if: github.event_name == 'never'\n"))],
     ['C17', 'if: never on soak:teeth', (f) => withFile(f, NT, (t) => rep(t, '      - run: |\n          mkdir -p "$RUNNER_TEMP/teeth"\n', "      - if: github.event_name == 'never'\n        run: |\n          mkdir -p \"$RUNNER_TEMP/teeth\"\n"))],
@@ -1171,7 +1206,14 @@ const CASES = [
     ['C17', 'smoke-report accepts bare text without the soak:report: prefix', (f) => withFile(f, CI, (t) => rep(t, "'soak:report: NOT A RELEASE SOAK -- smoke:'", "'NOT A RELEASE SOAK -- smoke'"))],
     ['C17', 'smoke-report accepts any reason sharing the prefix', (f) => withFile(f, CI, (t) => rep(t, "-- smoke:'", "-- smoke'"))],
     ['C17', 'smoke-report -eq 0 -> -le 1', (f) => withFile(f, CI, (t) => rep(t, '[ "$rc" -eq 0 ]', '[ "$rc" -le 1 ]'))],
-    ['C17', 'smoke-report INTEGRITY|CRASH|CONFIG clause dropped', (f) => withFile(f, CI, (t) => rep(t, "          if printf '%s' \"$out\" | grep -qE 'soak:report: (INTEGRITY|CRASH|CONFIG) --'; then exit 1; fi\n", ''))],
+    ['C17', 'smoke-report INTEGRITY|CRASH|CONFIG|UNEXPLAINED clause dropped', (f) => withFile(f, CI, (t) => rep(t, "          if printf '%s' \"$out\" | grep -qE 'soak:report: (INTEGRITY|CRASH|CONFIG|UNEXPLAINED) --'; then exit 1; fi\n", ''))],
+    ['C17', 'smoke-report EXPLAINED marker check dropped (fixture)', (f) => withFile(f, CI, (t) => rep(t, "          if ! printf '%s' \"$out\" | grep -qE '^soak:report: EXPLAINED -- '; then exit 1; fi\n", ''))],
+    ['C17', 'smoke-report --require-explained dropped (fixture)', (f) => withFile(f, CI, (t) => rep(t, ' --require-explained 2>&1', ' 2>&1'))],
+    ['C17', 'burn-in soak:report --require-explained dropped (fixture)', (f) => withFile(f, NT, (t) => rep(t, 'run: npm run soak:report -- "$SOAK_OUT" --require-explained', 'run: npm run soak:report -- "$SOAK_OUT"'))],
+    ['C11', 'burn-in SOAK_SEED removed (fixture)', (f) => withFile(f, NT, (t) => rep(t, "          SOAK_SEED: ${{ inputs.seed || github.run_number }}\n", ''))],
+    ['C11', "burn-in SOAK_SEED literal '7' (fixture)", (f) => withFile(f, NT, (t) => rep(t, 'SOAK_SEED: ${{ inputs.seed || github.run_number }}', "SOAK_SEED: '7'"))],
+    ['C13', 'nightly seed dispatch input removed', (f) => withFile(f, NT, (t) => rep(t, '      seed:\n        description: seed\n        type: string\n', ''))],
+    ['C13', "nightly seed dispatch input default '7'", (f) => withFile(f, NT, (t) => rep(t, '        description: seed\n        type: string\n', "        description: seed\n        type: string\n        default: '7'\n"))],
     ['C17', 'job-level if on ci test job', (f) => withFile(f, CI, (t) => rep(t, '    runs-on: ${{ matrix.os }}\n    timeout-minutes: 30\n', "    runs-on: ${{ matrix.os }}\n    if: github.event_name == 'never'\n    timeout-minutes: 30\n"))],
     ['C17', 'job-level if on nightly teeth job', (f) => withFile(f, NT, (t) => rep(t, '  teeth:\n    runs-on: ubuntu-latest\n', "  teeth:\n    runs-on: ubuntu-latest\n    if: github.event_name == 'never'\n"))],
     ['C15', 'workflow env NODE_OPTIONS', (f) => withFile(f, CI, (t) => rep(t, "env:\n  PIN_NODE: '26.8.2'\n", "env:\n  PIN_NODE: '26.8.2'\n  NODE_OPTIONS: '--test-skip-pattern=.'\n"))],
@@ -1270,6 +1312,37 @@ for (const [label, mutate, want, msg] of REAL_IF_CASES) {
         const real = loadReal();
         assert.deepEqual(workflowProblems(real), [], 'real files must be clean first');
         const p = workflowProblems(withFile(real, CI, mutate));
+        assert.deepEqual(families(p), want, JSON.stringify(p));
+        assert.ok(p.some((x) => msg.test(x)), 'expected ' + msg + ', got: ' + JSON.stringify(p));
+    });
+}
+
+// AUD-H1 B3: mutants of the REAL workflows around --require-explained, the EXPLAINED marker, UNEXPLAINED and SOAK_SEED.
+// Each names its exact families AND the message that must kill it (a C18 echo cannot pass it).
+const XM = "grep -qE '^soak:report: EXPLAINED -- ' <<<\"$out\"";
+const SMK = (lbl, acc) => new RegExp('^C17: smoke-report snippet ' + (acc ? 'accepts' : 'rejects') + ' \\[' + lbl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\] \\(exit \\d+\\) \\[ci\\.yml\\]$');
+const SEEDLINE = '      SOAK_SEED: ${{ inputs.seed || github.run_number }}\n';
+const REAL_B3_CASES = [
+    ['flag dropped from nightly soak:report', NT, (t) => rep(t, 'run: npm run soak:report -- "$SOAK_OUT" --require-explained\n', 'run: npm run soak:report -- "$SOAK_OUT"\n'), ['C17'],
+        /^C17: soak-nightly\.yml: job burn-in gating step text is not canonical: "npm run soak:report -- \\"\$SOAK_OUT\\""$/],
+    ['flag dropped from ci smoke-report', CI, (t) => rep(t, ' --require-explained 2>&1', ' 2>&1'), ['C17'], SMK('exit 1 smoke refusal + EXPLAINED', false)],
+    ['EXPLAINED check dropped from the rc 0 accept path', CI, (t) => rep(t, '[ "$rc" -eq 0 ] && ' + XM + '; then exit 0', '[ "$rc" -eq 0 ]; then exit 0'), ['C17'], SMK('exit 0 PASS verdict, no EXPLAINED marker', true)],
+    ['EXPLAINED check dropped from the smoke-refusal accept path', CI, (t) => rep(t, ' && ' + XM + '; then\n            echo', '; then\n            echo'), ['C17'], SMK('exit 1 smoke refusal, no EXPLAINED marker', true)],
+    ['EXPLAINED anchor ^ dropped on the rc 0 path', CI, (t) => rep(t, "-eq 0 ] && grep -qE '^soak:report: EXPLAINED", "-eq 0 ] && grep -qE 'soak:report: EXPLAINED"), ['C17'], SMK('exit 0 EXPLAINED marker not at line start', true)],
+    ['EXPLAINED anchor ^ dropped on the smoke-refusal path', CI, (t) => rep(t, " && grep -qE '^soak:report: EXPLAINED -- ' <<<\"$out\"; then\n            echo", " && grep -qE 'soak:report: EXPLAINED -- ' <<<\"$out\"; then\n            echo"), ['C17'], SMK('exit 1 smoke refusal + EXPLAINED marker not at line start', true)],
+    ['reject check dropped from the rc 0 path (moved below the rc 0 accept)', CI, (t) => { const r = t.slice(t.indexOf("          if grep -qE '^soak:report: (INTEGRITY"), t.indexOf('          if [ "$rc" -eq 0 ]')); const a = t.slice(t.indexOf('          if [ "$rc" -eq 0 ]'), t.indexOf('          if [ "$rc" -eq 1 ]')); return rep(t, r + a, a + r); }, ['C17'], SMK('exit 0 PASS verdict + EXPLAINED + UNEXPLAINED', true)],
+    ['CRASH dropped from reject', CI, (t) => rep(t, '(INTEGRITY|CRASH|CONFIG|UNEXPLAINED)', '(INTEGRITY|CONFIG|UNEXPLAINED)'), ['C17'], SMK('exit 0 PASS verdict + EXPLAINED + CRASH', true)],
+    ['CONFIG dropped from reject', CI, (t) => rep(t, '(INTEGRITY|CRASH|CONFIG|UNEXPLAINED)', '(INTEGRITY|CRASH|UNEXPLAINED)'), ['C17'], SMK('exit 0 PASS verdict + EXPLAINED + CONFIG', true)],
+    ['UNEXPLAINED dropped from the reject regex', CI, (t) => rep(t, '(INTEGRITY|CRASH|CONFIG|UNEXPLAINED)', '(INTEGRITY|CRASH|CONFIG)'), ['C17'], SMK('exit 1 smoke refusal + EXPLAINED + UNEXPLAINED', true)],
+    ['SOAK_SEED removed from burn-in', NT, (t) => rep(t, SEEDLINE, ''), ['C11'], /^C11: soak-nightly\.yml: burn-in SOAK_SEED must be exactly \$\{\{ inputs\.seed \|\| github\.run_number \}\}$/],
+    ["SOAK_SEED a literal '305419896'", NT, (t) => rep(t, SEEDLINE, "      SOAK_SEED: '305419896'\n"), ['C11'], /^C11: soak-nightly\.yml: burn-in SOAK_SEED must be exactly /],
+    ["seed dispatch input default '7'", NT, (t) => rep(t, "        default: ''\n", "        default: '7'\n"), ['C13'], /^C13: soak-nightly\.yml: workflow_dispatch input seed default must be absent or empty/],
+];
+for (const [label, file, mutate, want, msg] of REAL_B3_CASES) {
+    test('must-fail (real ' + file + ', AUD-H1 B3): ' + label, () => {
+        const real = loadReal();
+        assert.deepEqual(workflowProblems(real), [], 'real files must be clean first');
+        const p = workflowProblems(withFile(real, file, mutate));
         assert.deepEqual(families(p), want, JSON.stringify(p));
         assert.ok(p.some((x) => msg.test(x)), 'expected ' + msg + ', got: ' + JSON.stringify(p));
     });

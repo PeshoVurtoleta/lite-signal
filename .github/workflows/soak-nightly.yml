@@ -20,6 +20,10 @@ on:
         description: 'SOAK_OPS per lane per cycle for the burn-in (nightly volume; the release floor is config DEFAULT_OPS)'
         type: string
         default: '200000'
+      seed:
+        description: 'SOAK_SEED for the burn-in (overrides the per-run seed github.run_number; empty = github.run_number)'
+        type: string
+        default: ''
   push:
     branches:
       - 1.6.0-dev
@@ -45,6 +49,7 @@ jobs:
     env:
       SOAK_CYCLES: ${{ inputs.cycles || '33' }}
       SOAK_OPS: ${{ inputs.ops || '200000' }}
+      SOAK_SEED: ${{ inputs.seed || github.run_number }}
       SOAK_REQUIRE_PROVENANCE: '1'
     steps:
       - name: checkout
@@ -84,7 +89,7 @@ jobs:
         if: always()
         env:
           SOAK_OUT: ${{ runner.temp }}/soak-out/burn-in.jsonl
-        run: npm run soak:report -- "$SOAK_OUT"
+        run: npm run soak:report -- "$SOAK_OUT" --require-explained
       - name: upload burn-in stream
         if: always()
         uses: actions/upload-artifact@v7

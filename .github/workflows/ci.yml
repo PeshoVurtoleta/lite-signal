@@ -1,9 +1,12 @@
 # ci.yml -- lite-signal per-push / per-PR gate (SPEC-B addendum 11 = program addendum 17).
 # test: the unit suite + torture on every supported Node (22 / 24 / 26, macOS on 24).
-# gates: parity pins, the zero-GC perf gate, then the soak smoke on the exact PIN_NODE.
+# gates: parity pins, the zero-GC perf gate, then the soak smoke and its verdict-aware report on the exact PIN_NODE.
 # The soak smoke is report-only ONLY while bench/soak/teeth.mjs GAPS lists P-TREE (the tree is
 # expected red until A1-A3 land, SPEC-B 10.3/10.4). The ptree probe fails closed: if it cannot
 # decide, the job is red; continue-on-error is true only for the exact output gap=true.
+# The smoke report (soak:report --require-explained) always gates: a red smoke passes only when it is EXPLAINED
+# (every oracle BREACH registry-known, no gate BREACH, no INCONCLUSIVE, reason=end); an INTEGRITY / CRASH / CONFIG /
+# UNEXPLAINED line fails the job on every exit code.
 
 name: ci
 
@@ -104,17 +107,21 @@ jobs:
       - name: soak smoke red (report-only while P-TREE is a GAP)
         if: steps.smoke.outcome == 'failure'
         run: |
-          echo "::warning::soak smoke red: the tree soak smoke failed; it is report-only while the P-TREE GAP is declared (SPEC-B 10.4). Read the uploaded stream."
+          echo "::warning::soak smoke red: the tree soak smoke failed; it is report-only while the P-TREE GAP is declared (SPEC-B 10.4). Read the uploaded stream. The smoke-report step below still gates."
       - name: soak report (smoke stream)
         id: smoke-report
         if: always()
         env:
           SOAK_OUT: ${{ runner.temp }}/soak-out/smoke.jsonl
         run: |
-          if out=$(npm run soak:report -- "$SOAK_OUT" 2>&1); then rc=0; else rc=$?; fi
+          if out=$(npm run soak:report -- "$SOAK_OUT" --require-explained 2>&1); then rc=0; else rc=$?; fi
           printf '%s\n' "$out"
-          if [ "$rc" -eq 0 ]; then exit 0; fi
-          if [ "$rc" -eq 1 ] && grep -qE '^soak:report: NOT A RELEASE SOAK -- smoke:' <<<"$out" && ! grep -qE '^soak:report: (INTEGRITY|CRASH|CONFIG) --' <<<"$out"; then
+          if grep -qE '^soak:report: (INTEGRITY|CRASH|CONFIG|UNEXPLAINED) --' <<<"$out"; then
+            echo "::error::soak:report on the smoke stream printed an INTEGRITY / CRASH / CONFIG / UNEXPLAINED line (exit $rc)"
+            exit 1
+          fi
+          if [ "$rc" -eq 0 ] && grep -qE '^soak:report: EXPLAINED -- ' <<<"$out"; then exit 0; fi
+          if [ "$rc" -eq 1 ] && grep -qE '^soak:report: NOT A RELEASE SOAK -- smoke:' <<<"$out" && grep -qE '^soak:report: EXPLAINED -- ' <<<"$out"; then
             echo "soak:report: consistent smoke stream; the smoke refusal is expected (a smoke run is never release evidence)"
             exit 0
           fi
