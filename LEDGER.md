@@ -306,6 +306,11 @@ its outputs or it is measuring dead-code elimination.**
   (the fork's `soaWitness` ns/op) is not evidence. Run: `node harness/run.mjs layout <candidate>`.
 - **Counters are int32-safe (2026-10):** every int32 counter stays within [-2^30, 2^30-1]
   (ceiling 0x3FFFFFFF) or lives in a Float64Array.
+- **A B/op budget on a heapUsed bracket is also a budget on compiled code (CI classes 13 and 17, 2026-11):** `measureAllocs`' batch loop
+  OSR-compiles inside its own windows and the code objects count in `heapUsed` (up to about 25 KB of `code_space` + `trusted_space` in one measured batch under delayed compiles, excluding the first row, which the instrumentation perturbs and which read up to about 114 KB; local, node v26.8.2). A
+  tight per-batch budget therefore measures the tier-up, not the read: run the bracket in a `--no-use-osr` child that fails closed
+  (`test/torture.mjs`, `test/79`). Do not widen the budget. Not every small-window row is this mechanism: `test/78`'s 1e4 row still went red under
+  delayed compiles with OSR off (11 of 16 runs, 8 of 16 with OSR on, mechanism unproven).
 - **A creation win must also clear propagation (from #29):** creation rows and propagation rows
   can move in opposite directions from ONE mechanism. A creation-only scorecard is a
   self-reported claim.

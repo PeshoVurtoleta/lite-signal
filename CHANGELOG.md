@@ -85,7 +85,21 @@ Dual audit 2026-11-06 follow-ups. Harness and workflow files only; `Signal.js` a
   `node --expose-gc --test --test-reporter=spec 'test/*.test.mjs'`: the whole suite again) after "unit tests", with the same
   `if: ${{ !cancelled() }}` so a red "unit tests" step does not skip it (test/47 requires it). The job now holds the suite twice, so the
   test job `timeout-minutes` goes 30 -> 45 (the macOS `unit tests` step took 10m21s-14m21s over the last 6 CI runs, 12m08s on f2fccf3).
-  `test:gc` has not yet run on any CI cell: the first CI run is pending.
+  First CI proof: run 42521583986 on 0429b25, `test:gc` 3588 tests / 3581 pass / 0 fail / 7 skip on all four test cells (node v22.23.4,
+  v24.22.2, v26.13.0, macOS v24.22.2), job wall 9.4-23.9 min against the 45-minute budget. Local reads 2 skip; the five extra on CI are one
+  row pinned to node v26.8.2 and four that need gitignored local files.
+- **test/79 A4 rows measured in one `--no-use-osr` child (CI class 17).** Dev-only; no engine or API change; the only shipped files touched are docs (README.md, llms.txt, CHANGELOG.md). One `test:gc` run of
+  five (parallel, load1 about 15-20, b181) read `A4 computed reuse arm` at 0.013808 B/op against its 0.01 budget (10,000 B per batch of 1e6 reads).
+  Local evidence, node v26.8.2, Apple M4 Pro, untimed: `--trace-opt` / `--trace-osr` show `measureAllocs`' own batch loop OSR-compiled inside its
+  batch windows, and per-V8-space deltas put the growth in `code_space` + `trusted_space`, which `heapUsed` counts (it is not per-read). No
+  named engine function compiled there; one anonymous function could not be attributed. Forcing the condition with `--concurrent-recompilation-delay`
+  under `taskpolicy -b` (a stress proxy for a starved compiler thread), the unmodified file went red in 1 of 20 runs (`computed` 0.016736) with
+  many rows at 0.005-0.0075; the same 20 runs with `--no-use-osr` read 0 on every reuse and link row. The A4 lane now runs in one child started with
+  `--expose-gc --no-use-osr` (precedent: `test/torture.mjs` `ALLOC_LANE_ARGS`, CI class 13); a spawn error, timeout (SIGKILL), signal, non-zero
+  exit, unparseable output or `noOsr !== true` reds every A4 row. The 0.01 budget, the row titles and the row count are unchanged, and the two A4
+  CONTROL rows run in the child. Fixed file under `taskpolicy -b` with the 200 ms delay of the red run, passed to the A4 child: 20 runs, 0 red, worst reading 0.00216. Not observed on CI yet: the first run
+  on this commit is the proof. Still open: `test/78` "A7 1e4 dirty re-walks" (500 B per batch) reds under `--concurrent-recompilation-delay` 30-150 with OSR on (8 of 16 runs) and off (11 of 16),
+  mechanism unproven, no red on a real host so far.
 - **Verdict-aware soak report (AUD-H1 B1 / B2, D-AUD-1).** `bench/soak/SoakReport.mjs` takes `--require-explained` (no value;
   twice is CONFIG) and exports the pure `explainedProblems(summary)`. Read only after every integrity check passes, it exits
   >= 1 with one `soak:report: UNEXPLAINED -- ` line per cause on a non-end reason, an oracle BREACH with known=none, any gate

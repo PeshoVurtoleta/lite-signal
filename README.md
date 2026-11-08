@@ -952,7 +952,7 @@ The file guards on **both** `--expose-gc` and `--max-semi-space-size=4`; without
 them it emits one loud named skip. `node:test`'s absolute leaf tally is
 node-version-sensitive. Measured on the unreleased 1.6.0-dev tree, not the 1.5.2 release, on node v26.8.2, 2026-11-08 (b181): plain `npm test` =
 3520 tests / 3505 pass / 0 fail / 15 skip; `npm run test:gc` = 3588 tests / 3586 pass / 0 fail /
-2 skip (the count of a green run: one of five runs on that tree failed one row). Thresholds are
+2 skip (7 skip on CI: five more rows need gitignored local files or node v26.8.2). Thresholds are
 lite-perf-gate defaults, untouched -- a claimed-zero path that cannot meet them
 is a finding, not a config knob.
 
