@@ -17,6 +17,12 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 user callbacks run with `this === undefined` (#48) and a stale signal handle's `update(fn)` returns without calling `fn` (#51); see their "### Fixed" entries below. Nothing else in the
 published `files[]` changes except `README.md`, `llms.txt`, the 1.6.0 `reset()` / true-shutdown `destroy()` (C-RESET, below) and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
 
+### Fixed -- engine: dead-owner reads, op-4 timing, recycled `runWithOwner` owner (ARG-E1, Argon F3 / F8)
+
+- `isTracking()`, `getOwner()` and `onCleanup(fn)` test the current observer's / owner's flags: once that node is disposed, `isTracking()` is `false`, `getOwner()` is `undefined`, and `onCleanup` drops `fn` (no throw; it never runs).
+- `runWithOwner` pushes a real owner on a scope stack for the duration of `fn` (Argon F3, D-b183-3). A node disposed while it is an open scope's owner is pinned, and pinned slots are not released while any scope is open, so the slot cannot be recycled under `fn`. Cost: under `onCapacityExceeded: 'throw'`, an exactly-full pool whose only free slot is that pinned owner throws `CapacityError` while the scope is open. A scope with no valid owner (`undefined`, forged, signal, disposed handle) pushes nothing and does not block.
+- `onGraphMutation` op 4 fires after the edge is unlinked and its link is back in the pool (Argon F8; the old in-`freeLink` guard C10 is gone): inside the listener the edge is gone (`hasObservers` false for the last edge, `activeLinks` already decremented). If an op-4 listener throws, no link is left half-freed (LEDGER #54), the source's 1->0 `observeObservers` lifecycle is still delivered before the error surfaces, and a throwing `onDisconnect` replaces the listener's error. `Signal.d.ts` and docs updated; no API change.
+
 ### Added -- `registry.reset()` and top-level `reset()` (C-RESET)
 
 `reset()` disposes every live node and keeps the registry, its pools and its capacities. It runs inside `batch()`

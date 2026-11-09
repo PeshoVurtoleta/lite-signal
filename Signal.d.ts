@@ -325,7 +325,10 @@ export type ReactiveHandle = Signal<any> | Computed<any> | SignalBox<any> | Comp
  *                        the hook and before its error propagates. Op `2` (node disposed)
  *                        implies the node's subscriber edges are gone; no per-edge op `4`
  *                        is emitted for them (bench/soak/mirror.mjs rule I3).
- *  - `4` link remove.    `(intA, intB) = (source.id, target.id)`.
+ *  - `4` link remove.    `(intA, intB) = (source.id, target.id)`. Fires after the edge is
+ *                        unlinked and its link is back in the pool (1.6.0): inside the listener
+ *                        the edge is gone (`hasObservers(source)` is false for the last edge;
+ *                        `stats().activeLinks` is already decremented).
  *  - `5` recompute.      `(intA, intB) = (node.id, 0)` -- fires just before an effect
  *                        re-run or a computed re-eval.
  */
@@ -343,6 +346,10 @@ export type GraphMutationOpcode = 1 | 2 | 3 | 4 | 5;
  * body runs; the run is abandoned with its dependency links kept, the listener's error
  * surfaces to the caller, the write that triggered the run is absorbed, and the node
  * recovers on the next write to a source it still links (1.6.0).
+ *
+ * A listener that throws on opcode 4 (link remove) leaves no half-freed link (1.6.0): the edge is
+ * already gone and pooled. The source's 1->0 `observeObservers` `onDisconnect` is still delivered
+ * before the error surfaces; a throwing `onDisconnect` replaces the listener's error.
  */
 export type GraphMutationListener = (opcode: GraphMutationOpcode, intA: number, intB: number) => void;
 
@@ -434,6 +441,9 @@ export interface Registry {
      * The handle does NOT keep the owner alive -- it is a snapshot, not a
      * reference. Node lifetime is controlled by the owner tree, not by
      * outstanding handles.
+     *
+     * Returns `undefined` once the current owner has been disposed (1.6.0), even
+     * while its body is still on the stack.
      */
     getOwner(): Owner;
     /**
@@ -456,6 +466,15 @@ export interface Registry {
      * as {@link createRoot}): reads directly inside `fn` do NOT link into any
      * enclosing observer. Inner effect/computed bodies still establish their
      * own owner + observer scopes.
+     *
+     * Pins the owner for the duration of `fn` (1.6.0, D-b183-3): `fn` runs as an open
+     * scope with a valid owner. If that owner is disposed while the scope is open, its
+     * pool slot is not released until every scope has closed, so it cannot be recycled
+     * under `fn`. Cost: while a scope is open, pinned slots are not released, so under
+     * `onCapacityExceeded: 'throw'` an exactly-full node pool whose only free slot is
+     * that pinned owner throws `CapacityError` on the next node allocation. A scope
+     * with no valid owner (`undefined`, forged, signal or disposed handle) pushes
+     * nothing and does not block release.
      *
      * Returns whatever `fn` returns.
      */
@@ -481,7 +500,8 @@ export interface Registry {
     untrack<T>(fn: () => T): T;
     /** True iff a read RIGHT NOW would record a dependency on this registry.
      *  False inside `untrack`, `subscribe` callbacks, `onCleanup` bodies, and
-     *  outside any observer. Use for lazy-allocation wrappers like lite-store. */
+     *  outside any observer. Also false once the current observer has been disposed
+     *  (1.6.0). Use for lazy-allocation wrappers like lite-store. */
     isTracking(): boolean;
     /** O(1): does this source have at least one live observer right now? A `peek` does not count. */
     hasObservers(handle: ReactiveHandle): boolean;
@@ -526,6 +546,9 @@ export interface Registry {
      *  listener is registered: one branch-predicted `null` check per mutation point.
      *  @throws TypeError if `fn` is not a function or null. */
     onGraphMutation(fn: GraphMutationListener | null): GraphMutationUnsubscribe;
+    /** Register `fn` to run when the enclosing effect/computed re-runs or is disposed. A no-op
+     *  outside an owner, and once the current owner is disposed (1.6.0): `fn` is dropped, never
+     *  runs, and nothing throws. */
     onCleanup(fn: () => void): void;
     stats(): RegistryStats;
     /**

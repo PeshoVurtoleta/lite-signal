@@ -398,6 +398,8 @@ effect(() => {
 
 `getOwner()` returns the current owner as an **opaque, gen-stamped handle** (or `undefined` outside any effect/computed body). `runWithOwner(handle, fn)` runs `fn` with the captured lifecycle scope reinstated: effects and computeds created directly in `fn` are adopted by that owner and cascade-dispose when it re-runs or is disposed. Reads directly in `fn` do not link -- tracking is detached the same way `createRoot` detaches it, so accidental cross-async edges cannot form. Compose with an inner effect if you want tracking under the restored owner.
 
+**Owner pinning (1.6.0, D-b183-3).** `runWithOwner` keeps the owner on a scope stack for the duration of `fn`. A node disposed while it is an open scope's owner is pinned: its pool slot is not released while any scope is open, so it cannot be recycled under `fn`. The cost: under `onCapacityExceeded: 'throw'`, an exactly-full node pool whose only free slot is that pinned owner throws `CapacityError` while the scope is open. A scope with no valid owner (`undefined`, a forged handle, a signal, a disposed handle) pushes nothing and does not block. Since 1.6.0 `getOwner()` also returns `undefined` once the current owner has been disposed, and `onCleanup(fn)` called after that drops `fn` (no throw; it never runs).
+
 **Handles are safe to hold across async boundaries.** This is where a raw-pointer implementation would corrupt the graph: node objects are pooled and the LIFO free list recycles a disposed owner's slot into whatever effect/computed is allocated next. A stale raw pointer would silently adopt continuations into that stranger. Instead, `getOwner` returns a `describeNode` handle stamped with the pool slot's generation; `runWithOwner` resolves via `liveNode()`, and if the gen has moved (slot recycled) or the handle refers to a signal (not a tracker), it degrades to **rooted execution** -- the continuation runs, stays alive, and is simply not owned by anyone. That is the only honest semantics for "the scope you captured no longer exists": the alternative was a silent cascade-dispose by an unrelated stranger, or, if the slot was disposed but not yet recycled, a `RangeError: Maximum call stack size exceeded` inside the cleanup recursion. Both hazards are pinned in `test/28-run-with-owner.test.mjs` and empirically demonstrated in `harness/owner-hazard-repro.mjs`.
 
 The handles do **not** keep owners alive -- they are snapshots, not references. Node lifetime is controlled by the owner tree, not by outstanding handles.
@@ -420,7 +422,7 @@ function makeLazyField(initial) {
 }
 ```
 
-Returns `true` iff a read right now would record a dependency on the current registry -- an observer body is on the stack AND tracking is enabled. Mirrors the engine's own read-trap check (both flags), so it correctly returns `false` inside `untrack`, inside `subscribe` callbacks, inside `onCleanup` bodies, inside `watch` / `when` callbacks, and outside any observer.
+Returns `true` iff a read right now would record a dependency on the current registry -- an observer body is on the stack AND tracking is enabled. Mirrors the engine's own read-trap check (both flags), so it correctly returns `false` inside `untrack`, inside `subscribe` callbacks, inside `onCleanup` bodies, inside `watch` / `when` callbacks, and outside any observer. Since 1.6.0 it is also `false` once the current observer has been disposed.
 
 For wrapper libraries (lite-store, lite-query, lite-form) gating lazy allocation on the read path. Per-registry -- call `registry.isTracking()` if your signals live in a non-default registry.
 
@@ -493,6 +495,8 @@ A registry-level (and top-level) debug hook for push-based tooling -- the connec
 - **Live-entry stack (1.6.0)** -- registrations stack, newest on top, and only the newest live one is called. An unsubscribe works in any order and unlinks only its own entry: `onGraphMutation(a); onGraphMutation(b); unsubB()` re-activates `a`; `unsubA(); unsubB()` leaves none, and a removed listener never fires again (before 1.6.0 only LIFO order worked). A held unsubscriber, once called, no longer retains its listener. Used by lite-devtools 1.1 to multiplex multiple consumers behind one engine registration.
 
 **Flag values (1.6.0):** op 1 and op 2 carry the node's flags. Callable `signal` / `computed` / `effect` report 32 / 1 / 2; `signalBox` and `computedBox` nodes also carry the box bit (128) and report 160 / 129. Op 2 can additionally carry bit 6 (64, the internal stale-read mark) when a node a write flagged mid-run is disposed before that flag clears; op 1 never does.
+
+**Op 4 timing (1.6.0, ARG-E1 F8).** Op 4 fires after the edge is unlinked and its link is back in the pool: inside the listener the edge is gone (`hasObservers(source)` is false when it was the last edge; `stats().activeLinks` is already decremented). A listener that throws on op 4 leaves no half-freed link; the source's 1->0 `observeObservers` `onDisconnect` is still delivered before the error surfaces, and a throwing `onDisconnect` replaces the listener's error.
 
 **Listener contract: observe only -- never throw, never mutate the graph from inside.** The hook fires synchronously inside mutation points; mutating from the callback corrupts the in-flight operation. Wrap any downstream work that could touch the registry in a microtask.
 
