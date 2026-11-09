@@ -1011,8 +1011,8 @@ describe("A1 probe-gated suspects (S3b, P13, S9, S10, C10)", () => {
     it("S10c: createRoot restores a recycled owner", s10(
         "(r, X) => { r.createRoot(() => { X(); }); }"));
 
-    // C10: an op-4 (edge removed) hook disposes link.source. The hook fires while the link is
-    // still in the source's sub list, so the source's own disposal must not free it a second time.
+    // C10: an op-4 (edge removed) hook disposes link.source. The hook fires after the link is unlinked
+    // and back in the pool (ARG-E1, F8), so the source's own disposal cannot free it a second time.
     it("C10a: op-4 hook disposes link.source during a dispose walk (no double free)", async () => {
         const o = await isolated((createRegistry, tryMsg) => {
             const r = createRegistry();

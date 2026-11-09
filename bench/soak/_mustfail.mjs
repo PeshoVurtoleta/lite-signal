@@ -332,7 +332,8 @@ const A_RETURN = '    return {getOwner, runWithOwner, signal, computed, effect, 
 // `node.gen === gen &&` and does not match.
 const A_FLUSH_RUN = ' '.repeat(28) + 'if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n';
 // :607 the freeLink op-4 hook fire (unlink an edge; 8-space indent). b93 TASK 0 B0-9: exactly one occurrence in the
-// headpatched kernel (the allocateLink op-3 twin :597 carries mutationHook(3, ...) and does not match).
+// headpatched kernel (the allocateLink op-3 twin :597 carries mutationHook(3, ...) and does not match). Headpatched only:
+// the live freeLink fires op 4 through fireOp4 after the pool push (ARG-E1, F8), so T-hook-mirror stays on this frozen shape.
 const A_HOOK_OP4 = '        if (mutationHook !== null) mutationHook(4, source.id, target.id);\n';
 
 // T-LC anchors in the LIVE Signal.js (base tree; re-anchored b117 B3a on the A5a registration list, Signal.js
@@ -364,11 +365,11 @@ const LC_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE' });
 // T-cov-LIFECYCLE: no handle ever holds two live registrations (rule single-reg, lanes/lifecycle.mjs covOff).
 const LC_COV_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE', SOAK_MUSTFAIL: 'cov-off:lc-two-regs' });
 
-// T-owner-* anchors in the LIVE Signal.js (base tree e26168ce (AUD-E2b B2 re-pin: the AUD-E2 revert-time-check engine, D-AUD-3; was ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1), b136 LEDGER #51; first cut b127 B5 on ec6d7156,
+// T-owner-* anchors in the LIVE Signal.js (base tree 91c507df (ARG-E1 B3 re-pin: the ARG-E1 F3 / F8 engine; was e26168ce (AUD-E2b B2), ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1), b136 LEDGER #51; first cut b127 B5 on ec6d7156,
 // PLAN-R3-owner A5 (b)): each is the full line(s) of the single hunk `diff Signal.js
 // .handoff/b125-evidence/r3/mut/tree-<id>/Signal.js`, and each replacement is that mutant's exact text, so every row's
-// kernel is the b125 mutant's hunk on the live tree (sha256/8 on e26168ce, AUD-E2b B2: cascade 6c7772a8, cleanup 0e2585b7,
-// fifo 8be109e7, outin 3d916358, this 6fce3e4d; on ca39e1f4 (AUD-E1 B2b) 5c1a999a / ec3a23c2 / e1c575de / 80cfef67 / 7a4a2072; on c8f6cd1e (b176 B2b) 09261436 / 1251206d / 37d57c5c / 6e8af001 / 5e34e129; on d235e505 (b165 G2) 3edf8998 / ea4190c6 / 2b3dd433 / e265c6f7 / 19fbc430; on ea0b64d1 (b137 B4) 7581ec39 / bb41a594 / 84054fab / 1f9942cf /
+// kernel is the b125 mutant's hunk on the live tree (sha256/8 on 91c507df, ARG-E1 B3: cascade eb96afe3, cleanup 1927fff4,
+// fifo b4bdca14, outin 83de3ca4, this af45a80d; on e26168ce (AUD-E2b B2) 6c7772a8 / 0e2585b7 / 8be109e7 / 3d916358 / 6fce3e4d; on ca39e1f4 (AUD-E1 B2b) 5c1a999a / ec3a23c2 / e1c575de / 80cfef67 / 7a4a2072; on c8f6cd1e (b176 B2b) 09261436 / 1251206d / 37d57c5c / 6e8af001 / 5e34e129; on d235e505 (b165 G2) 3edf8998 / ea4190c6 / 2b3dd433 / e265c6f7 / 19fbc430; on ea0b64d1 (b137 B4) 7581ec39 / bb41a594 / 84054fab / 1f9942cf /
 // 21a4e3ac; on ec6d7156 they were 158a58b3 / ce6677c3 / 195121be / 7ef2a2db /
 // b8135782, .handoff/b127-evidence/b5/). Each anchor occurs exactly once (patchAll).
 // :1450 disposeOwned's pop-from-the-front loop (8-space indent).
@@ -384,11 +385,11 @@ const OW_ENV = Object.freeze({ SOAK_LANES: 'OWNER' });
 // T-cov-OWNER / P-OWNER-HP: no dying owner ever holds two cleanups (lanes/owner.mjs covOff cleanup-fifo -> single-cleanup).
 const OW_COV_ENV = Object.freeze({ SOAK_LANES: 'OWNER', SOAK_MUSTFAIL: 'cov-off:cleanup-fifo' });
 
-// T-RC-* anchors in the LIVE Signal.js (base tree e26168ce (AUD-E2b B2 re-pin: the AUD-E2 revert-time-check engine, D-AUD-3; was ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1), b136 LEDGER #51; first cut b130 B5 on ec6d7156, PLAN-R4
+// T-RC-* anchors in the LIVE Signal.js (base tree 91c507df (ARG-E1 B3 re-pin: the ARG-E1 F3 / F8 engine; was e26168ce (AUD-E2b B2), ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1), b136 LEDGER #51; first cut b130 B5 on ec6d7156, PLAN-R4
 // TASK 7 + O9 / O11): each is the full line(s) of the single hunk `diff Signal.js
 // .handoff/b129-evidence/r4a/mut/T-RC-<id>/Signal.js` (updgen: the b136 #51 hunk reverted), and each replacement is that
-// mutant's exact text, so every row's kernel is that hunk on the live tree (sha256/8 on e26168ce, AUD-E2b B2: setgen
-// ba5ae86a, readgen 06ae6a92, dispgen 8fc1f049, updgen 69d760ea; on ca39e1f4 (AUD-E1 B2b) b99d49fe / 58a2b1df / 4a3ea651 / da1e55a7; on c8f6cd1e (b176 B2b) 305f2d4c / 532ca4dd / 1963ae43 / 582cf708; on d235e505 (b165 G2) 60a28b74 / 9168e740 / 0ca760a1 / 3bb2801c; on ea0b64d1 (b137 B4) fb1de503 / 5b4ef7e2 / b9a480da /
+// mutant's exact text, so every row's kernel is that hunk on the live tree (sha256/8 on 91c507df, ARG-E1 B3: setgen
+// 98f45391, readgen e44f6df1, dispgen 2c8e5c8f, updgen c8e1f9b7; on e26168ce (AUD-E2b B2) ba5ae86a / 06ae6a92 / 8fc1f049 / 69d760ea; on ca39e1f4 (AUD-E1 B2b) b99d49fe / 58a2b1df / 4a3ea651 / da1e55a7; on c8f6cd1e (b176 B2b) 305f2d4c / 532ca4dd / 1963ae43 / 582cf708; on d235e505 (b165 G2) 60a28b74 / 9168e740 / 0ca760a1 / 3bb2801c; on ea0b64d1 (b137 B4) fb1de503 / 5b4ef7e2 / b9a480da /
 // ec6d7156, updgen then == `git show aa154b6:Signal.js`; on ec6d7156 the first three were 57f16bfc / 1fa4a0ca / 8603ef56). Each anchor occurs exactly once (patchAll).
 // :2075-:2076 the callable read's read.set closure gen guard (O11: adapters/lite.mjs hands the lane the callable read).
 const A_RC_SETGEN = '        read.set = (value) => {\n            if (node.gen !== birthGen) return;\n';
@@ -406,11 +407,11 @@ const RC_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE' });
 // rule stale-dispose-dead).
 const RC_COV_ENV = Object.freeze({ SOAK_LANES: 'RECYCLE', SOAK_MUSTFAIL: 'cov-off:stale-dispose-recycled' });
 
-// T-SC-* anchors in the LIVE Signal.js (base tree e26168ce (AUD-E2b B2 re-pin: the AUD-E2 revert-time-check engine, D-AUD-3; was ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1), b136 LEDGER #51; first cut b134 B5 on ec6d7156, PLAN-R4
+// T-SC-* anchors in the LIVE Signal.js (base tree 91c507df (ARG-E1 B3 re-pin: the ARG-E1 F3 / F8 engine; was e26168ce (AUD-E2b B2), ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1), b136 LEDGER #51; first cut b134 B5 on ec6d7156, PLAN-R4
 // R4c TASKS 6 + 7): each is the full line of the single hunk .handoff/b131-evidence/r4c/mut/tree-<id>.diff (dropcall,
 // wedge, thunkgen) or .handoff/b133-evidence/census/mut/syncrun.diff, and each replacement is that mutant's exact text,
-// so every row's kernel is that hunk on the live tree (sha256/8 on e26168ce, test/45 SC_ROWS: dropcall 0e1493c0, wedge
-// 2d7a3e7e, thunkgen a1fe839a, syncrun c8e23f08; on ca39e1f4 6b9b8602 / 5884b66d / 719de089 / 799b8a1b; on c8f6cd1e 2f6e3c8f / 74bb56d4 / 99e9c201 / f7a32a8b; on d235e505 1ee40e29 / 29cd0216 / 8ab3d4a3 / 92ff4790; on ea0b64d1 92b060e3 / 63e4de65 / f5b90744 / 01569c06; on ec6d7156 they were 9cc16933 / dbb57692 / 304984f9 / 542fcf14,
+// so every row's kernel is that hunk on the live tree (sha256/8 on 91c507df, test/45 SC_ROWS: dropcall 220a88c4, wedge
+// 9e49c3eb, thunkgen b9dfcc8f, syncrun 2cf07dc8; on e26168ce 0e1493c0 / 2d7a3e7e / a1fe839a / c8e23f08; on ca39e1f4 6b9b8602 / 5884b66d / 719de089 / 799b8a1b; on c8f6cd1e 2f6e3c8f / 74bb56d4 / 99e9c201 / f7a32a8b; on d235e505 1ee40e29 / 29cd0216 / 8ab3d4a3 / 92ff4790; on ea0b64d1 92b060e3 / 63e4de65 / f5b90744 / 01569c06; on ec6d7156 they were 9cc16933 / dbb57692 / 304984f9 / 542fcf14,
 // .handoff/b134-evidence/b5/kernels.txt). Each anchor occurs exactly once (patchAll).
 // :1699 the flush loop's queued-effect delivery through the cached thunk (32-space indent; dropcall drops it).
 const A_SC_DROPCALL = '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n';
@@ -454,7 +455,7 @@ const A_OP2 = '        if (mutationHook !== null) mutationHook(2, node.id, node.
 const A_NS_FLUSH = '        if (isFlushing) return 1;\n';
 const A_NS_OBS = '        if (currentObserver !== null) return 3;\n';
 
-// T-cap-* anchors in the LIVE Signal.js (base tree e26168ce (AUD-E2b B2 re-pin: the AUD-E2 revert-time-check engine, D-AUD-3; was ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1); .handoff/b139-evidence/b1b/mkmut.mjs, each 1x).
+// T-cap-* anchors in the LIVE Signal.js (base tree 91c507df (ARG-E1 B3 re-pin: the ARG-E1 F3 / F8 engine; was e26168ce (AUD-E2b B2), ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1); .handoff/b139-evidence/b1b/mkmut.mjs, each 1x).
 // The node-pool cap test under onCapacityExceeded 'throw' (T-cap-node: >= -> >, one node past the cap).
 const A_CAP_NODE = 'policy === "throw" && nodePool.length >= currentNodesCapacity';
 // The link-pool cap test under 'throw' (T-cap-link: >= -> >).
@@ -475,9 +476,9 @@ const LITEBOX_ENV = Object.freeze({ SOAK_ENGINE: 'lite-box' });
 // The tree SNAPSHOT lane (R8 C2a, PLAN-R8 GROUP C task 4; R8-5 / R8-16 / R8-21): a plain lane (no sub-lane mix, R8-8),
 // oracle OS once per restore event.
 const SNAP_ENV = Object.freeze({ SOAK_LANES: 'SNAPSHOT' });
-// T-SNAP-* anchors in the LIVE Signal.js registry restore() pass 1 (base tree e26168ce (AUD-E2b B2 re-pin: the AUD-E2 revert-time-check engine, D-AUD-3; was ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1); the A0 measured kernels
+// T-SNAP-* anchors in the LIVE Signal.js registry restore() pass 1 (base tree 91c507df (ARG-E1 B3 re-pin: the ARG-E1 F3 / F8 engine; was e26168ce (AUD-E2b B2), ca39e1f4 (AUD-E1 B2b), c8f6cd1e (b176 B2b), d235e505 (b165 G2), ea0b64d1); the A0 measured kernels
 // .handoff/r8-evidence/A0/kernels/M-OS-{roundtrip,refire,clean}/Signal.js, one hunk each, R8-16; each built kernel is
-// byte-equal to its A0 copy: sha256/8 a02a9be7 / caab50b1 / 76aa6ce6, re-cut AUD-E2b B2; the ca39e1f4 cut (AUD-E1 B2b) 87d12698 / e66b7976 / 954f91c9 is A0/kernels-ca39e1f4/; the c8f6cd1e cut (b176 B2b) 794a18d2 / 265ac68b / 95f5c836 is A0/kernels-c8f6cd1e/; the d235e505 cut (b165 G2) 04434212 / 1a579cd0 / 417aedbf is A0/kernels-d235e505/; the ea0b64d1 cut 5900bf33 / bf6c52af /
+// byte-equal to its A0 copy: sha256/8 4323b623 / 67dbca42 / a00d4dfc, re-cut ARG-E1 B3; the e26168ce cut (AUD-E2b B2) a02a9be7 / caab50b1 / 76aa6ce6 is A0/kernels-e26168ce/; the ca39e1f4 cut (AUD-E1 B2b) 87d12698 / e66b7976 / 954f91c9 is A0/kernels-ca39e1f4/; the c8f6cd1e cut (b176 B2b) 794a18d2 / 265ac68b / 95f5c836 is A0/kernels-c8f6cd1e/; the d235e505 cut (b165 G2) 04434212 / 1a579cd0 / 417aedbf is A0/kernels-d235e505/; the ea0b64d1 cut 5900bf33 / bf6c52af /
 // f3c08f86 is A0/kernels-ea0b64d1/). Each anchor occurs exactly
 // once (the D-M comment tells the CLEAN branch apart from the dirty-seeded one; one restored effect handle site).
 // A clean computed's recorded stamps (T-SNAP-clean: evalVersion 0; T-SNAP-roundtrip: the markEpoch copy dropped).

@@ -36,12 +36,13 @@ const SRC = readFileSync(KPATH, 'utf8');
 // executeEffect + refreshComputed re-pinned on ec6d7156 (b120, LEDGER #48, D-b120-2 `(0, fn)()` form);
 // executeEffect + refreshComputed re-pinned on c8f6cd1e (b176, FIX-CL-D, LEDGER #55; source = r3 9cf9518f, other 12 unchanged).
 // executeEffect re-pinned on ca39e1f4 (b177, AUD-E1 S3, D-AUD-5: effectTail inside the finally; LEDGER #55; other 13 unchanged); all 14 unchanged on e26168ce (AUD-E2, D-AUD-3).
+// disposeNode + freeLink re-pinned on 91c507df (b184, ARG-E1 B3; other 12 unchanged).
 const PINS = {
     flushEffects: { sha16: 'b4b77b7b0a6a8e2f', bytes: 2270 },
     executeEffect: { sha16: '07ee5b7a428a200b', bytes: 3598 },
     createNode: { sha16: '7a8c545056853c6a', bytes: 3780 },
     nodeMiss: { sha16: 'c6aa7fbe2f7077f0', bytes: 1535 },
-    disposeNode: { sha16: 'a79e91b70041f7eb', bytes: 6599 },
+    disposeNode: { sha16: '1ee1c455014776fe', bytes: 6672 },
     effectTail: { sha16: '1b80da7167ba5bbf', bytes: 93 },
     pullComputed: { sha16: '5420227134aa9791', bytes: 346 },
     refreshComputed: { sha16: 'df8e6f0c7019e7a0', bytes: 5164 },
@@ -50,7 +51,7 @@ const PINS = {
     readSignal: { sha16: 'bb06aefbf682ef8f', bytes: 605 },
     readComputed: { sha16: 'bb6f6be2c79aeb23', bytes: 991 },
     allocateLink: { sha16: 'e3e657b390cc8d35', bytes: 5017 },
-    freeLink: { sha16: '4db6ffe559493a41', bytes: 1767 },
+    freeLink: { sha16: '435bb8915b1e8b95', bytes: 1550 },
 };
 const NAMES = ['flushEffects', 'executeEffect', 'createNode', 'nodeMiss', 'disposeNode', 'effectTail', 'pullComputed',
     'refreshComputed', 'boxGet', 'boxComputedGet', 'readSignal', 'readComputed', 'allocateLink', 'freeLink'];

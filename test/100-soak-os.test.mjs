@@ -524,7 +524,7 @@ async function loadMutant(name) {
     const n = LIVE_SRC.split(from).length - 1;
     assert.equal(n, 1, name + ': patch site must match exactly once, got ' + n);
     const src = LIVE_SRC.replace(from, () => to);
-    // A0 kernels re-cut on Signal.js e26168ce (the AUD-E2 revert-time-check engine, D-AUD-3) by AUD-E2b B2 (== test/45 SNAP_ROWS shas); the ca39e1f4 cut (AUD-E1 B2b) is
+    // A0 kernels re-cut on Signal.js 91c507df (the ARG-E1 F3 / F8 engine) by ARG-E1 B3 (== test/45 SNAP_ROWS shas); the e26168ce cut (AUD-E2b B2) is A0/kernels-e26168ce/, the ca39e1f4 cut (AUD-E1 B2b) is
     // A0/kernels-ca39e1f4/, the c8f6cd1e cut (b176 B2b) A0/kernels-c8f6cd1e/, the d235e505 cut (b165 G2) A0/kernels-d235e505/,
     // the ea0b64d1 cut A0/kernels-ea0b64d1/
     const a0 = join(ROOT, '.handoff', 'r8-evidence', 'A0', 'kernels', name, 'Signal.js');

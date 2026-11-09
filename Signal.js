@@ -798,6 +798,13 @@ export function createRegistry(config) {
     // every frame has unwound would re-seat a stranger. Released into the free list only
     // at depth 0 (releasePinned).
     let pinnedHead = null;
+    // D-b183-3 (Q-E1-1): the owners of the runWithOwner scopes open right now, innermost last. Such an
+    // owner is usually idle, so without a pin its slot goes to the free list at dispose and a frame
+    // that saved it restores a recycled node. disposeNode pins it (scopeOwned) and releasePinned waits
+    // for scopeDepth === 0. Pushed and popped only by runWithOwner; each slot is nulled on pop.
+    // Smi (bounded by the JS stack).
+    const scopeOwners = [];
+    let scopeDepth = 0;
 
     // -- Node identity + observer-lifecycle introspection (ported from 1.1.5) --
     let nodeSeq = 1 | 0;
@@ -1056,14 +1063,6 @@ export function createRegistry(config) {
         // `link.source !== null ? ... : -1` guards existed only to survive a cursor
         // dangling at an already-freed link -- a state disposeNode's CURSOR REPAIR now
         // makes unreachable. Reading the params directly is equivalent and branch-free.
-        if (mutationHook !== null) {
-            mutationHook(4, source.id, target.id);
-            // C10: a hook that disposed `source` (or `target`) already freed this link via the
-            // source's sub-list walk; freeing it again would double-free it. Op order unchanged.
-            // Both ends are compared: a freed link recycled into a new edge from the same
-            // source slot would pass a source-only test.
-            if (link.source !== source || link.target !== target) return;
-        }
         const pSub = link.prevSub;
         const nSub = link.nextSub;
         if (pSub !== null) pSub.nextSub = nSub; else source.headSub = nSub;
@@ -1079,6 +1078,10 @@ export function createRegistry(config) {
         link.nextFree = freeLinkHead;
         freeLinkHead = link;
         activeLinks = (activeLinks - 1) | 0;
+        // Op 4 fires once the edge is gone and pooled (ARG-E1, F8): a throwing listener cannot
+        // strand a half-freed link, and nothing below reads `link`, so a listener that disposes
+        // either end cannot double-free it.
+        if (mutationHook !== null) fireOp4(source, target);
         // 1->0 fires LAST (A1 r2): the link is already back in the pool, so a throwing
         // onDisconnect cannot strand it half-freed (out of every list, never pooled).
         if (lifecycleCount !== 0 && source.headSub === null) fireDisconnect(source);
@@ -1282,8 +1285,8 @@ export function createRegistry(config) {
         // inherits them); before the gen bump, so hooks user code registered during teardown go too.
         if (lifecycleCount !== 0) dropLifecycleHooks(node);
         node.gen = (node.gen + 1) | 0;
-        if ((f & FLAG_COMPUTING) !== 0) {
-            node.nextFree = pinnedHead;   // A1.8: running -> pinned until depth 0
+        if ((f & FLAG_COMPUTING) !== 0 || (scopeDepth !== 0 && scopeOwned(node))) {
+            node.nextFree = pinnedHead;   // A1.8: running -> pinned until depth 0 (D-b183-3: or a scope's owner)
             pinnedHead = node;
         } else {
             node.nextFree = freeNodeHead;
@@ -1416,12 +1419,21 @@ export function createRegistry(config) {
         return node;
     }
 
+    /** D-b183-3: is `node` the owner of a runWithOwner scope open right now? Cold. @private */
+    function scopeOwned(node) {
+        for (let i = 0; i < scopeDepth; i++) if (scopeOwners[i] === node) return true;
+        return false;
+    }
+
     /**
      * A1.8: splice every pinned slot into the free list. Callers guarantee
-     * cursorDepth === 0 (no frame left that could hold a pinned node). Cold.
+     * cursorDepth === 0 (no frame left that could hold a pinned node); an open
+     * runWithOwner scope still can, so nothing is released then (D-b183-3): the
+     * miss grows the pool, or throws CapacityError under "throw". Cold.
      * @private
      */
     function releasePinned() {
+        if (scopeDepth !== 0) return false;
         let n = pinnedHead;
         pinnedHead = null;
         while (n !== null) {
@@ -1974,12 +1986,16 @@ export function createRegistry(config) {
     // the next write to a source it still links.
     function fireRecompute(node) { if (mutationHook !== null) fireOp5(node); }
     function fireOp5(node) { try { mutationHook(5, node.id, 0); } catch (e) { activeObserverCurrentDep = null; throw e; } }
+    // Op 4 (edge removed), out of line for freeLink's size; runs only while a listener is installed. A
+    // listener that throws skips freeLink's 1->0 tail, so the catch delivers it first; a throwing
+    // onDisconnect then replaces the listener's error (the #46 precedence).
+    function fireOp4(s, t) { try { mutationHook(4, s.id, t.id); } catch (e) { if (lifecycleCount !== 0 && s.headSub === null) fireDisconnect(s); throw e; } }
     // FIX-R (A3, F5; D-AUD-3): checked at revert time, cold -- read.set / boxSet call it only after a set
     // back that equals the capture, so no body run pays for FIX-R. A set back must not revert while a
     // reader saw the intermediate value: true iff a current subscriber of `node` is running now
     // (FLAG_COMPUTING) or was re-evaluated after the capture (evalVersion past preBatchEvals, the
-    // capture-time globalVersion; an int32 serial compare, exact while the capture and the set back
-    // are fewer than 2^31 version bumps apart). A body that does not read `node` does not block it.
+    // capture-time globalVersion; an int32 serial compare, exact only while the subscriber's stamp is
+    // within 2^31 version bumps of the capture). A body that does not read `node` does not block it.
     function revertBlocked(node) {
         const g0 = node.preBatchEvals;
         for (let l = node.headSub; l !== null; l = l.nextSub) {
@@ -2710,8 +2726,8 @@ export function createRegistry(config) {
      * mid-batch, an effect created mid-batch), the set back is a normal write: it
      * bumps the version and marks downstream, so no reader keeps the intermediate
      * value. A body that ran in the batch but does not read the signal does not
-     * block its revert. The check compares int32 version stamps: exact while the
-     * capture and the set back are fewer than 2^31 version bumps apart.
+     * block its revert. The check compares int32 version stamps: exact only while
+     * the subscriber's stamp is within 2^31 version bumps of the capture.
      *
      * NOT transactional: an exception inside the body does NOT roll back applied
      * writes. Effects that have not yet fired for the pending writes do still
@@ -2758,7 +2774,7 @@ export function createRegistry(config) {
      * @returns {boolean}
      */
     function isTracking() {
-        return currentObserver !== null;
+        return currentObserver !== null && currentObserver.flags !== 0;
     }
 
     function untrack(fn) {
@@ -2772,7 +2788,7 @@ export function createRegistry(config) {
     }
 
     function getOwner() {
-        return currentOwner !== null ? describeNode(currentOwner) : undefined;
+        return currentOwner !== null && currentOwner.flags !== 0 ? describeNode(currentOwner) : undefined;
     }
     function runWithOwner(ownerHandle, fn) {
         const node = liveNode(ownerHandle);
@@ -2780,9 +2796,12 @@ export function createRegistry(config) {
         const po = currentObserver, pg = po !== null ? po.gen : 0;
         currentOwner = (node !== undefined && (node.flags & (FLAG_COMPUTED | FLAG_EFFECT)) !== 0) ? node : null;
         currentObserver = null;
+        const scoped = currentOwner !== null;
+        if (scoped) scopeOwners[scopeDepth++] = currentOwner;   // D-b183-3: no call between this push and the try
         try {
             return fn();
         } finally {
+            if (scoped) scopeOwners[--scopeDepth] = null;
             // S10: gen-safe restore (the #30 idiom) -- fn may dispose the saved owner/observer.
             currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
             currentObserver = (po !== null && po.gen === pg) ? po : null;
@@ -2825,7 +2844,8 @@ export function createRegistry(config) {
      * is disposed. Cascade order on disposal is inside-out: an effect's owned
      * children's cleanups run BEFORE this one (#238 / #241 / #243).
      *
-     * No-op if called outside an effect / computed body.
+     * No-op if called outside an effect / computed body, or after the enclosing owner
+     * was disposed (the same no-op a body that disposed itself already gets): fn is dropped.
      *
      * A cleanup attached with runWithOwner to a node that has not run yet runs before that
      * node's first run, as today. If one throws, the owned children still attached are disposed, the cleanups
@@ -2836,7 +2856,7 @@ export function createRegistry(config) {
      * @param {() => void} fn
      */
     function onCleanup(fn) {
-        if (currentOwner !== null) {
+        if (currentOwner !== null && currentOwner.flags !== 0) {
             const existing = currentOwner.cleanupFn;
             if (existing === undefined) currentOwner.cleanupFn = fn;
             else if (typeof existing === "function") currentOwner.cleanupFn = [existing, fn];
