@@ -310,6 +310,10 @@ proof (the census K=1,1 `osr=off` on every OS) after the maintainer's push. Foll
 (not patched here): `measureAllocs`' batch loop OSRs (suspected, local evidence; UNVERIFIED on CI), which reads as a
 per-batch constant in `heapUsed`.
 
+### Tests / Docs -- bench: mirror tooling (BENCH B1-B3, b187; dev-only, not shipped)
+
+- `bench/`: `run-all-mirror.sh` (round-robin per-engine mirror reps, `.partial` until exit 0) and `sweep.mjs` (`SWEEP_DIR`, per-child SIGKILL timeout) refuse to overwrite a capture and write a `COMPLETE` marker last on exit 0; `report.mjs` takes its protocol prose from the stamp and refuses (exit 1) a directory without a matching `COMPLETE`, so the tracked Oct-12 `bench/mirror-runs/` must be copied aside first; `vs-andrii.mjs` requires the local stamp and an `[andrii-engine]` for non-destroy teardowns; `bench/README.md` and the lib headers no longer say "verbatim" / "rows diff 1:1"; the unused `random` dependency and the `bench-reactive-legacy` script are dropped from `bench/package.json`.
+
 ### Tests / Docs -- bench: inlining-budget-diff (dev tool, 2026-10-29)
 
 Dev-only (`bench/inlining-budget-diff.sh`, `npm run inline-budget-diff -- ...`; not shipped, never in `npm test` /

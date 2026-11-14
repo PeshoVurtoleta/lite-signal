@@ -10,13 +10,11 @@
     "report": "node report.mjs",
     "vs-andrii": "node vs-andrii.mjs",
     "selftest": "node --expose-gc lib/_selftest.mjs",
-    "dispose-recycle": "node --expose-gc dispose-recycle.mjs",
-    "bench-reactive-legacy": "node --expose-gc benchmarkReactive.mjs"
+    "dispose-recycle": "node --expose-gc dispose-recycle.mjs"
   },
   "dependencies": {
     "@preact/signals-core": "^1.14.2",
     "alien-signals": "^3.2.1",
-    "random": "^5.4.1",
     "solid-js": "^1.9.13"
   }
 }

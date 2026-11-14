@@ -7,7 +7,11 @@
 //
 // It re-runs the SAME provenance guards the aggregator does (stamp consistency, rep count),
 // so a results file cannot be generated from an inconsistent or under-counted capture.
-// Optionally joins against an Andrii log and validates the join via counters.
+// Optionally lists the lite-signal rows of an Andrii log (informational: it checks no
+// counters; the counter join is bench/vs-andrii.mjs). The protocol prose comes from the
+// stamp, so a per-engine capture is never described as per-row. It refuses (exit 1) a
+// dir without the COMPLETE marker the writers leave on exit 0, a marker that disagrees
+// with the stamps or the files, and unequal rep counts across engines (D-b187-4).
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -15,6 +19,7 @@ import { collectEngine, loadRepFiles } from "./lib/collect.mjs";
 
 const RUN_DIR = process.argv[2] || join(new URL(".", import.meta.url).pathname, "mirror-runs");
 const ANDRII = process.argv[3] || null;
+const DIR_LABEL = process.argv[2] || "bench/mirror-runs";
 
 // discover engines present in the dir
 function enginesIn(dir) {
@@ -41,6 +46,14 @@ function inferReps(dir, engine) {
 const engines = enginesIn(RUN_DIR);
 if (engines.length === 0) { console.error("no <engine>-rep<N>.txt files in " + RUN_DIR); process.exit(2); }
 
+// completion marker (D-b187-4): sweep.mjs / run-all-mirror.sh write it LAST, on exit 0 only
+let marker = null;
+try { marker = JSON.parse(readFileSync(join(RUN_DIR, "COMPLETE"), "utf8")); } catch (e) { marker = null; }
+if (!marker || typeof marker !== "object") {
+    console.error(`REFUSING to generate a report: no readable COMPLETE marker in ${RUN_DIR} -- the capture did not finish with exit 0.`);
+    process.exit(1);
+}
+
 // collect each engine with the provenance guards (reps inferred from files on disk)
 const collected = {};
 let stamp = null, hardFail = null;
@@ -55,6 +68,32 @@ for (const e of engines) {
     }
 }
 
+// what the protocol id says about how the rows were measured; an unknown id gets no prose
+const PROTOCOL_PROSE = {
+    "isolated-per-row": [
+        "Protocol isolated-per-row: every (engine, row) was measured in its OWN cold process,",
+        "so no row inherits JIT state or heap from another row.",
+    ],
+    "isolated-per-engine": [
+        "Protocol isolated-per-engine: each rep file is ONE cold process per engine that ran",
+        "all rows in a fixed order; rows share that process's JIT state and heap, so a row's",
+        "time can depend on the rows before it.",
+    ],
+};
+// every engine's rep count, printed in the header and required equal
+const repCounts = engines.map((e) => `${e}=${collected[e]?.reps}`).join(" ");
+if (!hardFail) {
+    const counts = new Set(engines.map((e) => collected[e].reps));
+    const protos = new Set(engines.map((e) => collected[e].protocol));
+    const sameEngines = Array.isArray(marker.engines) && marker.engines.length === engines.length && engines.every((e) => marker.engines.includes(e));
+    if (counts.size > 1) hardFail = `unequal rep counts across engines (${repCounts})`;
+    else if (protos.size > 1 || marker.protocol !== [...protos][0]) hardFail = `COMPLETE marker protocol "${marker.protocol}" != stamp protocol(s) ${[...protos].join(", ")}`;
+    else if (marker.reps !== [...counts][0] || !sameEngines) hardFail = `COMPLETE marker (reps=${marker.reps}, engines=${JSON.stringify(marker.engines)}) != files on disk (${repCounts})`;
+}
+if (!hardFail && stamp && !Object.hasOwn(PROTOCOL_PROSE, stamp.protocol)) {
+    hardFail = `unknown protocol "${stamp.protocol}" in the stamp -- no description of how these rows were measured`;
+}
+
 if (hardFail) {
     console.error("REFUSING to generate a report: " + hardFail);
     console.error("A results file cannot be built from an inconsistent or under-counted capture (F2).");
@@ -62,24 +101,40 @@ if (hardFail) {
 }
 
 // --- emit the publishable results file ------------------------------------------------
+// rule 1 states what was actually checked, per protocol (D-b187-4)
+const RULE1 = {
+    "isolated-per-row": [
+        "  1. Built only from a dir with the COMPLETE marker sweep.mjs writes on a clean exit 0:",
+        "     every child returned a stamp and a row within SWEEP_TIMEOUT_MS, exited 0 and printed no",
+        "     #GUARD line, each engine's stamps agree (engine sha, protocol, host) over REPS",
+        "     files, and the sentinel re-measure stayed within DRIFT_TOL. The mirror's counter /",
+        "     checksum agreement guards compare engines inside ONE process, so with one engine",
+        "     per child they check nothing here.",
+    ],
+    "isolated-per-engine": [
+        "  1. Built only from a dir with the COMPLETE marker run-all-mirror.sh writes after every",
+        "     FW=<engine> mirror.mjs process exited 0. No sentinel ran, and the mirror's counter /",
+        "     checksum agreement guards compare engines inside ONE process, so with one engine",
+        "     per process they check nothing here.",
+    ],
+};
 const now = new Date().toISOString();
 const L = [];
 L.push("=".repeat(94));
-L.push(" @zakkster/lite-signal -- REACTIVITY MIRROR (cross-framework, Andrii's canonical adapter)");
+L.push(" @zakkster/lite-signal -- REACTIVITY MIRROR (cross-framework)");
 L.push("=".repeat(94));
 L.push("");
 if (stamp) {
-    L.push(`Protocol : ${stamp.protocol}   reps: ${collected[engines[0]].reps}`);
+    L.push(`Protocol : ${stamp.protocol}   reps: ${repCounts}`);
     L.push(`Host     : ${stamp.cpu}  ${stamp.platform}/${stamp.arch}  node ${stamp.node}`);
     L.push(`Engine   : sha256 ${stamp.engineSha256}`);
-    L.push(`Adapter  : ${JSON.stringify(stamp.config)}  (lazy prealloc, default eager flush -- his config verbatim)`);
+    L.push(`Adapter  : ${JSON.stringify(stamp.config)}  teardown=${stamp.extra?.adapter ?? "(not stamped)"}`);
     L.push(`Generated: ${now}`);
 }
 L.push("");
-L.push("Every row was measured in its OWN cold process (isolated-per-row), engines run in");
-L.push("round-robin across reps, and a sentinel re-measure gated host drift. The counters");
-L.push("(nodesRecomputed/edgesTraversed/sinkReads) match Andrii's published suite exactly");
-L.push("(mirror.mjs --self-verify), so a lite-vs-alien delta here is identical work, not DCE.");
+if (stamp) for (const line of PROTOCOL_PROSE[stamp.protocol]) L.push(line);
+L.push("This file checks no counters against Andrii's log, and neither mirror.mjs --self-verify");
+L.push("nor bench/vs-andrii.mjs runs as part of a capture: run them separately.");
 L.push("");
 
 const ref = "alien-signals";
@@ -114,10 +169,12 @@ L.push("  zero-GC microscope). The headline is 'competitive throughput with dram
 L.push("  GC pressure', not 'fastest dynamic-graph engine'.");
 L.push("");
 L.push("STANDING RULES (enforced by the harness, not by prose):");
-L.push("  1. No number is published unless its file carries a machine stamp and the sweep");
-L.push("     exited 0 (dead-sink / counter / checksum / expected / sentinel / stamp guards).");
-L.push("  2. The mirror tracks Andrii verbatim; divergence for identical engine bytes is a");
-L.push("     harness bug (run mirror.mjs --self-verify). Shape edits only by re-porting.");
+for (const line of RULE1[stamp.protocol]) L.push(line);
+L.push("     report.mjs itself checked: the marker (protocol, reps, engines vs the files), one");
+L.push("     engine sha / protocol / host per engine, and equal rep counts across engines.");
+L.push("  2. The mirror is a port of Andrii's suite, not a copy; a counter divergence for");
+L.push("     identical engine bytes is a harness bug (run mirror.mjs --self-verify). Shape");
+L.push("     edits only by re-porting.");
 L.push("  3. One shape name = one definition, repo-wide. Approximations deleted, not renamed.");
 L.push("  4. lite's config is fixed per file and echoed by the stamp. sab is a production");
 L.push("     feature, not a benchmark knob.");
@@ -146,6 +203,6 @@ if (ANDRII) {
     L.push("");
 }
 
-L.push("Raw per-rep files (checked in for audit): bench/mirror-runs/<engine>-rep<N>.txt");
-L.push("Re-derive this file (no re-benching): node bench/report.mjs");
+L.push(`Raw per-rep files: ${DIR_LABEL}/<engine>-rep<N>.txt`);
+L.push(`Re-derive this file (no re-benching): node bench/report.mjs ${DIR_LABEL}`);
 console.log(L.join("\n"));

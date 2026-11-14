@@ -1,5 +1,5 @@
-// bench/lib/mirror-config.mjs -- Andrii's dynamic perfTests, ported verbatim from
-// src config.ts. These are the "dynamic" suite rows; kairo/fan/mol/S live in the
+// bench/lib/mirror-config.mjs -- Andrii's dynamic perfTests, ported from his src config.ts
+// (a port, not a copy). These are the "dynamic" suite rows; kairo/fan/mol/S live in the
 // harness alongside. Correctness is verified by CROSS-ENGINE AGREEMENT in mirror.mjs
 // (lite and alien must produce the same result sum + counters on each shape), not by
 // hand-transcribed `expected` vectors -- his config.ts vectors proved stale against his

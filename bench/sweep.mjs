@@ -22,12 +22,22 @@
 //   node --expose-gc bench/sweep.mjs                 # full: all scenarios, REPS reps
 //   QUICK=1 REPS=2 SUBSET=cheap node --expose-gc bench/sweep.mjs   # fast demo
 //
+// SWEEP_DIR=<dir> (default bench/sweep-runs/; a relative path resolves against the cwd)
+// receives <engine>-rep<N>.txt. If ANY *-rep*.txt is already there the sweep exits 2
+// before the first fork: it never deletes or overwrites a capture (copy it aside first).
+// SWEEP_TIMEOUT_MS=<ms> (integer 1..2^31-1, default 120000, nominal) bounds each child:
+// on expiry the child is killed with SIGKILL (a SIGTERM can be trapped), the row is
+// recorded as a failure and the sweep exits non-zero at the end.
+// Only a clean verdict (exit 0) writes <dir>/COMPLETE (protocol, reps, engines; tmp +
+// rename) as the LAST step; report.mjs refuses a dir without it, and the sweep refuses
+// to start where one exists (D-b187-4).
+//
 // Engines: lite-signal always; alien-signals if installed. (Extend as adapters land.)
 
 import { fork } from "node:child_process";
-import { mkdirSync, writeFileSync, appendFileSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync, existsSync, readdirSync, renameSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { DYNAMIC_TESTS } from "./lib/mirror-config.mjs";
 import { microRows } from "./lib/micro-suites.mjs";
 import { parseStampFromText } from "./lib/stamp.mjs";
@@ -39,7 +49,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MIRROR = join(HERE, "mirror.mjs");
 const QUICK = process.env.QUICK === "1";
 const REPS = Number(process.env.REPS || (QUICK ? 2 : 10));
-const RUN_DIR = join(HERE, "mirror-runs");
+const SWEEP_DIR = process.env.SWEEP_DIR;
+if (SWEEP_DIR === "") { console.error("sweep: SWEEP_DIR is set but empty"); process.exit(2); }
+const RUN_DIR = SWEEP_DIR === undefined ? join(HERE, "sweep-runs") : resolvePath(SWEEP_DIR);
+// per-child timeout (ms): unset -> default; anything but an integer 1..2^31-1 -> exit 2
+const TIMEOUT_RAW = process.env.SWEEP_TIMEOUT_MS;
+const CHILD_TIMEOUT_MS = TIMEOUT_RAW === undefined ? 120000 : (/^[1-9][0-9]*$/.test(TIMEOUT_RAW) ? Number(TIMEOUT_RAW) : NaN);
+if (!(CHILD_TIMEOUT_MS <= 2147483647)) {
+    console.error(`sweep: SWEEP_TIMEOUT_MS must be an integer 1..2147483647 (got "${TIMEOUT_RAW}")`);
+    process.exit(2);
+}
 
 // scenario selection: full list, or a cheap subset for demos
 const CHEAP = new Set(["pure pull", "linear chain - 1 source - pull (linear pull)", "wide tree - 8 sources - pull (branchy pull)", "stable diamond mesh warm"]);
@@ -57,10 +76,20 @@ function runRow(engine, scenario) {
             execArgv: [...process.execArgv.filter((a) => a !== "--expose-gc"), "--expose-gc"],
             stdio: ["ignore", "pipe", "pipe", "ipc"],
         });
-        let out = "", err = "";
+        let out = "", err = "", timedOut = false;
+        // SIGKILL, not SIGTERM: a child that traps SIGTERM would stall the night. stdout and
+        // stderr are destroyed too, so "close" fires even if a grandchild still holds them
+        // open (a grandchild holding the IPC fd can still delay "close").
+        const timer = setTimeout(() => {
+            timedOut = true;
+            child.kill("SIGKILL");
+            child.stdout.destroy();
+            child.stderr.destroy();
+        }, CHILD_TIMEOUT_MS);
         child.stdout.on("data", (d) => (out += d));
         child.stderr.on("data", (d) => (err += d));
-        child.on("exit", (code) => resolve({ code, out, err }));
+        // "close", not "exit": stdout/stderr are fully drained before the row is parsed
+        child.on("close", (code) => { clearTimeout(timer); resolve({ code, out, err, timedOut }); });
     });
 }
 
@@ -92,12 +121,28 @@ function buildSweep() {
 }
 
 async function main() {
-    if (existsSync(RUN_DIR)) rmSync(RUN_DIR, { recursive: true, force: true });
+    // refuse, never delete: an existing capture is the maintainer's, not ours
+    if (existsSync(RUN_DIR)) {
+        const reps = readdirSync(RUN_DIR).filter((f) => /-rep.*\.txt$/.test(f));
+        if (reps.length > 0) {
+            console.error(`sweep: REFUSING -- ${reps.length} rep file(s) already in ${RUN_DIR} (e.g. ${reps[0]}).`);
+            console.error("Copy the old set aside first; the sweep never overwrites or deletes a capture.");
+            process.exitCode = 2;
+            return;
+        }
+        if (existsSync(join(RUN_DIR, "COMPLETE"))) {
+            console.error(`sweep: REFUSING -- ${join(RUN_DIR, "COMPLETE")} already exists (a finished capture's marker).`);
+            console.error("Copy the old set aside first; the sweep never overwrites or deletes a capture.");
+            process.exitCode = 2;
+            return;
+        }
+    }
     mkdirSync(RUN_DIR, { recursive: true });
 
     const { combos, steps } = buildSweep();
     console.log(`sweep: ${ENGINES.length} engine(s) x ${scenarioNames.length} scenario(s) x ${REPS} rep(s) = ${steps.length} cold processes`);
-    console.log(`protocol: isolated-per-row, round-robin, sentinel drift @ ${(DRIFT_TOL * 100).toFixed(0)}%\n`);
+    console.log(`protocol: isolated-per-row, round-robin, sentinel drift @ ${(DRIFT_TOL * 100).toFixed(0)}%, child timeout ${CHILD_TIMEOUT_MS} ms`);
+    console.log(`output: ${RUN_DIR}\n`);
 
     const verdict = G.makeVerdict();
     const stampByFile = new Map();   // engine-rep -> stamp (written once)
@@ -118,14 +163,20 @@ async function main() {
 
     let done = 0;
     for (const step of steps) {
-        const { code, out, err } = await runRow(step.engine, step.scenario);
+        const { code, out, err, timedOut } = await runRow(step.engine, step.scenario);
         const { stamp, row, guards } = parseChild(out);
         done++;
+        if (timedOut) {
+            verdict.ok = false;
+            verdict.failures.push(`${step.engine}/${step.scenario} rep${step.rep}: TIMEOUT -- child killed (SIGKILL) after ${CHILD_TIMEOUT_MS} ms; row discarded`);
+            continue;
+        }
         if (!row || !stamp) {
             G.makeVerdict(); verdict.ok = false;
             verdict.failures.push(`${step.engine}/${step.scenario} rep${step.rep}: no row/stamp (exit ${code}). stderr: ${(err || "").split("\n")[0]}`);
             continue;
         }
+        if (code !== 0) { verdict.ok = false; verdict.failures.push(`${step.engine}/${step.scenario} rep${step.rep}: child exited ${code} after printing its row (its guards may not have run). stderr: ${(err || "").split("\n")[0]}`); }
         for (const g of guards) { verdict.ok = false; verdict.failures.push(`${step.engine}/${step.scenario}: ${g}`); }
         writeRow(step.engine, step.rep, stamp, row);
         // capture first-combo baseline for the sentinel
@@ -139,12 +190,16 @@ async function main() {
     process.stdout.write("\r" + " ".repeat(40) + "\r");
     const sent = await runRow(firstCombo.engine, firstCombo.scenario);
     const sp = parseChild(sent.out);
-    if (sp.row) {
+    if (sent.timedOut) {
+        verdict.ok = false;
+        verdict.failures.push(`sentinel ${firstCombo.engine}/${firstCombo.scenario}: TIMEOUT -- child killed (SIGKILL) after ${CHILD_TIMEOUT_MS} ms`);
+    } else if (sp.row && sent.code === 0 && Number.isFinite(firstTime) && Number.isFinite(timeOf(sp.row))) {
         sentinelTime = timeOf(sp.row);
         const d = sentinelDrift(firstTime, sentinelTime);
         console.log(`sentinel: ${firstCombo.engine}/${firstCombo.scenario}  first=${firstTime?.toFixed(2)}ms  last=${sentinelTime.toFixed(2)}ms  ratio=${d.ratio.toFixed(3)}x  ${d.drifted ? "<-- DRIFTED, sweep suspect" : "(stable)"}`);
         if (d.drifted) { verdict.ok = false; verdict.failures.push(`SENTINEL DRIFT: host moved ${((d.ratio - 1) * 100).toFixed(1)}% mid-sweep (> ${(DRIFT_TOL * 100).toFixed(0)}% tol); the whole sweep is thermally suspect`); }
     }
+    else { verdict.ok = false; verdict.failures.push(`sentinel ${firstCombo.engine}/${firstCombo.scenario}: drift unmeasured (exit ${sent.code}, first=${firstTime})`); }
 
     // --- aggregate with stamp + rep-count guards, then emit the table ---
     console.log("");
@@ -194,6 +249,10 @@ async function main() {
     }
 
     if (!G.reportVerdict(verdict)) return;
+    // completion marker (D-b187-4): LAST state write, clean verdict only; tmp + rename
+    const marker = { kind: "bench-capture-complete/v1", writer: "sweep.mjs", protocol: perEngine[ENGINES[0]].protocol, reps: REPS, engines: ENGINES };
+    writeFileSync(join(RUN_DIR, "COMPLETE.tmp"), JSON.stringify(marker) + "\n");
+    renameSync(join(RUN_DIR, "COMPLETE.tmp"), join(RUN_DIR, "COMPLETE"));
     console.log("\nsweep OK -- stamp-consistent, rep count verified, sentinel stable. Numbers are publishable.");
 }
 

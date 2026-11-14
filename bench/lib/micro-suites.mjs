@@ -1,11 +1,12 @@
 // bench/lib/micro-suites.mjs -- the kairo / mol / fan / sBench micro-benchmarks,
-// ported verbatim from Andrii's src (kairo/*, molBench, fanBench, sBench) onto the SAME
+// ported from Andrii's src (kairo/*, molBench, fanBench, sBench) onto the SAME
 // ReactiveFramework adapter the mirror already uses. Together with the mirror's 17
-// dependency-graph shapes these complete the full 47-row js-reactivity-benchmark field,
-// so `benchmarkReactive.mjs` can be retired: one unified run, one protocol, one adapter.
+// dependency-graph shapes these cover the 47-row js-reactivity-benchmark field that the
+// retired `benchmarkReactive.mjs` ran: one unified run, one protocol, one adapter.
 //
-// Faithfulness: bodies are 1:1 with his source (iteration counts, graph shapes, the
+// Faithfulness: bodies follow his source (graph shapes, the
 // `busy()` heavy-work stub, fan's checksum + seeded mutation, mol's fib(16) hard()).
+// Iteration counts are this harness's own (kairo 1000x loop, mol 1e4 passes; runners below).
 // Reporting matches his fastestTest: median over BENCH_RUNS repeats, each rebuilding the
 // graph outside the timed window. fan rows carry a `checksum=` for the checksum guard.
 
