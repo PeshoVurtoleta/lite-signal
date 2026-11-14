@@ -346,7 +346,7 @@ describe("FIX-CL r2: teeth for the ruled clauses", () => {
         assert.deepEqual(runs, [0, 1]);   // stampE mutant: [0]
     });
 
-    it("[R0] R2 computed clears STALE_READ on a cleanup throw: no stale bit, one recompute, log [0, '!E', 3]", () => {
+    it("[R0] R2 computed clears STALE_READ on a cleanup throw: no stale bit, one recompute, log [0, '!E', 2, 3]", () => {
         const r = createRegistry();
         const x = r.signal(0), p = r.signal(0), q = r.signal(0), w = r.signal(0);
         let cRuns = 0;
@@ -364,7 +364,9 @@ describe("FIX-CL r2: teeth for the ruled clauses", () => {
         const before = cRuns;
         p.set(2);
         assert.equal(cRuns - before, 1);  // nostaleC mutant: 2
-        assert.deepEqual(log, [0, "!E", 3]);
+        // ARG-E2 (b185-4, re-pinned b188 B3 on f6ff4cf3): the log gains a 2 (= p 1 + w 1, w written by the throwing cleanup)
+        // between '!E' and 3; was [0, '!E', 3] through 91c507df.
+        assert.deepEqual(log, [0, "!E", 2, 3]);
     });
 
     it("[R0] R3 effect clears STALE_READ on a cleanup throw inside a nested flush: no stale bit afterwards", () => {

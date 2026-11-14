@@ -116,6 +116,11 @@ const FLAG_BOX = 1 << 7;   // bits 0-6 are taken (1 << 6 = FLAG_STALE_READ)
 // call site, no OR. createNode stores flags wholesale, so the box bit rides the existing write.
 const FLAG_SIGNAL_BOX = FLAG_SIGNAL | FLAG_BOX;
 const FLAG_COMPUTED_BOX = FLAG_COMPUTED | FLAG_BOX;
+// ARG-E2 (F1, D-b183-1): an S1 cleanup error not yet delivered to a read. rerunCleanupComputed
+// stores it in a computed's value slot (with FLAG_HAS_ERROR) when a write reached the node while
+// its cleanups ran; throwComputedError unwraps it on the first read that throws. Module scope, so a
+// snapshot carries it by reference into a restored registry and the instanceof test still holds.
+class UndeliveredCleanupError { constructor(err) { this.err = err; } }
 
 // Private cross-registry rehydration hook (1.6.0 snapshot/restore). restore()
 // builds a FRESH registry via createRegistry() and populates its internals via
@@ -1679,11 +1684,17 @@ export function createRegistry(config) {
      * Cold half of runCleanupC. On a throw with gen unchanged: cache the error as the node's
      * error (value, FLAG_HAS_ERROR, version = evalVersion = globalVersion, as the body's catch
      * does) and clear COMPUTING | STALE_READ; never rethrow (refreshComputed never throws a
-     * cached error, D-H). S1 (D-AUD-2): if a write reached the node while its cleanups ran
-     * (markEpoch moved from the snapshot taken before runCleanup), evalVersion gets the far
-     * floor computedRunTail uses ((globalVersion - 0x3FFFFFFF) | 0, -1 if that is 0) instead
-     * of globalVersion: this read still throws the cleanup's error, the next read re-runs the
-     * body with the new values. Disposed / recycled by the cleanup (gen moved): swallow, as the
+     * cached error, D-H). S1 (D-AUD-2, ARG-E2 F1): if a write reached the node while its
+     * cleanups ran (markEpoch moved from the snapshot taken before runCleanup), the value slot
+     * holds the error wrapped in an UndeliveredCleanupError, stamped like the other branch
+     * (evalVersion = globalVersion), so a pre-walk does not consume it. The first read that
+     * reaches a throw arm (read closure, pullComputed, peekComputed) goes through
+     * throwComputedError: it unwraps the slot to err, gives evalVersion the far floor
+     * computedRunTail uses ((globalVersion - 0x3FFFFFFF) | 0, -1 if that is 0), marks a
+     * COMPUTING reader (currentObserver; never on a peek, D-b186-5) stale so it runs again
+     * for the cleanup's write (D-b183-1 option a),
+     * and throws err: that read throws the cleanup's error, the next read re-runs the body
+     * with the new values. Disposed / recycled by the cleanup (gen moved): swallow, as the
      * body's catch does for a disposed node. Returns runCleanupC's "stop" boolean from its own
      * gen snapshot: true on a throw or a gen move, false when the cleanups completed. A
      * never-evaluated node (version 0) goes to firstRunCleanupC (body-first, D-b175-1).
@@ -1696,13 +1707,12 @@ export function createRegistry(config) {
             runCleanup(node);
         } catch (err) {
             if (node.gen === g) {
-                node.value = err;
+                // S1 (ARG-E2 F1): a write reached this computed while its cleanups ran -> store err
+                // wrapped (undelivered); throwComputedError delivers it once and sets the far floor.
+                node.value = node.markEpoch !== m ? new UndeliveredCleanupError(err) : err;
                 node.flags = (node.flags | FLAG_HAS_ERROR) & ~(FLAG_COMPUTING | FLAG_STALE_READ);
                 node.version = globalVersion;
-                // S1: a write reached this computed while its cleanups ran -> this read throws err, the next
-                // read re-runs the body (far-floor evalVersion, as computedRunTail); else cache as before.
-                if (node.markEpoch !== m) { const f = (globalVersion - 0x3FFFFFFF) | 0; node.evalVersion = f === 0 ? -1 : f; }
-                else node.evalVersion = globalVersion;
+                node.evalVersion = globalVersion;
             }
             return true;
         }
@@ -1799,6 +1809,10 @@ export function createRegistry(config) {
      * against maxFlushPasses -> "CycleError: flush passes exceeded"); outside a flush
      * (effect() creation, a scheduler thunk) it drains now. Inside a batch it waits for
      * the batch close.
+     * F5 (D-b183-2): a drain outside any batch and flush that returns normally with the
+     * node evaluated (evalVersion !== 0) and not disposed (gen unchanged) records the node's
+     * id in staleDoneId; effect() reads it once, on its throw path only. Inside a flush the
+     * drain is skipped (flushEffects would return at once), so nothing is recorded there.
      * @private
      */
     function requeueStaleEffect(node) {
@@ -1808,8 +1822,23 @@ export function createRegistry(config) {
             node.flags |= FLAG_QUEUED;
             activeQueue[activeQueueLen++] = node;
         }
-        if (batchDepth === 0) flushEffects();
+        if (batchDepth === 0 && !isFlushing) {
+            const g = node.gen;
+            flushEffects();
+            if (node.evalVersion !== 0 && node.gen === g) staleDoneId = node.id;
+        }
     }
+
+    // F5 (D-b183-2): the id of the last node whose stale re-run requeueStaleEffect drained to completion
+    // outside any batch and flush. Cold: written there, read and cleared (one-shot) only on effect()'s
+    // throw path. null = none, never an int: any int32 can be a node id (a restored registry starts at
+    // any snap.nextId; nodeSeq wraps). The live registry never reuses an id before nodeSeq wraps (restore
+    // builds a fresh registry; reset does not rewind; b186-4), so the id alone names the node.
+    // The one counterexample: a witness from a drain whose effect() call did not throw lingers (it is
+    // cleared only on that throw path), and once nodeSeq wraps a new effect can take the same id.
+    // An id >= 2^30 stored here boxes (12 B per recorded drain) on 31-bit-Smi hosts (Chrome /
+    // Electron); Node has 32-bit Smis and is unaffected. Same class as nodeSeq.
+    let staleDoneId = null;
 
     // Nested stale re-pulls in flight (computedRunTail). Smi, capped at maxFlushPasses.
     let staleRepulls = 0;
@@ -1992,15 +2021,23 @@ export function createRegistry(config) {
     function fireOp4(s, t) { try { mutationHook(4, s.id, t.id); } catch (e) { if (lifecycleCount !== 0 && s.headSub === null) fireDisconnect(s); throw e; } }
     // FIX-R (A3, F5; D-AUD-3): checked at revert time, cold -- read.set / boxSet call it only after a set
     // back that equals the capture, so no body run pays for FIX-R. A set back must not revert while a
-    // reader saw the intermediate value: true iff a current subscriber of `node` is running now
-    // (FLAG_COMPUTING) or was re-evaluated after the capture (evalVersion past preBatchEvals, the
-    // capture-time globalVersion; an int32 serial compare, exact only while the subscriber's stamp is
-    // within 2^31 version bumps of the capture). A body that does not read `node` does not block it.
+    // reader saw the intermediate value, or while a reader's stamp cannot be ordered against the capture
+    // (F4). With x = (evalVersion - preBatchEvals) | 0, the int32 serial distance of a current
+    // subscriber's stamp from the capture-time globalVersion, it is true iff some subscriber of `node`
+    // is running now (FLAG_COMPUTING), or x > 0 (re-evaluated after the capture), or x <= -2^29 (a stamp
+    // 2^29 or more versions behind the capture: computedRunTail's far-floor needs-run marker, about 2^30
+    // behind, or a dormant stamp), or evalVersion is 0 (requeueStaleEffect's stale re-queue: the next
+    // run skips the pre-walk, so no stamp orders it). Only x in (-2^29, 0] reverts: a stamp taken at the
+    // capture or fewer than 2^29 versions before it. Both directions are modulo 2^32: a stamp 2^29 or
+    // more behind blocks even when its reader saw nothing new (fail closed: at most one extra run, the
+    // dormant-reader KNOWN case), and a stamp more than 2^32 - 2^29 versions AHEAD of the capture (that
+    // many version bumps after the capture) aliases into the revert window. A body that does not read
+    // `node` does not block it.
     function revertBlocked(node) {
         const g0 = node.preBatchEvals;
         for (let l = node.headSub; l !== null; l = l.nextSub) {
-            const t = l.target;
-            if ((t.flags & FLAG_COMPUTING) !== 0 || ((t.evalVersion - g0) | 0) > 0) return true;
+            const t = l.target, v = t.evalVersion, x = (v - g0) | 0;
+            if ((t.flags & FLAG_COMPUTING) !== 0 || x > 0 || x <= -0x20000000 || v === 0) return true;
         }
         return false;
     }
@@ -2011,6 +2048,31 @@ export function createRegistry(config) {
     function effectTail(node) { if (node.flags & FLAG_STALE_READ) requeueStaleEffect(node); }
     function throwEffectCycle() { throw new Error("CycleError: Infinite effect loop detected."); }
     function throwComputedCycle() { throw new Error("CycleError: Circular dependency detected."); }
+    // ARG-E2 (F1): the cold throw arm of the computed read closure, pullComputed and peekComputed
+    // (one call on a never-taken arm). A plain cached error is thrown as before. An S1
+    // UndeliveredCleanupError is delivered once: the slot keeps the bare error, evalVersion gets the
+    // far floor (the next read re-runs the body with the cleanup's write), and a COMPUTING reader is
+    // marked stale so it runs again (D-b183-1 option a: effectTail re-queues an effect;
+    // computedRunTail re-pulls a computed, its markEpoch stamped so that fires at every globalVersion
+    // band).
+    // The reader is currentObserver only, never currentOwner: untrack and runOwnCleanup null the
+    // observer, and such a read marks nothing. A peek is not a reader (D-b186-5): peekComputed passes
+    // peek = true, so it delivers, consumes and sets the floor but marks nothing; the read closure and
+    // pullComputed pass no second argument (undefined, a reader).
+    // A disposed observer CAN be seen here: a nested computed frame that disposed it restores it in
+    // refreshComputed's finally (no gen check). Its flags are 0 (a dead slot), so the COMPUTING test is
+    // the dead-observer guard (test/114 A11x: without it the dead effect is marked, effectTail re-queues
+    // it and the dead slot runs with no computeFn).
+    function throwComputedError(node, peek) {
+        const v = node.value;
+        if (!(v instanceof UndeliveredCleanupError)) throw v;
+        node.value = v.err;
+        const f = (globalVersion - 0x3FFFFFFF) | 0;
+        node.evalVersion = f === 0 ? -1 : f;
+        const o = currentObserver;
+        if (!peek && o !== null && (o.flags & FLAG_COMPUTING) !== 0) { o.flags |= FLAG_STALE_READ; o.markEpoch = globalVersion; }
+        throw v.err;
+    }
 
     /**
      * Run an effect's compute body, re-tracking dependencies.
@@ -2119,8 +2181,9 @@ export function createRegistry(config) {
      * gen snapshot across the refresh: a node disposed (or its slot recycled) by user
      * code during the refresh reads undefined, never the slot's new value or error.
      *
-     * Used by peek, box get and box peek; the computed read closure inlines these 3
-     * steps by hand (one frame per cold level).
+     * Used by box get (a reader); peek and box peek use peekComputed (the same 3 steps,
+     * D-b186-5). The computed read closure inlines these 3 steps by hand (one frame per
+     * cold level).
      *
      * @private
      */
@@ -2130,7 +2193,25 @@ export function createRegistry(config) {
             refreshComputed(node, 0);
             if (node.gen !== g) return undefined;   // disposed during the refresh
         }
-        if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;
+        if ((node.flags & FLAG_HAS_ERROR) !== 0) throwComputedError(node);
+        return node.value;
+    }
+
+    /**
+     * pullComputed for peek and box peek (D-b186-5: a peek is not a reader). pullComputed's
+     * 3 steps verbatim; only the never-taken throw arm differs: throwComputedError(node, true)
+     * delivers and consumes an S1 wrapper and sets the floor as a read does, but marks no
+     * observer stale (as a read under untrack).
+     *
+     * @private
+     */
+    function peekComputed(node) {
+        if (node.evalVersion !== globalVersion) {
+            const g = node.gen;
+            refreshComputed(node, 0);
+            if (node.gen !== g) return undefined;   // disposed during the refresh
+        }
+        if ((node.flags & FLAG_HAS_ERROR) !== 0) throwComputedError(node, true);
         return node.value;
     }
 
@@ -2141,8 +2222,8 @@ export function createRegistry(config) {
      * transitive cone since the last eval, instead of walking the whole dependency
      * subtree.
      *
-     * Returns void and never throws the node's cached error (pullComputed and the
-     * read closure do). A re-run cleanup that throws (FIX-CL, LEDGER #55) is cached as
+     * Returns void and never throws the node's cached error (pullComputed, peekComputed
+     * and the read closure do). A re-run cleanup that throws (FIX-CL, LEDGER #55) is cached as
      * the node's error (the body does not run; FLAG_COMPUTING is cleared), so it is still
      * never thrown from here and the next read sees the error, not a false CycleError.
      * A never-evaluated node still runs its first body (body-first, firstRunCleanupC).
@@ -2282,8 +2363,8 @@ export function createRegistry(config) {
     // Shared peeks (one per registry, not per primitive). Save one closure
     // allocation per signal/computed creation versus the previous per-instance
     // arrows. Method-invoked, so `this` is the read function and this[NODE_PTR]
-    // is the node. Signal: direct value read. Computed: pull (still respects
-    // the cached/short-circuit fast paths since pullComputed handles them).
+    // is the node. Signal: direct value read. Computed: peekComputed (pullComputed's
+    // steps, so the cached/short-circuit fast paths hold; a peek marks no reader, D-b186-5).
     function sharedSignalPeek() {
         const node = this[NODE_PTR];
         if (this[NODE_GEN] !== node.gen) return undefined;   // stale handle: slot recycled (ABA guard, matches read())
@@ -2292,7 +2373,7 @@ export function createRegistry(config) {
     function sharedComputedPeek() {
         const node = this[NODE_PTR];
         if (this[NODE_GEN] !== node.gen) return undefined;
-        return pullComputed(node);
+        return peekComputed(node);
     }
 
     /**
@@ -2409,11 +2490,11 @@ export function createRegistry(config) {
                 }
             }
             if (node.evalVersion !== globalVersion) {
-                const g = node.gen;   // equals birthGen here: the else arm re-checks after allocateLink (LEDGER #44)
                 refreshComputed(node, 0);
-                if (node.gen !== g) return undefined;   // disposed during the refresh
+                // node.gen equals birthGen up to the refresh (the else arm re-checks after allocateLink, LEDGER #44)
+                if (node.gen !== birthGen) return undefined;   // disposed during the refresh
             }
-            if ((node.flags & FLAG_HAS_ERROR) !== 0) throw node.value;
+            if ((node.flags & FLAG_HAS_ERROR) !== 0) throwComputedError(node);
             return node.value;
         };
 
@@ -2531,7 +2612,7 @@ export function createRegistry(config) {
     function boxComputedPeek() {
         const node = this[NODE_PTR];
         if (node.gen !== this[NODE_GEN]) return undefined;
-        return pullComputed(node);
+        return peekComputed(node);
     }
 
     // Shared prototypes -- methods defined once per registry, inherited by every box.
@@ -2617,6 +2698,19 @@ export function createRegistry(config) {
      * scheduler) disposes the effect first; a deferred first run (async scheduler)
      * that throws later leaves it live.
      *
+     * One exception (D-b183-2, D-b186-4), for an effect created WITHOUT a scheduler only:
+     * when the first run read a value a write in the same run changed and this call is
+     * made outside any batch and flush, the effect re-runs at once, before the error
+     * reaches this call. If that re-run completes and the effect is still live, the
+     * re-run supersedes the first run's error: this call returns the live handle and the
+     * error is dropped. A re-run that throws throws from this call (that error, not the
+     * first one) and disposes the effect. Inside a batch or a flush the first error
+     * throws and disposes as above. With a scheduler (synchronous or deferred), any
+     * error that escapes the first pass throws from this call and disposes the effect,
+     * even when a stale re-run completed (from the body or from the scheduler itself:
+     * this call cannot tell them apart). A stale drain in which another effect throws:
+     * this call throws that error and disposes the new effect, as on 91c507df.
+     *
      * @param {() => void} fn        Effect body.
      * @param {object} [opts]
      * @param {(run:()=>void)=>void} [opts.scheduler]
@@ -2680,6 +2774,20 @@ export function createRegistry(config) {
         disposeFn[NODE_GEN] = birthGen;
 
         if (threw) {
+            // F5 (D-b183-2): requeueStaleEffect recorded this effect's completed immediate re-run ->
+            // keep it and drop the first run's error. Unscheduled effects only (D-b186-4): with a
+            // scheduler the error may be the scheduler's own, which the witness cannot tell from the
+            // body's, so it throws and disposes as on 91c507df. One-shot witness. gen === birthGen: never
+            // disposed, so node.id is still the id it had before the first run (and a re-run that
+            // was followed by a dispose throws as before, never returns a dead handle).
+            // gen === birthGen alone has no tooth: NOGEN survives (requeueStaleEffect records only while
+            // gen === g, and no user code runs between that record and this test). Its conjunctions have
+            // one: GENBOTH (+ requeue's gen === g dropped) dies on test/114 F5-DD (a later effect in the
+            // same drain disposes the new effect after its re-run); TRIPLE (NOEV + NOGENREQ + NOGEN) also
+            // dies on F5-DS (the re-run disposes its own effect).
+            // No local for the witness: a block const takes a register in every path's frame (10 vs 9).
+            if (!scheduler && staleDoneId === node.id && node.gen === birthGen) { staleDoneId = null; return disposeFn; }
+            staleDoneId = null;
             disposeFn();
             throw firstRunError;
         }
@@ -3209,7 +3317,10 @@ export function createRegistry(config) {
         // descriptor -- enumerable: false was defending nothing. Confirmed
         // empirically: `o[Symbol()] = x; Object.keys(o)` returns only
         // string-keyed enumerable props.
-        const d = {id: node.id, kind, value: node.value};
+        // ARG-E2 (F1): an undelivered S1 cleanup error is described as the error, never the wrapper
+        // (describing does not deliver it: the slot keeps the wrapper).
+        const v = node.value;
+        const d = {id: node.id, kind, value: v instanceof UndeliveredCleanupError ? v.err : v};
         d[NODE_PTR] = node;
         d[NODE_GEN] = node.gen;   // descriptors are re-walkable handles; stamp gen so the ABA guard holds for them too
         return d;

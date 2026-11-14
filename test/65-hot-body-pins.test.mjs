@@ -37,6 +37,8 @@ const SRC = readFileSync(KPATH, 'utf8');
 // executeEffect + refreshComputed re-pinned on c8f6cd1e (b176, FIX-CL-D, LEDGER #55; source = r3 9cf9518f, other 12 unchanged).
 // executeEffect re-pinned on ca39e1f4 (b177, AUD-E1 S3, D-AUD-5: effectTail inside the finally; LEDGER #55; other 13 unchanged); all 14 unchanged on e26168ce (AUD-E2, D-AUD-3).
 // disposeNode + freeLink re-pinned on 91c507df (b184, ARG-E1 B3; other 12 unchanged).
+// pullComputed + readComputed re-pinned on f6ff4cf3 (b188, ARG-E2 B3: peek split; same values as b836fbbb / df50017f, C1;
+// other 12 unchanged). peekComputed and the peek closures are not pinned here.
 const PINS = {
     flushEffects: { sha16: 'b4b77b7b0a6a8e2f', bytes: 2270 },
     executeEffect: { sha16: '07ee5b7a428a200b', bytes: 3598 },
@@ -44,12 +46,12 @@ const PINS = {
     nodeMiss: { sha16: 'c6aa7fbe2f7077f0', bytes: 1535 },
     disposeNode: { sha16: '1ee1c455014776fe', bytes: 6672 },
     effectTail: { sha16: '1b80da7167ba5bbf', bytes: 93 },
-    pullComputed: { sha16: '5420227134aa9791', bytes: 346 },
+    pullComputed: { sha16: '115db3c64068c3bc', bytes: 354 },
     refreshComputed: { sha16: 'df8e6f0c7019e7a0', bytes: 5164 },
     boxGet: { sha16: '2938d89e667b9f07', bytes: 640 },
     boxComputedGet: { sha16: '5940c249c8717ecf', bytes: 618 },
     readSignal: { sha16: 'bb06aefbf682ef8f', bytes: 605 },
-    readComputed: { sha16: 'bb6f6be2c79aeb23', bytes: 991 },
+    readComputed: { sha16: '75ea16932f83f176', bytes: 1006 },
     allocateLink: { sha16: 'e3e657b390cc8d35', bytes: 5017 },
     freeLink: { sha16: '435bb8915b1e8b95', bytes: 1550 },
 };

@@ -91,14 +91,15 @@ export const EDITS = Object.freeze([
     // entry counts (the wrapper's stale branch, the read closure's stale branch, the pre-walks'
     // direct calls, the dep recursion), and the wrapper / read-closure FRESH branch -- which never
     // enters refreshComputed -- counts one entry and one cache hit. The `!==` row is un-indented:
-    // 2x = the pullComputed wrapper (8 spaces) + the read closure (12 spaces); a third reader that
-    // copies the line verbatim fails closed here.
+    // 3x = the pullComputed wrapper + peekComputed (8 spaces each) + the read closure (12 spaces);
+    // peekComputed is the wrapper's copy for peeks (ARG-E2, D-b187-3) and counts like it, so peek
+    // counts equal 91c507df's; a fourth reader that copies the line verbatim fails closed here.
     [`function refreshComputed(node, depth) {`,
         `function refreshComputed(node, depth) { ${bump(I.pullTotal)}`, 1],
     [`        if (node.evalVersion === globalVersion) return;`,
         `        if (node.evalVersion === globalVersion) { ${bump(I.pullCacheHit)}return; }`, 1],
     [`if (node.evalVersion !== globalVersion) {`,
-        `if (node.evalVersion === globalVersion) { ${bump(I.pullTotal)}${bump(I.pullCacheHit)}} else {`, 2],
+        `if (node.evalVersion === globalVersion) { ${bump(I.pullTotal)}${bump(I.pullCacheHit)}} else {`, 3],
     [`if (runCleanupC(node)) return;   // CROSS-EDGE L3->L2: dispose owned children before recompute`,
         `${bump(I.recompute)}if (runCleanupC(node)) return;   // CROSS-EDGE L3->L2: dispose owned children before recompute`, 1],
     [`const eq = node.equals;`,
