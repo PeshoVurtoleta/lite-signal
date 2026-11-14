@@ -13,7 +13,7 @@ Each has one job and one fixed configuration. They never borrow config from each
 | instrument | file | config | measures |
 | :--- | :--- | :--- | :--- |
 | **Microscope** | `benchmark.mjs` | **eager, right-sized pools, default flush** (lite's *recommended production* config) | throughput + allocation on six first-party shapes, with the anti-DCE sink |
-| **Mirror** | `mirror.mjs` + `sweep.mjs` | **Andrii's canonical adapter** verbatim: `lazy / 131072 / 1048576 / default eager / destroy()+rebuild` | cross-framework standing on the community suite; rows diff 1:1 against his log |
+| **Mirror** | `mirror.mjs` + `sweep.mjs` | **Andrii's canonical adapter** verbatim: `262144 / 1048576 / lazy / throw / destroy()+rebuild` (his committed adapter, fb10dd9 liteSignal.ts:4-15) | cross-framework standing on the community suite; rows diff 1:1 against his log |
 | **Version economics** | `harness/toe-to-toe` | frozen per-version engines | lite-vs-lite deltas across versions and capability-on costs |
 
 The microscope shows lite **at its recommended config on representative shapes**. The mirror shows lite **under the community benchmark's exact adapter** — a stricter, neutral cross-framework ranking. Both are reported. They can disagree, because they measure different things (lite's eager production pool vs Andrii's lazy oversized pool), and the honest position lives in the union of the two, not in cherry-picking one.
@@ -55,7 +55,7 @@ Every output begins with a machine-generated `#STAMP`: engine sha256, harness sh
 # protocol    : isolated-per-row  reps=10
 # host        : Apple M4 Pro  darwin/arm64  node v26.3.1  gc=on
 # engine.sha  : 65b2346069e621...
-# config      : {"maxNodes":131072,"maxLinks":1048576,"prealloc":"lazy",...}
+# config      : {"maxNodes":262144,"maxLinks":1048576,"prealloc":"lazy",...}
 ```
 
 Aggregation refuses to merge rep files whose stamps disagree (mixed engine hash, mixed protocol, mixed host) or whose count does not match the claimed reps. `report.mjs` will not generate a results file from an inconsistent capture.
@@ -97,13 +97,13 @@ The three former "~Andrii approximation" shapes (LARGE WEB APP, WIDE DENSE, SMAL
 ### Reading the output
 
 ```
-lite-signal   median=  21.83ms min=  21.76ms ops/s=916K   heapMed= 0.0KB   heapP95= 0.3KB   retained= 0.0KB   sink=[x]
+lite-signal   median=  21.83ms min=  21.76ms ops/s=916K   heapMed= 0.0KB   heapP95= 0.3KB   retained=  <KB>   sink=[x]
 ```
 
 - **median / min** — median of `RUNS` timed runs; min alongside so distribution tightness is visible.
 - **heapMed** — MEDIAN transient heap per timed run, GC-fenced around *each* run. (v3 fix: the old single Δheap smeared one run's GC across the average and needed an apology paragraph. Per-run fencing removed both.)
 - **heapP95** — 95th-percentile of the same per-run deltas — the allocation tail, shown separately instead of hidden in a mean.
-- **retained** — heap surviving a forced GC — the steady-state live-graph cost. Near-zero for a well-behaved engine.
+- **retained** -- post-run post-GC heap minus the pre-setup heap, floored at 0 (live graph + pools); > 0 on a correct run.
 - **sink** — `[x]` if the anti-DCE sum matched; `[ ]` invalidates the row.
 
 ---
@@ -112,7 +112,7 @@ lite-signal   median=  21.83ms min=  21.76ms ops/s=916K   heapMed= 0.0KB   heapP
 
 The claim that reproduces on any host is about **allocation, not raw propagation speed**. Representative M4 Pro / Node 26 microscope figures (lite's recommended eager config):
 
-- lite runs at `retained = 0.0KB` on every shape (true zero-GC steady state), with `heapMed` from **33× to ∞ lower** than the field — e.g. DEEP CHAIN `0.0KB` vs alien's ~1MB, DYNAMIC DAG ~40× under alien, KAIROS ~33× under alien.
+- (pending the next run log) the earlier `retained = 0.0KB` figure came from the pre-fix retained instrument, which read ~0 by construction; it and the `heapMed` ratios quoted beside it from the same run are restated from the new bench-runs logs, not carried over.
 - On **throughput**, lite is competitive-to-winning on this shape set: ahead on BROADCAST, MUX, and SELECTIVE DAG; ahead of alien on DYNAMIC DAG; within ~11% of alien on KAIROS.
 - The consistent **weakness is deep/layered propagation** (DEEP CHAIN: alien ~2× faster). A flatter representation wins when the propagation path is long rather than wide. This is real and unhidden.
 

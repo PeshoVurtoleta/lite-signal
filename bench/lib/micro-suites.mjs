@@ -157,70 +157,110 @@ const fanCases = {
 };
 
 // ---------------------------------------------------------------- sBench (17) ---------
-// createComputation helpers. Two corrections vs the first port:
-//  (1) cc0 now captures the loop var -- Andrii's is `computed(() => i)`, not `() => 0`.
-//      A constant no-capture body compiles to one shared closure, which V8 can prove dead
-//      and elide the whole discard loop for a lazy engine (alien collapsed to 0.04ms on
-//      Node 26 / M4 while lite paid full cost -- a fake 27000x gap).
-//  (2) ANTI-DCE ANCHOR. Andrii's harness discards created nodes; a sufficiently smart JIT
-//      then deletes the creation loop for the lazy engine but not the side-effecting one,
-//      so the row measures "creation unless the JIT deleted it" -- not comparable across
-//      engines or hosts. Each created handle is written into a reused ring buffer (one
-//      array write, equal cost for every engine), making the loop observably live. This
-//      is the SAME technique the microscope's Float64Array sink uses for propagation; it
-//      makes the create rows host-stable. NOTE: this intentionally diverges from Andrii's
-//      exact create numbers (his are the un-anchored, DCE-vulnerable values) -- the trade
-//      is a meaningful, reproducible measurement over bit-comparability with a fragile ref.
-const CREATE_ANCHOR = new Array(1 << 16);
-const ANCHOR_MASK = (1 << 16) - 1;
-let anchorIdx = 0;
-function sbenchHelpers(fw) {
-    const createDataSignals = (n, sources) => { for (let i = 0; i < n; i++) sources[i] = fw.signal(i); return sources; };
-    const anchor = (c) => { CREATE_ANCHOR[anchorIdx++ & ANCHOR_MASK] = c; return c; };
-    const cc0 = (i) => anchor(fw.computed(() => i));
-    const cc1 = (get) => anchor(fw.computed(() => get()));
-    const cc2 = (g1, g2) => anchor(fw.computed(() => g1() + g2()));
-    const cc4 = (g1, g2, g3, g4) => anchor(fw.computed(() => g1() + g2() + g3() + g4()));
-    const cc1000 = (ss, off) => anchor(fw.computed(() => { let sum = 0; for (let i = 0; i < 1000; i++) sum += ss[off + i].read(); return sum; }));
-    return { createDataSignals, cc0, cc1, cc2, cc4, cc1000 };
+// Rows, fixtures, bodies and validation of js-reactivity-benchmark src/sBench.ts at fb10dd9.
+// Create rows (:105-153): setup resets the framework, builds the sources and allocates the
+// `nodes` array; the timed call creates every node, reads it (initialisation and dependency
+// tracking are part of creation for lazy and eager engines alike), retains it in `nodes` and
+// sums the reads; validate throws unless the checksum equals his closed form (his `nodes.length`
+// check is kept verbatim; `nodes` is preallocated at row.nodes, so it cannot see a dropped node).
+// Every created node stays reachable from the result and every read feeds the
+// checksum, so no JIT can delete the creation loop for one engine and not another.
+// Update rows (:155-195): every write is followed by a read of every consumer; the checksum
+// is validated against his closed form the same way. Writes start at 1 so each one changes
+// the source.
+function makeComputation(fw, sources, fanIn, offset, constant) {
+    if (fanIn === 0) return fw.computed(() => constant);
+    if (fanIn === 1) { const source = sources[offset]; return fw.computed(() => source.read()); }
+    return fw.computed(() => {
+        let sum = 0;
+        for (let i = 0; i < fanIn; i++) sum += sources[offset + i].read();
+        return sum;
+    });
 }
-// (fn, count, scount) rows -- names + params exactly as sBench.sbench() calls them
+// sBench.ts:35-103, names and parameters verbatim (COUNT = his 1e5; QUICK shrinks it).
 function sbenchRows() {
-    return [
-        ["createDataSignals", COUNT, COUNT], ["createComputations0to1", COUNT, 0],
-        ["createComputations1to1", COUNT, COUNT], ["createComputations2to1", COUNT / 2, COUNT],
-        ["createComputations4to1", COUNT / 4, COUNT], ["createComputations1000to1", COUNT / 1000, COUNT],
-        ["createComputations1to2", COUNT, COUNT / 2], ["createComputations1to4", COUNT, COUNT / 4],
-        ["createComputations1to8", COUNT, COUNT / 8], ["createComputations1to1000", COUNT, COUNT / 1000],
-        ["updateComputations1to1", COUNT * 4, 1], ["updateComputations2to1", COUNT * 2, 2],
-        ["updateComputations4to1", COUNT, 4], ["updateComputations1000to1", COUNT / 100, 1000],
-        ["updateComputations1to2", COUNT * 4, 1], ["updateComputations1to4", COUNT * 4, 1],
-        ["updateComputations1to1000", COUNT * 4, 1],
-    ];
+    const creation = [
+        { name: "createDataSignals", nodes: COUNT, sources: 0, fanIn: 0, fanOut: 1, signals: true },
+        { name: "createComputations0to1", nodes: COUNT, sources: 0, fanIn: 0, fanOut: 1 },
+        { name: "createComputations1to1", nodes: COUNT, sources: COUNT, fanIn: 1, fanOut: 1 },
+        { name: "createComputations2to1", nodes: COUNT / 2, sources: COUNT, fanIn: 2, fanOut: 1 },
+        { name: "createComputations4to1", nodes: COUNT / 4, sources: COUNT, fanIn: 4, fanOut: 1 },
+        { name: "createComputations1000to1", nodes: COUNT / 1000, sources: COUNT, fanIn: 1000, fanOut: 1 },
+        ...[2, 4, 8, 1000].map((fanOut) => (
+            { name: `createComputations1to${fanOut}`, nodes: COUNT, sources: COUNT / fanOut, fanIn: 1, fanOut })),
+    ].map((row) => ({ ...row, kind: "create" }));
+    const update = [
+        { name: "updateComputations1to1", writes: COUNT * 4, fanIn: 1, fanOut: 1 },
+        { name: "updateComputations2to1", writes: COUNT * 2, fanIn: 2, fanOut: 1 },
+        { name: "updateComputations4to1", writes: COUNT, fanIn: 4, fanOut: 1 },
+        { name: "updateComputations1000to1", writes: COUNT / 100, fanIn: 1000, fanOut: 1 },
+        ...[2, 4, 1000].map((fanOut) => (
+            { name: `updateComputations1to${fanOut}`, writes: (COUNT * 4) / fanOut, fanIn: 1, fanOut })),
+    ].map((row) => ({ ...row, kind: "update" }));
+    return [...creation, ...update];
 }
-function sbenchBody(name, fw, H) {
-    const { createDataSignals, cc0, cc1, cc2, cc4, cc1000 } = H;
-    switch (name) {
-        case "createDataSignals": return (n) => { const s = []; createDataSignals(n, s); };
-        case "createComputations0to1": return (n) => { for (let i = 0; i < n; i++) cc0(i); };
-        case "createComputations1to1": return (n, s) => { for (let i = 0; i < n; i++) cc1(s[i].read); };
-        case "createComputations2to1": return (n, s) => { for (let i = 0; i < n; i++) cc2(s[i * 2].read, s[i * 2 + 1].read); };
-        case "createComputations4to1": return (n, s) => { for (let i = 0; i < n; i++) cc4(s[i * 4].read, s[i * 4 + 1].read, s[i * 4 + 2].read, s[i * 4 + 3].read); };
-        case "createComputations1000to1": return (n, s) => { for (let i = 0; i < n; i++) cc1000(s, i * 1000); };
-        case "createComputations1to2": return (n, s) => { for (let i = 0; i < n / 2; i++) { const g = s[i].read; cc1(g); cc1(g); } };
-        case "createComputations1to4": return (n, s) => { for (let i = 0; i < n / 4; i++) { const g = s[i].read; cc1(g); cc1(g); cc1(g); cc1(g); } };
-        case "createComputations1to8": return (n, s) => { for (let i = 0; i < n / 8; i++) { const g = s[i].read; for (let j = 0; j < 8; j++) cc1(g); } };
-        case "createComputations1to1000": return (n, s) => { for (let i = 0; i < n / 1000; i++) { const g = s[i].read; for (let j = 0; j < 1000; j++) cc1(g); } };
-        case "updateComputations1to1": return (n, s) => { const g = s[0].read, w = s[0].write; cc1(g); for (let i = 0; i < n; i++) w(i); };
-        case "updateComputations2to1": return (n, s) => { const g1 = s[0].read, w = s[0].write, g2 = s[1].read; cc2(g1, g2); for (let i = 0; i < n; i++) w(i); };
-        case "updateComputations4to1": return (n, s) => { const w = s[0].write; cc4(s[0].read, s[1].read, s[2].read, s[3].read); for (let i = 0; i < n; i++) w(i); };
-        case "updateComputations1000to1": return (n, s) => { const w = s[0].write; cc1000(s, 0); for (let i = 0; i < n; i++) w(i); };
-        case "updateComputations1to2": return (n, s) => { const g = s[0].read, w = s[0].write; cc1(g); cc1(g); for (let i = 0; i < n / 2; i++) w(i); };
-        case "updateComputations1to4": return (n, s) => { const g = s[0].read, w = s[0].write; cc1(g); cc1(g); cc1(g); cc1(g); for (let i = 0; i < n / 4; i++) w(i); };
-        case "updateComputations1to1000": return (n, s) => { const g = s[0].read, w = s[0].write; for (let j = 0; j < 1000; j++) cc1(g); for (let i = 0; i < n / 1000; i++) w(i); };
-        default: throw new Error("unknown sbench row " + name);
-    }
+// One sBench case as his registerBenchmark sees it: setup / benchmark / validate.
+function sbenchCase(fw, row) {
+    if (row.kind === "create") return {
+        setup() {
+            fw.reset();
+            return fw.withBuild(() => ({
+                sources: Array.from({ length: row.sources }, (_, i) => fw.signal(i)),
+                nodes: new Array(row.nodes),
+            }));
+        },
+        benchmark({ sources, nodes }) {
+            return fw.withBuild(() => {
+                let checksum = 0;
+                for (let i = 0; i < row.nodes; i++) {
+                    const node = row.signals
+                        ? fw.signal(i)
+                        : makeComputation(fw, sources, row.fanIn, Math.floor(i / row.fanOut) * row.fanIn, i);
+                    nodes[i] = node;
+                    checksum += node.read();
+                }
+                return { nodes, checksum };
+            });
+        },
+        validate({ nodes, checksum }) {
+            const expected = row.signals || row.fanIn === 0
+                ? (row.nodes * (row.nodes - 1)) / 2
+                : (row.fanOut * row.sources * (row.sources - 1)) / 2;
+            if (nodes.length !== row.nodes || checksum !== expected) {
+                throw new Error(`${row.name}: creation checksum ${checksum}, expected ${expected}`);
+            }
+        },
+    };
+    return {
+        setup() {
+            fw.reset();
+            return fw.withBuild(() => {
+                const sources = Array.from({ length: row.fanIn }, (_, i) => fw.signal(i));
+                const nodes = Array.from({ length: row.fanOut }, () => makeComputation(fw, sources, row.fanIn, 0, 0));
+                for (const node of nodes) node.read();
+                return { sources, nodes };
+            });
+        },
+        benchmark({ sources, nodes }) {
+            let checksum = 0;
+            for (let value = 1; value <= row.writes; value++) {
+                sources[0].write(value);
+                for (const node of nodes) checksum += node.read();
+            }
+            return checksum;
+        },
+        validate(checksum) {
+            const unchangedSources = (row.fanIn * (row.fanIn - 1)) / 2;
+            const expected = row.fanOut * ((row.writes * (row.writes + 1)) / 2 + row.writes * unchangedSources);
+            if (checksum !== expected) {
+                throw new Error(`${row.name}: update checksum ${checksum}, expected ${expected}`);
+            }
+        },
+    };
 }
+// his blackholeSink (util/benchmark.ts:704): the last result stays reachable until the next
+// invocation's setup.
+const SBENCH_SINK = { value: undefined };
 
 // ---------------------------------------------------------------- runners -------------
 // Each returns { time, checksum? }. fw.reset() between rows keeps pool state clean
@@ -256,21 +296,29 @@ function runFan(fw, name) {
     const time = measureMedian(() => { const run = fw.withBuild(() => build(fw)); run(1000); const t0 = performance.now(); checksum = run(FAN_ITERS); const t = performance.now() - t0; fw.reset(); return t; });
     return { time, checksum };
 }
-function runSbench(fw, name, count, scount) {
-    const H = sbenchHelpers(fw); const fn = sbenchBody(name, fw, H);
-    const time = measureMedian(() => {
-        let out;
-        fw.withBuild(() => {
-            // warmup x3 at n/100 (his harness), then prepare final sources + cache-warm
-            for (let k = 0; k < 3; k++) { const s = H.createDataSignals(scount, []); fn(Math.max(1, count / 100), s); }
-            const s = H.createDataSignals(scount, []);
-            for (let i = 0; i < scount; i++) s[i].read();
-            globalThis.gc?.();
-            const t0 = performance.now(); fn(count, s); out = performance.now() - t0;
-        });
-        fw.reset();
-        return out;
-    });
+// his measureCase (util/benchmark.ts:707-816), default quick profile (:197): each invocation
+// is reset + setup, a full GC, then the timed benchmark; every result is validated (a mismatch
+// throws). One untimed pilot and SBENCH_WARMUP untimed warmups at full size precede the
+// BENCH_RUNS timed samples; the median is reported. His default profile also keeps sampling until
+// >= 10 samples and >= 250 ms (max 100); runSbench takes BENCH_RUNS samples instead (5, or 1 under QUICK).
+const SBENCH_WARMUP = 2;
+function runSbench(fw, row) {
+    const c = sbenchCase(fw, row);
+    const invoke = () => {
+        SBENCH_SINK.value = undefined;
+        const fixture = c.setup();
+        globalThis.gc?.();
+        const t0 = performance.now();
+        const result = c.benchmark(fixture);
+        const t = performance.now() - t0;
+        c.validate(result);
+        SBENCH_SINK.value = result;
+        return t;
+    };
+    for (let k = 0; k <= SBENCH_WARMUP; k++) invoke();
+    const time = measureMedian(invoke);
+    SBENCH_SINK.value = undefined;
+    fw.reset();
     return { time };
 }
 
@@ -281,6 +329,6 @@ export function microRows() {
     for (const name of Object.keys(kairoCases)) rows.push({ name, group: "kairo", run: (fw) => runKairo(fw, name) });
     for (const name of Object.keys(fanCases)) rows.push({ name, group: "fan", run: (fw) => runFan(fw, name) });
     rows.push({ name: "molBench", group: "mol", run: (fw) => runMol(fw) });
-    for (const [name, count, scount] of sbenchRows()) rows.push({ name, group: "s", run: (fw) => runSbench(fw, name, count, scount) });
+    for (const row of sbenchRows()) rows.push({ name: row.name, group: "s", run: (fw) => runSbench(fw, row) });
     return rows;
 }

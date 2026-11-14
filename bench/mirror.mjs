@@ -1,11 +1,12 @@
 // bench/mirror.mjs -- the ECOSYSTEM MIRROR. Reproduces Andrii's dynamic suite so local
 // rows diff 1:1 against his log. This file's job is fidelity, not flattery: the lite
-// adapter uses HIS canonical config verbatim (lazy / 131072 / 1048576 / default eager
-// flush / destroy()+rebuild between benches), because the only way the rows are
-// comparable is byte-identical setup.
+// adapter uses the config of his committed adapter at fb10dd9 (src/frameworks/liteSignal.ts:4-15:
+// maxNodes 262144 / maxLinks 1048576 / prealloc "lazy" / onCapacityExceeded "throw", no
+// flush option) and, as its resetBenchmark() does (:46-49), destroys the registry and
+// builds a fresh one from the same config between benches.
 //
 //   node --expose-gc bench/mirror.mjs                 # lite + alien, full
-//   FW=lite-signal node --expose-gc bench/mirror.mjs  # one engine (isolated protocol)
+//   FW=lite-signal node --expose-gc bench/mirror.mjs  # one engine, one process (isolated-per-engine)
 //   QUICK=1 node --expose-gc bench/mirror.mjs          # fast smoke
 //   node --expose-gc bench/mirror.mjs --self-verify    # counters vs the document, then exit
 //
@@ -39,11 +40,15 @@ const ROWS_ONLY = process.env.ROWS_ONLY === "1";
 const CEILING_MS = QUICK ? 400 : 1500;
 const REPEATS = QUICK ? 1 : 3;
 
-// --- his canonical lite adapter config, as one frozen reference (single-reference rule) --
-const LITE_CONFIG = Object.freeze({ maxNodes: 131072, maxLinks: 1048576, prealloc: "lazy", onCapacityExceeded: "grow" });
+// --- his lite adapter config (fb10dd9 liteSignal.ts:4-15), one frozen reference (single-reference rule)
+const LITE_CONFIG = Object.freeze({
+    maxNodes: 262144, maxLinks: 1048576, prealloc: "lazy", onCapacityExceeded: "throw",
+});
 
 function liteAdapter() {
     let reg = createRegistry(LITE_CONFIG);
+    // pool counters of the registries reset() has retired, so poolMetrics() is cumulative
+    let retiredGrowths = 0, retiredFlushPasses = 0;
     return {
         name: "lite-signal",
         signal: (v) => { const s = reg.signal(v); return { read: s, write: s.set }; },
@@ -51,16 +56,23 @@ function liteAdapter() {
         effect: (fn) => { reg.effect(fn); },
         withBatch: (fn) => reg.batch(fn),
         withBuild: (fn) => fn(),
-        // his resetBenchmark(): destroy AND rebuild a fresh registry between benches
-        reset() { reg.destroy(); reg = createRegistry(LITE_CONFIG); },
+        // his resetBenchmark() (liteSignal.ts:46-49): destroy the registry, then build a fresh
+        // one from LITE_CONFIG. The retired registry's counters are folded in first.
+        reset() {
+            const s = reg.stats();
+            retiredGrowths += s.poolGrowths;
+            if (typeof s.flushPasses === "number") retiredFlushPasses += s.flushPasses;
+            reg.destroy();
+            reg = createRegistry(LITE_CONFIG);
+        },
         // lite-only pool fingerprint for the metrics column (free; absent on ref engines)
         // Emit only counters this stats() shape actually carries: 1.5.0 has no
         // flushPasses key, and "flushPasses=undefined" in the metrics column
         // broke the pool fingerprint the header promises (2026-08 review).
         poolMetrics() {
             const s = reg.stats();
-            const out = { poolGrowths: s.poolGrowths };
-            if (typeof s.flushPasses === "number") out.flushPasses = s.flushPasses;
+            const out = { poolGrowths: retiredGrowths + s.poolGrowths };
+            if (typeof s.flushPasses === "number") out.flushPasses = retiredFlushPasses + s.flushPasses;
             return out;
         },
     };
@@ -118,7 +130,7 @@ function metricsStr(res, pool, capped) {
     if (capped) parts.push(`SLOW/CAPPED samples=1 ceiling=${Math.round(CEILING_MS)}ms`);
     const s = res.snapshot;
     parts.push(`nodesRecomputed=${s.nodesRecomputed} nodesVisited=${s.nodesVisited} edgesTraversed=${s.edgesTraversed} sinkReads=${s.sinkReads}`);
-    if (pool) parts.push(`flushPasses=${pool.flushPasses} poolGrowths=${pool.poolGrowths}`);
+    if (pool) parts.push((typeof pool.flushPasses === "number" ? `flushPasses=${pool.flushPasses} ` : "") + `poolGrowths=${pool.poolGrowths}`);
     return parts.join(" ");
 }
 function emitRow(fwName, cfg, res, pool) {
@@ -136,12 +148,14 @@ async function runSelfVerify() {
         "wide dense": { nodesRecomputed: 735756, edgesTraversed: 18393900, sinkReads: 3001000 },
         "layered burst flush warm": { nodesRecomputed: 1529088, edgesTraversed: 12232704, sinkReads: 49664 },
         "stable diamond mesh warm": { nodesRecomputed: 24576, edgesTraversed: 196608, sinkReads: 49664 },
+        "pure push": { nodesRecomputed: 910133, edgesTraversed: 3640532, sinkReads: 220010 },
     };
     const fw = liteAdapter();
-    let fail = 0;
+    let fail = 0, total = 0;
     for (const cfg of DYNAMIC_TESTS) {
         const exp = EXP[cfg.name];
         if (!exp) continue;
+        total++;
         const res = measureOnce(fw, cfg);
         fw.reset();
         const s = res.snapshot;
@@ -149,8 +163,11 @@ async function runSelfVerify() {
         console.log(`${ok ? "MATCH" : "DIFF "} ${pad(cfg.name, 26)} nodes ${s.nodesRecomputed}/${exp.nodesRecomputed}  edges ${s.edgesTraversed}/${exp.edgesTraversed}  sink ${s.sinkReads}/${exp.sinkReads}`);
         if (!ok) fail++;
     }
-    console.log(`\n${fail === 0 ? "SELF-VERIFY PASS: counters match the document" : "SELF-VERIFY FAIL: " + fail}`);
-    process.exitCode = fail === 0 ? 0 : 1;
+    const want = Object.keys(EXP).length;
+    const pass = fail === 0 && total === want;
+    console.log(`\n${total - fail}/${want} MATCH`);
+    console.log(pass ? "SELF-VERIFY PASS: counters match the document" : "SELF-VERIFY FAIL: " + fail + " DIFF, " + (want - total) + " EXP rows not run");
+    process.exitCode = pass ? 0 : 1;
 }
 
 // --- main ----------------------------------------------------------------------------
@@ -161,9 +178,9 @@ async function main() {
         enginePath: new URL("../Signal.js", import.meta.url).href,
         harnessPath: import.meta.url,
         config: LITE_CONFIG,
-        protocol: (FW && FW.size === 1 && SCENARIO) ? PROTOCOLS.PER_ROW : (FW && FW.size === 1 ? PROTOCOLS.PER_ROW : PROTOCOLS.PER_ENGINE),
+        protocol: FW && FW.size === 1 ? (SCENARIO ? PROTOCOLS.PER_ROW : PROTOCOLS.PER_ENGINE) : PROTOCOLS.SMOKE,
         reps: REPEATS,
-        extra: { ceiling_ms: CEILING_MS, quick: QUICK, adapter: "andrii-canonical", scenario: SCENARIO || "all" },
+        extra: { ceiling_ms: CEILING_MS, quick: QUICK, adapter: "destroy", scenario: SCENARIO || "all" },
     });
     if (ROWS_ONLY) {
         // child mode: machine stamp line + rows, no pretty block, no header
@@ -189,8 +206,14 @@ async function main() {
 
     for (const fw of adapters) {
         for (const cfg of tests) {
+            const before = fw.poolMetrics();
             const res = measure(fw, cfg);
             const pool = fw.poolMetrics();
+            // poolMetrics() is cumulative across reset() rebuilds, so a row reports its own delta.
+            if (pool && before) {
+                pool.poolGrowths -= before.poolGrowths;
+                if (typeof pool.flushPasses === "number") pool.flushPasses -= before.flushPasses;
+            }
             emitRow(fw.name, cfg, res, pool);
             // CORRECTNESS: instead of comparing res.sum against a hand-transcribed
             // `expected` constant (which drifts -- his config.ts vectors are stale vs his

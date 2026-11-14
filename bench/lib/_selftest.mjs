@@ -6,6 +6,7 @@ import { makeStamp, formatStamp, formatStampLine, parseStampFromText, PROTOCOLS 
 import { summarizeSamples, median, primaryScore } from "./stats.mjs";
 import * as G from "./guards.mjs";
 import { buildSchedule, withSentinel, sentinelDrift } from "./schedule.mjs";
+import { makeRandom } from "./depgraph.mjs";
 
 let pass = 0, fail = 0;
 const ok = (cond, msg) => { if (cond) { pass++; } else { fail++; console.log("  FAIL " + msg); } };
@@ -18,8 +19,23 @@ ok(s.median === 12, "summarize median");
 ok(s.min === 10 && s.max === 100, "summarize min/max");
 ok(primaryScore([5, 5, 5]) === 5, "primaryScore is median");
 
+// --- seeded RNG: vendored random@5.4.1 generator (golden: his tests/util/seededRandom.test.ts:8-17) ---
+{
+    const rng = makeRandom("seed");
+    const eqAll = (got, want) => got.length === want.length && got.every((v, i) => v === want[i]);
+    ok(eqAll(Array.from({ length: 6 }, () => rng.float()), [
+        0.4770385572192159, 0.6635319494276601, 0.1544994037968863,
+        0.351112128035406, 0.8638669515610129, 0.3823690375297207,
+    ]), "seeded RNG: 6 golden floats from new Random(\"seed\")");
+    ok(eqAll(Array.from({ length: 12 }, () => rng.int(0, 99)), [9, 81, 80, 58, 69, 16, 65, 42, 17, 46, 24, 37]),
+        "seeded RNG: 12 golden int(0, 99) continue the same stream");
+    let sum = 0;
+    for (let i = 0; i < 100_000; i++) sum += rng.int(0, 1_000_000);
+    ok(sum === 49980951061, "seeded RNG: sum of 100000 int(0, 1000000) is the golden 49980951061");
+}
+
 // --- stamp: single-reference echo -- the config the stamp prints IS the one used ---
-const LITE_CONFIG = Object.freeze({ maxNodes: 1 << 18, maxLinks: 1 << 21, prealloc: "eager", onCapacityExceeded: "grow", flushStrategy: "sab" });
+const LITE_CONFIG = Object.freeze({ maxNodes: 1 << 18, maxLinks: 1 << 21, prealloc: "eager", onCapacityExceeded: "grow", maxFlushPasses: 7 });
 const reg = createRegistry(LITE_CONFIG);       // same reference to both:
 const stamp = makeStamp({
     enginePath: new URL("../../Signal.js", import.meta.url).href,
@@ -28,7 +44,7 @@ const stamp = makeStamp({
     protocol: PROTOCOLS.PER_ROW,
     reps: 10,
 });
-ok(stamp.config.flushStrategy === "sab", "stamp echoes the LIVE config (sab), not a hand-typed 'eager'");
+ok(stamp.config.maxFlushPasses === 7, "stamp echoes the LIVE config (maxFlushPasses 7), not a hand-typed default");
 ok(/^[0-9a-f]{64}$/.test(stamp.engineSha256), "engine sha256 computed");
 ok(/^[0-9a-f]{64}$/.test(stamp.harnessSha256), "harness sha256 computed");
 // round-trip through text
@@ -92,6 +108,5 @@ reg.destroy();
     ok(sentinelDrift(100, 106).drifted === true, "6% sentinel delta flags drift");
     ok(sentinelDrift(100, 103).drifted === false, "3% sentinel delta is within tolerance");
 }
-
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} -- ${pass} passed, ${fail} failed`);
 process.exitCode = fail === 0 ? 0 : 1;

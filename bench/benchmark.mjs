@@ -764,6 +764,10 @@ const LIBS = process.env.FW
 function runOne(lib, scenarioKey, N, sinkSlot) {
     const adapter = ADAPTERS[lib][scenarioKey];
     if (!adapter) return null; // Lib doesn't implement this scenario -- caller prints "n/a".
+    // Pre-setup baseline, read after a forced GC and BEFORE the adapter builds the graph:
+    // the retained figure below is measured against this.
+    forceGC();
+    const heapPreSetup = heapKB();
     const {drive, teardown} = adapter(N, sinkSlot);
     try {
         // Warmup
@@ -785,9 +789,9 @@ function runOne(lib, scenarioKey, N, sinkSlot) {
             heapDeltas.push(heapKB() - heapBefore);   // transient alloc for THIS run
         }
         forceGC();
-        const retainedBase = heapKB();
-        // retained = heap surviving a forced GC relative to a post-GC floor (live graph)
-        const retained = Math.max(0, retainedBase - (heapKB()));
+        // retained = post-run post-GC heap minus the pre-setup heap, floored at 0: the live
+        // graph and pools still held here (teardown runs in the finally below).
+        const retained = Math.max(0, heapKB() - heapPreSetup);
         return {samples, heapDeltas, retained};
     } finally {
         teardown();
@@ -857,8 +861,8 @@ for (const sc of SCENARIOS) {
 console.log("Notes:");
 console.log("  heapMed = MEDIAN transient heap per timed run, GC-fenced each run (raw alloc pressure)");
 console.log("  heapP95 = 95th-pctile of the same per-run deltas (tail alloc); no more single-smear average (F9)");
-console.log("  retained = heap surviving a forced GC (true leaks / steady-state live graph)");
-console.log("  Zero-GC libs should show retained ~ 0KB; heap close to 0KB.");
+console.log("  retained = post-run post-GC heap minus the pre-setup heap, floored at 0 (live graph + pools)");
+console.log("  retained is > 0 on a correct run: the graph and its pools are still live at that read.");
 console.log("  BENCH_SINK_SUM (anti-DCE):", sinkSum().toFixed(2));
 
 // --- VALIDITY GUARD ----------------------------------------------------------
