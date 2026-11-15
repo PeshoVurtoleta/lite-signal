@@ -23,6 +23,14 @@ published `files[]` changes except `README.md`, `llms.txt`, the 1.6.0 `reset()` 
 - `runWithOwner` pushes a real owner on a scope stack for the duration of `fn` (Argon F3, D-b183-3). A node disposed while it is an open scope's owner is pinned, and pinned slots are not released while any scope is open, so the slot cannot be recycled under `fn`. Cost: under `onCapacityExceeded: 'throw'`, an exactly-full pool whose only free slot is that pinned owner throws `CapacityError` while the scope is open. A scope with no valid owner (`undefined`, forged, signal, disposed handle) pushes nothing and does not block.
 - `onGraphMutation` op 4 fires after the edge is unlinked and its link is back in the pool (Argon F8; the old in-`freeLink` guard C10 is gone): inside the listener the edge is gone (`hasObservers` false for the last edge, `activeLinks` already decremented). If an op-4 listener throws, no link is left half-freed (LEDGER #54), the source's 1->0 `observeObservers` lifecycle is still delivered before the error surfaces, and a throwing `onDisconnect` replaces the listener's error. `Signal.d.ts` and docs updated; no API change.
 
+### Fixed -- engine: pending cleanup error, batch revert across the version wrap, effect() first-run error (ARG-E2, Argon F1 / F4 / F5)
+
+- **F1: a throwing cleanup that wrote a dependency (S1).** The first read of the computed that reaches the pending error throws it once, and counts as a stale read of its reader: a running tracked effect or computed that read it (`c()`, `box.get()`) runs again for the cleanup's write; a non-catching computed reader's caller sees the fresh value; the next read re-runs the body. `computed.peek()` and `box.peek()` are not readers (as `untrack(() => c())`): they deliver and consume the error and mark nothing. Before delivery the error is held in an internal wrapper: node descriptors show the error, a public `snapshot()` shows the wrapper as the node's `value`, and a restore into another copy of the module throws the wrapper on each read until its next dependency change. Amends the S1 text of the FIX-CL-D entry below.
+- **F4: batch revert across the int32 wrap.** `revertBlocked` now uses the int32-wrapped distance of a subscriber's `evalVersion` from the capture: it blocks a mid-run subscriber, a re-evaluation after the capture, a stamp 2^29 or more behind it and `evalVersion` 0. A stamp left across the 2^31 dormancy band no longer lets a revert through. KNOWN: a re-evaluation more than 2^32 - 2^29 bumps after the capture, inside one batch, is still missed.
+- **F5: `effect()` first-run error.** An effect created without a scheduler, outside any batch and flush, whose first run was made stale by a write in the same run and whose immediate re-run completes and leaves it live, returns the live handle and drops the first error. A re-run that throws throws from `effect()` and disposes the effect. With a scheduler, in a batch or in a flush, the first error throws and disposes as before.
+- **Bytecode (node v26.8.2, --print-bytecode; logs shapes/SHAPES.md, b187/c1/bc/table-b836fbbb-vs-df50017f.txt under .handoff/arg/e2/evidence/; the final-build compile of f6ff4cf3 has no b188 gate log, the b187 build differs by one comment).** The read arm alone: read (computed) 200 -> 204 B (+4 B). The trim alone (the post-refresh check reads `birthGen`, no local): 200 -> 192 B (-8 B, -1 register). Both: 196 B, 4 registers. pullComputed 77 -> 79 B; new peekComputed 82 B (4 registers); new cold throwComputedError 129 B (the b187 table; 123 B on the earlier build). refreshComputed 770 B and executeEffect 454 B unchanged. Cold paths only; no hot-path claim beyond these bytes.
+- **F12 (docs).** `NodeDescriptor.value` of an effect is `undefined` (the body's return is discarded), not its body return; the `untrack` FAQ no longer says it toggles a global flag.
+
 ### Added -- `registry.reset()` and top-level `reset()` (C-RESET)
 
 `reset()` disposes every live node and keeps the registry, its pools and its capacities. It runs inside `batch()`
@@ -174,7 +182,7 @@ Now (Signal.js c8f6cd1e):
 - **A write made by the throwing cleanup (AUD-E1, D-AUD-2 / D-AUD-5).** A re-run cleanup that wrote a dependency of its own
   node and then threw no longer leaves the node stale: `rerunCleanupEffect` / `rerunCleanupComputed` compare the node's
   `markEpoch` across the cleanup, and when it moved an effect is re-queued and a computed takes the far-floor `evalVersion`,
-  so the next flush or read re-runs it (cold path only). An effect whose body throws after a write it read the old value
+  so the next flush or read re-runs it (cold path only; for a computed, ARG-E2 F1 above changes how the error is delivered). An effect whose body throws after a write it read the old value
   of is now re-queued too: `effectTail` is the last statement of `executeEffect`'s `finally`, so the re-queue no longer
   skips a throwing body (the F-b33-1 entry below).
 - **Residuals.** A never-evaluated computed with no dependencies keeps its error until disposed (as a constant computed
@@ -1058,7 +1066,7 @@ AUD-E2 / E2b (D-AUD-3, D-AUD-4; Signal.js e26168ce) re-based the check; the rule
 counter `evalCount` is gone (0 occurrences in Signal.js): `preBatchEvals` now captures `globalVersion`, and the check runs
 at revert time in the cold `revertBlocked(node)`, which `read.set` / `boxSet` call only after a set back that equals the
 capture. It walks the node's direct subscribers: blocked iff one is `FLAG_COMPUTING` or its `evalVersion` is past the capture
-(an int32 serial compare, exact only while the subscriber's stamp is within 2^31 version bumps of the capture). A body that did
+(an int32 serial compare, exact only while the subscriber's stamp is within 2^31 version bumps of the capture; ARG-E2 F4, above, replaces this compare). A body that did
 not read the signal no longer blocks the revert. `fireRecompute` is now `if (mutationHook !== null) fireOp5(node);`; the
 cold `fireOp5` clears `activeObserverCurrentDep` when a graph-mutation listener throws and rethrows, so the run is abandoned
 with its links kept, the listener's error surfaces, the triggering write is absorbed and the node recovers on the next write.

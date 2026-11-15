@@ -186,7 +186,7 @@ export interface SnapshotNode {
     kind: SnapshotNodeKind;
     /** Raw flag bitmask at capture time. */
     flags: number;
-    /** The node's value at capture (by reference). */
+    /** The node's value at capture (by reference). A computed holding an undelivered cleanup error (S1, see {@link Registry.onCleanup}) carries an internal `UndeliveredCleanupError` wrapper here, not the error; restoring it into a registry from another copy of the module throws that wrapper on each read until its next dependency change. */
     value: unknown;
     /** The node's version counter at capture. */
     version: number;
@@ -282,7 +282,7 @@ export interface NodeDescriptor {
      *  re-walk handle: a descriptor may be passed back into forEachObserver/forEachSource. */
     id: number;
     kind: NodeKind;
-    /** The node's current value (last stored/computed value; an effect's is its body return). */
+    /** The node's current value (a signal's stored value; a computed's last value or its cached error, an undelivered cleanup error shown as the error itself; an effect's is always `undefined`: the body's return is discarded). */
     value: unknown;
 }
 
@@ -349,7 +349,9 @@ export type GraphMutationOpcode = 1 | 2 | 3 | 4 | 5;
  *
  * A listener that throws on opcode 4 (link remove) leaves no half-freed link (1.6.0): the edge is
  * already gone and pooled. The source's 1->0 `observeObservers` `onDisconnect` is still delivered
- * before the error surfaces; a throwing `onDisconnect` replaces the listener's error.
+ * before the error surfaces; a throwing `onDisconnect` replaces the listener's error. In a dispose walk (a handle's
+ * dispose or `dispose(handle)`) the throw aborts the walk: edges not yet reached stay linked, the node stays
+ * counted in `stats().effects`, and the handle's own dispose is latched, so finish with `dispose(handle)`.
  */
 export type GraphMutationListener = (opcode: GraphMutationOpcode, intA: number, intB: number) => void;
 
@@ -467,7 +469,7 @@ export interface Registry {
      * enclosing observer. Inner effect/computed bodies still establish their
      * own owner + observer scopes.
      *
-     * Pins the owner for the duration of `fn` (1.6.0, D-b183-3): `fn` runs as an open
+     * Pins the owner for the duration of `fn` (1.6.0): `fn` runs as an open
      * scope with a valid owner. If that owner is disposed while the scope is open, its
      * pool slot is not released until every scope has closed, so it cannot be recycled
      * under `fn`. Cost: while a scope is open, pinned slots are not released, so under
@@ -492,9 +494,10 @@ export interface Registry {
      * subscriber of that signal is running at the set back and none was re-evaluated
      * since the signal's first write in the batch (checked at the set back, 1.6.0);
      * otherwise the set back is a normal write. A body that ran in the batch but does
-     * not read the signal does not block its revert. The check compares int32 version
-     * stamps: exact only while the subscriber's stamp is within 2^31 version
-     * bumps of the capture.
+     * not read the signal does not block its revert. The check compares int32-wrapped
+     * version distances: it also blocks a subscriber whose stamp is 2^29 or more versions
+     * behind the capture, or is 0; a re-evaluation more than 2^32 - 2^29 versions after
+     * the capture is missed.
      */
     batch<T>(fn: () => T): T;
     untrack<T>(fn: () => T): T;
@@ -548,7 +551,14 @@ export interface Registry {
     onGraphMutation(fn: GraphMutationListener | null): GraphMutationUnsubscribe;
     /** Register `fn` to run when the enclosing effect/computed re-runs or is disposed. A no-op
      *  outside an owner, and once the current owner is disposed (1.6.0): `fn` is dropped, never
-     *  runs, and nothing throws. */
+     *  runs, and nothing throws. If `fn` throws when its node is about to re-run (1.6.0): an effect skips its
+     *  body and the error is rethrown from the `set()` / flush; a computed caches the error and its reads throw it
+     *  until its next dependency change. If `fn` also wrote a dependency of its own computed (S1), the first read
+     *  that reaches the error throws it once and counts as a stale read of its reader (a running tracked effect
+     *  or computed that read it runs again; a non-catching computed reader's caller sees the fresh value; the
+     *  error reaches only that body) and the next read re-runs the body. `peek()` / box `peek()` is not a reader
+     *  (as `untrack`): it delivers and consumes the error and marks nothing. A throw on the dispose path
+     *  rethrows and leaves the node live. */
     onCleanup(fn: () => void): void;
     stats(): RegistryStats;
     /**
@@ -723,7 +733,11 @@ export function computed<T>(fn: () => T, opts?: ComputedOptions<T>): Computed<T>
  * scheduler the first run is the scheduler's: a synchronous scheduler rethrows from `effect()`
  * after disposing the effect, as without one (also when the scheduler itself throws); a
  * deferred one does not throw from `effect()`. Any value the first run throws, `null`
- * included, is rethrown. A write made while another body is mid-run re-runs a reader that
+ * included, is rethrown, except that an effect created WITHOUT a scheduler, outside any
+ * batch and flush, whose first run was flagged stale by another body's write in the same run (its own writes are absorbed, F-b33-1) re-runs at
+ * once: if that re-run completes and leaves the effect live (not disposed in that drain; test/114 F5-DD / F5-DS) it supersedes the first run's error and `effect()` returns the
+ * live handle (a re-run that throws throws from `effect()` and disposes the effect; with a
+ * scheduler, or inside a batch or a flush, the first error throws and disposes) (1.6.0). A write made while another body is mid-run re-runs a reader that
  * already read the old value: a stale effect is re-queued after its run and runs again in the
  * same flush (1.6.0, F-b33-1). Rules and KNOWN exceptions: llms.txt 'Write during an
  * evaluation'. The handle of an effect that disposes itself during its first run is stale:
@@ -756,9 +770,10 @@ export function dispose(api: Disposable): void;
  * subscriber of that signal is running at the set back and none was re-evaluated
  * since the signal's first write in the batch (checked at the set back, 1.6.0);
  * otherwise the set back is a normal write. A body that ran in the batch but does
- * not read the signal does not block its revert. The check compares int32 version
- * stamps: exact only while the subscriber's stamp is within 2^31 version
- * bumps of the capture.
+ * not read the signal does not block its revert. The check compares int32-wrapped
+ * version distances: it also blocks a subscriber whose stamp is 2^29 or more versions
+ * behind the capture, or is 0; a re-evaluation more than 2^32 - 2^29 versions after
+ * the capture is missed.
  */
 export function batch<T>(fn: () => T): T;
 export function untrack<T>(fn: () => T): T;
