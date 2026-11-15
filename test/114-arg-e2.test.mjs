@@ -847,8 +847,9 @@ describe("ARG-E2 GC: 10,000 S1 cycles through an effect reader cost the rethrow 
 //          the child fails closed (exit 4) unless its sha256/8 is 91c507df.
 //   eng  = the engine under test (ENGINE_URL).
 //   s1v  = the must-fail control, EXECUTED: the fixture text with the S1v edit applied (count-checked, exactly one match each).
-// Per round, per build (order rotated each round): settle (gc until stable), heapUsed, N = 10000 computed(), settle, heapUsed; B/handle =
-// delta / N. Every delta must be > 0 (a delta <= 0 means the window did not measure: the row FAILS, a test bug, never re-run).
+// Per round, per build (order rotated each round): settle (gc until stable), used, N = 10000 computed(), settle, used; B/handle =
+// delta / N, where used = bytes used in the four JS-object heap spaces (see "Spaces" below). Every delta must be > 0 (a delta
+// <= 0 means the window did not measure: the row FAILS, a test bug, never re-run).
 // Gate: median over rounds of (eng - ref) <= +0.5 B per handle, one-sided; median of (s1v - ref) >= +4 B (control).
 // S1v mechanism (shapes/mkshapes.cjs S1v, SHAPES.md S1v: computed()'s read closure captures one more function-scoped `var`, so the
 // function context of computed() gains one slot per handle; measured +8.00 B on 91c507df-era shapes). The original aliased
@@ -859,6 +860,21 @@ describe("ARG-E2 GC: 10,000 S1 cycles through an effect reader cost the rethrow 
 //           the refresh` becomes `rcf(node, 0);`.
 // Loading: the fixture's one `export {watch, when, whenAsync} from "./Watch.js";` line is removed (count-checked) from the ref and
 // s1v texts (no Watch.js beside the fixture), and both are imported through a data: URL (no temp file).
+// Window pin (D-b189-2): the child runs --single-threaded and refuses to measure without it (exit 3). Mechanism (b189, CI run
+// 43651343131: one round of 15 at about -810 B on node 22 / 24 / 26): an in-flight job on the concurrent optimizing-compiler
+// thread keeps the PREVIOUS measure()'s registry context alive (its 16384 eager nodes + 65536 links + both pool arrays,
+// ~9.6 MB, without its handles) through every gc() of settle() at h0; the job is finalized before h1 and the context dies
+// inside the window: 1.68 MB - ~9.6 MB = about -810 B per handle. Space stats h0 -> h1 on a bad round: old -7194 KB,
+// large_object -773 KB (the two pool arrays). Locally reproduced under `taskpolicy -b` and --concurrent-recompilation-delay=300;
+// 0 bad windows with --single-threaded or --no-concurrent-recompilation. With no background compiler thread a compile job
+// completes inside the main-thread call that started it, so no job can hold a dead registry across a settle().
+// Spaces: used() sums v8.getHeapSpaceStatistics() space_used_size over new_space, old_space, new_large_object_space and
+// large_object_space only (the child exits 6 if one is missing). Every byte a handle retains is there (the closure, its context
+// and the node are old-space objects; a valid window moves old_space by 1643 KB and no other space by > 2 KB). Excluded: a JIT
+// code install / flush inside the window moved code_space by +90 / -88 / -91 KB with trusted_space -24 KB (about +-9 B per
+// handle on that column, 18x the gate bound), and code / trusted / read-only / shared spaces hold no per-handle object.
+// Must-fail tooth: PIN plants that pin (an extra eager registry alive at h0, dropped inside the window); the every-round guard
+// (memMeasured) must reject the planted window.
 const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/Signal-91c507df.js", import.meta.url));
 const MEM_N = 10000;
 const MEM_ROUNDS = 5;
@@ -867,8 +883,11 @@ const MEM_CONTROL = 4;     // B per handle: median(s1v - ref) >= this
 const CHILD_MEM = `
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { getHeapSpaceStatistics } from "node:v8";
 import { createRegistry as createEng } from ${JSON.stringify(ENGINE_URL)};
-if (!process.execArgv.includes("--expose-gc")) { console.error("MEM child: --expose-gc is not in execArgv"); process.exit(3); }
+for (const f of ["--expose-gc", "--single-threaded"]) {
+    if (!process.execArgv.includes(f)) { console.error("MEM child: " + f + " is not in execArgv"); process.exit(3); }
+}
 const text = readFileSync(${JSON.stringify(FIXTURE_PATH)}, "utf8");
 const sha8 = createHash("sha256").update(readFileSync(${JSON.stringify(FIXTURE_PATH)})).digest("hex").slice(0, 8);
 if (sha8 !== "91c507df") { console.error("MEM child: fixture sha256/8 " + sha8 + " is not 91c507df"); process.exit(4); }
@@ -890,16 +909,28 @@ const builds = [
 ];
 const N = ${MEM_N}, ROUNDS = ${MEM_ROUNDS};
 const body = () => 1;
-// settle: full gc() until two consecutive heapUsed readings agree within 1 KB (a single gc() can leave the previous build's garbage unswept)
+// used: bytes in the JS-object spaces (in-window JIT code install / flush in code / trusted space is not retention)
+const JS_SPACES = ["new_space", "old_space", "new_large_object_space", "large_object_space"];
+for (const n of JS_SPACES) {
+    if (!getHeapSpaceStatistics().some((s) => s.space_name === n)) { console.error("MEM child: no heap space named " + n); process.exit(6); }
+}
+function used() {
+    let u = 0;
+    for (const s of getHeapSpaceStatistics()) if (JS_SPACES.includes(s.space_name)) u += s.space_used_size;
+    return u;
+}
+// settle: full gc() until two consecutive used() readings agree within 1 KB (a single gc() can leave the previous build's garbage unswept)
 function settle() {
     let p = -Infinity, h = 0;
-    for (let i = 0; i < 12; i++) { globalThis.gc(); h = process.memoryUsage().heapUsed; if (Math.abs(h - p) < 1024) break; p = h; }
+    for (let i = 0; i < 12; i++) { globalThis.gc(); h = used(); if (Math.abs(h - p) < 1024) break; p = h; }
     return h;
 }
+let PIN = null;   // must-fail tooth: a planted pin of the D-b189-2 class, dropped inside the window
 function measure(create) {
     const r = create({ maxNodes: 16384, prealloc: "eager" });
     const keep = new Array(N).fill(null);
     const h0 = settle();
+    PIN = null;
     for (let i = 0; i < N; i++) keep[i] = r.computed(body);
     const h1 = settle();
     if (keep[N - 1] === null) console.log("x");
@@ -912,21 +943,27 @@ for (let round = 0; round < ROUNDS; round++) {
     for (let j = 0; j < builds.length; j++) { const b = builds[(round + j) % builds.length]; row[b.name] = measure(b.create); }
     rounds.push(row);
 }
-console.log("RESULT " + JSON.stringify({ rounds, sha8 }));
+PIN = builds[0].create({ maxNodes: 16384, prealloc: "eager" });   // tooth: an extra registry alive at h0, freed in the window
+const plant = measure(builds[0].create);
+console.log("RESULT " + JSON.stringify({ rounds, plant, sha8 }));
 `;
 const median = (xs) => { const a = [...xs].sort((x, y) => x - y); return a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2; };
+const memMeasured = (x) => x > 0;   // the every-round guard (D-b188-2, kept by D-b189-2): a delta <= 0 means the window did not measure
 describe("ARG-E2 MEM: a computed() handle retains no more than on 91c507df", () => {
     it("[PIN] MEM median of 5 interleaved rounds: engine retains no more than 91c507df + 0.5 B per computed(); executed S1v control >= +4 B", () => {
-        const o = runChild(CHILD_MEM, ["--expose-gc", "--max-old-space-size=256"], undefined);
+        const o = runChild(CHILD_MEM, ["--expose-gc", "--single-threaded", "--max-old-space-size=256"], undefined);
         assert.equal(o.sha8, "91c507df");
         assert.equal(o.rounds.length, MEM_ROUNDS);
         const show = o.rounds.map((x) => "ref " + x.ref.toFixed(2) + " eng " + x.eng.toFixed(2) + " s1v " + x.s1v.toFixed(2)).join(" | ");
         for (const x of o.rounds) {
-            for (const k of ["ref", "eng", "s1v"]) assert.ok(x[k] > 0, "round heap delta for " + k + " is not > 0 (the window did not measure): " + show);
+            for (const k of ["ref", "eng", "s1v"]) assert.ok(memMeasured(x[k]), "round heap delta for " + k + " is not > 0 (the window did not measure): " + show);
         }
+        // must-fail tooth (D-b189-2): the planted pin (an extra eager registry alive at h0, dropped inside the window) must be rejected
+        assert.ok(Number.isFinite(o.plant), "tooth: no planted-window reading: " + o.plant);
+        assert.equal(memMeasured(o.plant), false, "tooth: the planted in-window free read " + o.plant.toFixed(2) + " B per handle and passed the every-round guard");
         const dEng = median(o.rounds.map((x) => x.eng - x.ref));
         const dS1v = median(o.rounds.map((x) => x.s1v - x.ref));
-        if (process.env.E2_DEBUG) console.log("MEMDBG medians eng-ref " + dEng.toFixed(3) + " s1v-ref " + dS1v.toFixed(3) + " | " + show);
+        if (process.env.E2_DEBUG) console.log("MEMDBG medians eng-ref " + dEng.toFixed(3) + " s1v-ref " + dS1v.toFixed(3) + " plant " + o.plant.toFixed(2) + " | " + show);
         assert.ok(dEng <= MEM_BOUND, "median(engine - 91c507df) = " + dEng.toFixed(3) + " B per computed() > +" + MEM_BOUND + "; rounds: " + show);
         assert.ok(dS1v >= MEM_CONTROL, "must-fail control: median(S1v - 91c507df) = " + dS1v.toFixed(3) + " B < +" + MEM_CONTROL + " (the window cannot see one extra context slot); rounds: " + show);
     });
