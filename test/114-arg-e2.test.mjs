@@ -863,14 +863,14 @@ describe("ARG-E2 GC: 10,000 S1 cycles through an effect reader cost the rethrow 
 // Window pin (D-b189-2): the child runs --single-threaded and refuses to measure without it (exit 3). Mechanism (b189, CI run
 // 43651343131: one round of 15 at about -810 B on node 22 / 24 / 26): an in-flight job on the concurrent optimizing-compiler
 // thread keeps the PREVIOUS measure()'s registry context alive (its 16384 eager nodes + 65536 links + both pool arrays,
-// ~9.6 MB, without its handles) through every gc() of settle() at h0; the job is finalized before h1 and the context dies
-// inside the window: 1.68 MB - ~9.6 MB = about -810 B per handle. Space stats h0 -> h1 on a bad round: old -7194 KB,
+// ~9.8 MB, without its handles) through every gc() of settle() at h0; the job is finalized before h1 and the context dies
+// inside the window: 1.68 MB - ~9.8 MB = about -816 B per handle. Space stats h0 -> h1 on a bad round: old -7194 KB,
 // large_object -773 KB (the two pool arrays). Locally reproduced under `taskpolicy -b` and --concurrent-recompilation-delay=300;
 // 0 bad windows with --single-threaded or --no-concurrent-recompilation. With no background compiler thread a compile job
 // completes inside the main-thread call that started it, so no job can hold a dead registry across a settle().
 // Spaces: used() sums v8.getHeapSpaceStatistics() space_used_size over new_space, old_space, new_large_object_space and
 // large_object_space only (the child exits 6 if one is missing). Every byte a handle retains is there (the closure, its context
-// and the node are old-space objects; a valid window moves old_space by 1643 KB and no other space by > 2 KB). Excluded: a JIT
+// and the node are old-space objects; a valid window moves old_space by 1643 KB and no other of the four spaces by > 2 KB). Excluded: a JIT
 // code install / flush inside the window moved code_space by +90 / -88 / -91 KB with trusted_space -24 KB (about +-9 B per
 // handle on that column, 18x the gate bound), and code / trusted / read-only / shared spaces hold no per-handle object.
 // Must-fail tooth: PIN plants that pin (an extra eager registry alive at h0, dropped inside the window); the every-round guard
@@ -961,6 +961,8 @@ describe("ARG-E2 MEM: a computed() handle retains no more than on 91c507df", () 
         // must-fail tooth (D-b189-2): the planted pin (an extra eager registry alive at h0, dropped inside the window) must be rejected
         assert.ok(Number.isFinite(o.plant), "tooth: no planted-window reading: " + o.plant);
         assert.equal(memMeasured(o.plant), false, "tooth: the planted in-window free read " + o.plant.toFixed(2) + " B per handle and passed the every-round guard");
+        assert.equal(memMeasured(0), false, "guard boundary: a 0 B round must not count as measured");
+        assert.equal(memMeasured(NaN), false, "guard boundary: a NaN round must not count as measured");
         const dEng = median(o.rounds.map((x) => x.eng - x.ref));
         const dS1v = median(o.rounds.map((x) => x.s1v - x.ref));
         if (process.env.E2_DEBUG) console.log("MEMDBG medians eng-ref " + dEng.toFixed(3) + " s1v-ref " + dS1v.toFixed(3) + " plant " + o.plant.toFixed(2) + " | " + show);
