@@ -1514,8 +1514,12 @@ export function createRegistry(config) {
         if (node.gen === g) node.flags &= ~FLAG_STALE_READ;
     }
     // FIX-CL (LEDGER #55): the RE-RUN cleanup dispatchers. executeEffect / refreshComputed
-    // call these with FLAG_COMPUTING already set; a throwing cleanup used to escape past the
-    // finally that clears it and wedge the node. One combined test keeps the zero-call fast
+    // call these BEFORE they set FLAG_COMPUTING (L-1: a stack overflow at any call entry
+    // between the set and their try left it set; the set is now the last statement before
+    // that try). Each cold half sets COMPUTING itself, first thing inside a try whose catch
+    // clears it, so the node stays a cycle guard (and markDownstream does not queue it) while
+    // its cleanups run; a throwing cleanup used to escape past the run's finally that clears
+    // it and wedge the node. The fast path runs no user code. One combined test keeps the zero-call fast
     // path (small enough to inline into the frames); the cold half wraps the unchanged
     // runCleanup in try/catch with its own gen snapshot, so a cascade throw (disposeOwned)
     // still skips the node's own cleanups, as on the dispose path. disposeNode keeps the
@@ -1606,7 +1610,11 @@ export function createRegistry(config) {
     function firstRunCleanupE(node) {
         if (skipPreRunCleanup === node) { skipPreRunCleanup = null; return; }
         const g = node.gen;
-        const errs = drainPreRun(node);
+        let errs = null;
+        try {
+            node.flags |= FLAG_COMPUTING;   // L-1: set inside the try (an overflow at drainPreRun's entry clears it)
+            errs = drainPreRun(node);
+        } catch (e) { node.flags &= ~FLAG_COMPUTING; throw e; }
         if (errs === null) return;
         if (node.gen !== g) throw firstRunErrors(errs);
         node.flags &= ~(FLAG_COMPUTING | FLAG_STALE_READ);
@@ -1627,7 +1635,11 @@ export function createRegistry(config) {
     function firstRunCleanupC(node) {
         if (skipPreRunCleanup === node) { skipPreRunCleanup = null; return false; }
         const g = node.gen;
-        const errs = drainPreRun(node);
+        let errs = null;
+        try {
+            node.flags |= FLAG_COMPUTING;   // L-1: set inside the try (an overflow at drainPreRun's entry clears it)
+            errs = drainPreRun(node);
+        } catch (e) { node.flags &= ~FLAG_COMPUTING; throw e; }
         if (node.gen !== g) return true;
         if (errs === null) return false;
         node.flags &= ~(FLAG_COMPUTING | FLAG_STALE_READ);
@@ -1666,6 +1678,7 @@ export function createRegistry(config) {
         if (node.evalVersion === 0 && node.headDep === null) { firstRunCleanupE(node); return; }
         const g = node.gen, m = node.markEpoch;
         try {
+            node.flags |= FLAG_COMPUTING;   // L-1: set inside the try; the catch clears it
             runCleanup(node);
         } catch (err) {
             if (node.gen === g) {
@@ -1704,6 +1717,7 @@ export function createRegistry(config) {
         if (node.version === 0) return firstRunCleanupC(node);
         const g = node.gen, m = node.markEpoch;
         try {
+            node.flags |= FLAG_COMPUTING;   // L-1: set inside the try; the catch clears it
             runCleanup(node);
         } catch (err) {
             if (node.gen === g) {
@@ -2063,8 +2077,28 @@ export function createRegistry(config) {
     // refreshComputed's finally (no gen check). Its flags are 0 (a dead slot), so the COMPUTING test is
     // the dead-observer guard (test/114 A11x: without it the dead effect is marked, effectTail re-queues
     // it and the dead slot runs with no computeFn).
+    // L-1 overflow arm (D-b187-2): a cached stack overflow (RangeError with the V8 or the JSC message,
+    // recognised by constructor + message reads only, never instanceof) resets the node to
+    // never-evaluated (value undefined, HAS_ERROR clear, version 0, evalVersion 0, markEpoch the far
+    // floor) and is thrown; the next read re-runs the body. The reader is not marked (re-pulling would
+    // overflow again). A UCE never has constructor RangeError, so the S1 path is unchanged.
+    // COMPUTING guard (D-b190-2): inside the node's own refresh (op-5 hook, body, cleanups, the finally's
+    // severTail -> op-4 / onDisconnect) the arm falls through to the plain throw v (fail-closed); the outer serve resets.
+    // Pre-walk (Q-b191-2): the floor (never 0) makes a frame of this node still in its dependency walk (a dep's
+    // hook or body served it) fail refreshComputed's markAtWalk !== node.markEpoch and re-run the body instead of
+    // stamping evalVersion over the reset. Residual: a frame whose markAtWalk equals the floor (last mark exactly
+    // 0x3FFFFFFF writes back) still stamps it (LEDGER L-1 residual, test/115 A10c/A10d).
+    // Gen re-check (b191 r1): the v.constructor / v.message reads may run a user getter that disposes the node (and
+    // may recycle its slot); a changed gen skips the reset (the reset never touches a stranger) and falls through to
+    // the UCE test, which throws a non-UCE v as is; a v passing instanceof UndeliveredCleanupError still reaches the
+    // unwrap writes (open: forged-wrapper finding F-b192-1, its own 1.6.0 unit, D-b192-3).
     function throwComputedError(node, peek) {
-        const v = node.value;
+        const v = node.value, gen = node.gen;
+        if ((node.flags & FLAG_COMPUTING) === 0 && v !== null && typeof v === "object" && v.constructor === RangeError &&
+            (v.message === "Maximum call stack size exceeded" || v.message === "Maximum call stack size exceeded.") && node.gen === gen) {
+            node.value = undefined; node.flags &= ~FLAG_HAS_ERROR; node.version = 0; node.evalVersion = 0;
+            const g = globalVersion, m = g < -0x40000001 ? (g + 0x40000002) + 0x7FFFFFFF : g - 0x3FFFFFFF; node.markEpoch = m === 0 ? -1 : m; throw v;
+        }
         if (!(v instanceof UndeliveredCleanupError)) throw v;
         node.value = v.err;
         const f = (globalVersion - 0x3FFFFFFF) | 0;
@@ -2129,7 +2163,7 @@ export function createRegistry(config) {
             }
         }
 
-        node.flags = (node.flags & ~FLAG_QUEUED_STALE) | FLAG_COMPUTING;
+        node.flags &= ~FLAG_QUEUED_STALE;
         runCleanupE(node);   // CROSS-EDGE L3->L2: dispose owned children before re-run (a throw un-wedges, rethrows)
         if (node.gen !== savedGen) return;   // B1 (r3): a cleanup disposed it; never run a stranger
 
@@ -2144,10 +2178,13 @@ export function createRegistry(config) {
         currentOwner = node;
         // Cursor push (A1.1): nothing that can throw sits between it and `try`. The op-5 hook
         // runs INSIDE `try` (S5), so a throwing hook unwinds the context like a body throw.
+        // L-1: FLAG_COMPUTING is set last, after the push: no call (no stack-overflow site)
+        // sits between the set and `try`, whose finally clears it.
         const d = cursorDepth;
         if (d !== 0) cursorStack[d] = activeObserverCurrentDep;
         cursorDepth = d + 1;   // Smi: depth is bounded by the JS stack, far below 2^30
         activeObserverCurrentDep = node.headDep;
+        node.flags |= FLAG_COMPUTING;
         try {
             fireRecompute(node);
             (0, node.computeFn)();
@@ -2174,9 +2211,11 @@ export function createRegistry(config) {
      * its value.
      *
      * Errors thrown by computeFn are captured in `node.value` with FLAG_HAS_ERROR;
-     * subsequent reads re-throw until a dependency change re-runs computeFn. D-H: only
-     * this wrapper throws a cached error, so a dependent's pre-walk never aborts on an
-     * errored dep -- the dependent re-runs and its body's read (which may catch) throws.
+     * subsequent reads re-throw until a dependency change re-runs computeFn (except a
+     * cached stack-overflow RangeError: reset on its first serve, see throwComputedError).
+     * D-H: only this wrapper throws a cached error, so a dependent's pre-walk never
+     * aborts on an errored dep -- the dependent re-runs and its body's read (which may
+     * catch) throws.
      *
      * gen snapshot across the refresh: a node disposed (or its slot recycled) by user
      * code during the refresh reads undefined, never the slot's new value or error.
@@ -2226,6 +2265,8 @@ export function createRegistry(config) {
      * and the read closure do). A re-run cleanup that throws (FIX-CL, LEDGER #55) is cached as
      * the node's error (the body does not run; FLAG_COMPUTING is cleared), so it is still
      * never thrown from here and the next read sees the error, not a false CycleError.
+     * FLAG_COMPUTING is set as the last statement before the body's try, whose finally clears it, or first thing inside a cleanup half's try, whose catch clears it on a throw (L-1): a
+     * stack overflow at a call entry before the body leaves no false CycleError either.
      * A never-evaluated node still runs its first body (body-first, firstRunCleanupC).
      * Throws only on a cycle: the node re-entered while computing, or (#42) `depth`,
      * the pre-walk recursion depth (a Smi), past nodePool.length -- an acyclic dep
@@ -2273,7 +2314,6 @@ export function createRegistry(config) {
 
         if (shouldRun) {
             if ((node.flags & FLAG_COMPUTING) !== 0) throwComputedCycle();
-            node.flags |= FLAG_COMPUTING;
             // B1 (r3) + FIX-CL (#55): stop if a cleanup disposed the node or threw (error cached). runCleanupC's
             // gen snapshot equals savedGen: no user code runs since the snapshot or the pre-walk's gen test.
             if (runCleanupC(node)) return;   // CROSS-EDGE L3->L2: dispose owned children before recompute
@@ -2281,14 +2321,15 @@ export function createRegistry(config) {
             const prevObserver = currentObserver;
             const prevOwner = currentOwner;
 
-            // Same self-dispose detection, cursor push and in-`try` op-5 hook as executeEffect.
-            // A throwing hook is cached as this computed's error (DV-S5).
+            // Same self-dispose detection, cursor push, late COMPUTING set (L-1) and in-`try`
+            // op-5 hook as executeEffect. A throwing hook is cached as this computed's error (DV-S5).
             currentObserver = node;
             currentOwner = node;
             const d = cursorDepth;
             if (d !== 0) cursorStack[d] = activeObserverCurrentDep;
             cursorDepth = d + 1;   // Smi: depth is bounded by the JS stack, far below 2^30
             activeObserverCurrentDep = node.headDep;
+            node.flags |= FLAG_COMPUTING;
             try {
                 fireRecompute(node);
                 const newValue = (0, node.computeFn)();

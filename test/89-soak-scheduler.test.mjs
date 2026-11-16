@@ -134,9 +134,11 @@ const load = async (text, id) => {
 // AUD-E2b B2 re-pin -> e26168ce (the AUD-E2 revert-time-check engine, D-AUD-3) / a1fe839a;
 // ARG-E1 B3 re-pin -> 91c507df (the ARG-E1 F3 / F8 engine) / b9dfcc8f;
 // ARG-E2 B3 re-pin (b188) 91c507df / b9dfcc8f -> f6ff4cf3 (the ARG-E2 engine) / b9695eae (== test/45 T-SC-thunkgen,
-// .handoff/arg/e2/evidence/b188/b3/kernel-shas-f6ff4cf3.txt)
-describe('KERNEL: dead scheduled thunk on the frozen tree (f6ff4cf3)', () => {
-    it('frozen tree sha256/8 is f6ff4cf3', () => assert.equal(sha8(SRC), 'f6ff4cf3'));
+// .handoff/arg/e2/evidence/b188/b3/kernel-shas-f6ff4cf3.txt);
+// L-1 B3 re-pin (b192) f6ff4cf3 / b9695eae -> 2043b9f6 (the L-1 overflow-arm engine) / 091e5057 (== test/45 T-SC-thunkgen,
+// .handoff/l1/evidence/kernel-shas-2043b9f6.txt)
+describe('KERNEL: dead scheduled thunk on the frozen tree (2043b9f6)', () => {
+    it('frozen tree sha256/8 is 2043b9f6', () => assert.equal(sha8(SRC), '2043b9f6'));
     for (const phase of ['first-run', 'rerun']) {
         it('srec ' + phase + ': dead A delivers no body, successor B runs its own', async () => {
             const K = await load(SRC, 'ctl-' + phase);
@@ -164,9 +166,9 @@ const ANCHOR = '                    if (node.gen === gen && (node.flags & FLAG_E
 const REPL = '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n';
 
 describe('MUTANT: thunkgen (drop `node.gen === gen && `) is caught by the stale-thunk shape', () => {
-    it('anchor occurs exactly once; mutant sha256/8 is b9695eae', () => {
+    it('anchor occurs exactly once; mutant sha256/8 is 091e5057', () => {
         assert.equal(count(SRC, ANCHOR), 1);
-        assert.equal(sha8(SRC.replace(ANCHOR, () => REPL)), 'b9695eae');
+        assert.equal(sha8(SRC.replace(ANCHOR, () => REPL)), '091e5057');
     });
     for (const phase of ['first-run', 'rerun']) {
         it('srec ' + phase + ': dead A delivery runs successor B body (A->B+1, B->0)', async () => {
