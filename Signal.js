@@ -1856,7 +1856,10 @@ export function createRegistry(config) {
      * effectTail (the last statement of executeEffect's `finally`, S3) and by
      * rerunCleanupEffect's catch, only after the run start cleared QUEUED and COMPUTING was
      * cleared (that `finally`, or the catch), with no user code in between. evalVersion = 0
-     * makes the next run skip the pre-walk. Inside a flush the nested flushEffects()
+     * makes the next run skip the pre-walk. It is also load-bearing for the ONE QUEUED
+     * repair (AUD-F G2: flushEffects' catch arm clears QUEUED only when evalVersion !== 0),
+     * so the entry pushed here keeps QUEUED when the run that pushed it throws in a flush.
+     * Inside a flush the nested flushEffects()
      * returns at once and the entry runs in the next pass of the same flush (counted
      * against maxFlushPasses -> "CycleError: flush passes exceeded"); outside a flush
      * (effect() creation, a scheduler thunk) it drains now. Inside a batch it waits for
@@ -1978,6 +1981,24 @@ export function createRegistry(config) {
      * A scheduled effect keeps QUEUED until its thunk runs (one scheduler call per pending
      * period); a stale entry whose slot holds a legitimately QUEUED resident serves it early (KNOWN,
      * HEAD-equal); a deferred-scheduler resident then gets a second call at its own entry (R1).
+     * F3 / F4 (AUD-F G2, unq4): an entry that throws (pre-walk, scheduler, or body) clears
+     * QUEUED in its catch arm when node.evalVersion !== 0. A run clears QUEUED only after its
+     * pre-walk, and a scheduler that throws before calling run never reaches it, so without
+     * the clear the consumed entry would leave QUEUED set and no later change could schedule
+     * the effect ((c) below is a scheduler that throws after calling run). The catch arm runs
+     * inside flushEffects, where a re-queue from inside the run goes through
+     * requeueStaleEffect (evalVersion 0, so its entry keeps QUEUED) and a nested drain
+     * returns at once. The clear is inline (no call): it holds at the stack limit.
+     * KNOWN residuals; (b) and (c) lose one run and recover on the next change; (a) and (d)
+     * stay stranded:
+     * (a) pre-existing (G1-equal): a scheduled run called outside a flush (a deferred
+     * scheduler's thunk) whose pre-walk throws leaves QUEUED set with no entry.
+     * (b) a depth-0 dispose that recycles the slot into a QUEUED resident with a live entry,
+     * then a throw: the clear hits the resident and its entry is skipped.
+     * (c) a synchronous scheduler that runs the thunk, writes a dependency, then throws: the
+     * entry the write pushed loses QUEUED and is skipped.
+     * (d) pre-existing: an effect re-queued for a stale read (evalVersion 0) whose scheduler
+     * throws on the next pass keeps QUEUED with no entry and stays stranded.
      * @private
      */
     function flushEffects() {
@@ -2011,6 +2032,7 @@ export function createRegistry(config) {
                         }
                     } catch (err) {
                         flushErrorBuffer[flushErrorCount++] = err;
+                        if (node.evalVersion !== 0) node.flags &= ~FLAG_QUEUED;   // stranded QUEUED (no call: holds at the stack limit)
                     }
                 }
             }
@@ -2031,8 +2053,7 @@ export function createRegistry(config) {
                 flushErrorCount = 0;
                 throw err;
             }
-            const errs = flushErrorBuffer.slice(0, flushErrorCount);
-            for (let i = 0; i < flushErrorCount; i++) flushErrorBuffer[i] = null;
+            const errs = flushErrorBuffer.splice(0, flushErrorCount);   // removes them: nothing left to null
             flushErrorCount = 0;
             throw new AggregateError(errs, "Effects threw during flush");
         }
@@ -2826,6 +2847,15 @@ export function createRegistry(config) {
      *        Receives a `run` callback that the scheduler must eventually invoke.
      *        The thunk is cached per-node and gen-bound, so a stale schedule
      *        fired post-dispose against a recycled slot is a guaranteed no-op.
+     *        A scheduler that throws on a re-schedule (any run after the first)
+     *        leaves the effect live: the next change to a dependency schedules it
+     *        again; so does a scheduled run that throws inside a flush (the error
+     *        propagates out of `run`). KNOWN exceptions: a deferred scheduler's
+     *        `run` called outside a flush whose pre-walk throws strands the effect
+     *        (flushEffects F3 / F4 (a)); flushEffects F3 / F4 (b)-(d). A deferred
+     *        scheduler that stores `run` and then throws gets a second scheduler
+     *        call in the same pending period (the stored `run` still runs the
+     *        effect once; no double run).
      * @returns {() => void}         Dispose function. Idempotent. Safe to call
      *                               after registry.destroy() or registry.reset().
      */

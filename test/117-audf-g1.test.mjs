@@ -377,7 +377,7 @@ describe("A10 nested sever: the walk's cursor push (kills SS-NOPUSH)", () => {
 // ======================================================================================================================================
 // A2: the --jitless sweep (45 depths x 32 pads = 1440 cells per shape, plain + computed): an effect re-run at the stack limit; classify the registry after.
 // STUCK = isTracking() true | getOwner() !== undefined | reset() refuses "body is running" | woke 0 under "flush/batch/track in progress".
-// KNOWN-G2 = pending, woke 0, reset ok: REPORTED only (group 2 flips it to 0 and owns the flip in this file). HALF-FREED = the walked source-link sum differs from the
+// KNOWN-G2 = pending, woke 0, reset ok: asserted 0 on the engine and > 0 on frozen G1 (7386c610) by the KNOWN-G2 rows below (AUD-F group 2, batch B3'). HALF-FREED = the walked source-link sum differs from the
 // observer-link sum or stats().activeLinks. Kills FIN-CALLFIRST-E (plain shape) and FIN-CALLFIRST-C (computed shape).
 // Measured wall time of one child: ~0.5 s (reported by the child as ms).
 // ======================================================================================================================================
@@ -391,7 +391,7 @@ describe("A2 sweep (--jitless, 1440 cells per shape)", () => {
             assert.deepEqual(o.unknown, [], "unknown class");
             assert.equal(o.byClass.STUCK || 0, 0, "STUCK cells: " + (o.byClass.STUCK || 0));
             assert.equal(o.halfFreed, 0, JSON.stringify(o.halfExamples));
-            console.log("# REPORTED engine " + shape + " KNOWN-G2 (group 2 must flip this to 0 and assert it here): " + (o.byClass["KNOWN-G2"] || 0) + "; classes " + JSON.stringify(o.byClass) + "; " + o.ms + " ms");
+            console.log("# REPORTED engine " + shape + " KNOWN-G2 (group 2 asserts it 0 in the next row): " + (o.byClass["KNOWN-G2"] || 0) + "; classes " + JSON.stringify(o.byClass) + "; " + o.ms + " ms");
         });
         it("[RED reference] fixture " + shape + ": STUCK >= 1 (TASK 0: 32), no unknown class, HALF-FREED 0 (TASK 0: 0)", () => {
             const o = SWEEP(FIXTURE_PATH, shape);
@@ -400,6 +400,21 @@ describe("A2 sweep (--jitless, 1440 cells per shape)", () => {
             assert.ok((o.byClass.STUCK || 0) >= 1, "no STUCK cell on the fixture: " + JSON.stringify(o.byClass));
             assert.equal(o.halfFreed, 0, JSON.stringify(o.halfExamples));
             console.log("# REPORTED fixture " + shape + " STUCK " + o.byClass.STUCK + " KNOWN-G2 " + (o.byClass["KNOWN-G2"] || 0) + " classes " + JSON.stringify(o.byClass) + " " + o.ms + " ms");
+        });
+    }
+    // KNOWN-G2 (AUD-F G2 F3/F4): engine must be 0; frozen G1 (commit ca84b0a, measured plain 52 / computed 204 on node v26.8.2; count is node-dependent) > 0. Kills M4 UNQ3.
+    const G1_PATH = fileURLToPath(new URL("./fixtures/Signal-7386c610.js", import.meta.url));
+    for (const shape of ["plain", "computed"]) {
+        it("[RED] engine " + shape + ": KNOWN-G2 0 (AUD-F G2 F3/F4)", () => {
+            const o = SWEEP(ENGINE_PATH, shape);
+            assert.equal(o.cells, 1440);
+            assert.equal(o.byClass["KNOWN-G2"] || 0, 0, JSON.stringify(o.byClass));
+        });
+        it("[RED reference] frozen G1 " + shape + ": KNOWN-G2 > 0", () => {
+            assert.equal(createHash("sha256").update(readFileSync(G1_PATH)).digest("hex").slice(0, 8), "7386c610");
+            const o = SWEEP(G1_PATH, shape);
+            assert.equal(o.cells, 1440);
+            assert.ok((o.byClass["KNOWN-G2"] || 0) > 0, "no KNOWN-G2 cell on frozen G1: " + JSON.stringify(o.byClass));
         });
     }
     for (const [nm, path] of [["engine", ENGINE_PATH], ["fixture", FIXTURE_PATH]]) for (const shape of ["plain", "computed"]) {
