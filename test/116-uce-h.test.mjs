@@ -117,10 +117,10 @@ describe("A2 floor values (snapshot evalVersion after the site fired at a seeded
     it("[RED] census: the old floor text '(globalVersion - 0x3FFFFFFF) | 0' occurs 0 times (old code: 3 sites + 2 comments)", () => {
         assert.equal(count(src, "(globalVersion - 0x3FFFFFFF) | 0"), 0);
     });
-    // Census: counts the definition (1) + the 3 call sites; a comment containing `stampFarFloor(` would break it.
-    it("[RED] census: stampFarFloor( is called exactly 3 times (call sites; the single definition excluded)", () => {
+    // Census: counts the definition (1) + the 4 call sites; a comment containing `stampFarFloor(` would break it.
+    it("[RED] census: stampFarFloor( is called exactly 4 times (3 UCE-H sites + severStale's computed consume, AUD-F G1; the single definition excluded)", () => {
         assert.equal(count(src, "function stampFarFloor("), 1, "definitions");
-        assert.equal(count(src, "stampFarFloor(") - 1, 3, "call sites");
+        assert.equal(count(src, "stampFarFloor(") - 1, 4, "call sites");
     });
 });
 

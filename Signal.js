@@ -794,9 +794,9 @@ export function createRegistry(config) {
     // ever replace a slot that already holds the link, so it stays null.
     // Holds links only; preallocated to 32 slots and grows only at a new maximum depth.
     // cursorDepth is a Smi and balanced on every exit path: every push sits right before a
-    // `try` whose `finally` pops; the only user code inside that `finally` before the pop
-    // (the epilogue severTail) runs through severTailFrame, which pops and restores on a
-    // throw. destroy() and reset() refuse while any frame is in flight (C-RESET D-4), so they
+    // `try` whose `finally` pops; a frame's `finally` pops before its first call (K2, AUD-F G1),
+    // and the epilogue severTail runs through severStale, which pushes its own entry and pops it
+    // in its own `finally`. destroy() and reset() refuse while any frame is in flight (C-RESET D-4), so they
     // never see cursorDepth !== 0; destroy() nulls the stale saved slots.
     const cursorStack = [];
     for (let i = 0; i < 32; i++) cursorStack.push(null);
@@ -1120,25 +1120,59 @@ export function createRegistry(config) {
     }
 
     /**
-     * Frame-epilogue sever (A1 r2). The stale-tail walk runs user code (op-4 hook,
-     * onDisconnect). If that throws, the frame must still unwind: clear COMPUTING,
-     * restore observer/owner, pop the cursor, then rethrow. Without this a throwing
-     * epilogue callback left cursorDepth > 0 forever (pinned slots never released)
-     * and the context stranded. Links not yet severed stay in the dep list (still
-     * consistent): at worst one extra run, then the next re-track severs them.
-     * Cold: called only when a stale tail exists; the frame's caller checks for it.
+     * Frame-epilogue sever (A1 r2; K2 + F5, AUD-F G1: was severTailFrame). The calling frame
+     * (executeEffect / refreshComputed) has ALREADY unwound when it calls this -- S9 stamp,
+     * COMPUTING cleared, observer / owner / cursor restored, no call before any of them -- so
+     * nothing it set is stranded if this throws or overflows. `stale` is the frame's live
+     * cursor at its end: the first link its run did not re-visit (non-null; the caller tests).
+     * The stale-tail walk runs user code (op-4 hook, onDisconnect), so this re-enters the frame
+     * as the walk always saw it: cursor push (the outer cursor saved on cursorStack, as the
+     * bodies do), live cursor = stale, observer = owner = node, FLAG_COMPUTING set last before
+     * the `try` (G1-a: markDownstream marks or absorbs a walk callback's write exactly as
+     * inside the body, and a re-run of the node is a CycleError). The `finally` unwinds on both arms.
+     * Throw arm only (F5): the throw skips the frame's stale-read tail (effectTail /
+     * computedRunTail), so a pending FLAG_STALE_READ is consumed here, after the unwind: an
+     * effect through requeueStaleEffect (D-b195-2 (a): re-queued with evalVersion 0 (G1-b),
+     * drained at once outside any flush and batch; the re-run's error, if any, replaces the
+     * walk's), a computed by the flag clear + the far floor (its next read re-runs it). Links
+     * not yet severed stay in the dep list (still consistent): at worst one extra run, then the
+     * next re-track severs them.
+     * Zero-box: the call takes only (node, stale). `g` is this frame's own gen snapshot; the
+     * caller's savedGen (a per-slot int32 that reaches 2^30 and more on a churned slot, so it
+     * would box as an argument) never crosses the call.
+     * The COMPUTING clear keeps the frames' gen guard although it cannot change anything: a node
+     * disposed during the walk was COMPUTING, so disposeNode pinned its slot with flags 0, and a
+     * pinned slot is released only at cursor depth 0, after this unwind. The guard keeps "no
+     * write to a slot whose gen moved" literal, on a cold path.
+     * Cold: called only when a stale tail exists. K4 (open): a stack overflow AT the entry of
+     * this call (or of effectTail / computedRunTail / requeueStaleEffect / stampFarFloor) skips
+     * the sever and the consume; the frame is already unwound and the links stay consistent.
      * @private
      */
-    function severTailFrame(node, po, pw) {
+    function severStale(node, stale) {
+        const g = node.gen;
+        const po = currentObserver, pw = currentOwner;
+        const d = cursorDepth;
+        if (d !== 0) cursorStack[d] = activeObserverCurrentDep;
+        cursorDepth = d + 1;   // Smi, as in the frames
+        activeObserverCurrentDep = stale;
+        currentObserver = node;
+        currentOwner = node;
+        node.flags |= FLAG_COMPUTING;
+        let ok = false;
         try {
             severTail(node);
-        } catch (err) {
-            node.flags &= ~FLAG_COMPUTING;
+            ok = true;
+        } finally {
+            if (node.gen === g) node.flags &= ~FLAG_COMPUTING;
             currentObserver = po;
             currentOwner = pw;
-            cursorDepth = (cursorDepth - 1) | 0;
-            activeObserverCurrentDep = cursorStack[cursorDepth];
-            throw err;
+            cursorDepth = d;
+            activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
+            if (!ok && node.gen === g && (node.flags & FLAG_STALE_READ) !== 0) {
+                if ((node.flags & FLAG_EFFECT) !== 0) requeueStaleEffect(node);
+                else { node.flags &= ~FLAG_STALE_READ; stampFarFloor(node); }
+            }
         }
     }
 
@@ -2007,6 +2041,11 @@ export function createRegistry(config) {
     // A1 r2: the cycle throws live out of line. Their `new Error(...)` bytes counted
     // against executeEffect's TurboFan inlining budget (max 460 bytecode bytes) on
     // every run; the call that replaces them is smaller and never taken in practice.
+    // The budget is V8's --max-inlined-bytecode-size (default 460 on node 22, 24 and 26): a
+    // function over it is never inlined into its caller. L-1 took executeEffect to 462 B on
+    // node v26.8.2, so flushEffects stopped inlining it; AUD-F G1 (one shared QUEUED_STALE clear,
+    // the unwind-first `finally` with the sever out of line in severStale) brought it to 437 B
+    // (node v26.8.2 and v26.3.1; 428 B on v24, 426 B on v22.23.4; bench/bytecode-budget.sh, b196).
     // A1.9: pull a computed dep from executeEffect's pre-walk; true if that ran user code
     // which freed or recycled the walk's link (both ends compared). Small, so it inlines;
     // out of line only for executeEffect's inlining budget. refreshComputed keeps the check
@@ -2060,6 +2099,8 @@ export function createRegistry(config) {
     }
     // F-b33-1: executeEffect's post-run tail, the last statement of its `finally` (S3, D-AUD-5: a body
     // that throws after a stale read is re-queued too), out of line for its inlining budget (small: inlines back).
+    // A throw from the epilogue sever skips it; severStale's throw arm consumes the stale read instead
+    // (F5, AUD-F G1). K4 (open): a stack overflow at its own entry skips the re-queue.
     // Truthiness test, not `!== 0` (D4): 25 B vs 31 keeps it under the small-function inline caps
     // (Maglev 27 B, TurboFan 30 B); flags is a Smi bit set, so the two forms are the same test.
     function effectTail(node) { if (node.flags & FLAG_STALE_READ) requeueStaleEffect(node); }
@@ -2131,6 +2172,14 @@ export function createRegistry(config) {
      * every link) whose pre-run cleanup throws is body-first instead (firstRunCleanupE,
      * D-b175-2): that run still runs the body, then rethrows.
      *
+     * The `finally` unwinds first (K2, AUD-F G1): S9 stamp, FLAG_COMPUTING clear, observer /
+     * owner / cursor restore, with no call before any of them. Only then does it call
+     * severStale (the stale-tail walk, which re-enters the frame for its callbacks) and
+     * effectTail. A throw from the walk is the run's error; severStale then consumes a pending
+     * stale read itself (F5: re-queued as effectTail would, D-b195-2 (a)). K4 (open residual):
+     * a stack overflow at the ENTRY of an epilogue call (severStale / effectTail /
+     * computedRunTail / requeueStaleEffect) skips that call's work; the frame is already unwound.
+     *
      * effectTail is the last statement of the `finally` (S3, D-AUD-5): a body that read a
      * value a write in the same evaluation changed is re-queued even when it throws (or a
      * throwing op-5 hook ends the run); the re-queued run's error, if any, then replaces
@@ -2145,10 +2194,10 @@ export function createRegistry(config) {
         // recycled into a stranger (a pinned slot is released by the next depth-0 miss).
         const savedGen = node.gen;
 
-        if (node.evalVersion !== 0) {
+        let needsRun = node.evalVersion === 0;
+        if (!needsRun) {
             let link = node.headDep;
             const evalVer = node.evalVersion | 0;
-            let needsRun = false;
 
             while (link !== null) {
                 const dep = link.source;
@@ -2162,20 +2211,21 @@ export function createRegistry(config) {
                 link = link.nextDep;
             }
             if (node.gen !== savedGen) return;   // A1.9: disposed (maybe recycled) during the pre-walk
-
-            if (!needsRun) {
-                node.flags &= ~FLAG_QUEUED_STALE;
-                node.evalVersion = globalVersion;
-                return;
-            }
         }
 
+        // AUD-F G1 (K1 kept): one FLAG_QUEUED_STALE clear serves both exits (one copy of its bytes).
+        // No user code runs between the pre-walk's gen test and this clear on either path.
         node.flags &= ~FLAG_QUEUED_STALE;
+        if (!needsRun) {
+            node.evalVersion = globalVersion;
+            return;
+        }
         runCleanupE(node);   // CROSS-EDGE L3->L2: dispose owned children before re-run (a throw un-wedges, rethrows)
         if (node.gen !== savedGen) return;   // B1 (r3): a cleanup disposed it; never run a stranger
 
         const prevObserver = currentObserver;
         const prevOwner = currentOwner;
+        let stale = null;   // the run's stale dep tail, taken in the finally (K2: severed after the unwind)
 
         // If gen advances during the body the node was disposed (and may already have been
         // recycled into a different role). Skip the dep-list / flag / version mutations in
@@ -2197,17 +2247,22 @@ export function createRegistry(config) {
             (0, node.computeFn)();
         } finally {
             if (node.gen === savedGen) {
-                // S9: stamp BEFORE severTail. Its 1->0 callbacks may write a dep this run
-                // still reads; COMPUTING keeps markDownstream from queueing us, so a later
-                // stamp would absorb that write and the next pre-walk would miss it.
+                // S9: stamp BEFORE the sever. Its 1->0 callbacks may write a dep this run
+                // still reads; COMPUTING (re-set by severStale for the walk) keeps markDownstream
+                // from queueing us, so a later stamp would absorb that write and the next
+                // pre-walk would miss it.
                 node.evalVersion = globalVersion;
-                if (activeObserverCurrentDep !== null) severTailFrame(node, prevObserver, prevOwner);
                 node.flags &= ~FLAG_COMPUTING;
+                stale = activeObserverCurrentDep;
             }
+            // K2 (AUD-F G1): the frame is fully unwound (stamp, COMPUTING, observer, owner,
+            // cursor) before its first call, so an overflow or a throw in the epilogue strands
+            // no context (L1 closed by construction).
             currentObserver = prevObserver;
             currentOwner = prevOwner;
             cursorDepth = d;
             activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
+            if (stale !== null) severStale(node, stale);
             effectTail(node);   // S3 (D-AUD-5): in the finally, so a throwing body still re-queues a stale read
         }
     }
@@ -2272,8 +2327,10 @@ export function createRegistry(config) {
      * and the read closure do). A re-run cleanup that throws (FIX-CL, LEDGER #55) is cached as
      * the node's error (the body does not run; FLAG_COMPUTING is cleared), so it is still
      * never thrown from here and the next read sees the error, not a false CycleError.
-     * FLAG_COMPUTING is set as the last statement before the body's try, whose finally clears it, or first thing inside a cleanup half's try, whose catch clears it on a throw (L-1): a
-     * stack overflow at a call entry before the body leaves no false CycleError either.
+     * FLAG_COMPUTING is set as the last statement before the body's try, whose finally clears it before its first call (K2, AUD-F G1: the
+     * epilogue sever runs after the unwind, in severStale, see executeEffect), or first thing inside a cleanup half's try, whose catch clears it on a throw (L-1): a
+     * stack overflow at a call entry before the body or in the epilogue leaves no false CycleError either. K4 (open residual): an overflow
+     * at the ENTRY of severStale or computedRunTail skips that call's work (a stale tail stays linked; a stale read is not re-pulled).
      * A never-evaluated node still runs its first body (body-first, firstRunCleanupC).
      * Throws only on a cycle: the node re-entered while computing, or (#42) `depth`,
      * the pre-walk recursion depth (a Smi), past nodePool.length -- an acyclic dep
@@ -2327,6 +2384,7 @@ export function createRegistry(config) {
 
             const prevObserver = currentObserver;
             const prevOwner = currentOwner;
+            let stale = null;   // the run's stale dep tail (K2: severed after the unwind, see executeEffect)
 
             // Same self-dispose detection, cursor push, late COMPUTING set (L-1) and in-`try`
             // op-5 hook as executeEffect. A throwing hook is cached as this computed's error (DV-S5).
@@ -2368,14 +2426,16 @@ export function createRegistry(config) {
                 }
             } finally {
                 if (node.gen === savedGen) {
-                    node.evalVersion = globalVersion;   // S9: before severTail (see executeEffect)
-                    if (activeObserverCurrentDep !== null) severTailFrame(node, prevObserver, prevOwner);
+                    node.evalVersion = globalVersion;   // S9: before the sever (see executeEffect)
                     node.flags &= ~FLAG_COMPUTING;
+                    stale = activeObserverCurrentDep;
                 }
+                // K2: unwound before the first call (see executeEffect).
                 currentObserver = prevObserver;
                 currentOwner = prevOwner;
                 cursorDepth = d;
                 activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
+                if (stale !== null) severStale(node, stale);
             }
             if (node.flags === 0) return;   // disposed during body
             if ((node.flags & FLAG_ERR_OR_STALE) !== 0) computedRunTail(node);
