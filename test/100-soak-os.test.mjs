@@ -524,8 +524,9 @@ async function loadMutant(name) {
     const n = LIVE_SRC.split(from).length - 1;
     assert.equal(n, 1, name + ': patch site must match exactly once, got ' + n);
     const src = LIVE_SRC.replace(from, () => to);
-    // A0 kernels re-cut on Signal.js 2043b9f6 (the L-1 overflow-arm engine) by L-1 B3 (b192; == test/45 SNAP_ROWS shas,
-    // .handoff/l1/evidence/a0-recut-b192.log); the f6ff4cf3 cut (ARG-E2 B3, b188) is A0/kernels-f6ff4cf3/, the 91c507df cut
+    // A0 kernels re-cut on Signal.js 5af14f0b (the UCE-H forged-wrapper re-check engine) by UCE-H B4 (b194; == test/45 SNAP_ROWS
+    // shas, .handoff/uceh/evidence/a0-recut-b194.log); the 2043b9f6 cut (L-1 B3, b192) is A0/kernels-2043b9f6/, the f6ff4cf3 cut
+    // (ARG-E2 B3, b188) is A0/kernels-f6ff4cf3/, the 91c507df cut
     // (ARG-E1 B3) is A0/kernels-91c507df/, the e26168ce cut (AUD-E2b B2) is A0/kernels-e26168ce/, the ca39e1f4 cut (AUD-E1 B2b) is
     // A0/kernels-ca39e1f4/, the c8f6cd1e cut (b176 B2b) A0/kernels-c8f6cd1e/, the d235e505 cut (b165 G2) A0/kernels-d235e505/,
     // the ea0b64d1 cut A0/kernels-ea0b64d1/

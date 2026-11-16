@@ -120,6 +120,9 @@ const FLAG_COMPUTED_BOX = FLAG_COMPUTED | FLAG_BOX;
 // stores it in a computed's value slot (with FLAG_HAS_ERROR) when a write reached the node while
 // its cleanups ran; throwComputedError unwraps it on the first read that throws. Module scope, so a
 // snapshot carries it by reference into a restored registry and the instanceof test still holds.
+// The class is reachable from a snapshot value (its constructor), so user code can forge a wrapper or
+// give the class a Symbol.hasInstance: the instanceof test and the .err read may run user code, and
+// throwComputedError re-checks gen and the slot before any write (F-b192-1, D-b193-2).
 class UndeliveredCleanupError { constructor(err) { this.err = err; } }
 
 // Private cross-registry rehydration hook (1.6.0 snapshot/restore). restore()
@@ -1659,7 +1662,7 @@ export function createRegistry(config) {
      * D-b171-1 (LEDGER #55), narrowed by D-b171-3: an evalVersion of 0 WITH links (headDep not
      * null) is requeueStaleEffect's stale-read re-queue (links from a completed run; its QUEUED
      * was cleared when this run began; nothing is scheduled now), so it is replaced by the
-     * needs-run marker computedRunTail uses: (globalVersion - 0x3FFFFFFF) | 0, -1 if that is 0.
+     * needs-run marker computedRunTail uses (stampFarFloor: globalVersion - 0x3FFFFFFF in int32, -1 if 0).
      * Not a stamp -- nothing is claimed evaluated, a far floor below every recent version, so the
      * next wake's pre-walk still runs the body -- and snapshot() no longer reads the effect as a
      * pending scheduled run. An evalVersion of 0 with NO links means no completed run left
@@ -1686,8 +1689,7 @@ export function createRegistry(config) {
                 // S1: every walk that reaches the node (and every STALE_READ flag) stamps markEpoch.
                 if (node.markEpoch !== m) requeueStaleEffect(node);
                 else if (node.evalVersion === 0 && node.headDep !== null) {
-                    const f = (globalVersion - 0x3FFFFFFF) | 0;
-                    node.evalVersion = f === 0 ? -1 : f;
+                    stampFarFloor(node);
                 }
             }
             throw err;
@@ -1703,11 +1705,13 @@ export function createRegistry(config) {
      * (evalVersion = globalVersion), so a pre-walk does not consume it. The first read that
      * reaches a throw arm (read closure, pullComputed, peekComputed) goes through
      * throwComputedError: it unwraps the slot to err, gives evalVersion the far floor
-     * computedRunTail uses ((globalVersion - 0x3FFFFFFF) | 0, -1 if that is 0), marks a
+     * computedRunTail uses (stampFarFloor), marks a
      * COMPUTING reader (currentObserver; never on a peek, D-b186-5) stale so it runs again
      * for the cleanup's write (D-b183-1 option a),
      * and throws err: that read throws the cleanup's error, the next read re-runs the body
-     * with the new values. Disposed / recycled by the cleanup (gen moved): swallow, as the
+     * with the new values. If the instanceof test or the err read ran user code that moved the
+     * node (gen) or its slot (value), throwComputedError throws the wrapper as cached and writes
+     * nothing (D-b193-2). Disposed / recycled by the cleanup (gen moved): swallow, as the
      * body's catch does for a disposed node. Returns runCleanupC's "stop" boolean from its own
      * gen snapshot: true on a throw or a gen move, false when the cleanups completed. A
      * never-evaluated node (version 0) goes to firstRunCleanupC (body-first, D-b175-1).
@@ -1873,8 +1877,7 @@ export function createRegistry(config) {
     function computedRunTail(node) {
         if ((node.flags & FLAG_STALE_READ) === 0) return;
         node.flags &= ~FLAG_STALE_READ;
-        const f = (globalVersion - 0x3FFFFFFF) | 0;
-        node.evalVersion = f === 0 ? -1 : f;
+        stampFarFloor(node);
         if (staleRepulls >= maxFlushPasses) {
             node.value = new Error("CycleError: computed keeps invalidating its own reads");
             node.flags |= FLAG_HAS_ERROR;
@@ -2090,8 +2093,11 @@ export function createRegistry(config) {
     // 0x3FFFFFFF writes back) still stamps it (LEDGER L-1 residual, test/115 A10c/A10d).
     // Gen re-check (b191 r1): the v.constructor / v.message reads may run a user getter that disposes the node (and
     // may recycle its slot); a changed gen skips the reset (the reset never touches a stranger) and falls through to
-    // the UCE test, which throws a non-UCE v as is; a v passing instanceof UndeliveredCleanupError still reaches the
-    // unwrap writes (open: forged-wrapper finding F-b192-1, its own 1.6.0 unit, D-b192-3).
+    // the UCE test, which throws a non-UCE v as is.
+    // UCE gen + slot re-check (F-b192-1, D-b193-2): the instanceof test (a user Symbol.hasInstance, a Proxy
+    // getPrototypeOf) and the err read (an accessor, a Proxy get trap) may run user code that disposes or
+    // recycles the node, or re-pulls it at the same gen; err is read ONCE into a local, then a moved gen or a
+    // slot no longer holding v throws v as cached: nothing written, nothing marked, no stranger touched.
     function throwComputedError(node, peek) {
         const v = node.value, gen = node.gen;
         if ((node.flags & FLAG_COMPUTING) === 0 && v !== null && typeof v === "object" && v.constructor === RangeError &&
@@ -2100,12 +2106,13 @@ export function createRegistry(config) {
             const g = globalVersion, m = g < -0x40000001 ? (g + 0x40000002) + 0x7FFFFFFF : g - 0x3FFFFFFF; node.markEpoch = m === 0 ? -1 : m; throw v;
         }
         if (!(v instanceof UndeliveredCleanupError)) throw v;
-        node.value = v.err;
-        const f = (globalVersion - 0x3FFFFFFF) | 0;
-        node.evalVersion = f === 0 ? -1 : f;
+        const e = v.err;
+        if (node.gen !== gen || node.value !== v) throw v;
+        node.value = e;
+        stampFarFloor(node);
         const o = currentObserver;
         if (!peek && o !== null && (o.flags & FLAG_COMPUTING) !== 0) { o.flags |= FLAG_STALE_READ; o.markEpoch = globalVersion; }
-        throw v.err;
+        throw e;
     }
 
     /**
@@ -3351,6 +3358,7 @@ export function createRegistry(config) {
         };
     }
     function describeNode(node) {
+        const g = node.gen;
         const fl = node.flags;
         const kind = (fl & FLAG_EFFECT) !== 0 ? "effect" : (fl & FLAG_COMPUTED) !== 0 ? "computed" : "signal";
         // Plain property assignment, not Object.defineProperty.
@@ -3363,7 +3371,7 @@ export function createRegistry(config) {
         const v = node.value;
         const d = {id: node.id, kind, value: v instanceof UndeliveredCleanupError ? v.err : v};
         d[NODE_PTR] = node;
-        d[NODE_GEN] = node.gen;   // descriptors are re-walkable handles; stamp gen so the ABA guard holds for them too
+        d[NODE_GEN] = g;   // descriptors are re-walkable handles; stamp gen so the ABA guard holds for them too
         return d;
     }
     // Gen-guarded handle resolution (1.2.1): with the v1.2 owner tree, the
@@ -3818,6 +3826,13 @@ export function createRegistry(config) {
         return fresh;
     }
 
+    // The far evalVersion floor (D-b191-4 int32 form, never 0: 0 -> -1). A helper so that no HeapNumber
+    // crosses a call (it writes the field itself and returns nothing) and the warm callers shrink; cold, and
+    // declared late so no hot body's context-slot index shifts.
+    function stampFarFloor(node) {
+        const g = globalVersion, m = g < -0x40000001 ? (g + 0x40000002) + 0x7FFFFFFF : g - 0x3FFFFFFF;
+        node.evalVersion = m === 0 ? -1 : m;
+    }
     const api = {
         getOwner,
         runWithOwner,
