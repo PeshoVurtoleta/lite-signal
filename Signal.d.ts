@@ -31,7 +31,8 @@ export type EffectScheduler = (run: () => void) => void;
 /** Options accepted by {@link effect}. */
 export interface EffectOptions {
     /** Optional scheduler. If supplied, the effect's first run and every
-     *  subsequent re-run is deferred through this trampoline. */
+     *  subsequent re-run is deferred through this trampoline. A throw from a flush entry (the dependency pre-walk, the scheduler or the body) no longer leaves the effect marked queued: the next change schedules it again (1.6.0). One error is rethrown as-is; two or more become an `AggregateError` ("Effects threw during flush").
+     *  KNOWN residuals, pinned in test/119: a deferred scheduler's thunk run outside a flush whose pre-walk throws, and a stale-read re-queue whose scheduler throws, stay stranded; a synchronous scheduler that runs the thunk, writes a dependency and then throws, and a dispose recycled into a queued effect followed by a throw, each lose one run until the next change; a deferred scheduler that stores the thunk and then throws gets a second call in the same pending period (the effect still runs once). */
     scheduler?: EffectScheduler;
 }
 
@@ -498,6 +499,8 @@ export interface Registry {
      * version distances: it also blocks a subscriber whose stamp is 2^29 or more versions
      * behind the capture, or is 0; a re-evaluation more than 2^32 - 2^29 versions after
      * the capture is missed.
+     *
+     * Retention (KNOWN, 1.6.0, LEDGER #68): a signal written in a batch keeps the value it held before the batch strongly reachable until it is written in a later batch or disposed (a write outside any batch never captures the value it replaces, but does not release a value already held), so a large replaced object stays alive until then.
      */
     batch<T>(fn: () => T): T;
     untrack<T>(fn: () => T): T;
@@ -774,6 +777,8 @@ export function dispose(api: Disposable): void;
  * version distances: it also blocks a subscriber whose stamp is 2^29 or more versions
  * behind the capture, or is 0; a re-evaluation more than 2^32 - 2^29 versions after
  * the capture is missed.
+ *
+ * Retention (KNOWN, 1.6.0, LEDGER #68): a signal written in a batch keeps the value it held before the batch strongly reachable until it is written in a later batch or disposed (a write outside any batch never captures the value it replaces, but does not release a value already held), so a large replaced object stays alive until then.
  */
 export function batch<T>(fn: () => T): T;
 export function untrack<T>(fn: () => T): T;
@@ -891,7 +896,9 @@ export function when(
  * **NEVER use for:** per-frame entity updates, render-loop logic, animation
  * tick handlers. For zero-GC hot-path logic use {@link when} with a callback.
  *
- * Note: this promise never rejects. If the predicate never becomes truthy,
+ * Note: this promise never rejects once registered. A predicate that throws on its first
+ * evaluation (at registration) rejects it with that error; a later throw surfaces from the
+ * write that triggered it and the promise stays pending. If the predicate never becomes truthy,
  * the promise never settles. Wrap in `Promise.race` for timeout semantics.
  *
  * @param predicate  Reactive read function; resolves promise when truthy.

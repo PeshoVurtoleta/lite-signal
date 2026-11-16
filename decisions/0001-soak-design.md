@@ -748,6 +748,8 @@ Where this text and the code differ, the code is the record.
   `test/102-soak-snapshot-lane` (13), `test/43-soak-model` +14 (restoreCopy); SCENARIOS 79 -> 86. Detail: CHANGELOG
   [Unreleased] and SPEC-B Addendum 18.
 
+Amendment 2026-11-17 (b200, D-b199-2; harness only, Signal.js 4b740bdb unchanged): controls.json now pins SIX controls (rev152, headpatched, preb33, preb33g2, prefixr, prea5; + preb33g2, a frozen kernel = preb33 plus the one AUD-F G2 catch-arm line, because a soakPatch'd control has no controls.json identity and its fixed divergences stop explaining) and PARITY_FILES is 62 (60 + controls/preb33g2/Signal.js and Watch.js; commit f3a3153).
+
 ## Consequences
 
 - The BATCH cov-off switch is closed: lanes/batch.mjs:42 compares DECODED values with Object.is, as the detector does

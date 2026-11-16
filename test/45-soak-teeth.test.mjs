@@ -937,7 +937,7 @@ test('teeth p: the LIFECYCLE ids have teeth -- L-LC-preb33, P-LC-tree, T-cov-LIF
     // on f6ff4cf3 (ARG-E2): 7 / 11 -- requeueStaleEffect's `node.gen === g` +1 (B1b); the read closure's `const g` / `!== g` pair
     // became `!== birthGen` (S5, -1) and peekComputed's post-refresh `!== g` came in (+1); 91c507df 6 / 11, b836fbbb 7 / 10;
     // b191 B1b4: throwComputedError's `node.gen === gen` +1 -> 8 / 11; b194 UCE-H: throwComputedError's re-check +1 -> 12;
-    // b199 AUD-F G2 B2b on 4b740bdb: G1's refreshComputed `node.gen === g` x2 -> 10 / 12)
+    // b199 AUD-F G2 B2b on 4b740bdb: G1's new severStale helper `node.gen === g` x2 -> 10 / 12)
     assert.equal(base.split('node.gen === g').length - 1, 10);
     assert.equal(base.split('node.gen !== g').length - 1, 12);
     assert.equal(base.split(LC_GEN_STAMP).length - 1, 1, 'the UNREACHABLE gen-stamp line occurs exactly once');
