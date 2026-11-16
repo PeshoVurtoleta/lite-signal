@@ -228,18 +228,40 @@ describe("A4 [RED] restore(snapshot()) succeeds after every overflow pad; the ch
     });
 });
 
+// Tooth helper (CI18): spawn like child() but with the given flags, returning the raw result (child() fails any non-zero exit).
+function childRaw(flags, mode, args) {
+    return spawnSync(process.execPath, [...flags, HEAP, CHILD_PATH, mode, JSON.stringify(args)], { encoding: "utf8", timeout: CHILD_TIMEOUT, killSignal: "SIGKILL", maxBuffer: 1 << 26, env: process.platform === "win32" ? process.env : {} });
+}
+function assertRefuses(mode, args) {
+    const r = childRaw(["--expose-gc"], mode, args);
+    assert.equal(r.error, undefined);
+    assert.equal(r.signal, null);
+    assert.equal(r.status, 3, "exit " + r.status + " stdout " + String(r.stdout).slice(0, 200));
+    assert.ok(String(r.stderr).includes("GC modes need --single-threaded"), String(r.stderr).slice(-300));
+    assert.equal(String(r.stdout).trim(), "", "a JSON line was printed");
+}
+
 // ---- A5: GC. ----
 describe("A5 GC: 10,000 planted-overflow serve-and-re-run cycles allocate what the E2 reference allocates", () => {
     it("B/op of the engine equals the E2 fixture's (same child, interleaved windows); maxMajor 0; control exceeds the reference", () => {
         // A pre-allocated RangeError(V8 msg) is thrown by the body; each cycle is set(i) then a read (a re-run + serve + reset on the
         // engine, a re-run + cache on E2). Windows start after gc() + a settle, so a 10,000-cycle window (< 1 MB) holds no scavenge;
-        // a window that saw any collection is discarded and counted. Gate: |eng - ref| <= 1 B/op (heapUsed granularity: 8 B / 10,000
-        // cycles per page-sized step; measured ref 0.03 B/op). Must-fail control: the same engine loop plus one `new Array(4)` per run.
-        const o = child(["--expose-gc"], "gc", { eng: ENGINE_PATH, ref: FIXTURE_PATH, cycles: 10000, rounds: 6 });
+        // a window that saw any collection is discarded and counted. Gate: |eng - ref| <= 1 B/op.
+        // Must-fail control: the same engine loop plus one `new Array(4)` per run.
+        // CI class 18 (b193): the child runs --single-threaded and sums the JS heap spaces only (new / old / large-object), not heapUsed. On node 24 the
+        // window driver's own throw/catch loop is OSR-recompiled in every window and allocated 6-9 B/cycle in BOTH builds (a plain throw loop: 17-19 B/op).
+        // Measured b193 local: ref = eng = 0.396 B/op (3,960 B per 10,000-cycle window) on node 24.22.3 and 26.8.2; ctl 80.4. codeMoved is reported only.
+        const o = child(["--expose-gc", "--single-threaded"], "gc", { eng: ENGINE_PATH, ref: FIXTURE_PATH, cycles: 10000, rounds: 6 });
         assert.equal(o.windowMajors, 0);
         assert.ok(o.n[0] >= 3 && o.n[1] >= 3 && o.n[2] >= 3, "too few clean windows " + JSON.stringify(o.n) + " discarded " + o.discarded);
-        assert.ok(Math.abs(o.eng - o.ref) <= 1, "engine " + o.eng + " B/op vs reference " + o.ref);
+        assert.ok(Math.abs(o.eng - o.ref) <= 1, "engine " + o.eng + " B/op vs reference " + o.ref + " (codeMoved " + o.codeMoved + ", reported only)");
         assert.ok(o.ctl - o.ref >= 16, "control " + o.ctl + " B/op did not exceed the reference " + o.ref);
+    });
+});
+
+describe("A5 tooth (CI18)", () => {
+    it("A5 tooth: the gc child refuses to measure without --single-threaded (exit 3)", () => {
+        assertRefuses("gc", { eng: ENGINE_PATH, ref: FIXTURE_PATH, cycles: 1000, rounds: 1 });
     });
 });
 
@@ -702,20 +724,23 @@ const A8HOWS = [["call", "c()"], ["peek", "c.peek()"], ["boxget", "box.get()"], 
         assert.equal(ctr.runs, 1);
     });
     // ---- A13: GC (child): serve-and-reset cycles at far gv ----
-    // Stat: per window (gc + settle, 10,000 cycles, no collection inside, else discarded) B/op = heapUsed delta / cycles; per build the MEDIAN of
+    // Stat: per window (gc + settle, 10,000 cycles, no collection inside, else discarded) B/op = JS-heap-spaces delta / cycles (new / old / large-object; --single-threaded; CI class 18: see A5); per build the MEDIAN of
     // the clean windows over 6 rounds. noise = |ref - reftwin| (a second registry loop on the REFERENCE module, never the engine under test); gate |eng - ref| <= 1 + noise. The reference is
     // the vendored E2 fixture (CI has no .handoff/ FIXCOMP; both lack any per-cycle allocation). Must-fail control: the engine loop plus one
-    // new Array(4) per run exceeds the reference by >= 16 B/op.
+    // new Array(4) per run exceeds the reference by >= 16 B/op. Measured b193 local (node 24.22.3, 26.8.2): ref = eng = twin = reftwin = 0.396 B/op at both gv, ctl ~80.4.
     function a13(gv) {
-        const o = child(["--expose-gc"], "gc2", { eng: ENGINE_PATH, ref: FIXTURE_PATH, cycles: 10000, rounds: 6, gv });
+        const o = child(["--expose-gc", "--single-threaded"], "gc2", { eng: ENGINE_PATH, ref: FIXTURE_PATH, cycles: 10000, rounds: 6, gv });
         assert.equal(o.windowMajors, 0);
         assert.ok(o.n[0] >= 3 && o.n[1] >= 3 && o.n[2] >= 3 && o.n[3] >= 3 && o.n[4] >= 3, "too few clean windows " + JSON.stringify(o.n) + " discarded " + o.discarded);
         const noise = Math.abs(o.ref - o.reftwin);
         assert.ok(noise < 8, "reference A/A noise " + noise + " B/op: a tolerance of 1 + noise would hide one 16 B box (D-b191-4)");
         assert.ok(o.ctl - o.ref >= 16, "control " + o.ctl + " did not exceed the reference " + o.ref);
-        assert.ok(Math.abs(o.eng - o.ref) <= 1 + noise, "gv " + gv + ": engine " + o.eng + " B/op vs reference " + o.ref + " (A/A noise |ref - reftwin| " + noise + ", reftwin " + o.reftwin + ", engine twin (reported only) " + o.twin + ")");
+        assert.ok(Math.abs(o.eng - o.ref) <= 1 + noise, "gv " + gv + ": engine " + o.eng + " B/op vs reference " + o.ref + " (A/A noise |ref - reftwin| " + noise + ", reftwin " + o.reftwin + ", engine twin (reported only) " + o.twin + ", codeMoved (reported only) " + o.codeMoved + ")");
     }
     it("A13 GC: 10,000 serve-and-reset cycles at gv 0x50000000 allocate what the E2 reference allocates (reference A/A twin noise); maxMajor 0; control exceeds the reference", () => { a13(0x50000000); });
+    it("A13 tooth: the gc2 child refuses to measure without --single-threaded (exit 3)", () => {
+        assertRefuses("gc2", { eng: ENGINE_PATH, ref: FIXTURE_PATH, cycles: 1000, rounds: 1, gv: 0x50000000 });
+    });
     // D-b191-4: the D-b191-3 floor expression boxed 16 B/op per reset at gv < -0x40000001 (measured 16.03 vs 0.03).
     it("A13 GC: the same at gv -0x7FFFFF00 (the floor subtraction must stay int32)", () => { a13(-0x7FFFFF00); });
 });

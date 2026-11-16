@@ -6,6 +6,10 @@ import { readFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PerformanceObserver, constants as PC } from "node:perf_hooks";
+import { getHeapSpaceStatistics } from "node:v8";
+const JS_SPACES = ["new_space", "old_space", "new_large_object_space", "large_object_space"];
+function spaces() { let u = 0, k = 0; for (const s of getHeapSpaceStatistics()) { if (JS_SPACES.includes(s.space_name)) u += s.space_used_size; else if (s.space_name === "code_space" || s.space_name === "trusted_space" || s.space_name === "code_large_object_space" || s.space_name === "trusted_large_object_space") k += s.space_used_size; } return [u, k]; }
+function needST() { if (!process.execArgv.includes("--single-threaded")) { console.error("l1-child: GC modes need --single-threaded"); process.exit(3); } for (const n of JS_SPACES) if (!getHeapSpaceStatistics().some((s) => s.space_name === n)) fail("no heap space " + n); }
 
 const [mode, argJson] = process.argv.slice(2);
 const A = JSON.parse(argJson);
@@ -211,7 +215,10 @@ if (mode === "grid") {
     console.log(JSON.stringify(sum));
 } else if (mode === "gc") {
     // A5: planted-overflow serve-and-re-run cycles; B/op of the engine vs the E2 fixture in this child (a count, not a floor).
+    // CI class 18 (b193): needs --single-threaded (exit 3 otherwise) and sums JS heap spaces only (new / old / large-object), not heapUsed: on node 24 the
+    // window driver closure is OSR-recompiled in every window (code / trusted space grow; new_space +6-9 B per cycle in BOTH builds). codeMoved (windows where code spaces changed) is reported, not gated.
     if (typeof globalThis.gc !== "function") fail("--expose-gc missing");
+    needST();
     const Meng = await load(A.eng), Mref = await load(A.ref);
     const E = new RangeError(V8MSG);   // pre-allocated: the body allocates nothing
     let sink = null, majors = 0, scav = 0, windowMajors = 0;
@@ -227,15 +234,15 @@ if (mode === "grid") {
     const loops = { ref: mkLoop(Mref, false), eng: mkLoop(Meng, false), ctl: mkLoop(Meng, true) };
     for (const k of Object.keys(loops)) loops[k](3000);   // warm
     const CYC = A.cycles, ROUNDS = A.rounds, names = ["ref", "eng", "ctl"];
-    const res = { ref: [], eng: [], ctl: [] }; let scavInWindows = 0;
+    const res = { ref: [], eng: [], ctl: [] }; let scavInWindows = 0, codeMoved = 0;
     for (let rd = 0; rd < ROUNDS; rd++) {
         for (let q = 0; q < 3; q++) {
             const nm = names[(q + rd) % 3];
             globalThis.gc(); await tick();
             const sc0 = scav, mj0 = majors;
-            const h0 = process.memoryUsage().heapUsed;
+            const [h0, k0] = spaces();
             loops[nm](CYC);
-            const h1 = process.memoryUsage().heapUsed;
+            const [h1, k1] = spaces(); if (k1 !== k0) codeMoved++;
             await tick();
             if (majors !== mj0) windowMajors++;
             if (scav !== sc0 || majors !== mj0) { scavInWindows++; continue; }   // a collection inside the window: discard it (counted)
@@ -243,7 +250,7 @@ if (mode === "grid") {
         }
     }
     const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[b.length >> 1] : NaN; };
-    console.log(JSON.stringify({ ref: med(res.ref), eng: med(res.eng), ctl: med(res.ctl), n: [res.ref.length, res.eng.length, res.ctl.length], discarded: scavInWindows, windowMajors }));
+    console.log(JSON.stringify({ ref: med(res.ref), eng: med(res.eng), ctl: med(res.ctl), n: [res.ref.length, res.eng.length, res.ctl.length], discarded: scavInWindows, codeMoved, windowMajors }));
     void sink;
 } else if (mode === "ret") {
     // A6: 64 overflow pads each disposed -> activeNodes 0, activeLinks 0, tracker size 0; WeakRef to the reset node's error cleared.
@@ -334,7 +341,9 @@ if (mode === "grid") {
 } else if (mode === "gc2") {
     // A13: serve-and-reset cycles at a far gv (restore of a stamp-shifted snapshot); B/op of the engine vs the E2 reference vs an A/A twin of the REFERENCE
     // (reftwin: a second registry on Mref, the tolerance source) and an engine twin (reported only) in this child; plus the allocating control. Windows with any collection are discarded and counted.
+    // Same class 18 rule as mode gc: --single-threaded required (exit 3), JS heap spaces only, codeMoved reported.
     if (typeof globalThis.gc !== "function") fail("--expose-gc missing");
+    needST();
     const Meng = await load(A.eng), Mref = await load(A.ref);
     const E = new RangeError(V8MSG);
     let sink = null, majors = 0, scav = 0, windowMajors = 0;
@@ -356,15 +365,15 @@ if (mode === "grid") {
     }
     const loops = { ref: mkFar(Mref, A.gv, false), eng: mkFar(Meng, A.gv, false), twin: mkFar(Meng, A.gv, false), reftwin: mkFar(Mref, A.gv, false), ctl: mkFar(Meng, A.gv, true) };
     for (const k of Object.keys(loops)) loops[k](3000);
-    const names = ["ref", "eng", "twin", "ctl", "reftwin"], res = { ref: [], eng: [], twin: [], ctl: [], reftwin: [] }; let scavInWindows = 0;
+    const names = ["ref", "eng", "twin", "ctl", "reftwin"], res = { ref: [], eng: [], twin: [], ctl: [], reftwin: [] }; let scavInWindows = 0, codeMoved = 0;
     for (let rd = 0; rd < A.rounds; rd++) {
         for (let q = 0; q < 5; q++) {
             const nm = names[(q + rd) % 5];
             globalThis.gc(); await tick();
             const sc0 = scav, mj0 = majors;
-            const h0 = process.memoryUsage().heapUsed;
+            const [h0, k0] = spaces();
             loops[nm](A.cycles);
-            const h1 = process.memoryUsage().heapUsed;
+            const [h1, k1] = spaces(); if (k1 !== k0) codeMoved++;
             await tick();
             if (majors !== mj0) windowMajors++;
             if (scav !== sc0 || majors !== mj0) { scavInWindows++; continue; }
@@ -372,6 +381,6 @@ if (mode === "grid") {
         }
     }
     const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[b.length >> 1] : NaN; };
-    console.log(JSON.stringify({ ref: med(res.ref), eng: med(res.eng), twin: med(res.twin), ctl: med(res.ctl), reftwin: med(res.reftwin), n: [res.ref.length, res.eng.length, res.twin.length, res.ctl.length, res.reftwin.length], discarded: scavInWindows, windowMajors }));
+    console.log(JSON.stringify({ ref: med(res.ref), eng: med(res.eng), twin: med(res.twin), ctl: med(res.ctl), reftwin: med(res.reftwin), n: [res.ref.length, res.eng.length, res.twin.length, res.ctl.length, res.reftwin.length], discarded: scavInWindows, codeMoved, windowMajors }));
     void sink;
 } else fail("unknown mode " + mode);
