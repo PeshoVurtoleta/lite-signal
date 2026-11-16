@@ -321,7 +321,7 @@ const MF = 'bench/soak/_mustfail.mjs';
 export const NOT_TEETH = deepFreeze({
     'L-P-INTERIM': 'interim pass control, GRAPH,BATCH on headpatched (' + MF + ' L-P-INTERIM comment; ' + SPEC + ':500, :541-543)',
     'L-P-INTERIM-ERROR': 'interim pass control, ERROR on headpatched, explained by tolerated divergences only (' + SPEC + ':501, :541-543)',
-    'P-INTERIM-ERROR-clean': "L-P-INTERIM-ERROR's run on preb33 (" + MF + ' P-INTERIM-ERROR-clean comment: a false DIV-F21 label is a MISS; F21 teeth: test/58)',
+    'P-INTERIM-ERROR-clean': "L-P-INTERIM-ERROR's run on preb33g2 (preb33 + the AUD-F G2 catch-arm line, D-b199-2; " + MF + ' P-INTERIM-ERROR-clean comment: a false DIV-F21 label is a MISS; F21 teeth: test/58)',
     'P-HOOK-HP': 'the HOOK pass control on headpatched (' + MF + ' P-HOOK-HP comment)',
     'P-HOOK-TREE': 'the HOOK pass control on the tree (' + MF + ' P-HOOK-TREE comment)',
     'P-LC-tree': 'the LIFECYCLE pass control on the tree, the revert of every T-LC-* row (' + MF + ' P-LC-tree comment)',

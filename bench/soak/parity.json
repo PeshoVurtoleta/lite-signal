@@ -1,6 +1,6 @@
 {
   "files": {
-    "Signal.js": "5af14f0b60ef930f7d42adc3cc5b53041ab755ce1f22f82e84f4db9646f0a4c6",
+    "Signal.js": "4b740bdb9058d13b244976e6ee3ad344194337522b10f9f2599944e8ab6378af",
     "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/kinds.mjs": "d2aeeb73e5962873dd9d41f9891c76b4221125c42a965e4c0aadaefc9cc97411",
     "bench/soak/model.mjs": "84535c0345733e4f09e3390a14bf5191d854cf7f9cb544cad1d7a3e53c31568c",
@@ -31,10 +31,12 @@
     "bench/soak/kernel.mjs": "3bb9579913398d9c8946eef8785612647fb8838e60917181c54c0c1cfca85e75",
     "bench/torture/helpers/spin.mjs": "5823cad2d38c2ac9831631f4d774c2ae1ca4a0b5eab78cf06885ce0e1d970c6c",
     "bench/soak/adapters/lite.mjs": "58cdedc115c0cac523b852f650e1207b3eee40103f0d29da19b54620dec1aaeb",
-    "bench/soak/controls.json": "e25194d64908bb07c46b3e23025734895a812498bcbfa1b025833987a846f9ee",
+    "bench/soak/controls.json": "f9ea512cf730537924e9217df21fae35d5c67c15b914d4bb45132131f4c00a2c",
     "bench/soak/adapters/lite-s3.mjs": "c65976c825a7640a78edfe0871f9b798000b2cc019cf6774e15a26dc88a2e181",
     "bench/soak/controls/preb33/Signal.js": "a5c64df91928e9b71bc519e8be4c77861c0abe590ad845c22e28419a8b03fa73",
     "bench/soak/controls/preb33/Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
+    "bench/soak/controls/preb33g2/Signal.js": "27d201c0337b71c5645b651737a293105f754404461d3e5901932d46c4634eaf",
+    "bench/soak/controls/preb33g2/Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/controls/prefixr/Signal.js": "0628127bc811edc50d864424bb57955291fc9632d3c3291856d10219d3cafa48",
     "bench/soak/controls/prefixr/Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80",
     "bench/soak/controls/prea5/Signal.js": "0f75866f7085d68f24819092dc46623ba63bed8a9d14b24d0b52cf02a439ebd9",

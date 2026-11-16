@@ -41,15 +41,18 @@ const SRC = readFileSync(KPATH, 'utf8');
 // other 12 unchanged). peekComputed and the peek closures are not pinned here.
 // executeEffect + refreshComputed re-pinned on 2043b9f6 (b192, L-1 B3: the B1a late FLAG_COMPUTING set after the cursor
 // push + its comment; bytecode executeEffect 454 -> 462 B, refreshComputed 770 unchanged; other 12 unchanged).
+// flushEffects + executeEffect + refreshComputed re-pinned on 4b740bdb (b199, AUD-F G2 B2b; the pins were the 5af14f0b values):
+// executeEffect + refreshComputed moved with G1 (7386c610 gives the same two values), flushEffects with G2's catch-arm
+// FLAG_QUEUED clear; bytecode (b198, node v26.8.2) flushEffects 440 -> 442, executeEffect 462 -> 437, refreshComputed 770; other 11 unchanged.
 const PINS = {
-    flushEffects: { sha16: 'b4b77b7b0a6a8e2f', bytes: 2270 },
-    executeEffect: { sha16: 'b8ebbcd4485122b7', bytes: 3766 },
+    flushEffects: { sha16: 'b84c9fc740450c13', bytes: 2366 },
+    executeEffect: { sha16: '94ea4187a3fd905a', bytes: 4306 },
     createNode: { sha16: '7a8c545056853c6a', bytes: 3780 },
     nodeMiss: { sha16: 'c6aa7fbe2f7077f0', bytes: 1535 },
     disposeNode: { sha16: '1ee1c455014776fe', bytes: 6672 },
     effectTail: { sha16: '1b80da7167ba5bbf', bytes: 93 },
     pullComputed: { sha16: '115db3c64068c3bc', bytes: 354 },
-    refreshComputed: { sha16: '6df13d0d61b37035', bytes: 5190 },
+    refreshComputed: { sha16: 'd8bbef528a8ccab6', bytes: 5383 },
     boxGet: { sha16: '2938d89e667b9f07', bytes: 640 },
     boxComputedGet: { sha16: '5940c249c8717ecf', bytes: 618 },
     readSignal: { sha16: 'bb06aefbf682ef8f', bytes: 605 },

@@ -114,7 +114,7 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 /**
  * Every base a control can start from. A base is a Signal.js + Watch.js directory with sha256 pins:
- * headpatched, rev152, preb33, prefixr and prea5 are pinned by controls.json (by control name), tree by parity.json (red
+ * headpatched, rev152, preb33, preb33g2, prefixr and prea5 are pinned by controls.json (by control name), tree by parity.json (red
  * while the live Signal.js is mid-edit, amendment 10). The wrap control L-WRAP-TREE (S2) uses tree, and one main-run
  * control, P-NEST-TAINT-HALF (b71, NEST lane only: the tree NEST smoke is clean) and, since b112 B5, the LIFECYCLE rows
  * (b117: P-LC-tree, T-cov-LIFECYCLE and the six T-LC-* mutants; the tree is clean of DIV-D3 since A5a), and the HOOK
@@ -132,13 +132,14 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
  * does until A1-A3 land (SPEC-B section 10.3): burst 39 measured the tree ERROR lane (11 x DEFAULT_OPS,
  * default seed) red on DIV-F5 / DIV-F6 / DIV-F22 and on known=none recovery-after-throw BREACHes. preb33 does NOT
  * avoid that picture (burst 52: preb33 ERROR shows the same F5 / F6 / F22 lines, and the known=none heads are
- * DIV-F6 since the burst 53 triage, PLAN-F-b33-1 N19); P-INTERIM-ERROR-clean runs on preb33 because it is the
- * post-F21 controls.json kernel (N17.2), so a DIV-F21 label there is a MISS.
+ * DIV-F6 since the burst 53 triage, PLAN-F-b33-1 N19); P-INTERIM-ERROR-clean runs on preb33g2 (preb33 + the tree's AUD-F
+ * G2 catch-arm line, D-b199-2) because it is a post-F21 controls.json kernel (N17.2), so a DIV-F21 label there is a MISS.
  */
 export const BASES = Object.freeze({
     headpatched: Object.freeze({ dir: join(SOAK, 'controls', 'headpatched'), pins: 'controls.json', pinName: 'headpatched' }),
     rev152: Object.freeze({ dir: join(ROOT, 'node_modules', 'lite-signal-1.5.2'), pins: 'controls.json', pinName: 'rev152' }),
     preb33: Object.freeze({ dir: join(SOAK, 'controls', 'preb33'), pins: 'controls.json', pinName: 'preb33' }),
+    preb33g2: Object.freeze({ dir: join(SOAK, 'controls', 'preb33g2'), pins: 'controls.json', pinName: 'preb33g2' }),
     // b109 B1b (A6): 25784e5, the last kernel before A3 FIX-R (Signal.js 0628127b); L-WRAP-W2-PREFIXR's base
     prefixr: Object.freeze({ dir: join(SOAK, 'controls', 'prefixr'), pins: 'controls.json', pinName: 'prefixr' }),
     // b117 B3b (PLAN-A5b Q1 (a)): 767f808, the last kernel before A5a / A5b (Signal.js 0f75866f); T-A5b's base
@@ -504,7 +505,7 @@ const KNOWN_INTERIM = Object.freeze(['DIV-F21', 'DIV-F22']);
 // label there is not in this list -> MISS (A3': zero DIV-F21 on preb33); only DIV-F5 / DIV-F6 / DIV-F22 (no FIX-R /
 // FIX-T / A2 batch-error fix in preb33) may explain a BREACH. Only DIV-F22 is open; DIV-F5 (fixedIn A3-FIX-R, b109)
 // and DIV-F6 (fixedIn A2-FIX-T, b103) are FIXED and still explain here because preb33 is a named control kernel
-// (includeFixed true).
+// (includeFixed true). Its base since b199 is preb33g2 (preb33 + one line, D-b199-2): the same ERROR picture.
 const KNOWN_INTERIM_CLEAN = Object.freeze(['DIV-F5', 'DIV-F6', 'DIV-F22']);
 
 function deepFreeze(o) {
@@ -723,7 +724,12 @@ export const CONTROLS = deepFreeze([
 
     /* ---- short (^(?!L-)) ---- */
     // P-INTERIM-ERROR-clean (amendment 5, A2-F21; re-pointed N17.2, burst 52): L-P-INTERIM-ERROR's run on the
-    // preb33 control, NO patches. preb33 is post-F21 (carries the A2-F21 qskip2 hunk) and pre-F-b33-1 (exec
+    // preb33g2 control (D-b199-2, b199), NO patches. preb33g2 = preb33 + ONE line, the tree's AUD-F G2 flushEffects
+    // catch-arm QUEUED clear (controls.json recipe), frozen as its own controls.json kernel so that teeth k's kernel
+    // flush loop == tree equality holds AND the run keeps a controls.json identity: includeFixed needs one (a scratch
+    // patch on preb33 had none, so the FIXED DIV-F5 / DIV-F6 read known=none: b199 r1 MISS, .handoff/audf/g2/b2a/; with
+    // that sha named, its BREACH heads and known tags equal preb33's). The history below was measured on preb33; the
+    // one line leaves that ERROR picture unchanged (b199 r1). preb33 is post-F21 (carries the A2-F21 qskip2 hunk) and pre-F-b33-1 (exec
     // creationAbort false: a write-cycle creation does not abort). preb33 is a controls.json kernel (includeFixed
     // true): an F21 world there would read known=DIV-F21, which KNOWN_INTERIM_CLEAN does not list -> MISS (A3' zero
     // DIV-F21 on preb33). MEASURED burst 52 (.handoff/b52-evidence/b2-mustfail-pinterim*.txt): MISS -- zero DIV-F21,
@@ -739,7 +745,7 @@ export const CONTROLS = deepFreeze([
     // without FIX-T (and FIX-R / the A2 batch-error fix), so its F5 / F6 / F22 lines never clear (DIV-F6, fixed in
     // A2-FIX-T since b103, still explains them here: includeFixed is true on a named control kernel): this control stays
     // 'explained' at exit 1 permanently; a clean (exit 0, 'nobreach') control needs a FIX-T kernel. F21 teeth: test/58.
-    M('P-INTERIM-ERROR-clean', 'preb33', { SOAK_LANES: 'ERROR', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
+    M('P-INTERIM-ERROR-clean', 'preb33g2', { SOAK_LANES: 'ERROR', SOAK_CYCLES: CYC, SOAK_OPS: String(DEFAULT_OPS) }, [], {
         exit: 1, kind: 'explained', lines: [], specs: [], known: KNOWN_INTERIM_CLEAN,
     }),
     // P-NEST-TRIGGERLESS: NEST without its trigger must not false-fail. Line: gates.mjs:384 (scenario). RE-MEASURED b71

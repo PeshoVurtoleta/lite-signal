@@ -38,6 +38,18 @@
       "fixture": "byte-frozen; never edited. ASCII-only as of 2026-10-18 (0 non-ASCII bytes in both files)."
     },
     {
+      "name": "preb33g2",
+      "dir": "bench/soak/controls/preb33g2",
+      "version": "1.6.0-dev@7c65afd + AUD-F G2 catch arm (d89e3ee)",
+      "sha256": {
+        "Signal.js": "27d201c0337b71c5645b651737a293105f754404461d3e5901932d46c4634eaf",
+        "Watch.js": "065f21bd9b3a29363e96eac35f1c6c2005bcc8bfdc56e8d4ed0155617fd29d80"
+      },
+      "role": "P-INTERIM-ERROR-clean base (D-b199-2, b199): preb33 plus the AUD-F G2 flushEffects catch-arm QUEUED clear, so its flush loop equals the tree's (teeth k) while it keeps preb33's ERROR picture (no FIX-R / FIX-T / A2 batch-error fix: DIV-F5 / DIV-F6 / DIV-F22 explain). post-F21 (carries A2-F21); a DIV-F21 label here is a FAIL.",
+      "recipe": "cp ../preb33/Watch.js Watch.js; Signal.js = ../preb33/Signal.js with ONE line inserted after its line 1122 (flushErrorBuffer[flushErrorCount++] = err;): line 2035 of the tree Signal.js at d89e3ee (sha256/8 4b740bdb), verbatim with its indentation: if (node.evalVersion !== 0) node.flags &= ~FLAG_QUEUED;   // stranded QUEUED (no call: holds at the stack limit) -- so diff ../preb33/Signal.js Signal.js is exactly that one added line (1122a1123). Frozen in-repo so CI needs no history.",
+      "fixture": "byte-frozen; never edited. ASCII-only as of 2026-11-16 (0 non-ASCII bytes in both files)."
+    },
+    {
       "name": "prefixr",
       "dir": "bench/soak/controls/prefixr",
       "version": "1.6.0-dev 25784e5",

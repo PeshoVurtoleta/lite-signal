@@ -56,6 +56,8 @@ export const PARITY_FILES = Object.freeze([
     // S3 R0 (burst 92, S3-D1): the decorator adapter main / replay / calibrate load (it wraps the pinned lite.mjs)
     'bench/soak/adapters/lite-s3.mjs',
     'bench/soak/controls/preb33/Signal.js', 'bench/soak/controls/preb33/Watch.js',
+    // b199 B2a (D-b199-2): preb33 + the tree's AUD-F G2 catch-arm line, P-INTERIM-ERROR-clean's base
+    'bench/soak/controls/preb33g2/Signal.js', 'bench/soak/controls/preb33g2/Watch.js',
     'bench/soak/controls/prefixr/Signal.js', 'bench/soak/controls/prefixr/Watch.js',
     // b117 B2 (A5b Q1 = a): 767f808, the pre-A5 kernel (Signal.js 0f75866f); T-A5b's base
     'bench/soak/controls/prea5/Signal.js', 'bench/soak/controls/prea5/Watch.js',

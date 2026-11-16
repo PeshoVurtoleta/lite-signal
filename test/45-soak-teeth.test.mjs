@@ -588,15 +588,15 @@ test('teeth j: T-A5b, P-HOOK-TREE and P-HOOK-TREE-COVOFF are pinned; T-A5b holds
         ['tree', { SOAK_LANES: 'HOOK', SOAK_MUSTFAIL: 'cov-off:hook-non-lifo-off' }, ['--smoke'], 3, 'nobreach']);
 });
 
-test('teeth k: P-INTERIM-ERROR-clean is pinned: preb33 (no patches), ERROR at the control budget, explained by DIV-F5 / DIV-F6 / DIV-F22, short battery', () => {
+test('teeth k: P-INTERIM-ERROR-clean is pinned: preb33g2 (no patches), ERROR at the control budget, explained by DIV-F5 / DIV-F6 / DIV-F22, short battery', () => {
     const c = CONTROLS.find((x) => x.name === 'P-INTERIM-ERROR-clean');
     assert.ok(c, 'the GAP landed as a _mustfail control');
     assert.ok(SHORT_RE.test(c.name) && !LONG_RE.test(c.name), 'short battery');
     const hp = CONTROLS.find((x) => x.name === 'L-P-INTERIM-ERROR');
     assert.deepEqual([c.run, c.base, c.env, c.argv, c.expect.exit, c.expect.kind, c.expect.specs, c.expect.lines, c.expect.known],
-        ['main', 'preb33', hp.env, [], 1, 'explained', [], [], ['DIV-F5', 'DIV-F6', 'DIV-F22']]);
+        ['main', 'preb33g2', hp.env, [], 1, 'explained', [], [], ['DIV-F5', 'DIV-F6', 'DIV-F22']]);
     assert.deepEqual(hp.expect.known, ['DIV-F21', 'DIV-F22'], 'the unpatched pre-fix control still tolerates F21 (includeFixed)');
-    assert.equal(c.patches.length, 0, 'preb33 carries the A2-F21 hunk natively: no patch');
+    assert.equal(c.patches.length, 0, 'preb33g2 = preb33 + the AUD-F G2 catch-arm QUEUED clear (D-b199-2), frozen; the A2-F21 hunk is native: no patch');
     const src = buildKernel(c).src;
     assert.equal(src.indexOf('if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n                        }\n'), -1, 'the pre-fix flush run is gone');
     // the patched flush loop must BE the shipped A2-F21 fix, not only match QSKIP2's own strings: the whole
@@ -936,8 +936,9 @@ test('teeth p: the LIFECYCLE ids have teeth -- L-LC-preb33, P-LC-tree, T-cov-LIF
     // c8f6cd1e: 6 / 11, the FIX-CL-D cleanup drain runCleanupC / firstRunCleanupC / rerunCleanup* added 2 + 6; re-measured b188 B3
     // on f6ff4cf3 (ARG-E2): 7 / 11 -- requeueStaleEffect's `node.gen === g` +1 (B1b); the read closure's `const g` / `!== g` pair
     // became `!== birthGen` (S5, -1) and peekComputed's post-refresh `!== g` came in (+1); 91c507df 6 / 11, b836fbbb 7 / 10;
-    // b191 B1b4: throwComputedError's `node.gen === gen` +1 -> 8 / 11; b194 UCE-H: throwComputedError's re-check +1 -> 12)
-    assert.equal(base.split('node.gen === g').length - 1, 8);
+    // b191 B1b4: throwComputedError's `node.gen === gen` +1 -> 8 / 11; b194 UCE-H: throwComputedError's re-check +1 -> 12;
+    // b199 AUD-F G2 B2b on 4b740bdb: G1's refreshComputed `node.gen === g` x2 -> 10 / 12)
+    assert.equal(base.split('node.gen === g').length - 1, 10);
     assert.equal(base.split('node.gen !== g').length - 1, 12);
     assert.equal(base.split(LC_GEN_STAMP).length - 1, 1, 'the UNREACHABLE gen-stamp line occurs exactly once');
     // T-LC-iter runs exactly the exported LC_ITER_PATCH (the LC_ROWS loop above proves it exactly-once and one-line)
@@ -1067,14 +1068,14 @@ const RC = (sig) => 'oracle=O9 lane=RECYCLE sig=' + sig + ' known=none';
 const RC_ROWS = [
     // [name, the anchor (full line(s)) in the live Signal.js, the mutant's replacement, the row's specs, kernel sha256/8]
     ['T-RC-setgen', '        read.set = (value) => {\n            if (node.gen !== birthGen) return;\n',
-        '        read.set = (value) => {\n            /* MUT */\n', [RC('stale-write')], '799671cd'],
+        '        read.set = (value) => {\n            /* MUT */\n', [RC('stale-write')], 'e33e91fb'],
     ['T-RC-readgen', '        if (this[NODE_GEN] !== node.gen) return undefined;   // stale handle: slot recycled (ABA guard, matches read())\n',
-        '', [RC('stale-read')], 'ab56f22d'],
-    ['T-RC-dispgen', '        if (api[NODE_GEN] !== node.gen) return;\n', '', [RC('stale-dispose')], '7d9096b6'],
+        '', [RC('stale-read')], '54a75fcc'],
+    ['T-RC-dispgen', '        if (api[NODE_GEN] !== node.gen) return;\n', '', [RC('stale-dispose')], '3ef4ac1c'],
     // b137 B4 (PLAN-b137 TASK 7 / A4): the b136 #51 sharedUpdate gen guard reverted to the HEAD aa154b6 line (history: on
     // ea0b64d1 the kernel WAS aa154b6's Signal.js; the C-RESET engine moved the rest of the file, b165 G2 Q3 (a))
     ['T-RC-updgen', '    function sharedUpdate(fn) { const node = this[NODE_PTR]; if (this[NODE_GEN] !== node.gen) return undefined; return this.set(fn(node.value)); }\n',
-        '    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }\n', [RC('stale-write')], '3102f71d'],
+        '    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }\n', [RC('stale-write')], 'a699e2f3'],
 ];
 // History (b137 A4 -> b165 G2 Q3 (a)): on ROWS_BASE8 ea0b64d1 the T-RC-updgen kernel was byte-equal to `git show aa154b6:Signal.js`
 // (sha256 ec6d7156..., b137 B0 FACTS: k-ec6d7156/Signal.js). Since the C-RESET engine (482a1d98 / d235e505) it is not, so
@@ -1087,9 +1088,10 @@ const RC_ROWS = [
 // .handoff/arg/e1-b3/kernel-shas-91c507df.txt; 91c507df -> f6ff4cf3 (the ARG-E2 engine, b188) by ARG-E2 B3,
 // .handoff/arg/e2/evidence/b188/b3/kernel-shas-f6ff4cf3.txt; f6ff4cf3 -> 2043b9f6 (the L-1 overflow-arm engine, b192) by L-1 B3,
 // .handoff/l1/evidence/kernel-shas-2043b9f6.txt; 2043b9f6 -> 5af14f0b (the UCE-H forged-wrapper re-check engine, b194) by UCE-H B4,
-// .handoff/uceh/evidence/kernel-shas-5af14f0b.txt). It must equal the parity.json Signal.js pin
+// .handoff/uceh/evidence/kernel-shas-5af14f0b.txt; 5af14f0b -> 4b740bdb (the AUD-F G2 engine, b199) by AUD-F G2 B2b,
+// .handoff/audf/g2/b2b/kernel-shas-4b740bdb.txt). It must equal the parity.json Signal.js pin
 // AND the live Signal.js: a parity re-pin without re-pinning these shas (and re-measuring the T-RC / T-SC heads) is red.
-const ROWS_BASE8 = '5af14f0b';
+const ROWS_BASE8 = '4b740bdb';
 function rowsBase() {
     const base = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
     const live8 = createHash('sha256').update(base).digest('hex').slice(0, 8);
@@ -1172,13 +1174,13 @@ const A_SC_THUNK = '                    if (node.gen === gen && (node.flags & FL
 const SC_ROWS = [
     // [name, the anchor (full line) in the live Signal.js, the mutant's replacement, the row's specs, kernel sha256/8]
     ['T-SC-dropcall', '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n',
-        '                                /* MUT dropcall */\n', [SC('O4', 'effect-dead')], 'cdfd53c0'],
+        '                                /* MUT dropcall */\n', [SC('O4', 'effect-dead')], 'be0c9409'],
     ['T-SC-wedge', A_SC_THUNK,
-        '                    if (false && node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O4', 'effect-dead')], '6c2ec9f0'],
+        '                    if (false && node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O4', 'effect-dead')], 'ea6eabe3'],
     ['T-SC-thunkgen', A_SC_THUNK,
-        '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O9', 'stale-thunk')], '51a71e4b'],
+        '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O9', 'stale-thunk')], '68d8a6f8'],
     ['T-SC-syncrun', '                scheduler(node.schedulerThunk);\n',
-        '                /* MUT syncrun */ executeEffect(node);\n', [SC('O9', 'stale-thunk')], '28445737'],
+        '                /* MUT syncrun */ executeEffect(node);\n', [SC('O9', 'stale-thunk')], '809a9529'],
 ];
 const SC_ENV = { SOAK_LANES: 'SCHEDULER' };
 const SC_COV_ENV = { SOAK_LANES: 'SCHEDULER', SOAK_MUSTFAIL: 'cov-off:thunk-recycled' };
@@ -1285,39 +1287,40 @@ const REG_ROWS = [
 // by the ARG-E1 B3 re-pin (.handoff/arg/e1-b3/kernel-shas-91c507df.txt), then on f6ff4cf3 (the ARG-E2 engine) by the ARG-E2 B3
 // re-pin (.handoff/arg/e2/evidence/b188/b3/kernel-shas-f6ff4cf3.txt), then on 2043b9f6 (the L-1 overflow-arm engine) by the L-1 B3
 // re-pin (.handoff/l1/evidence/kernel-shas-2043b9f6.txt), then on 5af14f0b (the UCE-H forged-wrapper re-check engine) by the UCE-H B4
-// re-pin (.handoff/uceh/evidence/kernel-shas-5af14f0b.txt).
+// re-pin (.handoff/uceh/evidence/kernel-shas-5af14f0b.txt), then on 4b740bdb (the AUD-F G2 engine) by the AUD-F G2 B2b
+// re-pin (.handoff/audf/g2/b2b/kernel-shas-4b740bdb.txt).
 const MUT = '   // MUTANT ';
 const RESET_ROWS = [
     ['T-REG-F10', [['        if (ns !== 0) throw new Error("[lite-signal] destroy: graph not settled (" + NOT_SETTLED_REASON[ns] + ")");\n', '']],
         [REG('O6', 'expected-escape-missing'), REG('O5', 'kind-count'), REG('O5', 'node-count'), REG('O5', 'link-count'),
-            REG('O1', 'computed-mismatch'), REG('O4', 'effect-dead'), REG('O6', 'escape-TypeError')], 'a88bedfa'],
+            REG('O1', 'computed-mismatch'), REG('O4', 'effect-dead'), REG('O6', 'escape-TypeError')], '84c5cbb9'],
     ['T-RESET-noop', [['        try { errs = batch(resetRounds); } catch (e) { fe = e; fthrew = true; } finally { disposeDepth--; }\n', '        disposeDepth--;' + MUT + 'T-RESET-noop\n']],
         [REG('O6', 'expected-escape-missing'), REG('O5', 'kind-count'), REG('O5', 'node-count'), REG('O5', 'link-count'),
-            REG('O8', 'mirror-links'), REG('OW', 'reset-cleanup')], 'f3327588'],
+            REG('O8', 'mirror-links'), REG('OW', 'reset-cleanup')], '641f3cc9'],
     ['T-RESET-nocleanup', [['                        const fc = n.cleanupFn;\n', '                        const fc = n.cleanupFn; n.cleanupFn = undefined;' + MUT + 'T-RESET-nocleanup-A\n']],
-        [REG('OW', 'reset-cleanup')], 'c0e93527'],
+        [REG('OW', 'reset-cleanup')], '8e9b5e2f'],
     ['T-RESET-silent-op2', [['        if (mutationHook !== null) mutationHook(2, node.id, node.flags | 0);\n',
         '        if (mutationHook !== null && disposeDepth === 0) mutationHook(2, node.id, node.flags | 0);' + MUT + 'T-RESET-silent-op2-A\n']],
-        [REG('O8', 'mirror-links')], '4797c612'],
+        [REG('O8', 'mirror-links')], 'cab71150'],
     ['T-RESET-wrap', [['            if (errs.length === 1) throw errs[0];\n', '            if (errs.length === 1) throw new Error(errs[0].message);' + MUT + 'T-RESET-wrap\n']],
-        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], 'c01f3b93'],
+        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], '1d2cb5fd'],
     ['T-RESET-noagg', [['            throw new AggregateError(errs, "reset: cleanups threw");\n', '            throw errs[0];' + MUT + 'T-RESET-noagg\n']],
-        [REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], '605e97fd'],
+        [REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], '235a7bba'],
     ['T-RESET-reason', [['        if (isFlushing) return 1;\n', '        if (currentObserver !== null) return 3;' + MUT + 'T-RESET-reason (moved above isFlushing)\n        if (isFlushing) return 1;\n'],
         ['        if (currentObserver !== null) return 3;\n', '']],
-        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing')], 'b0f72a9b'],
+        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing')], '158a3644'],
 ];
 // [name, the anchor in the live Signal.js, the replacement (b139 B1b mkmut.mjs), specs, kernel sha256/8 on ROWS_BASE8]
 // (each kernel byte-equal to .handoff/b139-evidence/b1b/mut/<name>/Signal.js, b140 B2b)
 const CAP_ROWS = [
     ['T-cap-node', 'policy === "throw" && nodePool.length >= currentNodesCapacity', 'policy === "throw" && nodePool.length > currentNodesCapacity',
-        [CAP('O6', 'expected-escape-missing')], 'f039206e'],
+        [CAP('O6', 'expected-escape-missing')], '8df18fee'],
     ['T-cap-link', 'policy === "throw" && linkPool.length >= currentLinkCapacity', 'policy === "throw" && linkPool.length > currentLinkCapacity',
-        [CAP('O6', 'expected-escape-missing')], '2e4b87b6'],
+        [CAP('O6', 'expected-escape-missing')], '17b5faa7'],
     ['T-cap-ceiling', 'const maxLinkLimit = currentLinkCapacity * 16;', 'const maxLinkLimit = currentLinkCapacity * 17;',
-        [CAP('O6', 'expected-escape-missing')], '028edd5b'],
+        [CAP('O6', 'expected-escape-missing')], 'cf2d9ac2'],
     ['T-cap-residue', '        link.nextFree = freeLinkHead;\n        freeLinkHead = link;\n        activeLinks = (activeLinks - 1) | 0;\n',
-        '        // MUTANT T-cap-residue: link not freed (not pooled, activeLinks not decremented)\n', [CAP('O5', 'link-count')], '4725ec38'],
+        '        // MUTANT T-cap-residue: link not freed (not pooled, activeLinks not decremented)\n', [CAP('O5', 'link-count')], 'b27331a3'],
 ];
 const shape = (c) => [c.run, c.base, c.env, c.argv, c.patches, c.arm, c.expect.exit, c.expect.kind, c.expect.lines, c.expect.specs];
 
@@ -1615,10 +1618,10 @@ const A_SNAP_EV = '                    node.evalVersion = evs[i];   // D-M: the 
 // [name, anchor in the live Signal.js restore() pass 1, replacement, spec sig, kernel sha256/8 on ROWS_BASE8]; each kernel is
 // byte-equal to .handoff/r8-evidence/A0/kernels/M-OS-<x>/Signal.js (the A0 measured tamper kernels, R8-16)
 const SNAP_ROWS = [
-    ['T-SNAP-roundtrip', A_SNAP_EV + '                    node.markEpoch = mes[i];\n', A_SNAP_EV, 'roundtrip', 'd2e4f17c'],
+    ['T-SNAP-roundtrip', A_SNAP_EV + '                    node.markEpoch = mes[i];\n', A_SNAP_EV, 'roundtrip', 'a0604a71'],
     ['T-SNAP-refire', '                handle = disposeFn;\n',
-        '                handle = disposeFn;\n                try { fn(); } catch (e) { /* M-OS-refire */ }\n', 'refire', '5d2d465b'],
-    ['T-SNAP-clean', A_SNAP_EV, '                    node.evalVersion = 0;   // M-OS-clean\n', 'clean-bit', '3bd9faba'],
+        '                handle = disposeFn;\n                try { fn(); } catch (e) { /* M-OS-refire */ }\n', 'refire', '8b34d773'],
+    ['T-SNAP-clean', A_SNAP_EV, '                    node.evalVersion = 0;   // M-OS-clean\n', 'clean-bit', '441d5eb9'],
 ];
 // The frozen pre-C1 build (git archive 7548461, rebased as dc7ed8f; .handoff is gitignored, so this row SKIPS without it)
 const FROZEN_MAIN = join(ROOT, '.handoff', 'r8-evidence', 'before-C-7548461', 'bench', 'soak', 'main.mjs');
