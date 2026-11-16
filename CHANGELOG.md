@@ -17,6 +17,15 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 user callbacks run with `this === undefined` (#48) and a stale signal handle's `update(fn)` returns without calling `fn` (#51); see their "### Fixed" entries below. Nothing else in the
 published `files[]` changes except `README.md`, `llms.txt`, the 1.6.0 `reset()` / true-shutdown `destroy()` (C-RESET, below) and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
 
+### Fixed -- engine: stack-overflow recovery (L-1)
+
+- **K1: a re-run cleanup no longer turns a stack overflow into a false `CycleError`.** `executeEffect` and `refreshComputed` used to set `FLAG_COMPUTING` before pushing the cursor and entering the cleanup dispatchers, so a stack overflow at any call entry between the set and the `try` left the node marked as running (wedged; its next run threw `CycleError`). The set is now the last statement before the `try`, and each cleanup half (`rerunCleanupEffect`, `rerunCleanupComputed`, `firstRunCleanupE`, `firstRunCleanupC`) sets it first thing inside a `try` whose catch clears it.
+- **K3: a cached stack overflow resets instead of sticking.** A computed whose read cached a stack-overflow `RangeError` ("Maximum call stack size exceeded", with or without the final period; recognised by reading `constructor` and `message`, never `instanceof`) resets on its FIRST serve to never-evaluated (value `undefined`, error bit clear, version 0, evalVersion 0, markEpoch a far floor) and the error is thrown once; the next read re-runs the body, and after a write the top's next read re-runs (a fresh overflow or a value, never the same cached error; test/115 A2). The reader is not marked stale. Inside the node's own refresh (hook, body, cleanups, the finally's disconnect hooks) the error is re-thrown without a reset (fail-closed; the outer serve resets); if that inner throw escapes the refresh uncaught (e.g. a hook's `X()`), the node stays cached and the next read throws the same error once more, then resets (test/115 A7.8). A frame of the node still in its own dependency walk re-runs its body (S-EPOCH). A user getter on the error that disposes the node (and recycles its slot) leaves the error thrown: the node's generation is re-checked before the reset writes. By design the test also matches a user-thrown `new RangeError("Maximum call stack size exceeded")` (test/115 A3), and a cross-realm overflow is not recognised (it stays cached, as before).
+- **KNOWN residual (D-b191-3).** A dependency-walk frame whose recorded mark equals the floor (the node's last mark exactly 0x3FFFFFFF writes before the reset) still serves `undefined` (test/115 A10c / A10d / A10e / A10f, pinned KNOWN). After a reset the floor also shortens the `markDownstream` alias horizon from 2^32 to 0xC0000001 writes, inside the known 2^31 dormancy band (LEDGER #65).
+- **Cost (node v26.8.2, --print-bytecode, untimed; evidence .handoff/l1/evidence/bytecode-6a.txt, bytecode-6b4.txt, bytecode-6b6.txt).** `executeEffect` 454 -> 462 B (+8 B, 16 registers; 6a, 6b4 row 10, 6b6 row 10). `refreshComputed` 770 B unchanged (19 registers). `read` (computed), `pullComputed` 79 B and `peekComputed` 82 B byte-identical to ARG-E2 (6b6, vs the B1b4 reference, which 6b4 shows SAME as E2). Cold `throwComputedError` 129 B (ARG-E2) -> 329 B / 8 registers (6b4 row 18; 6b6 row 18, the final build 2043b9f6, shows the same 329 B / 8). 0 B allocated per reset: test/115 A13 gates the engine against the ARG-E2 reference (A/A twin noise, capped below 8 B) at both version bands (gv 0x50000000 and -0x7FFFFF00).
+- **Open, not fixed in L-1.** An effect or a catching computed above the overflowing node (no edge carries the write, LEDGER #26); the SpiderMonkey `InternalError` message (inert); K2, K4, K5 and the warm phase (unmeasured). A forged `UndeliveredCleanupError` writes into a recycled slot (LEDGER #65, F-b192-1; scheduled as its own 1.6.0 unit).
+- **Tests.** `test/115-l1-overflow.test.mjs`: 143 tests (node --test, this cycle's run: 143 pass).
+
 ### Fixed -- engine: dead-owner reads, op-4 timing, recycled `runWithOwner` owner (ARG-E1, Argon F3 / F8)
 
 - `isTracking()`, `getOwner()` and `onCleanup(fn)` test the current observer's / owner's flags: once that node is disposed, `isTracking()` is `false`, `getOwner()` is `undefined`, and `onCleanup` drops `fn` (no throw; it never runs).
@@ -168,7 +177,7 @@ Now (Signal.js c8f6cd1e):
 - **Re-run rule.** Effect: the body is skipped, the cleanup's error is rethrown from the write / flush like a body error,
   `evalVersion` is not stamped and the links stay as the last completed run left them, so the next dependency change
   re-runs it. Computed: the error is cached (`FLAG_HAS_ERROR`) and rethrown by each read, until its next dependency
-  change; a refresh never throws it (the cached-error rule). A cleanup that disposes the node itself is swallowed for a
+  change (a stack overflow excepted, L-1 above); a refresh never throws it (the cached-error rule). A cleanup that disposes the node itself is swallowed for a
   computed and rethrown for an effect.
 - **Body-first rule (a cleanup attached before the node's first run).** `runWithOwner` can attach a cleanup or an owned
   child to a computed never read, or to an effect whose first run a scheduler still holds. If one throws, the owned
@@ -1428,7 +1437,8 @@ skipped).
   no longer throws a dependency's cached error. Before, the throw escaped the pre-walk: the effect stayed queued forever, or a
   computed kept a stale cached error after its dependency recovered. Now the pre-walk refreshes (`refreshComputed`, void, never
   throws the node's own error) and the dependent re-runs; its body's read of the errored dependency throws the cached error (the
-  same object), which the body may catch. READS of an errored computed still throw the cached error until a dependency changes
+  same object), which the body may catch. READS of an errored computed still throw the cached error until a dependency changes (a cached stack overflow
+  excepted, L-1 above)
   (`pullComputed` and the computed read closure keep that throw).
 - Leaving an error state (D-K, #41). A computed that cached an error and then returns a value equal to it (or one its custom
   `equals` accepts) now always moves its value and version: `equals` is NOT called when the previous state was an error. A

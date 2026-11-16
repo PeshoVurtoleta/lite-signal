@@ -553,7 +553,7 @@ export interface Registry {
      *  outside an owner, and once the current owner is disposed (1.6.0): `fn` is dropped, never
      *  runs, and nothing throws. If `fn` throws when its node is about to re-run (1.6.0): an effect skips its
      *  body and the error is rethrown from the `set()` / flush; a computed caches the error and its reads throw it
-     *  until its next dependency change. If `fn` also wrote a dependency of its own computed (S1), the first read
+     *  until its next dependency change (a stack-overflow RangeError excepted: it resets and the next read re-runs, L-1). If `fn` also wrote a dependency of its own computed (S1), the first read
      *  that reaches the error throws it once and counts as a stale read of its reader (a running tracked effect
      *  or computed that read it runs again; a non-catching computed reader's caller sees the fresh value; the
      *  error reaches only that body) and the next read re-runs the body. `peek()` / box `peek()` is not a reader
