@@ -229,8 +229,20 @@ export function when(predicate, callback) {
  * allocation-free per evaluation in its hot path (two closures total at
  * registration, zero per predicate check).
  *
- * Note: this promise never rejects. If the predicate never becomes truthy,
- * the promise never settles. Wrap in `Promise.race` for timeout semantics.
+ * Note: once registered, this promise never rejects. A predicate that throws
+ * on its first evaluation (at registration) rejects it with that error. One
+ * exception, as effect() documents: outside any batch or flush, if another
+ * body that evaluation ran (e.g. a computed it read) wrote a value the
+ * predicate had already read (its own writes are absorbed), the predicate
+ * re-runs at once. That re-run decides: a throw rejects with the re-run's
+ * error, a truthy result resolves, a falsy one drops the first error and
+ * the promise stays pending -- unless that same drain disposes the
+ * predicate's effect (before the re-run, which then does not run, or after
+ * a falsy one): then the first error rejects it, as effect() documents.
+ * A later throw surfaces from the write (or the enclosing batch) that
+ * triggered it and the promise stays pending. If the predicate never becomes
+ * truthy, the promise never settles. Wrap in `Promise.race` for timeout
+ * semantics.
  *
  * @example  // OK -- high-level orchestration
  *   await whenAsync(() => user.isAuthenticated);

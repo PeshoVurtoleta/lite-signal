@@ -1,4 +1,4 @@
-// Real lite-devtools 1.3.1 boot against the 1.5.0 engine.
+// Real lite-devtools 1.3.1 boot against the canonical 1.6.0 engine.
 //
 // Setup note (test-rig quirk, NOT an engine bug). Because this repo's
 // package.json declares name="@zakkster/lite-signal", the resolver maps any
@@ -72,7 +72,7 @@ before(async () => {
     );
 });
 
-describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
+describe("lite-devtools 1.3.1 boots against the canonical 1.6.0 engine", () => {
     it("imports resolve and all 21 documented functions are exported", () => {
         // 19 baseline + the two 1.3.x additions (burstProfile, watchAllocations).
         const expected = [
@@ -88,13 +88,14 @@ describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
 
     // capabilities() is devtools' runtime probe of the engine it is bound to.
     // Asserting the FULL vector turns it into a precise fingerprint of the
-    // 1.5.0 surface: the 1.5 feature triad (boxes / roots / ownerCapture) must
-    // be present, and every 1.6+ feature (scopes / flushControl / cleanupReturn
-    // / the richer burst payload) must be absent. If a later engine feature is
-    // accidentally back-ported into canonical 1.5.0, one of these flags flips
-    // and this test catches it -- across the two-package boundary, not from the
-    // engine's own introspection.
-    it("capabilities() fingerprints EXACTLY the 1.5.0 surface (1.5 on, 1.6+ off)", () => {
+    // canonical 1.6.0 surface: the 1.5 feature triad (boxes / roots / ownerCapture)
+    // must be present, createScope is present (canonical 1.6.0 carries it since
+    // 2026-11-17, D-SCOPE-1, D-CS-1), and every later feature (flushControl /
+    // cleanupReturn / the richer burst payload) must be absent. If a later engine
+    // feature is accidentally back-ported into canonical 1.6.0, or createScope is
+    // dropped, one of these flags flips and this test catches it -- across the
+    // two-package boundary, not from the engine's own introspection.
+    it("capabilities() fingerprints EXACTLY the canonical 1.6.0 surface (1.5 on, createScope on, 1.7+ off)", () => {
         const caps = DT.capabilities();
         assert.equal(typeof caps, "object");
         assert.ok(caps !== null);
@@ -109,11 +110,13 @@ describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
         assert.equal(caps.poolPopulation, true, "1.5.0 stats expose pool population");
         assert.equal(caps.statsKeys, 13, "1.5.0 stats() has exactly 13 keys");
 
+        // Present in canonical 1.6.0 (D-SCOPE-1, D-CS-1: createScope landed 2026-11-17).
+        assert.equal(caps.scopes, true, "canonical 1.6.0 carries createScope (D-SCOPE-1, D-CS-1)");
+
         // Absent until later engines -- graceful-degrade sentinels.
-        assert.equal(caps.scopes, false, "createScope is a 1.6 feature, must be absent in 1.5.0");
-        assert.equal(caps.flushControl, false, "flushStrategy is a 1.7 feature, must be absent in 1.5.0");
-        assert.equal(caps.cleanupReturn, false, "effect-return cleanup is a 1.8 feature, must be absent in 1.5.0");
-        assert.equal(caps.burst, false, "the richer op 5/6/7 burst payload is a 1.6+ feature, must be absent in 1.5.0");
+        assert.equal(caps.flushControl, false, "flushStrategy is a 1.7 feature, must be absent in canonical 1.6.0");
+        assert.equal(caps.cleanupReturn, false, "effect-return cleanup is a 1.8 feature, must be absent in canonical 1.6.0");
+        assert.equal(caps.burst, false, "the richer op 5/6/7 burst payload is not in canonical 1.6.0, must be absent");
     });
 
     it("inspect() reports a live handle as non-stale, with sensible neighbourhood counts", () => {
@@ -177,12 +180,12 @@ describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
         assert.ok(Array.isArray(tree.owned), "descriptor carries an owned[] child array");
     });
 
-    it("burstProfile() degrades to null on 1.5.0 (needs the 1.6+ op 5/6/7 payload)", () => {
-        // capabilities().burst is false on 1.5.0, so burstProfile must return
+    it("burstProfile() degrades to null on canonical 1.6.0 (needs the later op 5/6/7 payload)", () => {
+        // capabilities().burst is false on canonical 1.6.0, so burstProfile must return
         // null rather than throw or hand back a half-wired profiler. This pins
         // the documented graceful-degradation contract for the richer
         // mutation-hook payload that only later engines emit.
-        assert.equal(DT.capabilities().burst, false, "precondition: 1.5.0 has no burst payload");
+        assert.equal(DT.capabilities().burst, false, "precondition: canonical 1.6.0 has no burst payload");
         const bp = DT.burstProfile();
         assert.equal(bp, null, "burstProfile must return null when capabilities().burst is false");
     });
@@ -210,7 +213,7 @@ describe("lite-devtools 1.3.1 boots against the 1.5.0 engine", () => {
         watch.stop();   // CRITICAL: clears the sampler handle
     });
 
-    it("track() registers a lifecycle listener against a 1.5.0-built handle", () => {
+    it("track() registers a lifecycle listener against a canonical-1.6.0-built handle", () => {
         const s = SIG.signal(0);
         const events = [];
         const untrack = DT.track(s, (e) => events.push(e));

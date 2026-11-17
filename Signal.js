@@ -1128,7 +1128,8 @@ export function createRegistry(config) {
      * The stale-tail walk runs user code (op-4 hook, onDisconnect), so this re-enters the frame
      * as the walk always saw it: cursor push: cursorDepth = d + 1; the outer cursor already sits in
      * cursorStack[d] (both callers restored the live cursor from it one statement earlier, no user
-     * code between), so the push alone puts that slot in repairCursor's scan (slots d..0) and keeps a nested frame, which saves into slot d + 1, off it; live
+     * code between), so the push alone puts that slot in repairCursor's scan (slots d..0) and
+     * keeps a nested frame, which saves into slot d + 1, off it; live
      * cursor = stale, observer = owner = node, FLAG_COMPUTING set last before
      * the `try` (G1-a: markDownstream marks or absorbs a walk callback's write exactly as
      * inside the body, and a re-run of the node is a CycleError). The `finally` unwinds on both arms.

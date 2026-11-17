@@ -60,7 +60,9 @@ const ENV_SKIP_EXIT = 78;
  * to convert into silent green. (--lenient downgrades this to a plain skip.)
  */
 // Candidate-line floors (scope, flush, cleanup-return, dispose) were re-pinned +1 minor on
-// 2026-10-10 (SPEC-B addendum D1): 1.6.0 ships without those features, which move to 1.7.0+.
+// 2026-10-10 (SPEC-B addendum D1): 1.6.0 was to ship without those features, which moved to 1.7.0+.
+// scope's floor moved back to 1.6.0 on 2026-11-17 (D-CS-5) when createScope landed in canonical
+// 1.6.0; flush, cleanup-return and dispose keep their +1 floors (1.8.0 / 1.9.0 / 1.10.0).
 const SCENARIOS = [
     { name: "oracle-fuzzer", group: "semantic", file: "oracle-fuzzer.mjs", floor: "1.4.0", about: "values vs an independent reference evaluator" },
     { name: "glitch-hunter", group: "semantic", file: "glitch-hunter.mjs", floor: "1.4.0", about: "glitch freedom + exact wakeup accounting" },
@@ -69,7 +71,7 @@ const SCENARIOS = [
     { name: "scheduler-storm", group: "semantic", file: "scheduler-storm.mjs", floor: "1.4.0", about: "deferred execution, ABA thunks, coalescing" },
     { name: "box-torture", group: "semantic", file: "box-torture.mjs", floor: "1.5.0", about: "signalBox/computedBox interop + surface (1.5.0+)" },
     { name: "snapshot-torture", group: "semantic", file: "snapshot-torture.mjs", floor: "1.6.0", about: "snapshot/restore clean-bit fuzz + fail-closed + D-A..D-D + retention (1.6.0+)" },
-    { name: "scope-torture", group: "semantic", file: "scope-torture.mjs", floor: "1.7.0", about: "createScope adoption + disposal-crash fuzz (1.7.0+)" },
+    { name: "scope-torture", group: "semantic", file: "scope-torture.mjs", floor: "1.6.0", about: "createScope adoption + disposal-crash fuzz (1.6.0+)" },
     { name: "retrack-dispose-torture", group: "semantic", file: "retrack-dispose-torture.mjs", floor: "1.4.0", about: "dispose-during-retracking cursor hazard + seeded disposal fuzz" },
     { name: "owner-torture", group: "semantic", file: "owner-torture.mjs", floor: "1.5.0", about: "getOwner/runWithOwner capture-restore + ABA degradation" },
     { name: "async-torture", group: "semantic", file: "async-torture.mjs", floor: "1.4.0", about: "watch/when/whenAsync contracts + fuzz" },
