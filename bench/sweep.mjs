@@ -32,7 +32,7 @@
 // rename) as the LAST step; report.mjs refuses a dir without it, and the sweep refuses
 // to start where one exists (D-b187-4).
 //
-// Engines: lite-signal always; alien-signals if installed. (Extend as adapters land.)
+// Engines: lite-signal always; alien-signals and reflex-quant if installed. (Extend as adapters land.)
 
 import { fork } from "node:child_process";
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readdirSync, renameSync } from "node:fs";
@@ -66,7 +66,7 @@ const scenarioNames = process.env.SUBSET === "cheap"
     ? DYNAMIC_TESTS.filter((t) => CHEAP.has(t.name)).map((t) => t.name)
     : [...DYNAMIC_TESTS.map((t) => t.name), ...microRows().map((r) => r.name)];  // full 47-row field
 
-const ENGINES = ["lite-signal", "alien-signals"];
+const ENGINES = ["lite-signal", "alien-signals", "reflex-quant"];
 
 // --- fork one (engine, scenario) row in its own cold process -------------------------
 function runRow(engine, scenario) {
@@ -219,16 +219,16 @@ async function main() {
         perEngine[e] = c;
     }
 
+    // per-shape spread flag: the single-shape sentinel does not guard per-row variance
+    // on the heavy shapes (burst/layered swing ~15% run-to-run). SPREAD_WARN marks any
+    // row whose worst-engine (max-min)/median across reps exceeds the threshold, so a
+    // high-variance row can never be published as a point number by accident.
+    const SPREAD_WARN = Number(process.env.SPREAD_WARN || 8);   // % ; host-calibratable
     if (perEngine["lite-signal"] && perEngine["alien-signals"]) {
         const lite = perEngine["lite-signal"], alien = perEngine["alien-signals"];
         console.log(`aggregated: protocol=${lite.protocol}  reps=${lite.reps}  engineSha=${lite.engineSha.slice(0, 12)}\n`);
         console.log("test".padEnd(52) + "lite".padStart(9) + "alien".padStart(9) + "  lite vs alien".padEnd(17) + "spread");
         console.log("-".repeat(100));
-        // per-shape spread flag: the single-shape sentinel does not guard per-row variance
-        // on the heavy shapes (burst/layered swing ~15% run-to-run). SPREAD_WARN marks any
-        // row whose worst-engine (max-min)/median across reps exceeds the threshold, so a
-        // high-variance row can never be published as a point number by accident.
-        const SPREAD_WARN = Number(process.env.SPREAD_WARN || 8);   // % ; host-calibratable
         const noisy = [];
         for (const test of lite.perTest.keys()) {
             const l = lite.perTest.get(test), a = alien.perTest.get(test);
@@ -245,6 +245,42 @@ async function main() {
             console.log(`\n${noisy.length} row(s) exceed ${SPREAD_WARN}% run-to-run spread -- treat as a band, not a point, or add reps:`);
             for (const n of noisy) console.log(`  ${n.test.slice(0, 54).padEnd(56)} ${n.sp.toFixed(0)}%`);
             console.log("(the sentinel guards ONE shape; these rows have their own per-shape variance.)");
+        }
+    }
+
+    // every other captured engine (D-b207-8, output only; the block above is unchanged):
+    // an all-engines median block, then one lite vs <engine> block per extra engine.
+    // spread = worst (max-min)/median across reps over the engines in that block.
+    const SHORT = { "lite-signal": "lite", "alien-signals": "alien" };
+    const shortOf = (e) => SHORT[e] || e;
+    const extras = ENGINES.filter((e) => e !== "lite-signal" && e !== "alien-signals" && perEngine[e]);
+    if (perEngine["lite-signal"] && extras.length) {
+        const lite = perEngine["lite-signal"];
+        const spStrOf = (sp) => sp.toFixed(0) + "%" + (sp > SPREAD_WARN ? " !!" : "");
+        const all = ENGINES.filter((e) => perEngine[e]);
+        const colW = all.map((e) => Math.max(9, shortOf(e).length + 2));
+        console.log("\nall engines (median ms; lower is better):");
+        console.log("test".padEnd(52) + all.map((e, i) => shortOf(e).padStart(colW[i])).join("") + "  spread");
+        console.log("-".repeat(100));
+        for (const test of lite.perTest.keys()) {
+            let sp = 0;
+            for (const e of all) sp = Math.max(sp, perEngine[e].perTestSpread.get(test) ?? 0);
+            console.log(test.slice(0, 50).padEnd(52) + all.map((e, i) => { const v = perEngine[e].perTest.get(test); return (v == null ? "-" : v.toFixed(2)).padStart(colW[i]); }).join("") + "  " + spStrOf(sp));
+        }
+        console.log("-".repeat(100));
+        for (const x of extras) {
+            const other = perEngine[x], xs = shortOf(x), xw = Math.max(9, xs.length + 2), vsW = Math.max(17, xs.length + 13);
+            console.log(`\nlite vs ${x}:`);
+            console.log("test".padEnd(52) + "lite".padStart(9) + xs.padStart(xw) + `  lite vs ${xs}`.padEnd(vsW) + "spread");
+            console.log("-".repeat(100));
+            for (const test of lite.perTest.keys()) {
+                const l = lite.perTest.get(test), a = other.perTest.get(test);
+                if (a == null) continue;
+                const d = (a - l) / a * 100;
+                const sp = Math.max(lite.perTestSpread.get(test) ?? 0, other.perTestSpread.get(test) ?? 0);
+                console.log(test.slice(0, 50).padEnd(52) + l.toFixed(2).padStart(9) + a.toFixed(2).padStart(xw) + `   ${d >= 0 ? "+" : ""}${d.toFixed(1)}% ${l < a ? "lite" : xs}`.padEnd(vsW) + "  " + spStrOf(sp));
+            }
+            console.log("-".repeat(100));
         }
     }
 

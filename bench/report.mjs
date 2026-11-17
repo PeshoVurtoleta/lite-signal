@@ -160,6 +160,44 @@ if (primary && hasRef) {
     L.push("");
 }
 
+// every other collected engine (D-b207-8, output only; the table above is unchanged):
+// an all-engines median table, then one lite vs <engine> table per extra engine
+const SHORT = { "lite-signal": "lite", "alien-signals": "alien" };
+const shortOf = (e) => SHORT[e] || e;
+const extras = engines.filter((e) => e !== "lite-signal" && e !== ref);
+if (primary && extras.length) {
+    const all = ["lite-signal", ...(hasRef ? [ref] : []), ...extras];
+    const colW = all.map((e) => Math.max(10, shortOf(e).length + 2));
+    L.push("-".repeat(94));
+    L.push("EXECUTION TIME -- ALL ENGINES (median across reps, ms; lower is better)");
+    L.push("-".repeat(94));
+    L.push("test".padEnd(58) + all.map((e, i) => shortOf(e).padStart(colW[i])).join(""));
+    for (const test of primary.perTest.keys()) {
+        L.push(test.slice(0, 56).padEnd(58) + all.map((e, i) => { const v = collected[e].perTest.get(test); return (v == null ? "-" : v.toFixed(2)).padStart(colW[i]); }).join(""));
+    }
+    L.push("-".repeat(94));
+    L.push("");
+    for (const x of extras) {
+        const other = collected[x], xs = shortOf(x), xw = Math.max(10, xs.length + 2);
+        L.push("-".repeat(94));
+        L.push(`EXECUTION TIME -- lite vs ${x} (median across reps, ms; lower is better)`);
+        L.push("-".repeat(94));
+        L.push("test".padEnd(58) + "lite".padStart(10) + xs.padStart(xw) + `   lite vs ${xs}`);
+        let wins = 0, total = 0;
+        for (const test of primary.perTest.keys()) {
+            const l = primary.perTest.get(test), a = other.perTest.get(test);
+            if (a == null) continue;
+            total++;
+            const d = (a - l) / a * 100;
+            if (l < a) wins++;
+            L.push(test.slice(0, 56).padEnd(58) + l.toFixed(2).padStart(10) + a.toFixed(2).padStart(xw) + `   ${d >= 0 ? "+" : ""}${d.toFixed(1)}%  ${l < a ? "lite" : xs}`);
+        }
+        L.push("-".repeat(94));
+        L.push(`lite faster than ${xs} on ${wins}/${total} shapes.`);
+        L.push("");
+    }
+}
+
 L.push("HONEST FRAMING (the claim that reproduces):");
 L.push("  lite-signal's differentiated position is ALLOCATION, not raw propagation speed.");
 L.push("  On these shapes lite runs at parity-to-behind alien on throughput (weak on deep/");

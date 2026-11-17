@@ -5,7 +5,7 @@
 // flush option) and, as its resetBenchmark() does (:46-49), destroys the registry and
 // builds a fresh one from the same config between benches.
 //
-//   node --expose-gc bench/mirror.mjs                 # lite + alien, full
+//   node --expose-gc bench/mirror.mjs                 # lite + alien + reflex-quant, full
 //   FW=lite-signal node --expose-gc bench/mirror.mjs  # one engine, one process (isolated-per-engine)
 //   QUICK=1 node --expose-gc bench/mirror.mjs          # fast smoke
 //   node --expose-gc bench/mirror.mjs --self-verify    # counters vs the document, then exit
@@ -88,6 +88,25 @@ async function alienAdapter() {
         computed: (fn) => { const c = computed(fn); return { read: () => c() }; },
         effect: (fn) => { effect(() => { fn(); }); },
         withBatch: (fn) => { startBatch(); try { fn(); } finally { endBatch(); } },
+        withBuild: (fn) => fn(),
+        reset() {},
+        poolMetrics() { return null; },
+    };
+}
+
+// reflex-quant: a handle IS the node (get(h) / set(h, v)); effects run synchronously on
+// creation and inside set(), and batch(fn) delivers its writes once fn returns. The effect
+// body is wrapped like alien's: reflex-quant treats a returned function as a cleanup.
+async function reflexAdapter() {
+    let rq;
+    try { rq = await import("reflex-quant"); } catch { return null; }
+    const { signal, computed, effect, get, set, batch } = rq;
+    return {
+        name: "reflex-quant",
+        signal: (v) => { const s = signal(v); return { read: () => get(s), write: (x) => set(s, x) }; },
+        computed: (fn) => { const c = computed(fn); return { read: () => get(c) }; },
+        effect: (fn) => { effect(() => { fn(); }); },
+        withBatch: (fn) => { batch(fn); },
         withBuild: (fn) => fn(),
         reset() {},
         poolMetrics() { return null; },
@@ -199,6 +218,7 @@ async function main() {
     const adapters = [];
     if (!FW || FW.has("lite-signal")) adapters.push(liteAdapter());
     if (!FW || FW.has("alien-signals")) { const a = await alienAdapter(); if (a) adapters.push(a); }
+    if (!FW || FW.has("reflex-quant")) { const a = await reflexAdapter(); if (a) adapters.push(a); }
 
     const verdict = G.makeVerdict();
     const byTest = new Map();   // edgesTraversed, for counter-agreement across engines

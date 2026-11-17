@@ -2,7 +2,7 @@
 //
 // Reads bench-runs/<engine>-rep<N>.txt (from run-all-bench.sh, one stamped process per
 // engine per rep), medians per-scenario time and heap across reps, prints engines side
-// by side + each lite build vs alien. Rewritten for v3:
+// by side + each other engine vs alien. Rewritten for v3:
 //   - parses the v3 columns (median=, heapMed=, heapP95=), NOT the retired Dheap=;
 //   - SCENARIOS is the SIX first-party shapes (the three impostors were deleted in F8);
 //   - reuses the stamp guards so an inconsistent/under-counted merge is refused,
@@ -57,14 +57,14 @@ for (const eng of engines) {
     for (const sc of SCENARIOS) if (per[sc]) { meds[eng][sc] = median(per[sc].map((x) => x.time)); heaps[eng][sc] = median(per[sc].map((x) => x.heap).filter((v) => v != null)); }
 }
 
-// print: engines side by side (time), then lite-vs-alien time + heap
+// print: engines side by side (time), then each engine vs alien time + heap
 const pad = (s, n) => { s = String(s); return s.length >= n ? s : s + " ".repeat(n - s.length); };
 console.log(`microscope aggregate  (reps on disk; ${engines.length} engine(s))\n`);
 console.log(pad("scenario", 16) + engines.map((e) => pad(LABEL[e], 14)).join(""));
 for (const sc of SCENARIOS) console.log(pad(sc, 16) + engines.map((e) => pad((meds[e][sc] != null ? meds[e][sc].toFixed(2) + "ms" : "-"), 14)).join(""));
 
 if (meds[REF]) {
-    console.log(`\nvs ${REF} (time / heap; + = lite better):`);
+    console.log(`\nvs ${REF} (time / heap; + = the named engine better than ${REF}):`);
     for (const eng of engines) {
         if (eng === REF) continue;
         console.log(`\n  ${LABEL[eng]}:`);

@@ -1,6 +1,6 @@
 /**
  * bench.mjs -- honest cross-library benchmark for lite-signal vs alien-signals vs
- * @preact/signals-core vs solid-js.
+ * @preact/signals-core vs solid-js vs reflex-quant.
  *
  * KEY FIXES over the previous harness (which was reporting Solid at ~50 GHz):
  *
@@ -35,6 +35,7 @@ import {median, summarizeSamples} from "./lib/stats.mjs";
 import {makeStamp, printStamp, PROTOCOLS} from "./lib/stamp.mjs";
 import {ENGINE_KEYS} from "./frameworks.mjs";
 import * as alien from "alien-signals";
+import * as reflex from "reflex-quant";
 import * as preact from "@preact/signals-core";
 // IMPORTANT: solid-js resolves to its SSR build in Node by default,
 // where effects are stubbed and never re-fire. We import the client
@@ -471,6 +472,118 @@ const ADAPTERS = {
                 SINK[sinkSlot] = s;
             });
             return {drive: (i) => src(i), teardown: () => dispose()};
+        }
+    },
+
+    // reflex-quant: same graphs as the alien-signals adapter above, scenario by scenario.
+    // A handle IS the node: reads are get(h), writes set(h, v). Effects run synchronously
+    // on creation and inside set(); an effect body that returns a function registers it as
+    // a cleanup, so every effect body here is a block that returns undefined. Teardown is
+    // dispose(effectHandle), the point where alien calls its disposer.
+    "reflex-quant": {
+        kairos(N, sinkSlot) {
+            const src = reflex.signal(0);
+            const cs = new Array(N);
+            for (let i = 0; i < N; i++) {
+                const k = i;
+                cs[i] = reflex.computed(() => reflex.get(src) * (k + 1));
+            }
+            const eff = reflex.effect(() => {
+                let s = 0; for (let i = 0; i < N; i++) s += reflex.get(cs[i]);
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => reflex.set(src, i), teardown: () => reflex.dispose(eff)};
+        },
+        broadcast(N, sinkSlot) {
+            const src = reflex.signal(0);
+            const effects = [];
+            for (let i = 0; i < N; i++) {
+                const k = i;
+                effects.push(reflex.effect(() => { SINK[sinkSlot + (k & 31)] = reflex.get(src) + k; }));
+            }
+            return {
+                drive: (i) => reflex.set(src, i),
+                teardown: () => {
+                    for (let i = 0; i < effects.length; i++) reflex.dispose(effects[i]);
+                }
+            };
+        },
+        deepChain(N, sinkSlot) {
+            const src = reflex.signal(0);
+            let prev = src;
+            for (let i = 0; i < N; i++) {
+                const p = prev;
+                prev = reflex.computed(() => reflex.get(p) + 1);
+            }
+            const tip = prev;
+            const eff = reflex.effect(() => { SINK[sinkSlot] = reflex.get(tip); });
+            return {drive: (i) => reflex.set(src, i), teardown: () => reflex.dispose(eff)};
+        },
+        mux(N, sinkSlot) {
+            const sigs = new Array(N);
+            for (let i = 0; i < N; i++) sigs[i] = reflex.signal(0);
+            const sum = reflex.computed(() => {
+                let s = 0; for (let i = 0; i < N; i++) s += reflex.get(sigs[i]); return s;
+            });
+            const eff = reflex.effect(() => { SINK[sinkSlot] = reflex.get(sum); });
+            return {drive: (i) => reflex.set(sigs[i % N], i), teardown: () => reflex.dispose(eff)};
+        },
+        dynamicDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const FAN = 6;
+            const src = reflex.signal(0);
+            let prevLayer = [src];
+            for (let layer = 0; layer < L; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const deps = new Array(FAN);
+                    for (let k = 0; k < FAN; k++) deps[k] = prevLayer[(w * 7 + k * 11) % prevLayer.length];
+                    newLayer.push(reflex.computed(() => {
+                        let s = 0;
+                        if (reflex.get(src) & 1) {
+                            for (let k = 0; k < FAN; k++) s += reflex.get(deps[k]);
+                        } else {
+                            for (let k = FAN - 1; k >= 0; k--) s += reflex.get(deps[k]);
+                        }
+                        return s;
+                    }));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            const eff = reflex.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += reflex.get(tip[i]);
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => reflex.set(src, i), teardown: () => reflex.dispose(eff)};
+        },
+        selectiveDag(N, sinkSlot) {
+            const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+            const L = Math.max(2, Math.ceil(N / W));
+            const POOL = 4;
+            const src = reflex.signal(0);
+            const PAIRS = [[0, 1], [0, 2], [1, 3], [2, 3]];
+            let prevLayer = [src];
+            for (let layer = 0; layer < L; layer++) {
+                const newLayer = [];
+                for (let w = 0; w < W; w++) {
+                    const cand = new Array(POOL);
+                    for (let k = 0; k < POOL; k++) cand[k] = prevLayer[(w * 7 + k * 13) % prevLayer.length];
+                    newLayer.push(reflex.computed(() => {
+                        const which = reflex.get(src) & 3;
+                        const a = PAIRS[which][0], b = PAIRS[which][1];
+                        return reflex.get(cand[a]) + reflex.get(cand[b]);
+                    }));
+                }
+                prevLayer = newLayer;
+            }
+            const tip = prevLayer;
+            const eff = reflex.effect(() => {
+                let s = 0; for (let i = 0; i < tip.length; i++) s += reflex.get(tip[i]);
+                SINK[sinkSlot] = s;
+            });
+            return {drive: (i) => reflex.set(src, i), teardown: () => reflex.dispose(eff)};
         }
     },
 

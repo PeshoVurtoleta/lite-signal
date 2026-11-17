@@ -4,7 +4,7 @@
 # ONE engine per cold Node process: `FW=<engine> node --expose-gc mirror.mjs` runs all
 # rows of that engine in one process and stamps isolated-per-engine. Reps are scheduled
 # ROUND-ROBIN (rep-major, engine-minor, rotated per wave by schedule.mjs) so thermal
-# drift spreads across both engines instead of loading the last one (F3).
+# drift spreads across all engines instead of loading the last one (F3).
 # Output: mirror-runs/<engine>-rep<k>.txt (stdout only), one file per process.
 #
 # It never overwrites or deletes a capture: if ANY mirror-runs/*-rep*.txt, *-rep*.txt.partial
@@ -24,7 +24,7 @@ if ! [[ "$REPS" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-ENGINES="lite-signal alien-signals"
+ENGINES="lite-signal alien-signals reflex-quant"
 
 # Refuse before any run when a capture already exists (never overwrite, never delete).
 shopt -s nullglob

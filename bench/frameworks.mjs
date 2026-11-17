@@ -22,6 +22,7 @@ export const ENGINES = [
     { key: "alien-signals", label: "alien-signals",         kind: "ref" },
     { key: "preact",        label: "preact-signals",        kind: "ref" },
     { key: "solid",         label: "solid-signals",         kind: "ref" },
+    { key: "reflex-quant",  label: "reflex-quant",          kind: "ref" },
 ];
 
 // Ordered list of all engine keys.
