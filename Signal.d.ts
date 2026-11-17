@@ -443,7 +443,8 @@ export interface Registry {
      * forEachOwned and dispose(api).
      * A `dispose` call made while `fn` is still running is recorded and honoured right after `fn`
      * returns, before createScope returns: the scope and everything `fn` created are disposed, their
-     * cleanups run, and `fn`'s value is still returned (a requested disposal is never dropped; a cleanup that throws during it propagates from createScope instead).
+     * cleanups run, and `fn`'s value is still returned (a requested disposal is never dropped; a
+     * cleanup that throws during it propagates from createScope instead).
      * A non-function `fn` throws a TypeError ("[lite-signal] createScope: fn must be a function")
      * before anything is allocated (stats() unchanged).
      * The scope is always a root, also inside another scope's `fn` and inside runWithOwner: an inner
@@ -508,8 +509,11 @@ export interface Registry {
     runWithOwner<T>(ownerHandle: Owner, fn: () => T): T;
     /**
      * Universal disposal for anything created by this registry: signals,
-     * computeds, boxes, or effect dispose handles. Cross-registry calls are
-     * silent no-ops (each registry owns its own private node-identity Symbol).
+     * computeds, boxes, or effect dispose handles. A foreign signal, computed or
+     * box (another registry's) is a silent no-op (each registry owns its own
+     * private node-identity Symbol). A function handle -- an effect handle or a
+     * createScope disposer from another registry -- is invoked and disposes its
+     * own node in its own registry.
      * Passing an unrelated value is also a safe no-op.
      */
     dispose(api: Disposable): void;
@@ -922,10 +926,17 @@ export function when(
  * **NEVER use for:** per-frame entity updates, render-loop logic, animation
  * tick handlers. For zero-GC hot-path logic use {@link when} with a callback.
  *
- * Note: this promise never rejects once registered. A predicate that throws on its first
- * evaluation (at registration) rejects it with that error; a later throw surfaces from the
- * write that triggered it and the promise stays pending. If the predicate never becomes truthy,
- * the promise never settles. Wrap in `Promise.race` for timeout semantics.
+ * Note: once registered, this promise never rejects. A predicate that throws on its first
+ * evaluation (at registration) rejects it with that error. One exception, as effect()
+ * documents: outside any batch or flush, if another body that evaluation ran (e.g. a computed
+ * it read) wrote a value the predicate had already read (its own writes are absorbed), the
+ * predicate re-runs at once and that re-run decides: a throw rejects with the re-run's error,
+ * a truthy result resolves, a falsy one drops the first error and the promise stays pending --
+ * unless that same drain disposes the predicate's effect (before the re-run, which then does
+ * not run, or during or after a falsy one), which rejects with the first error. A later throw
+ * surfaces from the write (or the enclosing batch) that triggered it and the promise stays
+ * pending. If the predicate never becomes truthy, the promise never settles. Wrap in
+ * `Promise.race` for timeout semantics.
  *
  * @param predicate  Reactive read function; resolves promise when truthy.
  * @returns Promise that resolves when predicate first truthy.

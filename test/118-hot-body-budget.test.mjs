@@ -12,9 +12,9 @@
  * Row labels: RED = fails on the fixture, passes on the fixed build; PIN = same on both.
  * Named mutant killed: LISTDROP (the A1 RED / live rows).
  *
- * BUDGET (14 functions through the script + read.set measured raw, the script's fn regex refuses a dot): executeEffect, flushEffects, read (two closures),
+ * BUDGET (19 gated names through the script (14 + the five cleanup-path inlinees added in b203) + read.set measured raw, the script's fn regex refuses a dot): executeEffect, flushEffects, read (two closures),
  * read.set, markDownstream, batch (two), peekComputed, pullComputed, pullMoved, sharedComputedPeek, sharedSignalPeek, effectTail, runCleanupC, runCleanupE,
- * fireRecompute. refreshComputed (770 on v26, never inlined: a host, not an inlinee) is REPORTED only.
+ * fireRecompute, onCleanup, runOwnCleanup, runCleanup, rerunCleanupEffect, rerunCleanupComputed. refreshComputed (770 on v26, never inlined: a host, not an inlinee) is REPORTED only.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -35,7 +35,8 @@ const skip = process.platform === "win32" ? "bash script: POSIX hosts only" : fa
 const SPAWN = { encoding: "utf8", timeout: 300000, killSignal: "SIGKILL", maxBuffer: 1 << 26 };
 
 const GATED = ["executeEffect", "flushEffects", "read", "markDownstream", "batch", "peekComputed", "pullComputed", "pullMoved",
-    "sharedComputedPeek", "sharedSignalPeek", "effectTail", "runCleanupC", "runCleanupE", "fireRecompute"];
+    "sharedComputedPeek", "sharedSignalPeek", "effectTail", "runCleanupC", "runCleanupE", "fireRecompute",
+    "onCleanup", "runOwnCleanup", "runCleanup", "rerunCleanupEffect", "rerunCleanupComputed"];
 
 // Stage one build as ./Signal.js beside a copy of the driver. A build with Watch.js beside it is copied with it; the vendored fixture loads with its one
 // re-export line removed (count-checked): the line is not function bytecode.
@@ -102,11 +103,13 @@ describe("A1 hot-body bytecode budget (sequential, POSIX)", () => {
         assert.equal(lensOf(rep.stdout, "read").length, 2);
         assert.equal(lensOf(rep.stdout, "batch").length, 2);
     });
-    it("[PIN] the gated list is exactly the BUDGET set (14 names, executeEffect and flushEffects included): a dropped entry fails (kills LISTDROP)", () => {
+    it("[PIN] the gated list is exactly the BUDGET set (19 names, executeEffect and flushEffects included): a dropped entry fails (kills LISTDROP)", () => {
         // the BUDGET set of the header: executeEffect, flushEffects, read, markDownstream, batch, peekComputed, pullComputed, pullMoved,
-        // sharedComputedPeek, sharedSignalPeek, effectTail, runCleanupC, runCleanupE, fireRecompute (read.set is measured raw, refreshComputed is REPORTED)
+        // sharedComputedPeek, sharedSignalPeek, effectTail, runCleanupC, runCleanupE, fireRecompute,
+        // onCleanup, runOwnCleanup, runCleanup, rerunCleanupEffect, rerunCleanupComputed (read.set is measured raw, refreshComputed is REPORTED)
         assert.deepEqual(GATED, ["executeEffect", "flushEffects", "read", "markDownstream", "batch", "peekComputed", "pullComputed", "pullMoved",
-            "sharedComputedPeek", "sharedSignalPeek", "effectTail", "runCleanupC", "runCleanupE", "fireRecompute"]);
+            "sharedComputedPeek", "sharedSignalPeek", "effectTail", "runCleanupC", "runCleanupE", "fireRecompute",
+            "onCleanup", "runOwnCleanup", "runCleanup", "rerunCleanupEffect", "rerunCleanupComputed"]);
     });
     it("[PIN] engine: read.set (measured raw) is <= 460 (279 on the fixture too)", { skip }, () => {
         const lens = rawLens(LIVE.drv, "read.set");

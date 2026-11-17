@@ -230,7 +230,8 @@ describe("A5 scheduler effect, thunk outside a flush: requeueStaleEffect drains 
 
 // ======================================================================================================================================
 // A8 PIN (TASK 0 golden, evidence/a8a9-golden.mjs): a 1->0 hook running in the epilogue sees isTracking() false and getOwner() = the run's own node; a write
-// the hook makes to an already-read dep is absorbed by the run (markDownstreamInEval treats the owner as the writer). Kills SS-NOCOMPUTING, SS-NOOBS.
+// the hook makes to an already-read dep is absorbed by the run (markDownstreamInEval treats the owner as the writer). Kills SS-NOCOMPUTING. (SS-NOOBS, dropping `currentObserver = node;` from severStale, is NOT killed here: observeObservers
+// hooks do not read; it is killed by the op-4 onGraphMutation rows below, A8b.)
 // ======================================================================================================================================
 function ownerTag(r, selfId) { const o = r.getOwner(); return o === undefined ? "undefined" : (o.id === selfId ? "self" : "other"); }
 function a8Effect(M) {
@@ -265,6 +266,45 @@ describe("A8 PIN: the epilogue hook's context and the self-write absorption", ()
             assert.deepEqual(a8Computed(M), { v0: 0, v1: 0, v2: 1, hook: [{ isTracking: false, owner: "self" }], runs: 3, w: 1, after: { isTracking: false, owner: "undefined", links: 2 } });
         });
     }
+});
+
+// ======================================================================================================================================
+// A8b PIN (D-DELTA-2, fable-5.2-delta-1): the context an onGraphMutation op-4 listener sees during the frame-epilogue sever. Kills SS-NOOBS: with
+// `currentObserver = node;` dropped from severStale a listener READ is not tracked (isTracking false, no link to the probe, no re-run on its write).
+// Shapes from the prototype audit/2026-11-17/work/fable-5.2-delta/ssnoobs-row.mjs; the values are the live tuple (isTracking true: the sever runs
+// with the node as observer and owner; the effect case subscribes the listener's read of `probe`, so links 2 and one re-run on the probe write).
+// ======================================================================================================================================
+function a8bEffect(M) {
+    const r = M.createRegistry();
+    const t = r.signal(0), b = r.signal(0), probe = r.signal(0);
+    let first = true, runs = 0, selfId = -1; const seen = [];
+    const E = r.effect(() => { runs++; t(); if (first) b(); });
+    selfId = r.nodeId(E);
+    r.onGraphMutation((op) => { if (op === 4) { seen.push({ isTracking: r.isTracking(), owner: ownerTag(r, selfId) }); probe(); } });
+    first = false;
+    t.set(1);
+    const links = r.stats().activeLinks;
+    const before = runs; probe.set(1);
+    return { seen, links, rerunOnProbeWrite: runs - before, after: { isTracking: r.isTracking(), owner: ownerTag(r, selfId) } };
+}
+function a8bComputed(M) {
+    const r = M.createRegistry();
+    const t = r.signal(0), b = r.signal(0);
+    let first = true, selfId = -1; const seen = [];
+    const C = r.computed(() => { t(); if (first) b(); return 1; });
+    selfId = r.nodeId(C);
+    C();
+    r.onGraphMutation((op) => { if (op === 4) seen.push({ isTracking: r.isTracking(), owner: ownerTag(r, selfId) }); });
+    first = false; t.set(1); C();
+    return { seen, after: { isTracking: r.isTracking(), owner: ownerTag(r, selfId) } };
+}
+describe("A8b PIN: the op-4 onGraphMutation listener's context in the epilogue sever (kills SS-NOOBS)", () => {
+    it("[PIN] engine effect: two op-4 events (the sever, then the re-run that drops the listener's probe link), each isTracking true, owner self; links 2; 1 re-run on probe write", () => {
+        assert.deepEqual(a8bEffect(ME), { seen: [{ isTracking: true, owner: "self" }, { isTracking: true, owner: "self" }], links: 2, rerunOnProbeWrite: 1, after: { isTracking: false, owner: "undefined" } });
+    });
+    it("[PIN] engine computed: one op-4 event, isTracking true, owner self", () => {
+        assert.deepEqual(a8bComputed(ME), { seen: [{ isTracking: true, owner: "self" }], after: { isTracking: false, owner: "undefined" } });
+    });
 });
 
 // ======================================================================================================================================

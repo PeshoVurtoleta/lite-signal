@@ -613,7 +613,7 @@ describe("D-DELTA-1 and D-CS-7 (A9)", () => {
 
     // D-CS-7 kept createRoot's gen checks on the outer restore; the b202 search (mu-genrestore-search.mjs, shape i3) found a
     // killing shape, so MU-NOGENRESTORE (restore `currentOwner = pw; currentObserver = po;` without the `.gen ===` checks) is
-    // NO LONGER declared equivalent. C disposes itself from a scope fn (pinned, gen moves at release); with the gen checks the
+    // NO LONGER declared equivalent. C disposes itself from a scope fn (pinned, gen moves at dispose); with the gen checks the
     // restore drops the dead C, so reset() inside C reports the "(untrack)" suffix; the mutant restores the dead C and the
     // message loses it.
     // OWNERGENDROP (`currentOwner = pw;` alone, the observer gen test kept) survives test/120 and is declared EQUIVALENT by the same

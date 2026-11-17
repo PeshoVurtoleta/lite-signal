@@ -30,7 +30,7 @@ SEMANTIC (listed in run.mjs registration order)
   snapshot-torture         snapshot/restore clean-bit fuzz + fail-closed  (1.6.0+)
                            battery + D-A box flags / D-B guard / D-C sizing /
                            D-D not-captured + retention witness
-  scope-torture            createScope adoption + disposal-crash fuzz  (1.7.0+)
+  scope-torture            createScope adoption + disposal-crash fuzz  (1.6.0+)
   retrack-dispose-torture  dispose-during-retracking cursor hazard + seeded
                            disposal fuzz w/ survivor value + pool oracle
                            (hoisted from scope-torture so it runs from 1.4)
@@ -188,9 +188,9 @@ missing mark lane. Recommendation there: add a "compare lane" (op 11/12) so the
 short-circuit's benefit becomes a counted fact and its regression becomes
 catchable.
 
-FEATURE GATES: box/owner->1.5, snapshot/reset->1.6, scope->1.7, flush->1.8,
+FEATURE GATES: box/owner->1.5, snapshot/reset->1.6, scope->1.6, flush->1.8,
 cleanup-return->1.9, dispose->1.10. (Re-pinned +1 minor on 2026-10-10: 1.6.0
-ships without the candidate-line features, which move to 1.7.0+.)
+ships without the candidate-line features, which move to 1.7.0+; scope returned to 1.6.0 on 2026-11-17, D-CS-5, when createScope landed in canonical.)
 retrack-dispose, op-accounting, lifecycle, contract, interop, and all others:
 1.4.0+. Floors are declared per scenario in
 run.mjs and ENFORCED: at/above its floor a skip is a FAIL (--lenient downgrades);

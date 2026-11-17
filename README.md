@@ -111,7 +111,7 @@ No microtask between `B` and `I`. No promise, no `queueMicrotask`. Just call sta
 - **`signal(value, { equals? })`** -- root reactive cell. `set`, `peek`, `update`, `subscribe`.
 - **`computed(fn, { equals? })`** -- memoized derivation. Lazy. Pulls deps on read.
 - **`effect(fn, { scheduler? })`** -- side-effect runner. Returns a dispose function.
-- **`dispose(api)`** -- universal disposal for signals, computeds, and effect handles. Cross-registry calls are silent no-ops.
+- **`dispose(api)`** -- universal disposal for signals, computeds, and effect handles. A foreign signal, computed or box (another registry's) is a silent no-op; a function handle -- an effect handle or a `createScope` disposer from another registry -- is invoked and disposes its own node in its own registry.
 - **`batch(fn)`** -- defer effect flush until the outermost batch closes.
 - **`untrack(fn)`** -- read without subscribing.
 - **`isTracking()`** -- `true` iff a read right now would subscribe (for lazy-allocation wrappers).
@@ -262,6 +262,7 @@ import {
   signalBox, computedBox,       // 1.5.0 -- allocation-light, non-callable
   batch, untrack, onCleanup, isTracking,
   createRoot,                   // 1.5.0 -- detached ownership scope
+  createScope,                  // 1.6.0 -- detached ADOPTING scope with a disposer
   getOwner, runWithOwner,       // 1.5.0-beta.2 -- capture + restore ownership across async gaps
   // Registry / lifecycle
   createRegistry, setDefaultRegistry, dispose, destroy,
@@ -377,6 +378,25 @@ dispose();
 Runs `fn` in a **detached ownership scope** and returns whatever `fn` returns. Effects and computeds created directly inside `fn` are not adopted by the enclosing owner, so they survive the enclosing effect's re-runs and disposal -- there is no parent to auto-dispose them, so the caller is responsible (typically `fn` returns a disposer or the created handle). Both ownership *and* tracking are detached for the duration of `fn`'s direct body; inner effect/computed bodies still establish their own scopes as usual. Mirrors Solid's `createRoot` on the lifecycle axis.
 
 The problem it solves: lazily spawning a *long-lived* node from *inside* a consumer effect is otherwise a footgun -- the spawned node is adopted by the consumer, so the consumer's next re-run cascade-disposes it. That is the ownership model working as designed (owned children dispose with their parent); `createRoot` is the sanctioned opt-out. Any consumer that creates a watcher/subscription inside a reactive scope and expects it to outlive that scope wraps the spawn in `createRoot(() => effect(...))` -- `lite-query`'s query-watcher being the first in the ecosystem. The companion primitives `getOwner` / `runWithOwner` -- for capturing the current owner and restoring it across an async boundary -- ship in **1.5.0-beta.2**; see the next section.
+
+### createScope (1.6.0)
+
+```ts
+const result = createScope((dispose) => {
+  effect(() => { /* adopted by the scope */ });
+  computed(() => /* adopted too */ 0);
+  return dispose;                 // whatever fn returns comes back
+});
+result();                         // disposes the scope and everything fn created
+```
+
+`createScope(fn)` (top-level, and a method on every registry) runs `fn(dispose)` ONCE in a detached, untracked, **adopting** scope and returns what `fn` returns. Effects and computeds created while `fn` runs are owned by the scope; one call to `dispose` disposes them inside-out, cleanups included, and `onCleanup` inside `fn` registers on the scope. Plain signals / signalBoxes are never adopted (their creator disposes them). Where `createRoot` leaves the caller to dispose each node, `createScope` hands back one disposer for all of them.
+
+- **A root.** Created inside an effect, a computed, `runWithOwner` or another scope's `fn`, the scope survives that owner's re-run and disposal; an inner scope is disposed only by its own disposer.
+- **Untracked.** Reads in `fn`'s own body are not tracked and the scope never re-runs; put reactive reads in inner effect / computed bodies.
+- **Throws.** If `fn` throws, everything it created is disposed and the error is rethrown unchanged. A non-function `fn` throws a `TypeError` before anything is allocated.
+- **Backed by one effect node.** It counts as one effect in `stats()`, `snapshot()` records it as kind `"effect"`, and `restore()` needs a `fnsById` body for it like any effect. The disposer is idempotent and gen-guarded; once `createScope` has returned it resolves to the scope's node under `describe` / `nodeId` / `ownerOf` / `forEachOwned` and `dispose(api)`.
+- **Dispose while `fn` runs.** A `dispose` call made inside `fn` is recorded and honoured right after `fn` returns, before `createScope` returns: the scope and everything it created are disposed, their cleanups run, and `fn`'s value is still returned (a cleanup that throws during it propagates from `createScope` instead).
 
 ### getOwner / runWithOwner (1.5.0-beta.2)
 
@@ -523,7 +543,7 @@ dispose(c);   // computed -> same, also unlinks its upstreams
 dispose(e);   // effect handle -> identical to calling e()
 ```
 
-One function for all three primitives. Idempotent. Cross-registry calls are silent no-ops -- each registry holds a private `Symbol("node_ptr")` keyed on its own nodes, so passing a signal from registry A to `registry B.dispose()` won't corrupt either pool. Passing an unrelated value (`null`, `42`, `{}`) is also a safe no-op. Passing an arbitrary function invokes it (the effect-handle contract).
+One function for all three primitives. Idempotent. A foreign signal, computed or box is a silent no-op -- each registry holds a private `Symbol("node_ptr")` keyed on its own nodes, so passing a signal from registry A to `registry B.dispose()` won't corrupt either pool. A function handle (an effect handle or a `createScope` disposer from another registry) is invoked and disposes its own node in its own registry: `B.dispose(aEffectHandle)` disposes A's effect. Passing an unrelated value (`null`, `42`, `{}`) is also a safe no-op. Passing an arbitrary function invokes it (the effect-handle contract).
 
 The effect dispose handle (`const dispose = effect(...)`) is still a plain function -- you can call it directly. `dispose()` exists to unify the call site when you're managing a heterogeneous bag of reactive resources, which is the common case for component teardown and tests.
 
@@ -778,7 +798,7 @@ async function bootSequence() {
 }
 ```
 
-The promise never rejects once registered -- if the predicate never becomes truthy, the promise never settles (a predicate that throws on its first evaluation, at registration, rejects it with that error; a later throw surfaces from the write that triggered it and the promise stays pending). For timeout semantics use `Promise.race`:
+The promise never rejects once registered -- if the predicate never becomes truthy, the promise never settles. A predicate that throws on its first evaluation (at registration) rejects it with that error. One exception, as `effect()` documents: outside any batch or flush, if another body that evaluation ran (e.g. a computed it read) wrote a value the predicate had already read (its own writes are absorbed), the predicate re-runs at once and that re-run decides: a throw rejects with the re-run's error, a truthy result resolves, a falsy one drops the first error and the promise stays pending -- unless that same drain disposes the predicate's effect (before the re-run, which then does not run, or during or after a falsy one), which rejects with the first error. A later throw surfaces from the write (or the enclosing batch) that triggered it and the promise stays pending. For timeout semantics use `Promise.race`:
 
 ```js
 await Promise.race([
@@ -901,6 +921,7 @@ Four tiers, all reproducible.
 - **`23-owner-introspection.test.mjs`** -- 1.2.1 owner-tree introspection + effect-disposer regression (22 tests across 4 suites). `ownerOf`: undefined for top-level / garbage input / stale handle; returns the enclosing effect's descriptor for a child created inside an effect body. `forEachOwned`: no-op for handles with no owned children / garbage input / stale handle; iterates owned children as `{id, kind, value}` descriptors. Gen-guarded introspection (ABA fix): `nodeId` / `describe` / `hasObservers` return undefined / false for stale handles; `observeObservers` throws `TypeError`; `forEachObserver` / `forEachSource` are no-ops; descriptors returned by `describeNode` are themselves gen-stamped so a descriptor obtained pre-recycle correctly walks as a no-op post-recycle (the "descriptors are re-walkable handles" contract survives the guard). Plus the 1.2.1 effect-dispose-handle fix: passing the effect's disposer directly to `describe` / `nodeId` / `forEachSource` / `forEachOwned` / `ownerOf` / `hasObservers` works as a first-class introspection handle (pre-fix it was a bare closure and returned `undefined` for a *live* effect); after `fx()` dispose the same handle correctly goes stale on every entry point; the disposer's `NODE_GEN` mirrors the effect node's birthGen exactly.
 - **`24-signalbox.test.mjs`** -- the `signalBox` / `computedBox` allocation-light handle API, **activated in 1.5.0** (committed `{skip:true}` since 1.3.0, now running against the real implementation). 12 tests: box get/set/peek/update, `computedBox` derive + memoize, peek-does-not-track, subscribe fires-and-untracks, box<->callable interop both directions, batch coalescing (including set-then-revert net no-op), dispose with ABA-safety, the `equals` short-circuit, `computedBox.peek`, and the top-level helpers bound to the default registry.
 - **`27-create-root.test.mjs`** -- `createRoot` (1.5.0), the ownership escape hatch. A watcher spawned inside a consumer effect via `createRoot` survives the consumer's re-run (the exact `lite-query` lazy-watcher pattern); the contrast case confirms an *unwrapped* spawn is cascade-disposed; `createRoot` returns `fn`'s value, detaches tracking in `fn`'s direct body while inner effect bodies still track, and composes with box handles.
+- **`120-create-scope.test.mjs`** -- `createScope` (1.6.0): adoption and inside-out disposal, the root property, dispose-while-running, throw containment, the one-effect-node backing, and the mutant-killing pins for the engine change that added it.
 - **`28-run-with-owner.test.mjs`** -- `getOwner` / `runWithOwner` (1.5.0-beta.2), the re-attach companion. 16 tests, structured in three groups: basic shape (7 tests: undefined outside, effect/computed inside, restore-on-return, throw-safety, nesting), degradation (3 tests: null / undefined / signal-handle all fall through to rooted execution), and the three **hazard pins** that a raw-pointer implementation fails: (i) recycled-slot cascade -- capture, dispose owner, allocate an effect that reuses the pool slot, `runWithOwner(captured)` must not adopt into the recycled slot's new resident; (ii) corpse adoption -- capture, dispose owner but not-yet-recycled, `runWithOwner(captured, () => effect(...))` must not crash with `RangeError` in the cleanup recursion; (iii) composed -- both together, continuation must survive stranger re-runs AND disposal. All three fail against the naive `getOwner() { return currentOwner; }` shape (empirically verified against a 1.5.0-beta engine patched with the raw-pointer alternative -- `harness/owner-hazard-repro.mjs`); all three pass with the `describeNode` gen-stamped handle + `liveNode` ABA guard that ships.
 - **`25-devtools-real-boot.test.mjs`** -- Devtools/Studio contract (10 tests). Boots the actual `Devtools.js` against the 1.5.0 engine and exercises all 19 Devtools exports plus the 10 symbols Studio imports from Devtools. Pins the ghost contract: heavy introspection (graph walk, owner-tree, observer descriptors) adds **zero** nodes to the live graph. Catches the real-rig failure mode where importing the package by its own name from a repo whose `package.json` declares `name: "@zakkster/lite-signal"` resolves to the published build instead of the local engine.
 - **`26-free-list-invariant.test.mjs`** -- the 1.2.2 audit's cleanliness pins (3 invariant tests + 1 targeted coverage test). Asserts directly -- by inspecting freshly-allocated nodes through the documented `describe()` -> `NODE_PTR` introspection protocol -- that the `ReactiveNode` constructor and the fresh-pool-growth path initialize the ten fields the audit removed from `createNode` to identical values, so the deleted writes were defending against a state the engine cannot produce on a clean free list. The 4th test covers the swallow-on-self-dispose-then-throw branch in `pullComputed` (the path that lifted branch coverage from 98.07% to 98.43%).
@@ -955,8 +976,8 @@ the gate, so a lane that has gone blind fails loudly instead of passing.
 
 The file guards on **both** `--expose-gc` and `--max-semi-space-size=4`; without
 them it emits one loud named skip. `node:test`'s absolute leaf tally is
-node-version-sensitive. Measured on the unreleased 1.6.0-dev tree, not the 1.5.2 release, on node v26.8.2: plain `npm test` (2026-11-17, b200, one file per process, after AUD-F G1 / G2, f3a3153) =
-4110 tests / 4095 pass / 0 fail / 15 skip; `npm run test:gc` (2026-11-08, b181, not re-measured since) = 3588 tests / 3586 pass / 0 fail /
+node-version-sensitive. Measured on the unreleased 1.6.0-dev tree, not the 1.5.2 release, on node v26.8.2: plain `npm test` (2026-11-17, b204, one file per process, HEAD d46b4dd plus the b204 docs / test edits) =
+4159 tests / 4144 pass / 0 fail / 15 skip; `npm run test:gc` (2026-11-08, b181, not re-measured since) = 3588 tests / 3586 pass / 0 fail /
 2 skip (7 skip on CI: five more rows need gitignored local files or node v26.8.2). Thresholds are
 lite-perf-gate defaults, untouched -- a claimed-zero path that cannot meet them
 is a finding, not a config knob.
@@ -987,13 +1008,13 @@ engine throughput -- `bench/benchmark.mjs` remains the canonical perf harness.
 
 Every scenario feature-detects and **skips cleanly** below the engine version
 that introduces its feature, so the whole set is safe to ship on the 1.5.0 engine
-and stays green from 1.4.x forward. On this engine the runner executes **20
-semantic scenarios** -- `snapshot-torture` and `reset-torture` (both 1.6.0) plus the 18 of the 1.5.x engine, including `owner-torture`, `error-torture`,
+and stays green from 1.4.x forward. On this engine the runner executes **21
+semantic scenarios** -- `scope-torture`, `snapshot-torture` and `reset-torture` (all 1.6.0) plus the 18 of the 1.5.x engine, including `owner-torture`, `error-torture`,
 `deep-chain-torture`, `zerogc-torture` (its `churn-box` signalBox lane),
 `introspect-torture` and `lifecycle-torture`, which EXECUTE here for the first
 time via signalBox and the getOwner/runWithOwner/createRoot surface -- and
-reports a clean SKIP for the four later-version ones (`scope-torture` 1.7.0,
-`flush-torture` 1.8.0, `cleanup-return-torture` 1.9.0, `dispose-torture` 1.10.0).
+reports a clean SKIP for the three later-version ones (`flush-torture` 1.8.0,
+`cleanup-return-torture` 1.9.0, `dispose-torture` 1.10.0).
 
 Runner verdict rules (AUD-H2, pinned by `test/111`): a scenario passes only with exit 0 AND a
 `  PASS: ` line on its stdout (an exit 0 without one fails as "exit 0 without a PASS: line"). Exit 77 is a
@@ -1034,7 +1055,7 @@ asserting nothing.
 #### `semantic` -- deterministic, fast, asserts on **meaning**
 
 Run these on every commit. They pin values, wakeups, work and ordering. The nine
-without a version tag run on the 1.5.0 engine; the four tagged `1.7.0+`/`1.8.0+`/
+without a version tag run on the 1.5.0 engine; the four tagged `1.6.0+`/`1.8.0+`/
 `1.9.0+`/`1.10.0+` feature-detect and report a clean SKIP here, then activate on
 the engine version that introduces their feature.
 
@@ -1049,7 +1070,7 @@ the engine version that introduces their feature.
 | `async-torture` | `watch` / `when` / `whenAsync` contracts: the `Object.is` projection guard, correct `oldValue`, stop-from-callback, once-then-auto-dispose, plus a 300-seed differential storm against an independent shadow |
 | `capacity-torture` | the fail-closed pool boundary: exact node/link ceilings, `CapacityError` on both pools, re-throw-on-read after a mid-build overflow (no partial value escapes), and `grow` crossing the same boundary without throwing |
 | `op-accounting` | structural work counted from the engine's own `onGraphMutation` opcode lane (op 1-5) instead of wall-clock: op5 identity, equality cutoff, link/node balance across rewiring, laziness, and a 400-seed op5-vs-wrapper differential |
-| `scope-torture` (1.7.0+) | `createScope` adoption + the disposal-crash repro and its 300-seed fuzz; `runWithOwner` re-attachment into a scope; pool balance over 200 scope rounds |
+| `scope-torture` (1.6.0+) | `createScope` adoption + the disposal-crash repro and its 300-seed fuzz; `runWithOwner` re-attachment into a scope; pool balance over 200 scope rounds |
 | `flush-torture` (1.8.0+) | `flushStrategy` eager/sab/manual convergence via a cross-strategy differential, per-strategy scheduling, and the `.subscribe()` contract under each |
 | `cleanup-return-torture` (1.9.0+) | an effect's returned cleanup: timing, compose order after imperative `onCleanup`, the self-dispose guard, and a 400-seed differential vs `onCleanup(fn)` as the last statement |
 | `dispose-torture` (1.10.0+) | `Symbol.dispose` / `using` on lifecycle objects: the five stamped sites, the callable-exclusion assertion, per-site equivalence, idempotence, prototype-stamping for boxes |
