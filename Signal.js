@@ -1126,8 +1126,10 @@ export function createRegistry(config) {
      * nothing it set is stranded if this throws or overflows. `stale` is the frame's live
      * cursor at its end: the first link its run did not re-visit (non-null; the caller tests).
      * The stale-tail walk runs user code (op-4 hook, onDisconnect), so this re-enters the frame
-     * as the walk always saw it: cursor push (the outer cursor saved on cursorStack, as the
-     * bodies do), live cursor = stale, observer = owner = node, FLAG_COMPUTING set last before
+     * as the walk always saw it: cursor push: cursorDepth = d + 1; the outer cursor already sits in
+     * cursorStack[d] (both callers restored the live cursor from it one statement earlier, no user
+     * code between), so the push alone puts that slot in repairCursor's scan (slots d..0) and keeps a nested frame, which saves into slot d + 1, off it; live
+     * cursor = stale, observer = owner = node, FLAG_COMPUTING set last before
      * the `try` (G1-a: markDownstream marks or absorbs a walk callback's write exactly as
      * inside the body, and a re-run of the node is a CycleError). The `finally` unwinds on both arms.
      * Throw arm only (F5): the throw skips the frame's stale-read tail (effectTail /
@@ -1153,7 +1155,6 @@ export function createRegistry(config) {
         const g = node.gen;
         const po = currentObserver, pw = currentOwner;
         const d = cursorDepth;
-        if (d !== 0) cursorStack[d] = activeObserverCurrentDep;
         cursorDepth = d + 1;   // Smi, as in the frames
         activeObserverCurrentDep = stale;
         currentObserver = node;
@@ -3923,6 +3924,33 @@ export function createRegistry(config) {
         const g = globalVersion, m = g < -0x40000001 ? (g + 0x40000002) + 0x7FFFFFFF : g - 0x3FFFFFFF;
         node.evalVersion = m === 0 ? -1 : m;
     }
+    // createScope (1.6.0, D-CS-1..4). Cold, declared late, built only from existing context slots
+    // (effect, currentOwner, currentObserver): naming createRoot / untrack here would context-allocate
+    // them and shift 18 bodies' slot operands (b201 CS-SLOT). The restore is createRoot's S10 idiom.
+    function createScope(fn) {
+        if (typeof fn !== "function") throw new TypeError("[lite-signal] createScope: fn must be a function");
+        let stop;
+        let result;
+        let requested = false;   // D-CS-2: d() while fn runs (stop not assigned yet)
+        const dispose = function dispose() { if (stop !== undefined) stop(); else requested = true; };
+        const pw = currentOwner, pwg = pw !== null ? pw.gen : 0;
+        const po = currentObserver, pg = po !== null ? po.gen : 0;
+        currentOwner = null;
+        currentObserver = null;
+        try {
+            stop = effect(function scopeOwner() {
+                currentObserver = null;   // untrack fn's direct reads; executeEffect's finally restores it
+                result = fn(dispose);
+            });
+        } finally {
+            currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
+            currentObserver = (po !== null && po.gen === pg) ? po : null;
+        }
+        dispose[NODE_PTR] = stop[NODE_PTR];
+        dispose[NODE_GEN] = stop[NODE_GEN];
+        if (requested) stop();
+        return result;
+    }
     const api = {
         getOwner,
         runWithOwner,
@@ -3950,7 +3978,8 @@ export function createRegistry(config) {
         describe,
         onGraphMutation,
         snapshot,
-        restore
+        restore,
+        createScope
     };
     // Private rehydration hook: reachable by restore() via REHYDRATE.get(fresh)
     // but held OFF the public object in a module-scope WeakMap, so a live
@@ -4003,6 +4032,9 @@ export function untrack(fn) {
 }
 export function createRoot(fn) {
     return defaultRegistry.createRoot(fn);
+}
+export function createScope(fn) {
+    return defaultRegistry.createScope(fn);
 }
 
 /**

@@ -428,6 +428,30 @@ export interface Registry {
      */
     createRoot<T>(fn: () => T): T;
     /**
+     * Run `fn(dispose)` ONCE in a detached, untracked, ADOPTING scope and return what `fn` returns.
+     * Effects and computeds created while `fn` runs are owned by the scope and are disposed (inside-out,
+     * cleanups included) by one call to `dispose`; onCleanup inside `fn` registers on the scope.
+     * Plain signals / signalBoxes are never adopted (the creator disposes them). The scope is a ROOT:
+     * created inside an effect, a computed, runWithOwner or another scope's `fn`, it survives that
+     * owner's re-run and disposal (the keyed-list reconciler property). Reads in `fn`'s own body are
+     * untracked and the scope never re-runs; put reactive reads in inner effect / computed bodies.
+     * If `fn` throws, everything it created is disposed and the error is rethrown unchanged.
+     * The scope is backed by one effect node: it counts as one effect in stats(), snapshot() records
+     * it as kind "effect" with no deps, and restore() needs a fnsById body for it like any effect.
+     * `dispose` is idempotent, gen-guarded (a stale call never touches a recycled slot) and, once
+     * createScope has returned, resolves to the scope's node under describe / nodeId / ownerOf /
+     * forEachOwned and dispose(api).
+     * A `dispose` call made while `fn` is still running is recorded and honoured right after `fn`
+     * returns, before createScope returns: the scope and everything `fn` created are disposed, their
+     * cleanups run, and `fn`'s value is still returned (a requested disposal is never dropped; a cleanup that throws during it propagates from createScope instead).
+     * A non-function `fn` throws a TypeError ("[lite-signal] createScope: fn must be a function")
+     * before anything is allocated (stats() unchanged).
+     * The scope is always a root, also inside another scope's `fn` and inside runWithOwner: an inner
+     * scope is disposed only by its own disposer, never by the enclosing scope's.
+     * @throws {TypeError} when `fn` is not a function.
+     */
+    createScope<T>(fn: (dispose: () => void) => T): T;
+    /**
      * Return the currently-active owner as an opaque, gen-stamped handle
      * (`undefined` if called outside any effect/computed body). Companion to
      * {@link runWithOwner}: capture the current lifecycle scope now, restore
@@ -753,6 +777,8 @@ export function signalBox<T>(initial: T, opts?: SignalOptions<T>): SignalBox<T>;
 export function computedBox<T>(fn: () => T, opts?: ComputedOptions<T>): ComputedBox<T>;
 /** Run `fn` in a detached ownership scope (1.5.0), bound to the default registry. See {@link Registry.createRoot}. */
 export function createRoot<T>(fn: () => T): T;
+/** Run `fn(dispose)` in a detached, adopting scope, bound to the default registry. See {@link Registry.createScope}. */
+export function createScope<T>(fn: (dispose: () => void) => T): T;
 /**
  * An owner handle -- an opaque descriptor returned by {@link getOwner},
  * safe to hold across async boundaries. A stale, null, or non-tracker

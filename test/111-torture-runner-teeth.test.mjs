@@ -105,7 +105,7 @@ test('R1 (A1): package 1.5.2 + reset/snapshot exports dropped -> exit 1, both 1.
     const d = copyTree();
     setPkgVersion(d, '1.5.2');
     edit(d, 'Signal.js', '        reset,\n        isTracking,', '        isTracking,');
-    edit(d, 'Signal.js', '        snapshot,\n        restore\n    };', '    };');
+    edit(d, 'Signal.js', '        snapshot,\n        restore,\n        createScope\n    };', '        createScope\n    };');
     const r = runner(d, ['reset-torture', 'snapshot-torture']);
     assert.equal(r.status, 1, r.out + r.err);
     assert.match(r.summary, /^0 passed, 0 skipped, 2 failed$/);
@@ -120,7 +120,7 @@ test('R1 control: same mutant with the 1.6.0 declarations removed from Signal.d.
     const d = copyTree();
     setPkgVersion(d, '1.5.2');
     edit(d, 'Signal.js', '        reset,\n        isTracking,', '        isTracking,');
-    edit(d, 'Signal.js', '        snapshot,\n        restore\n    };', '    };');
+    edit(d, 'Signal.js', '        snapshot,\n        restore,\n        createScope\n    };', '        createScope\n    };');
     stripDecl160(d);
     const r = runner(d, ['reset-torture', 'snapshot-torture']);
     assert.equal(r.status, 0, r.out + r.err);

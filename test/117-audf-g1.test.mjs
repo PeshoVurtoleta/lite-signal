@@ -301,7 +301,7 @@ describe("A9 PIN: self-dispose mid-body after dropping a dep", () => {
 // HALF-FREED classifier: stats().activeLinks must equal the per-node sums of forEachSource and of forEachObserver.
 // ======================================================================================================================================
 function tri(r, hs) { let src = 0, obs = 0; for (const h of hs) { r.forEachSource(h, () => { src++; }); r.forEachObserver(h, () => { obs++; }); } return { src, obs, links: r.stats().activeLinks }; }
-// (a) E reads t, C, z, w. Run 2 (batch: t, s): E's body reads C at cursor depth 1 -> C re-runs and drops b -> severStale(C) at d = 1 saves E's cursor (the link
+// (a) E reads t, C, z, w. Run 2 (batch: t, s): E's body reads C at cursor depth 1 -> C re-runs and drops b -> severStale(C) at d = 1 pushes depth 2 over E's cursor (already in cursorStack[1], restored there by C's frame; the link
 // to z, the next after C); b's 1->0 hook disposes z, freeing E's link to z while it is E's saved cursor. E then does not read z (gone) and reads w.
 function a10a(M) {
     const r = M.createRegistry();
