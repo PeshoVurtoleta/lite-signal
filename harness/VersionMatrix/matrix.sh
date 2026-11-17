@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # Capture manifest versions same-host (cold per version x workload), then gate.
-#   bash matrix.sh gate <candidate-version>   # floor + rolling + candidate, then gate.mjs
+#   bash matrix.sh gate <candidate-version>   # floor + rolling + candidate, then judge (CONTROL_LABEL refused: exit 2)
 #   bash matrix.sh calibrate                  # rolling captured twice, then calibrate.mjs
+#   bash matrix.sh judge <candidate-label>    # verdict only: gate.mjs on the candidate (+ CONTROL_LABEL)
+# gate-self optional sabotage control: CONTROL_LABEL=<label> CONTROL_ENGINE=<engine file>.
+# Exit codes: 0 PASS, 1 FAIL, 3 NO EVIDENCE (gate.mjs); 4 the control did not trip (NO
+# VERDICT); 5 harness error (swap / npm pack / run.mjs / aggregate failed -- never a 1);
+# 2 usage error (missing argument, CONTROL_LABEL in gate mode) -- never a 1.
 set -euo pipefail
+set -E
+trap 'exit 5' ERR
 cd "$(dirname "$0")"
 
 FLOOR=$(node -p "require('./manifest.json').floor")
@@ -33,6 +40,21 @@ capture () {  # capture <label> [version]  -- REPS cold processes per workload, 
   for k in $(seq 1 "$REPS"); do for w in $WORKLOADS; do node run.mjs "$label" "$w" --rep="$k" >/dev/null; done; done
   node aggregate.mjs "$label"
   hash_engine "$label" "node_modules/@zakkster/lite-signal/Signal.js"
+}
+
+# judge <candidate-label>: the candidate's gate.mjs status, unless CONTROL_LABEL is set
+# and the control does NOT trip (gate.mjs --expect-fail non-zero) -> exit 4, whatever
+# the candidate said: a run that cannot see a known regression judges nothing.
+judge () {
+  local cand="$1"; local cst=0
+  node gate.mjs "$cand" || cst=$?
+  if [ -n "${CONTROL_LABEL:-}" ]; then
+    if ! node gate.mjs "$CONTROL_LABEL" --expect-fail; then
+      echo "judge: control $CONTROL_LABEL did not trip the gate -- NO VERDICT (exit 4) (candidate gate exit $cst)" >&2
+      exit 4
+    fi
+  fi
+  exit "$cst"
 }
 
 # INTERLEAVED gate capture: sequential per-label blocks (floor, then rolling,
@@ -66,20 +88,32 @@ capture_interleaved () {  # capture_interleaved <label1> <label2> <label3>
 
 case "${1:-}" in
   gate)
-    CAND="${2:?usage: matrix.sh gate <candidate-version>}"
+    [ -n "${2:-}" ] || { echo "usage: matrix.sh gate <candidate-version>" >&2; exit 2; }
+    CAND="$2"
+    # D-b208-3: gate mode captures no control, so a CONTROL_LABEL here would be silently
+    # ignored (a verdict with no control). Refuse BEFORE any capture or npm.
+    if [ -n "${CONTROL_LABEL:-}" ]; then
+      echo "matrix.sh gate: CONTROL_LABEL=$CONTROL_LABEL refused -- gate mode runs no control; gate-self is the controlled run (exit 2)" >&2; exit 2
+    fi
     echo "capturing floor=$FLOOR rolling=$ROLLING candidate=$CAND (same host, INTERLEAVED rounds, cold per workload)..."
     capture_interleaved "$FLOOR" "$ROLLING" "$CAND"
-    node gate.mjs "$CAND"
+    judge "$CAND"
     ;;
   gate-self)
-    CANDLABEL="${2:?usage: matrix.sh gate-self <candidate-label> <engine-path>}"
-    ENGINE="${3:?usage: matrix.sh gate-self <candidate-label> <engine-path>}"
-    echo "capturing floor=$FLOOR rolling=$ROLLING (published) + candidate=$CANDLABEL (current tree: $ENGINE), INTERLEAVED rounds..."
-    rm -rf "baselines/$FLOOR" "baselines/$ROLLING" "baselines/$CANDLABEL"
+    [ -n "${2:-}" ] || { echo "usage: matrix.sh gate-self <candidate-label> <engine-path>" >&2; exit 2; }
+    [ -n "${3:-}" ] || { echo "usage: matrix.sh gate-self <candidate-label> <engine-path>" >&2; exit 2; }
+    CANDLABEL="$2"; ENGINE="$3"
+    CTL="${CONTROL_LABEL:-}"
+    if [ -n "$CTL" ] && { [ -z "${CONTROL_ENGINE:-}" ] || [ ! -f "$CONTROL_ENGINE" ] || [ "$CTL" = "$FLOOR" ] || [ "$CTL" = "$ROLLING" ] || [ "$CTL" = "$CANDLABEL" ] || ! [[ "$CTL" =~ ^[a-z0-9_][a-z0-9._-]*$ ]]; }; then
+      echo "gate-self: CONTROL_LABEL=$CTL needs CONTROL_ENGINE=<existing engine file> (got '${CONTROL_ENGINE:-}') and must differ from floor $FLOOR / rolling $ROLLING / candidate $CANDLABEL" >&2; exit 5
+    fi
+    echo "capturing floor=$FLOOR rolling=$ROLLING (published) + candidate=$CANDLABEL (current tree: $ENGINE)${CTL:+ + control=$CTL ($CONTROL_ENGINE)}, INTERLEAVED rounds..."
+    rm -rf "baselines/$FLOOR" "baselines/$ROLLING" "baselines/$CANDLABEL" ${CTL:+"baselines/$CTL"}
     # primers (discarded): absorb the cold-start penalty for all three sources
     swap "$FLOOR";   for w in $WORKLOADS; do node run.mjs "$FLOOR" "$w" --rep=0 >/dev/null 2>&1 || true; done
     swap "$ROLLING"; for w in $WORKLOADS; do node run.mjs "$ROLLING" "$w" --rep=0 >/dev/null 2>&1 || true; done
     for w in $WORKLOADS; do node run.mjs "$CANDLABEL" "$w" --engine="$ENGINE" --rep=0 >/dev/null 2>&1 || true; done
+    if [ -n "$CTL" ]; then for w in $WORKLOADS; do node run.mjs "$CTL" "$w" --engine="$CONTROL_ENGINE" --rep=0 >/dev/null 2>&1 || true; done; rm -f "baselines/$CTL"/*.rep0.json; fi
     rm -f "baselines/$FLOOR"/*.rep0.json "baselines/$ROLLING"/*.rep0.json "baselines/$CANDLABEL"/*.rep0.json
     # interleaved rounds: every label samples every time window, so host drift
     # (thermal ramp, background load) cancels in the comparison instead of
@@ -88,17 +122,24 @@ case "${1:-}" in
       swap "$FLOOR";   for w in $WORKLOADS; do node run.mjs "$FLOOR" "$w" --rep="$k" >/dev/null; done
       swap "$ROLLING"; for w in $WORKLOADS; do node run.mjs "$ROLLING" "$w" --rep="$k" >/dev/null; done
       for w in $WORKLOADS; do node run.mjs "$CANDLABEL" "$w" --engine="$ENGINE" --rep="$k" >/dev/null; done
+      if [ -n "$CTL" ]; then for w in $WORKLOADS; do node run.mjs "$CTL" "$w" --engine="$CONTROL_ENGINE" --rep="$k" >/dev/null; done; fi
     done
     node aggregate.mjs "$FLOOR"; node aggregate.mjs "$ROLLING"; node aggregate.mjs "$CANDLABEL"
+    if [ -n "$CTL" ]; then node aggregate.mjs "$CTL"; fi
     swap "$FLOOR";   hash_engine "$FLOOR" "node_modules/@zakkster/lite-signal/Signal.js"
     swap "$ROLLING"; hash_engine "$ROLLING" "node_modules/@zakkster/lite-signal/Signal.js"
     hash_engine "$CANDLABEL" "$ENGINE"
-    node gate.mjs "$CANDLABEL"
+    if [ -n "$CTL" ]; then hash_engine "$CTL" "$CONTROL_ENGINE"; fi
+    judge "$CANDLABEL"
+    ;;
+  judge)
+    [ -n "${2:-}" ] || { echo "usage: matrix.sh judge <candidate-label>" >&2; exit 2; }
+    judge "$2"
     ;;
   calibrate)
     echo "capturing $ROLLING twice for self-noise..."
     capture "$ROLLING"; capture "${ROLLING}__b" "$ROLLING"
     node calibrate.mjs "$ROLLING" "${ROLLING}__b"
     ;;
-  *) echo "usage: bash matrix.sh [gate <candidate-version> | gate-self <label> <engine-path> | calibrate]"; exit 2;;
+  *) echo "usage: bash matrix.sh [gate <candidate-version> | gate-self <label> <engine-path> | judge <label> | calibrate]"; exit 2;;
 esac

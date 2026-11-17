@@ -77,8 +77,30 @@ Graphs are sized under lite-signal's default 1024-node pool cap; frame cost is s
     bash matrix.sh gate-self <label> <path>   # current-tree candidate (engine path) vs floor + rolling
     node diff.mjs                             # diagnostic table over committed baselines -> matrix-report.json
     node gate.mjs <label>                     # gate over already-captured baselines (exit 1 on regression)
+    bash matrix.sh judge <label>              # verdict only, over already-captured baselines
+    node gate.mjs <label> --expect-fail       # control mapping: FAIL 1 -> 0; PASS 0 / NO EVIDENCE 3 -> 4; 2 unchanged
 
 `REPS=5` (env) controls the median sample count.
+
+**Optional sabotage control (gate-self).** `CONTROL_LABEL=<label> CONTROL_ENGINE=<engine file> bash matrix.sh gate-self <label> <path>`
+also captures a known-regressed engine under `<label>`, interleaved with the other sources, and
+judges it with `gate.mjs --expect-fail`. A run that cannot see a known regression judges
+nothing: if the control does not trip the gate, the run exits 4 (NO VERDICT) whatever the
+candidate said. A control config is refused with exit 5 when `CONTROL_ENGINE` is missing or
+not an existing file, when the label equals floor / rolling / the candidate label, or when the
+label does not match `^[a-z0-9_][a-z0-9._-]*$`. `matrix.sh gate` refuses `CONTROL_LABEL` with
+exit 2 (it captures no control); gate-self is the controlled run.
+
+**`matrix.sh` exit codes.**
+
+| Code | Meaning |
+|---|---|
+| 0 | PASS |
+| 1 | FAIL: the gate verdict when stderr shows "GATE FAILED"; a gate.mjs crash (e.g. an unparsable baseline) also exits 1 -- without "GATE FAILED" treat it as a harness error |
+| 2 | usage error: missing args, unknown mode, `gate` + `CONTROL_LABEL` |
+| 3 | NO EVIDENCE (recapture) |
+| 4 | the control did not trip: NO VERDICT |
+| 5 | harness error: swap / npm pack / run.mjs / aggregate failure, a `calibrate.mjs` crash under `matrix.sh calibrate`, a bad control config |
 
 ## Two roles for `baselines/`
 

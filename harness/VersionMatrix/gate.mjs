@@ -11,6 +11,21 @@ const manifest = JSON.parse(readFileSync('./manifest.json', 'utf8'));
 const candidate = process.argv.slice(2).filter((a) => !a.startsWith('--'))[0];
 if (!candidate) { console.error('usage: node gate.mjs <candidate-label>'); process.exit(2); }
 
+// --expect-fail (b208, PLAN-PD-B task 2): judge a SABOTAGE CONTROL label. A control
+// carries a known regression, so it MUST trip the gate: verdict FAIL (1) -> exit 0;
+// PASS (0) or NO EVIDENCE (3) -> exit 4 (control blind: this capture could not see a
+// known regression, so no verdict it gives is evidence). matrix.sh judge reads it.
+// Without the flag every exit code and every stderr byte is unchanged.
+const EXPECT_FAIL = process.argv.slice(2).includes('--expect-fail');
+const verdict = (code) => {
+    if (EXPECT_FAIL) {
+        const tripped = code === 1;
+        console.error(`expect-fail: control ${candidate} gate exit ${code} -> ${tripped ? 'exit 0 (control tripped)' : 'exit 4 (CONTROL BLIND: the known regression was not seen)'}`);
+        process.exit(tripped ? 0 : 4);
+    }
+    process.exit(code);
+};
+
 const { floor, rolling, workloads } = manifest;
 const TF = manifest.tolerances.floor, TR = manifest.tolerances.rolling;
 const load = (v, w) => { const p = `./baselines/${v}/${w}.json`; return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null; };
@@ -69,7 +84,7 @@ for (const w of workloads) {
 }
 if (noEvidence) {
     console.error(`\nGATE REFUSED (${noEvidence} unstable or missing capture(s)) -- RECAPTURE, do not treat as regression`);
-    process.exit(3);
+    verdict(3);
 }
 
 let failed = 0;
@@ -89,6 +104,6 @@ for (const w of workloads) {
     }
 }
 console.error('');
-if (failed) { console.error(`GATE FAILED (${failed} workload(s)) -- publish should abort`); process.exit(1); }
+if (failed) { console.error(`GATE FAILED (${failed} workload(s)) -- publish should abort`); verdict(1); }
 console.error('GATE PASSED');
-process.exit(0);
+verdict(0);
