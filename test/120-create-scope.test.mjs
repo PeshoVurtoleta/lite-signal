@@ -12,11 +12,15 @@
  * Row labels (probe ids R1..R26 in the titles). Named mutants a row kills are in its title / comment:
  * MU-NOUNTRACK, MU-WRAPCALLSNOTHING, MU-NODETACH, MU-NOSTAMP, MU-NOOUTERRESTORE, MU-NOOWNERRESTORE, DEFERDROP,
  * DEFERDROP-W, HONOURINTRY, FNCHECKDROP, FNCHECKLATE; D-DELTA-1 text rows (SS-NOPUSH is test/117 A10, unchanged).
+ * b205 D-SCOPEAUD block also kills: STAMPSAFE-NOSTOP, STAMPSAFE-SWALLOW (A1), M-NOPRENULLOBS (A4). STAMPSAFE-PTRONLY, -NEWTE,
+ * -REORDER (A7). STAMPSAFE-DOUBLESTOP and
+ * STAMPSAFE-DOUBLESTOP2 are EQUIVALENT (stop() is one-shot: the second call returns at the disposed flag); A3 pins that outcome.
  * Nothing timed; no GC-count assertions (retention is asserted by node counts only).
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const ENG = process.env.CS_ENGINE || new URL("../Signal.js", import.meta.url).pathname;
@@ -628,5 +632,181 @@ describe("D-DELTA-1 and D-CS-7 (A9)", () => {
         });
         C();
         assert.equal(msg, "[lite-signal] reset: graph not settled (a computed / effect body is running (untrack))");
+    });
+});
+
+describe("D-SCOPEAUD (b205: scope-audit F1 / F2 / F4 / F5)", () => {
+    // Oracle: .handoff/cs/b205/ASSERTIONS-U1.md A1-A6 (PROBED values, node v26.8.2; frozen 217a22e 2141cf2f vs the
+    // PROTO-STAMPSAFE tail). Cleanup runs once (cl), live = activeNodes delta vs before the call.
+    const KINDS = { freeze: Object.freeze, seal: Object.seal, preventExtensions: Object.preventExtensions };
+    // One case: fn registers an effect + a counting cleanup (optionally throwing CE), locks the disposer, optionally calls d().
+    const run = (kind, inFnD, cleanupThrows) => {
+        const r = R(); const b = r.stats().activeNodes; const CE = new Error("cl");
+        let cl = 0, d0, ownerH, caught = null, ret = "unset";
+        try {
+            ret = r.createScope((d) => {
+                d0 = d; ownerH = r.getOwner(); r.effect(() => {});
+                r.onCleanup(() => { cl++; if (cleanupThrows) throw CE; });
+                if (kind) KINDS[kind](d);
+                if (inFnD) d();
+                return 7;
+            });
+        } catch (e) { caught = e; }
+        const t = { r, b, CE, caught, ret, d0, ownerH, cl: () => cl };
+        t.live = r.stats().activeNodes - b;
+        return t;
+    };
+    const live = (t) => t.r.stats().activeNodes - t.b;
+
+    for (const kind of Object.keys(KINDS)) {
+        it("A1 [" + kind + "] disposer made non-extensible (in-fn d() absent AND present): createScope throws a TypeError, the scope is torn down once (kills STAMPSAFE-NOSTOP, STAMPSAFE-SWALLOW)", () => {
+            for (const inFnD of [false, true]) {
+                const t = run(kind, inFnD, false);
+                const tag = kind + " inFnD=" + inFnD;
+                assert.ok(t.caught instanceof TypeError, tag + ": TypeError expected, got " + t.caught);
+                assert.notEqual(t.caught.message, TYPE_MSG, tag);
+                assert.equal(t.ret, "unset", tag + ": fn's 7 not returned");
+                assert.equal(t.cl(), 1, tag + ": cleanup ran once");
+                assert.equal(t.live, 0, tag + ": live");
+                t.d0();
+                assert.deepEqual([live(t), t.cl()], [0, 1], tag + ": afterD");
+                t.r.dispose(t.d0);
+                assert.deepEqual([live(t), t.cl()], [0, 1], tag + ": afterDispose");
+                assert.equal(t.r.describe(t.d0), undefined, tag);
+                balanced(t.r);
+            }
+        });
+    }
+
+    it("A2 [KNOWN] frozen disposer + throwing cleanup (in-fn d() absent and present): the cleanup's CE wins (the TypeError is lost), the owner stays live, d() / dispose(d) no-ops, the getOwner() handle finishes it", () => {
+        for (const inFnD of [false, true]) {
+            const t = run("freeze", inFnD, true);
+            const tag = "inFnD=" + inFnD;
+            assert.equal(t.caught, t.CE, tag + ": CE propagates");
+            assert.equal(t.ret, "unset", tag);
+            assert.equal(t.cl(), 1, tag);
+            assert.equal(t.live, 1, tag + ": live");
+            t.d0();
+            assert.deepEqual([live(t), t.cl()], [1, 1], tag + ": afterD (stop is one-shot)");
+            t.r.dispose(t.d0);
+            assert.deepEqual([live(t), t.cl()], [1, 1], tag + ": afterDispose (disposer never stamped)");
+            assert.equal(t.r.describe(t.d0), undefined, tag);
+            t.r.dispose(t.ownerH);
+            assert.equal(live(t), 0, tag + ": getOwner() handle finishes it");
+        }
+    });
+
+    it("A3 requested stop + throwing cleanup (not frozen): CE propagates, the stop is one-shot (STAMPSAFE-DOUBLESTOP / -DOUBLESTOP2 are EQUIVALENT: the second stop() returns at the disposed flag; this row pins the one-shot outcome), dispose(d) then finishes it", () => {
+        const t = run(null, true, true);
+        assert.equal(t.caught, t.CE);
+        assert.equal(t.ret, "unset");
+        assert.equal(t.cl(), 1);
+        assert.equal(t.live, 1);
+        t.d0();
+        assert.deepEqual([live(t), t.cl()], [1, 1], "afterD: one-shot, no second cleanup");
+        t.r.dispose(t.d0);
+        assert.deepEqual([live(t), t.cl()], [0, 1], "afterDispose: the stamp landed (K-4)");
+        assert.equal(t.r.describe(t.d0), undefined);
+    });
+
+    // F4: kills M-NOPRENULLOBS (the `currentObserver = null;` before effect() in createScope dropped; audit: seen [true], links 2, reruns 1).
+    it("A4 [PIN] the scope owner is created untracked: an op-1 listener inside a consumer effect sees isTracking false and its read does not subscribe the consumer (kills M-NOPRENULLOBS)", () => {
+        const r = R(); const probe = r.signal(0), t = r.signal(0); const seen = []; let runs = 0, d0, listen = false;
+        r.onGraphMutation((op) => { if (listen && op === 1) { seen.push(r.isTracking()); probe(); } });
+        const stop = r.effect(() => { t(); runs++; if (runs === 1) { listen = true; r.createScope((d) => { d0 = d; }); listen = false; } });
+        const links = r.stats().activeLinks; const before = runs; probe.set(1);
+        assert.deepEqual({ seen, links, reruns: runs - before }, { seen: [false], links: 1, reruns: 0 });
+        stop(); d0();
+    });
+
+    it("A5 [KNOWN] fn throws E and a cleanup registered in fn throws CE (F1): CE propagates, the owner stays live, d() and dispose(d) are no-ops, the getOwner() handle finishes it", () => {
+        const r = R(); const E = new Error("fn"), CE = new Error("cl"); let d0, ownerH, caught = null;
+        const b = r.stats().activeNodes;
+        try { r.createScope((d) => { d0 = d; ownerH = r.getOwner(); r.effect(() => {}); r.onCleanup(() => { throw CE; }); throw E; }); } catch (e) { caught = e; }
+        const t = { caught: caught === CE ? "CE" : caught === E ? "E" : "other", live: r.stats().activeNodes - b, describeD: r.describe(d0) === undefined };
+        d0(); r.dispose(d0); t.afterD = r.stats().activeNodes - b;
+        r.dispose(ownerH); t.afterOwnerHandle = r.stats().activeNodes - b;
+        assert.deepEqual(t, { caught: "CE", live: 1, describeD: true, afterD: 1, afterOwnerHandle: 0 });
+    });
+
+    it("A7 second stamp fails (prototype Proxy set trap throws on the 2nd stamp): the trap's own error is rethrown, both stamps attempted in order, scope torn down once (kills STAMPSAFE-PTRONLY / -NEWTE / -REORDER)", () => {
+        const r = R(); const b = r.stats().activeNodes; const TE = new TypeError("gen"); const keys = [];
+        let cl = 0, n = 0, caught = null, d0;
+        try {
+            r.createScope((d) => {
+                d0 = d; r.effect(() => {}); r.onCleanup(() => { cl++; });
+                Object.setPrototypeOf(d, new Proxy(Object.getPrototypeOf(d), { set(t, k, v, recv) { keys.push(String(k)); if (++n === 2) throw TE; return Reflect.set(t, k, v, recv); } }));
+                return 7;
+            });
+        } catch (e) { caught = e; }
+        const row = { caught: caught === TE, keys, cl, live: r.stats().activeNodes - b, own: Object.getOwnPropertySymbols(d0).map(String), describeD: r.describe(d0) === undefined };
+        d0(); row.afterD = [r.stats().activeNodes - b, cl];
+        assert.deepEqual(row, { caught: true, keys: ["Symbol(node_ptr)", "Symbol(node_gen)"], cl: 1, live: 0, own: ["Symbol(node_ptr)"], describeD: true, afterD: [0, 1] });
+    });
+
+    // A6 (F2 KNOWN): createScope entered with k spare frames under --jitless leaves a half-built owner (RangeError
+    // after the owner effect was allocated but before it ran). Deterministic: --jitless + fixed --stack-size; window
+    // found by sweeping k over two recursion shapes; no exact k asserted, at least one LEAK-* row across both shapes.
+    const CHILD = `
+import { pathToFileURL } from "node:url";
+const S = await import(pathToFileURL(process.env.CS_CHILD_ENGINE).href);
+const KMAX = 450;
+function at(n, f) { if (n === 0) return f(); return at(n - 1, f); }
+function atp(n, f) { const a = n | 1, b = a + 2, c = b * 3; if (n === 0) return f(); const v = atp(n - 1, f); return (c & 0) === 0 ? v : 0; }
+const noop = () => 0;
+const out = {};
+for (const [name, rec] of [["at", at], ["atp", atp]]) {
+    const limit = () => { let lo = 100, hi = 200000; while (lo < hi) { const mid = (lo + hi + 1) >> 1; let ok = true; try { rec(mid, noop); } catch (e) { ok = false; } if (ok) lo = mid; else hi = mid - 1; } return lo; };
+    for (let i = 0; i < 3; i++) limit();
+    const rows = [];
+    for (let k = 0; k <= KMAX; k++) {
+        const r = S.createRegistry(); let fnRan = 0, err = null, ret = "unset";
+        const N = limit();
+        try { ret = rec(N - k, () => r.createScope(() => { fnRan++; return 7; })); } catch (e) { err = e; }
+        const st = r.stats(); let snapErr = null; try { r.snapshot(); } catch (e) { snapErr = String(e.message); }
+        let resetErr = null; try { r.reset(); } catch (e) { resetErr = String(e.message); }
+        rows.push({ k, fnRan, err: err === null ? null : err.constructor.name, ret, nodes: st.activeNodes, effects: st.effects, allocs: st.totalAllocations, disp: st.totalDisposals, snapErr, resetErr, afterReset: r.stats().activeNodes });
+    }
+    out[name] = rows;
+}
+process.stdout.write(JSON.stringify(out));
+`;
+    // D-b205-1 (KNOWN, pin both): every row of every shape falls in exactly ONE of five named classes; an unclassified row fails.
+    // At least one LEAK-* row must exist (the residual is present); a future fix that closes both turns this row red on purpose.
+    it("A6 [KNOWN] F2 stack-overflow residual, D-b205-1 (--jitless child sweep): every k of both shapes is CLEAN-NOALLOC, CLEAN-DISPOSED, OK, LEAK-PENDING or LEAK-SILENT; a LEAK-* row exists; reset() clears every row", () => {
+        const res = spawnSync(process.execPath, ["--jitless", "--stack-size=984", "--input-type=module", "-e", CHILD],
+            { encoding: "utf8", timeout: 120000, killSignal: "SIGKILL", env: { ...process.env, CS_CHILD_ENGINE: ENG } });
+        assert.equal(res.error, undefined, "child spawn error: " + (res.error && res.error.message));
+        assert.equal(res.signal, null, "child killed / timed out: " + res.signal + " " + String(res.stderr).slice(0, 300));
+        assert.equal(res.status, 0, "child exit: " + String(res.stderr).slice(0, 300));
+        assert.ok(res.stdout.length > 0, "child printed nothing");
+        const out = JSON.parse(res.stdout);
+        assert.deepEqual(Object.keys(out).sort(), ["at", "atp"]);
+        const PENDING = "[lite-signal] snapshot: graph not settled (scheduled effect run pending)";
+        const OV = { err: "RangeError", fnRan: 0, ret: "unset" };
+        const CLASSES = {
+            "CLEAN-NOALLOC": { ...OV, nodes: 0, effects: 0, allocs: 0, disp: 0, snapErr: null },
+            "CLEAN-DISPOSED": { ...OV, nodes: 0, effects: 0, allocs: 1, disp: 1, snapErr: null },
+            "OK": { err: null, fnRan: 1, ret: 7, nodes: 1, effects: 1, allocs: 1, disp: 0, snapErr: null },
+            "LEAK-PENDING": { ...OV, nodes: 1, effects: 1, allocs: 1, disp: 0, snapErr: PENDING },
+            "LEAK-SILENT": { ...OV, nodes: 1, effects: 1, allocs: 1, disp: 0, snapErr: null },
+        };
+        const classify = (x) => { for (const c in CLASSES) { const t = CLASSES[c]; let m = true; for (const f in t) if (x[f] !== t[f]) { m = false; break; } if (m) return c; } return null; };
+        const census = {}; let leaks = 0;
+        for (const name of Object.keys(out)) {
+            const rows = out[name];
+            assert.equal(rows.length, 451, name + ": every k swept");
+            for (const x of rows) {
+                assert.deepEqual(Object.keys(x).sort(), ["afterReset", "allocs", "disp", "effects", "err", "fnRan", "k", "nodes", "resetErr", "ret", "snapErr"], name + " k" + x.k + ": row fields");
+                const c = classify(x);
+                assert.notEqual(c, null, name + " k" + x.k + ": unclassified row " + JSON.stringify(x));
+                assert.equal(x.resetErr, null, name + " k" + x.k + ": reset() does not throw");
+                assert.equal(x.afterReset, 0, name + " k" + x.k + ": reset() clears the row");
+                census[c] = (census[c] || 0) + 1;
+                if (c === "LEAK-PENDING" || c === "LEAK-SILENT") leaks++;
+            }
+        }
+        assert.ok(census["OK"] > 0 && (census["CLEAN-NOALLOC"] || 0) > 0, "sweep covers overflow and success: " + JSON.stringify(census));
+        assert.ok(leaks >= 1, "KNOWN F2 residual present (LEAK-PENDING / LEAK-SILENT): " + JSON.stringify(census));
     });
 });

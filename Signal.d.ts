@@ -302,7 +302,7 @@ export interface ObserveObserversHooks {
 export type Unobserve = () => void;
 
 /** Anything carrying a node identity that the introspection surface can read. */
-export type ReactiveHandle = Signal<any> | Computed<any> | SignalBox<any> | ComputedBox<any>;
+export type ReactiveHandle = Signal<any> | Computed<any> | SignalBox<any> | ComputedBox<any> | Dispose | NodeDescriptor;
 
 // --- Graph-mutation hook (1.2.1) ----------------------------------------------
 
@@ -435,7 +435,14 @@ export interface Registry {
      * created inside an effect, a computed, runWithOwner or another scope's `fn`, it survives that
      * owner's re-run and disposal (the keyed-list reconciler property). Reads in `fn`'s own body are
      * untracked and the scope never re-runs; put reactive reads in inner effect / computed bodies.
-     * If `fn` throws, everything it created is disposed and the error is rethrown unchanged.
+     * If `fn` throws, everything it created is disposed and the error is rethrown unchanged, unless a
+     * cleanup throws during that disposal: then the cleanup's error propagates and the scope's owner
+     * stays live (`d()` / dispose(d) are then no-ops; a getOwner() handle taken inside `fn` still
+     * disposes it).
+     * If `fn` makes the disposer non-extensible (Object.freeze / seal / preventExtensions), or stamping
+     * it otherwise throws, createScope disposes the scope (its cleanups run) and rethrows that same
+     * error; `fn`'s value is not returned. Same exception: a cleanup that throws during that disposal
+     * propagates instead and the owner stays live.
      * The scope is backed by one effect node: it counts as one effect in stats(), snapshot() records
      * it as kind "effect" with no deps, and restore() needs a fnsById body for it like any effect.
      * `dispose` is idempotent, gen-guarded (a stale call never touches a recycled slot) and, once
@@ -444,7 +451,8 @@ export interface Registry {
      * A `dispose` call made while `fn` is still running is recorded and honoured right after `fn`
      * returns, before createScope returns: the scope and everything `fn` created are disposed, their
      * cleanups run, and `fn`'s value is still returned (a requested disposal is never dropped; a
-     * cleanup that throws during it propagates from createScope instead).
+     * cleanup that throws during it propagates from createScope instead; a disposer made
+     * non-extensible throws as above).
      * A non-function `fn` throws a TypeError ("[lite-signal] createScope: fn must be a function")
      * before anything is allocated (stats() unchanged).
      * The scope is always a root, also inside another scope's `fn` and inside runWithOwner: an inner

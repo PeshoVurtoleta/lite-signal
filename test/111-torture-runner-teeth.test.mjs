@@ -7,6 +7,8 @@
 //      package.json at 1.5.2 and reset/snapshot dropped from Signal.js, the two 1.6.0-floor
 //      scenarios FAIL (old runner: green "0 passed, 2 skipped"), naming "declared 1.6.0".
 //      Control: the same mutant with the 1.6.0 declarations removed from Signal.d.ts skips.
+//      Also (F6): createScope dropped from Signal.js with package 1.5.2 -> scope-torture FAILs
+//      (floor 1.6.0), not skipped.
 //   R2 Signal.d.ts or package.json unreadable -> exit 2 (old runner: warn / run, exit 0).
 //   R3 a pass needs exit 0 AND a "  PASS: " line on the child's stdout (old runner: exit 0
 //      alone). Control: the unedited scenario passes.
@@ -114,6 +116,20 @@ test('R1 (A1): package 1.5.2 + reset/snapshot exports dropped -> exit 1, both 1.
         assert.match(row, /^  FAIL  semantic  (snapshot|reset)-torture  \(skipped, but engine package 1\.5\.2, declared 1\.6\.0 \(Signal\.d\.ts\) >= floor 1\.6\.0 -- /);
     }
     assert.match(r.out, /^  floors: package 1\.5\.2, declared 1\.6\.0 \(Signal\.d\.ts\)$/m);
+});
+
+test('R1 (F6): package 1.5.2 + createScope dropped (api entry + top-level export) -> scope-torture exit 1, FAIL names "declared 1.6.0" at floor 1.6.0', () => {
+    // fails on a runner whose scope-torture floor is 1.7.0 (it skips, exit 0): floor 1.6.0 is the pin
+    const d = copyTree();
+    cpSync(join(ROOT, 'bench', 'torture', 'scope-torture.mjs'), join(d, 'bench', 'torture', 'scope-torture.mjs'));
+    setPkgVersion(d, '1.5.2');
+    edit(d, 'Signal.js', '        snapshot,\n        restore,\n        createScope\n    };', '        snapshot,\n        restore\n    };');
+    edit(d, 'Signal.js', 'export function createScope(fn) {\n    return defaultRegistry.createScope(fn);\n}\n', '');
+    const r = runner(d, ['scope-torture']);
+    assert.equal(r.status, 1, r.out + r.err);
+    assert.match(r.summary, /^0 passed, 0 skipped, 1 failed$/);
+    assert.equal(r.rows.length, 1);
+    assert.match(r.rows[0], /^  FAIL  semantic  scope-torture  \(skipped, but engine package 1\.5\.2, declared 1\.6\.0 \(Signal\.d\.ts\) >= floor 1\.6\.0 -- /);
 });
 
 test('R1 control: same mutant with the 1.6.0 declarations removed from Signal.d.ts -> exit 0, 2 skipped (floor 1.6.0)', () => {

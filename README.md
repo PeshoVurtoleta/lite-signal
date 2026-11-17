@@ -394,9 +394,9 @@ result();                         // disposes the scope and everything fn create
 
 - **A root.** Created inside an effect, a computed, `runWithOwner` or another scope's `fn`, the scope survives that owner's re-run and disposal; an inner scope is disposed only by its own disposer.
 - **Untracked.** Reads in `fn`'s own body are not tracked and the scope never re-runs; put reactive reads in inner effect / computed bodies.
-- **Throws.** If `fn` throws, everything it created is disposed and the error is rethrown unchanged. A non-function `fn` throws a `TypeError` before anything is allocated.
+- **Throws.** If `fn` throws, everything it created is disposed and the error is rethrown unchanged, unless a cleanup throws during that disposal: then the cleanup's error propagates and the scope's owner stays live (`d()` / `dispose(d)` are then no-ops; a `getOwner()` handle taken inside `fn` still disposes it; KNOWN, `test/120` A5). A non-function `fn` throws a `TypeError` before anything is allocated. If `fn` makes the disposer non-extensible (`Object.freeze` / `seal` / `preventExtensions`), or stamping it otherwise throws, `createScope` disposes the scope (its cleanups run) and rethrows that same error; `fn`'s value is not returned (`test/120` A1, A7). The same exception applies: if a cleanup throws during that disposal, its error propagates and the owner stays live (`test/120` A2, KNOWN).
 - **Backed by one effect node.** It counts as one effect in `stats()`, `snapshot()` records it as kind `"effect"`, and `restore()` needs a `fnsById` body for it like any effect. The disposer is idempotent and gen-guarded; once `createScope` has returned it resolves to the scope's node under `describe` / `nodeId` / `ownerOf` / `forEachOwned` and `dispose(api)`.
-- **Dispose while `fn` runs.** A `dispose` call made inside `fn` is recorded and honoured right after `fn` returns, before `createScope` returns: the scope and everything it created are disposed, their cleanups run, and `fn`'s value is still returned (a cleanup that throws during it propagates from `createScope` instead).
+- **Dispose while `fn` runs.** A `dispose` call made inside `fn` is recorded and honoured right after `fn` returns, before `createScope` returns: the scope and everything it created are disposed, their cleanups run, and `fn`'s value is still returned (a cleanup that throws during it propagates from `createScope` instead; a disposer `fn` made non-extensible throws as under **Throws** above).
 
 ### getOwner / runWithOwner (1.5.0-beta.2)
 
@@ -976,8 +976,8 @@ the gate, so a lane that has gone blind fails loudly instead of passing.
 
 The file guards on **both** `--expose-gc` and `--max-semi-space-size=4`; without
 them it emits one loud named skip. `node:test`'s absolute leaf tally is
-node-version-sensitive. Measured on the unreleased 1.6.0-dev tree, not the 1.5.2 release, on node v26.8.2: plain `npm test` (2026-11-17, b204, one file per process, HEAD d46b4dd plus the b204 docs / test edits) =
-4159 tests / 4144 pass / 0 fail / 15 skip; `npm run test:gc` (2026-11-08, b181, not re-measured since) = 3588 tests / 3586 pass / 0 fail /
+node-version-sensitive. Measured on the unreleased 1.6.0-dev tree, not the 1.5.2 release, on node v26.8.2: plain `npm test` (2026-11-17, b205, one file per process, HEAD 217a22e plus the b205 engine / test / docs edits) =
+4169 tests / 4154 pass / 0 fail / 15 skip; `npm run test:gc` (2026-11-08, b181, not re-measured since) = 3588 tests / 3586 pass / 0 fail /
 2 skip (7 skip on CI: five more rows need gitignored local files or node v26.8.2). Thresholds are
 lite-perf-gate defaults, untouched -- a claimed-zero path that cannot meet them
 is a finding, not a config knob.
@@ -1055,7 +1055,7 @@ asserting nothing.
 #### `semantic` -- deterministic, fast, asserts on **meaning**
 
 Run these on every commit. They pin values, wakeups, work and ordering. The nine
-without a version tag run on the 1.5.0 engine; the four tagged `1.6.0+`/`1.8.0+`/
+without a version tag run on the 1.5.0 engine; `scope-torture` (1.6.0+) executes on this engine; the three tagged `1.8.0+`/
 `1.9.0+`/`1.10.0+` feature-detect and report a clean SKIP here, then activate on
 the engine version that introduces their feature.
 

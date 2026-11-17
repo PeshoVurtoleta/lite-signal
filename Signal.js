@@ -3947,8 +3947,13 @@ export function createRegistry(config) {
             currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
             currentObserver = (po !== null && po.gen === pg) ? po : null;
         }
-        dispose[NODE_PTR] = stop[NODE_PTR];
-        dispose[NODE_GEN] = stop[NODE_GEN];
+        // D-SCOPEAUD-2: a non-extensible disposer (freeze / seal / preventExtensions) makes the stamp
+        // throw; fail closed: dispose the scope, rethrow the TypeError (stop is one-shot, so a requested
+        // dispose never runs twice).
+        try {
+            dispose[NODE_PTR] = stop[NODE_PTR];
+            dispose[NODE_GEN] = stop[NODE_GEN];
+        } catch (e) { stop(); throw e; }
         if (requested) stop();
         return result;
     }
