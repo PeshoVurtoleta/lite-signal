@@ -11,17 +11,22 @@ const manifest = JSON.parse(readFileSync('./manifest.json', 'utf8'));
 const candidate = process.argv.slice(2).filter((a) => !a.startsWith('--'))[0];
 if (!candidate) { console.error('usage: node gate.mjs <candidate-label>'); process.exit(2); }
 
-// --expect-fail (b208, PLAN-PD-B task 2): judge a SABOTAGE CONTROL label. A control
-// carries a known regression, so it MUST trip the gate: verdict FAIL (1) -> exit 0;
-// PASS (0) or NO EVIDENCE (3) -> exit 4 (control blind: this capture could not see a
-// known regression, so no verdict it gives is evidence). matrix.sh judge reads it.
-// Without the flag every exit code and every stderr byte is unchanged.
+// --expect-fail (b208, PLAN-PD-B task 2; b210 D-QVM-2): judge a SABOTAGE CONTROL label.
+// A control carries a known regression, so it MUST trip the gate: verdict FAIL (1) ->
+// exit 0 (tripped); NO EVIDENCE (3) -> exit 3 (control REFUSED: its capture is not
+// evidence either way -> PENDING, never "blind"); any other verdict (PASS 0) -> exit 4
+// (CONTROL BLIND: it ran with evidence and the known regression was not seen). An
+// uncaught crash (e.g. an unparsable baseline) bypasses this and exits 1 -- never 0.
+// matrix.sh judge reads it. Without the flag every exit code and stderr byte is unchanged.
 const EXPECT_FAIL = process.argv.slice(2).includes('--expect-fail');
 const verdict = (code) => {
     if (EXPECT_FAIL) {
-        const tripped = code === 1;
-        console.error(`expect-fail: control ${candidate} gate exit ${code} -> ${tripped ? 'exit 0 (control tripped)' : 'exit 4 (CONTROL BLIND: the known regression was not seen)'}`);
-        process.exit(tripped ? 0 : 4);
+        const out = code === 1 ? 0 : code === 3 ? 3 : 4;
+        const why = out === 0 ? 'exit 0 (control tripped)'
+                  : out === 3 ? 'exit 3 (CONTROL REFUSED: NO EVIDENCE -> PENDING, not blind)'
+                  : 'exit 4 (CONTROL BLIND: ran with evidence, the known regression was not seen)';
+        console.error(`expect-fail: control ${candidate} gate exit ${code} -> ${why}`);
+        process.exit(out);
     }
     process.exit(code);
 };

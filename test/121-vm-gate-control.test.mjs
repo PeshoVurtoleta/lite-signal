@@ -1,10 +1,13 @@
 /**
  * VersionMatrix sabotage-control tooth (b208, PLAN-PD-B tasks 2-4 as amended by .handoff/b208/PLAN-B.md).
  *
- * Oracle: the DELTA's exit-code contract, not the harness code. gate.mjs --expect-fail maps the gate
- * verdict FAIL (1) -> 0 and PASS (0) / NO EVIDENCE (3) -> 4; matrix.sh `judge <cand>` exits with the
- * candidate's gate status unless CONTROL_LABEL is set and the control does not trip (-> 4); matrix.sh
- * harness errors (swap / npm pack / run.mjs) exit 5, never a 1 that reads as FAIL.
+ * Oracle: the DELTA's exit-code contract (as ruled by D-QVM-2, b210), not the harness code. gate.mjs
+ * --expect-fail maps the gate verdict FAIL (1) -> 0, NO EVIDENCE (3) -> 3 (control REFUSED: PENDING,
+ * not blind) and PASS (0) -> 4 (ran with evidence, did not trip); a gate.mjs crash exits 1, never 0.
+ * matrix.sh `judge <cand>` without CONTROL_LABEL exits with the candidate's gate status; with it, both
+ * gates run and the precedence is: either gate 3 -> 3 (PENDING), else control 4 -> 4 (NO VERDICT),
+ * else control any other non-zero (crash) -> 5, else the candidate's status. matrix.sh harness errors
+ * (swap / npm pack / run.mjs) exit 5, never a 1 that reads as FAIL.
  *
  * Every row runs in its own tmp dir T holding COPIES of gate.mjs + matrix.sh, a fixture manifest and
  * fixture baselines (built from the tracked baselines/1.5.0/reactive-graph-mix.json); nothing touches
@@ -44,6 +47,8 @@ const LABELS = {
     ctl: () => [slow(), sha('e')],            // control that trips (1.5x)
     ctlblind: () => [clone(), sha('f')],      // identical numbers, different sha: control blind
     ctlnoev: () => [spread(), sha('9')],      // spread 20%: NO EVIDENCE
+    candnoev: () => [spread(), sha('8')],     // b210: candidate refused (spread 20%: NO EVIDENCE)
+    ctlbad: () => ['{ "frame": ', sha('7')],  // b210: unparsable baseline JSON: gate.mjs crashes (exit 1)
 };
 
 function makeT({ modules = true } = {}) {
@@ -55,7 +60,7 @@ function makeT({ modules = true } = {}) {
     for (const [label, mk] of Object.entries(LABELS)) {
         const [s, h] = mk();
         mkdirSync(join(T, 'baselines', label), { recursive: true });
-        writeFileSync(join(T, 'baselines', label, 'reactive-graph-mix.json'), JSON.stringify(s, null, 2));
+        writeFileSync(join(T, 'baselines', label, 'reactive-graph-mix.json'), typeof s === 'string' ? s : JSON.stringify(s, null, 2));
         writeFileSync(join(T, 'baselines', label, 'engine.sha256'), h);
     }
     if (modules) symlinkSync(join(ROOT, 'node_modules'), join(T, 'node_modules'));   // @zakkster/lite-profiler
@@ -90,10 +95,11 @@ test('(ii) gate: identical numbers, different sha (gate PASS) under --expect-fai
     assert.equal(r.status, 4, 'blind control' + tail(r));
 });
 
-test('(iii) gate: spread 20% (NO EVIDENCE) under --expect-fail -> 4', () => {
+test('(iii) gate: spread 20% (NO EVIDENCE) under --expect-fail -> 3 (control REFUSED, not blind; D-QVM-2)', () => {
     const T = makeT();
     const r = gate(T, 'ctlnoev', '--expect-fail');
-    assert.equal(r.status, 4, 'NO EVIDENCE control' + tail(r));
+    assert.equal(r.status, 3, 'NO EVIDENCE control' + tail(r));
+    assert.match(String(r.stderr), /gate exit 3 -> exit 3 \(CONTROL REFUSED: NO EVIDENCE -> PENDING/, 'refused message' + tail(r));
 });
 
 test('(iv) judge: control trips + candidate PASS -> 0', () => {
@@ -122,6 +128,49 @@ test('(vii) judge: CONTROL_LABEL unset -> the plain gate codes 0 / 1 / 3', () =>
     assert.equal(b.status, 1, 'judge candfail' + tail(b));
     const c = judge(T, 'ctlnoev');
     assert.equal(c.status, 3, 'judge NO EVIDENCE' + tail(c));
+});
+
+// (xiv)-(xvii) D-QVM-2 (b210): judge with CONTROL_LABEL returns 3 / PENDING whenever either gate refused
+// for lack of evidence; 4 stays reserved for a control that ran with evidence and did not trip; a control
+// gate crash is a harness error (5). One row per arm; each asserts the exact status and the judge line.
+const PENDING = (cst, ctl, l) => new RegExp(`judge: candidate gate exit ${cst}, control ${l} expect-fail exit ${ctl} -- NO EVIDENCE -> PENDING \\(exit 3\\)`);
+
+test('(xiv) judge: refused candidate (NO EVIDENCE) + tripping control -> 3', () => {
+    const T = makeT();
+    const r = judge(T, 'candnoev', { CONTROL_LABEL: 'ctl' });
+    assert.equal(r.status, 3, 'judge' + tail(r));
+    assert.match(String(r.stderr), PENDING(3, 0, 'ctl'), 'PENDING line names both exits' + tail(r));
+});
+
+test('(xv) judge: candidate PASS + refused control (NO EVIDENCE) -> 3, not 4', () => {
+    const T = makeT();
+    const r = judge(T, 'cand', { CONTROL_LABEL: 'ctlnoev' });
+    assert.equal(r.status, 3, 'judge' + tail(r));
+    assert.match(String(r.stderr), PENDING(0, 3, 'ctlnoev'), 'PENDING line names both exits' + tail(r));
+    assert.doesNotMatch(String(r.stderr), /NO VERDICT/, 'a refused control is not reported blind' + tail(r));
+});
+
+test('(xvi) judge precedence: refused candidate + blind control -> 3; candidate FAIL + refused control -> 3', () => {
+    const T = makeT();
+    const a = judge(T, 'candnoev', { CONTROL_LABEL: 'ctlblind' });
+    assert.equal(a.status, 3, 'refused candidate + blind control' + tail(a));
+    assert.match(String(a.stderr), PENDING(3, 4, 'ctlblind'), 'PENDING ahead of blind' + tail(a));
+    const b = judge(T, 'candfail', { CONTROL_LABEL: 'ctlnoev' });
+    assert.equal(b.status, 3, 'candidate FAIL + refused control' + tail(b));
+    assert.match(String(b.stderr), PENDING(1, 3, 'ctlnoev'), 'PENDING ahead of the candidate FAIL' + tail(b));
+    const c = judge(T, 'candnoev', { CONTROL_LABEL: 'ctlbad' }); assert.equal(c.status, 3, 'refused candidate + crashing control' + tail(c)); assert.match(String(c.stderr), PENDING(3, 1, 'ctlbad'), 'PENDING ahead of the crash arm' + tail(c));
+});
+
+test('(xvii) control gate crash (unparsable baseline): gate --expect-fail -> 1 (never 0); judge -> 5 (never 4)', () => {
+    const T = makeT();
+    const g = gate(T, 'ctlbad', '--expect-fail');
+    assert.equal(g.status, 1, 'crashing control under --expect-fail' + tail(g));
+    assert.match(String(g.stderr), /SyntaxError/, 'the crash is the JSON parse' + tail(g));
+    assert.doesNotMatch(String(g.stderr), /expect-fail: control/, 'the crash bypasses the verdict mapping' + tail(g));
+    const r = judge(T, 'cand', { CONTROL_LABEL: 'ctlbad' });
+    assert.equal(r.status, 5, 'judge with a crashing control' + tail(r));
+    assert.match(String(r.stderr), /judge: control ctlbad gate crashed \(expect-fail exit 1\) -- harness error \(exit 5\) \(candidate gate exit 0\)/, 'crash line' + tail(r));
+    const u = judge(T, 'cand', { CONTROL_LABEL: '--x' }); assert.equal(u.status, 5, 'control gate usage exit 2' + tail(u)); assert.match(String(u.stderr), /judge: control --x gate crashed \(expect-fail exit 2\) -- harness error \(exit 5\) \(candidate gate exit 0\)/, 'crash line, exit 2' + tail(u));
 });
 
 test('(viii) gate-self: a failing npm (swap) is a harness error -> 5, never 1', () => {

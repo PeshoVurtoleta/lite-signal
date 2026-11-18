@@ -4,8 +4,9 @@
 #   bash matrix.sh calibrate                  # rolling captured twice, then calibrate.mjs
 #   bash matrix.sh judge <candidate-label>    # verdict only: gate.mjs on the candidate (+ CONTROL_LABEL)
 # gate-self optional sabotage control: CONTROL_LABEL=<label> CONTROL_ENGINE=<engine file>.
-# Exit codes: 0 PASS, 1 FAIL, 3 NO EVIDENCE (gate.mjs); 4 the control did not trip (NO
-# VERDICT); 5 harness error (swap / npm pack / run.mjs / aggregate failed -- never a 1);
+# Exit codes: 0 PASS, 1 FAIL, 3 NO EVIDENCE (gate.mjs; with a control: either gate refused
+# -> PENDING); 4 the control ran with evidence and did not trip (NO VERDICT); 5 harness
+# error (swap / npm pack / run.mjs / aggregate failed, a control gate crash -- never a 1);
 # 2 usage error (missing argument, CONTROL_LABEL in gate mode) -- never a 1.
 set -euo pipefail
 set -E
@@ -42,16 +43,31 @@ capture () {  # capture <label> [version]  -- REPS cold processes per workload, 
   hash_engine "$label" "node_modules/@zakkster/lite-signal/Signal.js"
 }
 
-# judge <candidate-label>: the candidate's gate.mjs status, unless CONTROL_LABEL is set
-# and the control does NOT trip (gate.mjs --expect-fail non-zero) -> exit 4, whatever
-# the candidate said: a run that cannot see a known regression judges nothing.
+# judge <candidate-label>: the candidate's gate.mjs status. With CONTROL_LABEL set both
+# gates run (D-QVM-2, b210), in this precedence:
+#   (a) either gate REFUSED (candidate 3 or control --expect-fail 3) -> exit 3 (PENDING):
+#       no evidence is no verdict, never "blind" and never a candidate PASS/FAIL;
+#   (b) control 4 (ran with evidence, did not trip) -> exit 4, whatever the candidate said:
+#       a run that cannot see a known regression judges nothing;
+#   (c) control any other non-zero (a gate.mjs crash / usage) -> exit 5 harness error
+#       (4 is reserved for an evidenced blind control);
+#   (d) control tripped (0) -> the candidate's status.
 judge () {
-  local cand="$1"; local cst=0
+  local cand="$1"; local cst=0; local ctl=0
   node gate.mjs "$cand" || cst=$?
   if [ -n "${CONTROL_LABEL:-}" ]; then
-    if ! node gate.mjs "$CONTROL_LABEL" --expect-fail; then
+    node gate.mjs "$CONTROL_LABEL" --expect-fail || ctl=$?
+    if [ "$cst" -eq 3 ] || [ "$ctl" -eq 3 ]; then
+      echo "judge: candidate gate exit $cst, control $CONTROL_LABEL expect-fail exit $ctl -- NO EVIDENCE -> PENDING (exit 3)" >&2
+      exit 3
+    fi
+    if [ "$ctl" -eq 4 ]; then
       echo "judge: control $CONTROL_LABEL did not trip the gate -- NO VERDICT (exit 4) (candidate gate exit $cst)" >&2
       exit 4
+    fi
+    if [ "$ctl" -ne 0 ]; then
+      echo "judge: control $CONTROL_LABEL gate crashed (expect-fail exit $ctl) -- harness error (exit 5) (candidate gate exit $cst)" >&2
+      exit 5
     fi
   fi
   exit "$cst"
