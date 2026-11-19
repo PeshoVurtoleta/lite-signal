@@ -400,7 +400,7 @@ function a10c(M) {
     q.set(40); const runsQ = runs;
     return { l0, l1, runs1, runsW, runsQ };
 }
-describe("A10 nested sever: the walk's cursor push (kills SS-NOPUSH)", () => {
+describe("A10 nested sever: the walk's cursor push (row (a) kills SS-NOPUSH)", () => {
     const OK = { threw: false };
     const TRI6 = { src: 6, obs: 6, links: 6 }, TRI4 = { src: 4, obs: 4, links: 4 };
     for (const [nm, M] of [["engine", ME], ["fixture", MF]]) {

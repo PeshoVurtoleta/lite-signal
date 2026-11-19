@@ -1395,7 +1395,7 @@ describe("A1-r3 reviewer blockers", () => {
 // mutants can loop forever on a corrupted list.
 // ---------------------------------------------------------------------------
 describe("A1 QA boundaries", () => {
-    it("QA1: cursorStack growth -- saved-cursor repair at nesting depth 1, 2, 31, 32, 33, 64", async () => {
+    it("QA1: deep nesting -- saved-cursor repair (fix log) at nesting depth 1, 2, 31, 32, 33, 64", async () => {
         const o = await isolated((createRegistry, tryMsg) => {
             const out = [];
             for (const D of [1, 2, 31, 32, 33, 64]) {

@@ -27,11 +27,12 @@ const PIN_KEY = "v26.8.2";
 const PINNED = process.version === PIN_KEY;
 const DRIVER = fileURLToPath(new URL("./fixtures/inlined-sets/driver.mjs", import.meta.url));
 const ENGINE_PATH = process.env.INLINED_SETS_SIGNAL || fileURLToPath(new URL("../Signal.js", import.meta.url));
+if (process.env.INLINED_SETS_SIGNAL) console.log("# engine under test (INLINED_SETS_SIGNAL): " + ENGINE_PATH);
 const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/Signal-f8dd50f8.js", import.meta.url));
 const CI_PATH = fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url));
 const WATCH_LINE = 'export {watch, when, whenAsync} from "./Watch.js";';
 const FLAGS = ["--no-concurrent-recompilation", "--single-threaded"];
-const SPAWN = { encoding: "utf8", timeout: 300000, killSignal: "SIGKILL", maxBuffer: 1 << 28, env: { ...process.env, NODE_OPTIONS: "" } };
+const SPAWN = { encoding: "utf8", timeout: 300000, killSignal: "SIGKILL", maxBuffer: 1 << 28, env: { ...process.env, NODE_OPTIONS: "", NODE_V8_COVERAGE: undefined } };
 
 // Measured on v26.8.2 (census.txt MODE sync; before da5ddb86 == after b5289277).
 const PIN = {
@@ -62,7 +63,7 @@ function trace(dir, kind, wl, extra = []) {
     assert.match(r.stdout, new RegExp("^DRIVER2-CHK " + wl + " ", "m"));
     return String(r.stdout);
 }
-// Same parse as audit/2026-11-19-hotpath-fable/work/trsum.mjs (inlinee -> caller multiset, refusals, budgets), plus the refused read.set targets.
+// Same parse as audit/2026-11-19-hotpath-fable/work/trsum.mjs's Inlining / Cannot consider / Budget regexes (its free-text note branch omitted), plus the refused read.set targets.
 const nm = (s) => { const m = /<SharedFunctionInfo ?([^>]*)>/.exec(s); return m ? (m[1] || "(anon)") : "?"; };
 function tf(dir, wl, extra) {
     const inl = {}, ref = {}, budgets = [], readSet = [];

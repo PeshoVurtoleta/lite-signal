@@ -593,7 +593,8 @@ describe("D-DELTA-1 and D-CS-7 (A9)", () => {
     });
 
     // Whole-file text pin (b220 G1 B2b): no cursorStack anywhere; each of the three frames (severStale, executeEffect,
-    // refreshComputed) saves the outer cursor in a local. Red on .handoff/b215/before/Signal.js (da5ddb86: cursorStack 16,
+    // refreshComputed) saves the outer cursor in a local. NOTE: frameShape counts `cursorStack` anywhere in Signal.js text,
+    // comments included, so a future history comment naming cursorStack turns this row red (rename it in the comment, not the row). Red on .handoff/b215/before/Signal.js (da5ddb86: cursorStack 16,
     // savedCur 0; evidence .handoff/b220/b2b/t6-before.txt).
     function frameShape(src) {
         return { cursorStack: src.split("cursorStack").length - 1, savedCur: src.split("const savedCur = activeObserverCurrentDep;").length - 1 };
