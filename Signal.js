@@ -784,22 +784,29 @@ export function createRegistry(config) {
     let currentOwner = null;              // lifecycle context: who owns nodes created now
     let activeObserverCurrentDep = null;
     let batchDepth = 0;
-    // A1 cursor stack (F15): the SAVED re-tracking cursors of suspended frames. executeEffect /
-    // pullComputed push the outer cursor on entry and pop it on exit, so disposeNode can repair a
-    // cursor no matter how deep the frame that holds it is suspended (repairCursor / dropCursors).
-    // A frame entered at depth d saves into slot d. At depth 0 there is no outer frame and the
-    // live cursor is always null, so a depth-0 frame skips both the store and the load and
-    // restores null (r3: the keyed store + load were the cost every top-level flush paid per
-    // effect, measured on fanout64). Slot 0 is never written; repairCursor / dropCursors only
-    // ever replace a slot that already holds the link, so it stays null.
-    // Holds links only; preallocated to 32 slots and grows only at a new maximum depth.
+    // A1 cursor-repair log (F15; b215 shape A, LEDGER #20 / #33): each frame (executeEffect /
+    // refreshComputed / severStale) saves the outer re-tracking cursor in a LOCAL (savedCur) on
+    // entry and restores it on exit, so the common path writes no memory per frame. While
+    // cursorDepth > 1, repairCursor appends an entry for every spliced link of a running
+    // frame that is not the live cursor (repaired in place; an entry no saved cursor matches
+    // is inert), and dropCursors one per dep link of the dying node: an entry
+    // (link, replacement, cursorDepth) inline (D-b216-1: a call there would be a new stack-overflow
+    // site). A frame's restore reads fixLen: 0 takes
+    // savedCur as is; otherwise the cold arm applies the log through fixCursor, and
+    // a depth-0 restore clears the log (fixLen = 0) with no call (at depth 0 there is no outer
+    // frame and the live cursor is always null). An entry applies only to frames below the depth
+    // it was logged at. Holds links and Smi depths only; preallocated to 48 slots (16 entries),
+    // grows only by appending at index === length (stays packed), never shrinks: a cold
+    // high-water growth. Slots at index >= fixLen are never read.
     // cursorDepth is a Smi and balanced on every exit path: every push sits right before a
     // `try` whose `finally` pops; a frame's `finally` pops before its first call (K2, AUD-F G1),
-    // and the epilogue severTail runs through severStale, which pushes its own entry and pops it
+    // and the epilogue severTail runs through severStale, which pushes its own depth and pops it
     // in its own `finally`. destroy() and reset() refuse while any frame is in flight (C-RESET D-4), so they
-    // never see cursorDepth !== 0; destroy() nulls the stale saved slots.
-    const cursorStack = [];
-    for (let i = 0; i < 32; i++) cursorStack.push(null);
+    // never see cursorDepth !== 0; destroy() nulls the log slots and clears fixLen.
+    // fixLen and fixCursor are declared at the END of createRegistry (LEDGER #70: a binding
+    // added here would shift every later context slot).
+    const fixLog = [];
+    for (let i = 0; i < 48; i++) fixLog.push(null);
     let cursorDepth = 0;
     // A1.8 (S2): slots of nodes disposed while RUNNING (FLAG_COMPUTING). A suspended frame
     // may still hold such a node as its saved observer/owner; recycling the slot before
@@ -1126,10 +1133,10 @@ export function createRegistry(config) {
      * nothing it set is stranded if this throws or overflows. `stale` is the frame's live
      * cursor at its end: the first link its run did not re-visit (non-null; the caller tests).
      * The stale-tail walk runs user code (op-4 hook, onDisconnect), so this re-enters the frame
-     * as the walk always saw it: cursor push: cursorDepth = d + 1; the outer cursor already sits in
-     * cursorStack[d] (both callers restored the live cursor from it one statement earlier, no user
-     * code between), so the push alone puts that slot in repairCursor's scan (slots d..0) and
-     * keeps a nested frame, which saves into slot d + 1, off it; live
+     * as the walk always saw it: cursor push: savedCur = the outer cursor (both callers restored the
+     * live cursor one statement earlier, no user code between), cursorDepth = d + 1, so a disposal
+     * under the walk that hits savedCur is logged (repairCursor / dropCursors) and applied at this call's restore, while
+     * a nested frame saves the walk's cursor in its own local; live
      * cursor = stale, observer = owner = node, FLAG_COMPUTING set last before
      * the `try` (G1-a: markDownstream marks or absorbs a walk callback's write exactly as
      * inside the body, and a re-run of the node is a CycleError). The `finally` unwinds on both arms.
@@ -1149,13 +1156,16 @@ export function createRegistry(config) {
      * write to a slot whose gen moved" literal, on a cold path.
      * Cold: called only when a stale tail exists. K4 (open): a stack overflow AT the entry of
      * this call (or of effectTail / computedRunTail / requeueStaleEffect / stampFarFloor) skips
-     * the sever and the consume; the frame is already unwound and the links stay consistent.
+     * the sever and the consume; the frame is already unwound and the links stay consistent. An
+     * overflow at the cold-arm fixCursor call (dirty log only) leaves the live cursor null and
+     * skips the consume, as at those calls' own entries.
      * @private
      */
     function severStale(node, stale) {
         const g = node.gen;
         const po = currentObserver, pw = currentOwner;
         const d = cursorDepth;
+        const savedCur = activeObserverCurrentDep;
         cursorDepth = d + 1;   // Smi, as in the frames
         activeObserverCurrentDep = stale;
         currentObserver = node;
@@ -1170,7 +1180,7 @@ export function createRegistry(config) {
             currentObserver = po;
             currentOwner = pw;
             cursorDepth = d;
-            activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
+            activeObserverCurrentDep = fixLen === 0 ? savedCur : (d === 0 ? (fixLen = 0, null) : (activeObserverCurrentDep = null, fixCursor(savedCur, d)));
             if (!ok && node.gen === g && (node.flags & FLAG_STALE_READ) !== 0) {
                 if ((node.flags & FLAG_EFFECT) !== 0) requeueStaleEffect(node);
                 else { node.flags &= ~FLAG_STALE_READ; stampFarFloor(node); }
@@ -1180,32 +1190,30 @@ export function createRegistry(config) {
 
     /**
      * A1.2 cold helpers: keep every re-tracking cursor (the live one and the
-     * frames' saved ones on cursorStack) pointing at a live link of its own list.
+     * frames' saved ones, through the fix log that fixCursor applies) pointing at a live link of its own list.
      * Identity compares only; no numeric arguments.
      * @private
      */
     function repairCursor(sLink, nDep) {
         if (activeObserverCurrentDep === sLink) { activeObserverCurrentDep = nDep; return; }
         // At most one match: one frame per owner, one owner per link.
-        for (let i = (cursorDepth - 1) | 0; i >= 0; i--) {
-            if (cursorStack[i] === sLink) { cursorStack[i] = nDep; return; }
-        }
+        if (cursorDepth > 1) { const n = fixLen; fixLog[n] = sLink; fixLog[n + 1] = nDep; fixLog[n + 2] = cursorDepth; fixLen = n + 3; }
     }
     /**
      * Drop every cursor into a dying running node's dep list. The live-cursor test is the
-     * functional part. The saved-slot loop is DEFENSE IN DEPTH (no probe can observe it):
-     * a dead frame's saved cursor only ever returns to that dead frame, which can no
-     * longer link (allocateLink's flags gate) or sever (the gen guard); and if its link is
-     * recycled into another frame's list, any legitimate holder sits in a higher slot, so
-     * repairCursor's top-down scan finds that one first. Nulling it keeps repairCursor's
-     * "at most one match" invariant literally true. @private
+     * functional part. The logged drops (one null fix per dep link, only while a frame is
+     * suspended) are DEFENSE IN DEPTH (no probe can observe them): a dead frame's saved
+     * cursor only ever returns to that dead frame, which can no longer link (allocateLink's
+     * flags gate) or sever (the gen guard). Nulling it keeps a link recycled into another
+     * frame's list from steering the dead frame's restore. @private
      */
     function dropCursors(node) {
         const c = activeObserverCurrentDep;
         if (c !== null && c.target === node) activeObserverCurrentDep = null;
-        for (let i = 0; i < cursorDepth; i++) {
-            const k = cursorStack[i];
-            if (k !== null && k.target === node) cursorStack[i] = null;
+        if (cursorDepth > 1) {
+            for (let l = node.headDep; l !== null; l = l.nextDep) {
+                const n = fixLen; fixLog[n] = l; fixLog[n + 1] = null; fixLog[n + 2] = cursorDepth; fixLen = n + 3;
+            }
         }
     }
 
@@ -1286,8 +1294,9 @@ export function createRegistry(config) {
             // that is MID-RUN with its re-tracking cursor parked on this very link -- it
             // linked `source` on the previous run, has not reached that read yet on this
             // one, and `source` is disposed from its body or from any frame nested inside
-            // it (F15: the cursor is then SAVED on cursorStack, not live). Splicing the
-            // link out and handing it to the free list would leave that cursor dangling
+            // it (F15: the cursor is then SAVED by its frame; fixCursor applies the logged
+            // entry at the saving frame's restore). Splicing the link out and handing it to the
+            // free list would leave that cursor dangling
             // at a freed slot: severTail would then read a nulled prevDep, wipe
             // target.headDep (orphaning every surviving dep), and double-free the link --
             // freeLink null-derefs on `source.headSub`. Advance the cursor to the next
@@ -2202,6 +2211,8 @@ export function createRegistry(config) {
      * stale read itself (F5: re-queued as effectTail would, D-b195-2 (a)). K4 (open residual):
      * a stack overflow at the ENTRY of an epilogue call (severStale / effectTail /
      * computedRunTail / requeueStaleEffect) skips that call's work; the frame is already unwound.
+     * An overflow at the cold-arm fixCursor call (dirty log only) leaves the live cursor null and
+     * skips the epilogue, as at those calls' own entries.
      *
      * effectTail is the last statement of the `finally` (S3, D-AUD-5): a body that read a
      * value a write in the same evaluation changed is re-queued even when it throws (or a
@@ -2226,7 +2237,7 @@ export function createRegistry(config) {
                 const dep = link.source;
                 // A1.9 (S3): the pull ran user code that freed (maybe recycled) this link;
                 // its nextDep is gone, so stop walking and run the body (fail closed).
-                if ((dep.flags & FLAG_COMPUTED) !== 0 && pullMoved(link, dep, node)) { needsRun = true; break; }
+                if ((dep.flags & FLAG_COMPUTED) !== 0 && dep.evalVersion !== globalVersion && pullMoved(link, dep, node)) { needsRun = true; break; }
                 if (((dep.version - evalVer) | 0) > 0) {
                     needsRun = true;
                     break;
@@ -2261,7 +2272,7 @@ export function createRegistry(config) {
         // L-1: FLAG_COMPUTING is set last, after the push: no call (no stack-overflow site)
         // sits between the set and `try`, whose finally clears it.
         const d = cursorDepth;
-        if (d !== 0) cursorStack[d] = activeObserverCurrentDep;
+        const savedCur = activeObserverCurrentDep;
         cursorDepth = d + 1;   // Smi: depth is bounded by the JS stack, far below 2^30
         activeObserverCurrentDep = node.headDep;
         node.flags |= FLAG_COMPUTING;
@@ -2284,7 +2295,7 @@ export function createRegistry(config) {
             currentObserver = prevObserver;
             currentOwner = prevOwner;
             cursorDepth = d;
-            activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
+            activeObserverCurrentDep = fixLen === 0 ? savedCur : (d === 0 ? (fixLen = 0, null) : (activeObserverCurrentDep = null, fixCursor(savedCur, d)));
             if (stale !== null) severStale(node, stale);
             effectTail(node);   // S3 (D-AUD-5): in the finally, so a throwing body still re-queues a stale read
         }
@@ -2354,6 +2365,7 @@ export function createRegistry(config) {
      * epilogue sever runs after the unwind, in severStale, see executeEffect), or first thing inside a cleanup half's try, whose catch clears it on a throw (L-1): a
      * stack overflow at a call entry before the body or in the epilogue leaves no false CycleError either. K4 (open residual): an overflow
      * at the ENTRY of severStale or computedRunTail skips that call's work (a stale tail stays linked; a stale read is not re-pulled).
+     * An overflow at the cold-arm fixCursor call (dirty log only) leaves the live cursor null and skips the epilogue, as at those calls' own entries.
      * A never-evaluated node still runs its first body (body-first, firstRunCleanupC).
      * Throws only on a cycle: the node re-entered while computing, or (#42) `depth`,
      * the pre-walk recursion depth (a Smi), past nodePool.length -- an acyclic dep
@@ -2385,7 +2397,7 @@ export function createRegistry(config) {
             const evalVer = node.evalVersion | 0;
             while (link !== null) {
                 const dep = link.source;
-                if ((dep.flags & FLAG_COMPUTED) !== 0) {
+                if ((dep.flags & FLAG_COMPUTED) !== 0 && dep.evalVersion !== globalVersion) {
                     refreshComputed(dep, depth + 1);
                     if (link.source !== dep || link.target !== node) { shouldRun = true; break; }   // A1.9: link freed
                 }
@@ -2414,7 +2426,7 @@ export function createRegistry(config) {
             currentObserver = node;
             currentOwner = node;
             const d = cursorDepth;
-            if (d !== 0) cursorStack[d] = activeObserverCurrentDep;
+            const savedCur = activeObserverCurrentDep;
             cursorDepth = d + 1;   // Smi: depth is bounded by the JS stack, far below 2^30
             activeObserverCurrentDep = node.headDep;
             node.flags |= FLAG_COMPUTING;
@@ -2457,7 +2469,7 @@ export function createRegistry(config) {
                 currentObserver = prevObserver;
                 currentOwner = prevOwner;
                 cursorDepth = d;
-                activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;
+                activeObserverCurrentDep = fixLen === 0 ? savedCur : (d === 0 ? (fixLen = 0, null) : (activeObserverCurrentDep = null, fixCursor(savedCur, d)));
                 if (stale !== null) severStale(node, stale);
             }
             if (node.flags === 0) return;   // disposed during body
@@ -3227,7 +3239,8 @@ export function createRegistry(config) {
         linkPool.length = 0;
         freeLinkHead = null;
         // Saved cursors of long-unwound frames (the guard proved cursorDepth === 0).
-        for (let i = 0; i < cursorStack.length; i++) cursorStack[i] = null;
+        for (let i = 0; i < fixLog.length; i++) fixLog[i] = null;
+        fixLen = 0;
 
         pinnedHead = null;   // A1.8: pinned slots are released with the rest of the pool
         // C-RESET D-2: the next node / link miss regrows the pools from the constructor config.
@@ -3987,6 +4000,20 @@ export function createRegistry(config) {
         restore,
         createScope
     };
+    // A1 cursor-repair log (see fixLog): declared last so no existing context slot moves (LEDGER #70).
+    let fixLen = 0;
+    // k = the depth of the frame being resumed (it owns c). Entries apply to frames BELOW the depth they were
+    // logged at; once applied to frame k they are lowered to k, so a cursor saved later is never touched.
+    function fixCursor(c, k) {
+        const n = fixLen;
+        for (let i = 0; i < n; i += 3) {
+            if (fixLog[i + 2] > k) {
+                if (c !== null && fixLog[i] === c) c = fixLog[i + 1];
+                fixLog[i + 2] = k;
+            }
+        }
+        return c;
+    }
     // Private rehydration hook: reachable by restore() via REHYDRATE.get(fresh)
     // but held OFF the public object in a module-scope WeakMap, so a live
     // registry exposes no handle to its own rehydrate (invisible to

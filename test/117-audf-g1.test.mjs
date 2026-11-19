@@ -334,15 +334,17 @@ describe("A9 PIN: self-dispose mid-body after dropping a dep", () => {
 });
 
 // ======================================================================================================================================
-// A10 (nested sever; kills SS-NOPUSH, which test/110 A1.3 -- the in-frame case -- does not reach): severStale pushes its own cursor entry. Without it
-// cursorDepth stays at d during the walk, so (a) repairCursor (scans i < cursorDepth) misses the OUTER frame's saved cursor cursorStack[d] when a walk hook
-// frees the outer frame's next link, and (b) a nested frame started from a walk hook (at d == 0) nulls the walk's own cursor on exit.
+// A10 (nested sever; kills SS-NOPUSH, which test/110 A1.3 -- the in-frame case -- does not reach): severStale saves the outer cursor in a local (savedCur)
+// and pushes its own depth (cursorDepth = d + 1). Without the push cursorDepth stays at d during the walk, so in (a) (d = 1) repairCursor, which logs a fix
+// only while cursorDepth > 1, logs nothing when a walk hook frees the outer frame's saved cursor, and the restore hands that saved cursor back unrepaired.
+// b220 G1 B2b (.handoff/b220/b2b/t7-mutants.txt, engine b5289277): SS-NOPUSH is KILLED by row (a) only; row (b) passes under it and stays a behaviour pin.
 // Values are hand-derived from the graph shape (links 6 -> 4: C drops b, E drops z; the runs / seen list from the write sequence), not copied from a run.
 // HALF-FREED classifier: stats().activeLinks must equal the per-node sums of forEachSource and of forEachObserver.
 // ======================================================================================================================================
 function tri(r, hs) { let src = 0, obs = 0; for (const h of hs) { r.forEachSource(h, () => { src++; }); r.forEachObserver(h, () => { obs++; }); } return { src, obs, links: r.stats().activeLinks }; }
-// (a) E reads t, C, z, w. Run 2 (batch: t, s): E's body reads C at cursor depth 1 -> C re-runs and drops b -> severStale(C) at d = 1 pushes depth 2 over E's cursor (already in cursorStack[1], restored there by C's frame; the link
-// to z, the next after C); b's 1->0 hook disposes z, freeing E's link to z while it is E's saved cursor. E then does not read z (gone) and reads w.
+// (a) E reads t, C, z, w. Run 2 (batch: t, s): E's body reads C at cursor depth 1 -> C re-runs and drops b -> severStale(C) at d = 1 saves E's live cursor (restored by C's
+// own frame; the link to z, the next after C) in savedCur and pushes depth 2; b's 1->0 hook disposes z, freeing E's link to z while it is that saved cursor (repairCursor logs
+// the fix at depth 2; severStale's restore applies it through fixCursor). E then does not read z (gone) and reads w.
 function a10a(M) {
     const r = M.createRegistry();
     const t = r.signal(0), s = r.signal(0), b = r.signal(0), z = r.signal(0), w = r.signal(0);
@@ -363,7 +365,7 @@ function a10a(M) {
     return { x1, x2, x3, runs, seen, l0, l1, l2, bObs: r.hasObservers(b), snap, reset };
 }
 // (b) E (depth 0) reads t, b, c on run 1 and only t on run 2: severStale(E) at d = 0 walks b then c. b's 1->0 hook creates and runs a nested effect (a nested
-// frame inside the walk). The nested frame's exit at d == 0 must not null the walk's cursor: c must still be severed.
+// frame inside the walk). The nested frame's exit must hand the walk its cursor back: c must still be severed. (Does not kill SS-NOPUSH on b5289277, see above.)
 function a10b(M) {
     const r = M.createRegistry();
     const t = r.signal(0), b = r.signal(0), c = r.signal(0), n = r.signal(0);
@@ -381,7 +383,8 @@ function a10b(M) {
     let reset = "ok"; try { r.reset(); } catch (e) { reset = String(e.message); }
     return { x1, x2, runs, nested, l0, l1, bObs, cObs, l2, snap, reset };
 }
-// (c) kills SS-D0NULL: after a nested sever at d > 0 the finally restores the OUTER frame's cursor (cursorStack[d]); null leaves E unable to sever its own stale w.
+// (c) kills SS-D0NULL: after a nested sever at d > 0 the finally restores the OUTER frame's cursor (savedCur; through fixCursor when the fix log is non-empty); null
+// leaves E unable to sever its own stale w. (b220 G1 B2b: KILLED by this row on b5289277, .handoff/b220/b2b/t7-mutants.txt.)
 // E reads y, C, then w (only while s == 0), q. batch(y, s): C re-runs at d = 1 and severs x; E (s now 1) skips w, so w must be severed: links 6 -> 4, w.set no re-run.
 // Hand-derived: l0 = E.{y,C,w,q} 4 + C.{s,x} 2 = 6; l1 = E.{y,C,q} 3 + C.{s} 1 = 4; runs: 1 initial + 1 (batch) = 2; w.set -> 2; q.set -> 3.
 function a10c(M) {

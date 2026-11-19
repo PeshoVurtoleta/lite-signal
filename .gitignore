@@ -18,3 +18,5 @@ node_modules/
 /audit/
 /bench/soak/out/
 /.handoff/
+/Contributing/
+/.idea/

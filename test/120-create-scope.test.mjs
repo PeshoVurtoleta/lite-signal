@@ -580,21 +580,34 @@ describe("D-DELTA-1 and D-CS-7 (A9)", () => {
         assert.notEqual(j, -1);
         return src.slice(i, j);
     }
-    // Text row: severStale must NOT save the outer cursor; the push alone remains. Fails on the frozen build
-    // (.handoff/cs/before/Signal.js has the `if (d !== 0) cursorStack[d] = activeObserverCurrentDep;` line).
-    // SSSAVE-READD (re-adding that line) is an identity write -- cursorStack[d] already equals the live cursor --
-    // EQUIVALENT by construction; only this text row kills it, never counted as a behaviour kill.
-    it("severStale slice: 0 x `cursorStack[d] =` write, exactly 1 x `cursorDepth = d + 1`", () => {
+    // Text pin (b220 G1 B2b, b215 shape A): cursorStack is gone; severStale saves the outer cursor in a LOCAL (savedCur)
+    // and pushes its own depth, and stores nothing into the fix log itself (only repairCursor / dropCursors append to it).
+    // A text pin only, never counted as a behaviour kill: dropping the push (SS-NOPUSH) or nulling the d > 0 restore
+    // (SS-D0NULL) is killed by behaviour in test/117 A10. Red on .handoff/b215/before/Signal.js (da5ddb86: no savedCur).
+    it("severStale slice: 0 x `cursorStack`, 0 x `fixLog[...] =` store, exactly 1 x `const savedCur = activeObserverCurrentDep;`, exactly 1 x `cursorDepth = d + 1`", () => {
         const body = severSlice(SRC);
-        assert.equal((body.match(/cursorStack\[d\]\s*=(?!=)/g) || []).length, 0);
+        assert.equal(body.split("cursorStack").length - 1, 0);
+        assert.equal((body.match(/fixLog\[[^\]]*\]\s*=(?!=)/g) || []).length, 0);
+        assert.equal(body.split("const savedCur = activeObserverCurrentDep;").length - 1, 1);
         assert.equal((body.match(/cursorDepth = d \+ 1/g) || []).length, 1);
     });
 
-    // Precondition: both callers restore the live cursor from cursorStack[d] the statement before severStale.
+    // Whole-file text pin (b220 G1 B2b): no cursorStack anywhere; each of the three frames (severStale, executeEffect,
+    // refreshComputed) saves the outer cursor in a local. Red on .handoff/b215/before/Signal.js (da5ddb86: cursorStack 16,
+    // savedCur 0; evidence .handoff/b220/b2b/t6-before.txt).
+    function frameShape(src) {
+        return { cursorStack: src.split("cursorStack").length - 1, savedCur: src.split("const savedCur = activeObserverCurrentDep;").length - 1 };
+    }
+    it("Signal.js: 0 x `cursorStack`, exactly 3 x `const savedCur = activeObserverCurrentDep;`", () => {
+        assert.deepEqual(frameShape(SRC), { cursorStack: 0, savedCur: 3 });
+    });
+
+    // Precondition: both callers (executeEffect, refreshComputed) restore the live cursor (savedCur as is when the fix log
+    // is empty, else through fixCursor; null at depth 0) the statement before severStale.
     function precondOk(src) {
         const lines = src.split("\n");
         const call = "if (stale !== null) severStale(node, stale);";
-        const prev = "activeObserverCurrentDep = d !== 0 ? cursorStack[d] : null;";
+        const prev = "activeObserverCurrentDep = fixLen === 0 ? savedCur : (d === 0 ? (fixLen = 0, null) : (activeObserverCurrentDep = null, fixCursor(savedCur, d)));";
         let n = 0;
         for (let i = 0; i < lines.length; i++) {
             if (lines[i].trim() === call) {

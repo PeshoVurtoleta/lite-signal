@@ -44,15 +44,18 @@ const SRC = readFileSync(KPATH, 'utf8');
 // flushEffects + executeEffect + refreshComputed re-pinned on 4b740bdb (b199, AUD-F G2 B2b; the pins were the 5af14f0b values):
 // executeEffect + refreshComputed moved with G1 (7386c610 gives the same two values), flushEffects with G2's catch-arm
 // FLAG_QUEUED clear; bytecode (b198, node v26.8.2) flushEffects 440 -> 442, executeEffect 462 -> 437, refreshComputed 770; other 11 unchanged.
+// executeEffect + refreshComputed + disposeNode re-pinned on b5289277 (b220, G1 B2b: shape A fix log + G pre-walk guard, PLAN-b215; other 11 unchanged);
+// bytecode (b220, node v26.8.2, bench/bytecode-budget.sh --diff on test/fixtures/bytecode-budget/hot-driver.mjs, da5ddb86 -> b5289277)
+// executeEffect 437 -> 450, refreshComputed 770 -> 782, flushEffects 442 unchanged; disposeNode not compiled by that driver (not measured).
 const PINS = {
     flushEffects: { sha16: 'b84c9fc740450c13', bytes: 2366 },
-    executeEffect: { sha16: '94ea4187a3fd905a', bytes: 4306 },
+    executeEffect: { sha16: '2ae231bdee8db00a', bytes: 4415 },
     createNode: { sha16: '7a8c545056853c6a', bytes: 3780 },
     nodeMiss: { sha16: 'c6aa7fbe2f7077f0', bytes: 1535 },
-    disposeNode: { sha16: '1ee1c455014776fe', bytes: 6672 },
+    disposeNode: { sha16: '4002d9f2fb2e64ff', bytes: 6741 },
     effectTail: { sha16: '1b80da7167ba5bbf', bytes: 93 },
     pullComputed: { sha16: '115db3c64068c3bc', bytes: 354 },
-    refreshComputed: { sha16: 'd8bbef528a8ccab6', bytes: 5383 },
+    refreshComputed: { sha16: 'df330d73eacf8b5c', bytes: 5492 },
     boxGet: { sha16: '2938d89e667b9f07', bytes: 640 },
     boxComputedGet: { sha16: '5940c249c8717ecf', bytes: 618 },
     readSignal: { sha16: 'bb06aefbf682ef8f', bytes: 605 },
