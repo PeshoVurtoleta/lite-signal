@@ -505,10 +505,12 @@ export interface Registry {
      *
      * Pins the owner for the duration of `fn` (1.6.0): `fn` runs as an open
      * scope with a valid owner. If that owner is disposed while the scope is open, its
-     * pool slot is not released until every scope has closed, so it cannot be recycled
-     * under `fn`. Cost: while a scope is open, pinned slots are not released, so under
+     * pool slot is released when the last scope owning it closes (other owners' open
+     * scopes do not hold it), so it cannot be recycled under `fn`. A node disposed while
+     * it is running is released at its own frame / cleanup-arm exit (F-b224-1). Cost: under
      * `onCapacityExceeded: 'throw'` an exactly-full node pool whose only free slot is
-     * that pinned owner throws `CapacityError` on the next node allocation. A scope
+     * a pinned owner throws `CapacityError` on the next node allocation until that
+     * owner's last owning scope closes. A scope
      * with no valid owner (`undefined`, forged, signal or disposed handle) pushes
      * nothing and does not block release.
      *
