@@ -240,35 +240,94 @@ describe("ASSERTION 2 G + fuzz + controls", () => {
         const f = fuzz(stageFix(), stageEng(text.replace(a, "")), 300, 12345, "grow");
         assert.ok(f.diffs >= 1, "MU-NOLOG must diverge: " + f.diffs);
     });
-    // A-b216-2: the --jitless real-overflow sweep (same child, same cells) on the fixture and on the engine: every cell classified,
-    // and the engine's CORRUPT cells are a subset of the fixture's (pre-existing: freeLink -> repairCursor entry, at:R k=385..387).
-    it("2f --jitless sweep (k 0..450, at + atp, shapes R E S Rd R+ E+ S+): every cell classified; engine CORRUPT cells subset of fixture CORRUPT cells", { skip: "A-b216-5: out of the gate until the site-set oracle is rebuilt (next burst)" }, () => {
+    // A-b216-5 (maintainer D-b216-4): the --jitless real-overflow sweep (same child, same shapes) classified by overflow SITE, not by k.
+    // Why not k: savedCur adds a register to 3 frames, so a cell's k -> site map moves between builds, and the stack start moves with
+    // argv / env (LEDGER #65, b190 trap). So the cells are classified CORRUPT / OVERFLOW / NORMAL / SETUPERR as before, and every CORRUPT
+    // cell is reduced to its overflow site(s); the gate is on the SET of corrupting sites, unioned over a fixed set of stack phases
+    // (an argv pad string of 0..PAD_MAX chars, step PAD_STEP, passed as one extra argv string to the child), one union per engine.
+    // SITE RULE: a cell's sites are "thrower<-caller" for every RangeError it caught = the first two stack frames' function names as V8
+    // prints them ("at fn (file:l:c)": names only, no line numbers; "<anon>" when V8 prints no name). V8 raises the overflow at the
+    // callee's entry, so the top frame is the function whose entry failed and the second is the call site's function; the overflow
+    // whose unwind leaves the corruption is the one RangeError in a CORRUPT cell (probed: a CORRUPT cell holds 1 caught RangeError;
+    // when it holds more, every one is kept: a superset only makes the subset gate stricter). Raw example (before, at:R k385):
+    // "RangeError: Maximum call stack size exceeded / at disposeNode (...) / at disposeGuarded (...) / at dispose (...)". The sweep child
+    // records the stack AFTER the cell (cap() only keeps the error): formatting a stack inside the overflow zone itself overflows.
+    // The windowed run finds 6 fixture sites; a full 0..450 sweep of the same child finds only disposeNode<-disposeGuarded on both
+    // builds: which sites appear depends on the cell sequence, so KWIN is fixed and the set is comparable only within one host + Node.
+    // Hence the gate is "engine sites subset of the fixture sites measured in the SAME run" plus an exact pin, and the WHOLE 2f set
+    // (2f, 2f-pin, 2f-control) runs only on HOST_KEY (darwin-arm64, node v26.8.2; D-b222-1, A-b222-0). Every other host prints one
+    // "# REPORTED" note per row and skips; no sweep spawns off-key. A narrower sweep also keeps the row at 129-139 s darwin-arm64.
+    // Why host-keyed: the argv pad moves only the child's stack start (an env pad the child never reads gives the same per-pad
+    // signatures, 9/9). Linux x64 randomizes each process's stack start by 0..8 KB, swamping the 0..160 B pads, so each spawn there
+    // samples a random phase (padSigs >= 2 would pass from randomness and a drop-pad mutant would survive). x64 v26.3.1 table: the
+    // head build has a fixture-absent site at 17/21 single pads. Local-only gate: CI never runs it.
+    const PAD_STEP = 8, PAD_MAX = 160, KWIN = "0-30,375-395", NK = 31 + 21;
+    const sweepSites = (eng, padMax) => {
         const SW = join(HERE, "fixtures", "b123", "sweep-child.mjs");
-        const cells = (eng) => {
-            const res = spawnSync(process.execPath, ["--jitless", "--stack-size=984", SW], { encoding: "utf8", timeout: 240000, killSignal: "SIGKILL", maxBuffer: 1 << 28,
-                env: { ...process.env, B123_ENGINE: eng, B123_LINES: "[]", B123_KMAX: "450" } });
+        const sites = new Set(), census = {}, padSigs = new Set();
+        for (let pad = 0; pad <= padMax; pad += PAD_STEP) {
+            const res = spawnSync(process.execPath, ["--jitless", "--stack-size=984", SW, "x".repeat(pad)], { encoding: "utf8", timeout: 240000, killSignal: "SIGKILL", maxBuffer: 1 << 28,
+                env: { ...process.env, B123_ENGINE: eng, B123_LINES: "[]", B123_KMAX: "450", B123_KWIN: KWIN } });
             assert.equal(res.error, undefined, "sweep spawn error"); assert.equal(res.signal, null, "sweep killed / timed out: " + res.signal);
             assert.equal(res.status, 0, "sweep exit: " + String(res.stderr).slice(0, 300));
-            const out = JSON.parse(res.stdout); const corrupt = new Set(), census = {};
+            const out = JSON.parse(res.stdout);
             assert.deepEqual(Object.keys(out).length, 14, "2 recursion shapes x 7 shapes");
+            const corrupt = [];
             for (const key in out) {
-                assert.equal(out[key].length, 451, key + ": every k swept");
+                assert.equal(out[key].length, NK, key + " pad " + pad + ": every windowed k swept");
                 for (const x of out[key]) {
                     let cls;
                     if (x.err || !x.o) cls = "SETUPERR";
                     else if (x.other.filter((z) => z !== "Error:hook").length || x.o.audit[0] !== x.o.audit[1] || x.o.resetErr !== null) cls = "CORRUPT";
                     else cls = x.ranges > 0 ? "OVERFLOW" : "NORMAL";
-                    assert.notEqual(cls, "SETUPERR", key + " k" + x.k + ": unclassified cell " + String(x.err));
+                    assert.notEqual(cls, "SETUPERR", key + " k" + x.k + " pad " + pad + ": unclassified cell " + String(x.err));
                     census[cls] = (census[cls] || 0) + 1;
-                    if (cls === "CORRUPT") corrupt.add(key + "@" + x.k);
+                    if (cls === "CORRUPT") { corrupt.push(key + "@" + x.k); assert.ok(x.sites.length > 0, key + " k" + x.k + " pad " + pad + ": CORRUPT cell with no overflow site"); for (const s of x.sites) sites.add(s); }
                 }
             }
-            return { corrupt, census };
-        };
-        const b = cells(stageFix()), h = cells(stageEng());
+            padSigs.add(corrupt.sort().join(","));   // per-pad signature: proves the pad axis changes the cells
+        }
+        return { sites: [...sites].sort(), census, padSigs };
+    };
+    // Before's corrupting-site set as measured on HOST_KEY (repeat-stable: 3 runs identical; .handoff/b221/2f). Other hosts / Nodes
+    // differ (x86_64 v26.3.1: +refreshComputed<-read, -disposeNode<-disposeGuarded).
+    const BEFORE_SITES = ["WeakMap.get<-dropLifecycleHooks", "disposeNode<-disposeGuarded", "dropLifecycleHooks<-disposeNode", "freeLink<-severTail", "repairCursor<-disposeNode", "severTail<-severStale"];
+    const HOST_KEY = process.platform === "darwin" && process.arch === "arm64" && process.version === "v26.8.2";
+    const offKey = (t, row) => { console.log("# REPORTED " + row + " on " + process.platform + "-" + process.arch + " " + process.version + ": host-keyed (D-b222-1: Linux stack-start ASLR makes the pad axis random)"); t.skip("host-keyed (D-b222-1)"); return true; };
+    const memo = {};   // one fixture / engine measurement shared by 2f, 2f-pin and 2f-control
+    const fixSweep = () => (memo.b ||= sweepSites(stageFix(), PAD_MAX)), engSweep = () => (memo.h ||= sweepSites(stageEng(), PAD_MAX));
+    it("2f --jitless sweep (pads 0..160 step 8, k 0..30 + 375..395, at + atp, shapes R E S Rd R+ E+ S+): every cell classified; engine's corrupting overflow SITES are a subset of the fixture's (same run)", (t) => {
+        if (!HOST_KEY) return offKey(t, "2f");
+        const b = fixSweep(), h = engSweep();
         assert.ok(b.census.NORMAL > 0 && b.census.OVERFLOW > 0, "sweep covers success and overflow: " + JSON.stringify(b.census));
-        for (const c of h.corrupt) assert.ok(b.corrupt.has(c), "new CORRUPT cell on the engine: " + c);
-        assert.deepEqual([...b.corrupt].sort(), ["at:R@385", "at:R@386", "at:R@387"], "before CORRUPT cells (B2a-sweep.txt)");
+        assert.ok(h.census.NORMAL > 0 && h.census.OVERFLOW > 0, "engine sweep covers success and overflow: " + JSON.stringify(h.census));
+        // non-vacuous floor: the fixture has sites, and the pad axis changes the cells (a dropped pad collapses padSigs to 1)
+        assert.ok(b.sites.length > 0, "fixture CORRUPT site set is empty (vacuous gate)");
+        assert.ok(b.padSigs.size >= 2, "pad axis has no effect on the fixture's CORRUPT cells: padSigs " + b.padSigs.size);
+        console.log("# 2f host " + process.platform + "-" + process.arch + " " + process.version + " fixture sites " + JSON.stringify(b.sites) + " engine sites " + JSON.stringify(h.sites) + " padSigs " + b.padSigs.size + "/" + h.padSigs.size);
+        const extra = h.sites.filter((s) => !b.sites.includes(s));
+        assert.deepEqual(extra, [], "new corrupting overflow site(s) on the engine");
+    });
+    it("2f-pin fixture CORRUPT site set equals BEFORE_SITES exactly (darwin-arm64 node v26.8.2 only)", (t) => {
+        if (!HOST_KEY) return offKey(t, "2f-pin");
+        assert.deepEqual(fixSweep().sites, BEFORE_SITES, "before CORRUPT site set");
+    });
+    // Must-fail control: the fixture plus one count-checked cold call on the dispose path (in the dSub-walk, after the link is spliced out and before it is nulled and freed)
+    // must surface a corrupting site the fixture lacks (pads 0..64 are enough to show it). Extras are taken against the fixture set
+    // measured in this run over pads 0..160 (the shared memo), a superset of the control's pads: a planted site is named plantCold<-
+    // and is absent from any fixture set.
+    it("2f-control a planted new overflow site on the dispose path (fixture + one cold call in disposeNode) is caught as a new CORRUPT site", (t) => {
+        if (!HOST_KEY) return offKey(t, "2f-control");
+        // plantCold carries 12 locals: a leaf with a tiny frame was not seen to fail its entry stack check first (probed pads 0..32, one build: the
+        // 1-register version surfaced 0 sites; this one 23 CORRUPT cells).
+        const PLANT_FN = "    function plantCold(n) { const a = n, b = a, c = b, d = c, e = d, f = e, g = f, h = g, i = h, j = i, k = j, l = k; return l; }\n";
+        const text = fixText(); const a = "            sLink.source = null;\n            sLink.target = null;";
+        assert.equal(text.split(a).length - 1, 1, "plant anchor: exactly 1 match"); assert.equal(text.split("    function disposeNode(node) {").length - 1, 1, "plant fn anchor: exactly 1 match");
+        const planted = text.replace(a, "            plantCold(sLink);\n            sLink.source = null;\n            sLink.target = null;").replace("    function disposeNode(node) {", PLANT_FN + "    function disposeNode(node) {");
+        const r = sweepSites(stage(FIX, planted, FIXW), 64);
+        assert.ok(r.census.NORMAL > 0 && r.census.OVERFLOW > 0, "control sweep covers success and overflow: " + JSON.stringify(r.census));
+        const extra = r.sites.filter((s) => !fixSweep().sites.includes(s));
+        assert.ok(extra.length > 0 && extra.every((s) => s.startsWith("plantCold<-")), "planted site(s) appear: " + JSON.stringify(extra));
     });
 });
 
