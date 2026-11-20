@@ -810,13 +810,14 @@ export function createRegistry(config) {
     let cursorDepth = 0;
     // A1.8 (S2): slots of nodes disposed while RUNNING (FLAG_COMPUTING). A suspended frame
     // may still hold such a node as its saved observer/owner; recycling the slot before
-    // every frame has unwound would re-seat a stranger. Released into the free list only
-    // at depth 0 (releasePinned).
+    // every frame has unwound would re-seat a stranger. F15 as amended by F-b224-1: released into
+    // the free list at the node's own frame / cleanup-arm exit (unpinOwn), when the last scope owning it closes
+    // (via scopePinHead), or at depth 0 when no arm or scope is open (releasePinned).
     let pinnedHead = null;
     // D-b183-3 (Q-E1-1): the owners of the runWithOwner scopes open right now, innermost last. Such an
     // owner is usually idle, so without a pin its slot goes to the free list at dispose and a frame
-    // that saved it restores a recycled node. disposeNode pins it (scopeOwned) and releasePinned waits
-    // for scopeDepth === 0. Pushed and popped only by runWithOwner; each slot is nulled on pop.
+    // that saved it restores a recycled node. disposeNode pins it (scopeOwned -> scopePinHead, SG2);
+    // unpinScope releases it when the last scope owning it closes, releasePinned only at scopeDepth === 0. Pushed and popped only by runWithOwner; each slot is nulled on pop.
     // Smi (bounded by the JS stack).
     const scopeOwners = [];
     let scopeDepth = 0;
@@ -1150,10 +1151,12 @@ export function createRegistry(config) {
      * Zero-box: the call takes only (node, stale). `g` is this frame's own gen snapshot; the
      * caller's savedGen (a per-slot int32 that reaches 2^30 and more on a churned slot, so it
      * would box as an argument) never crosses the call.
-     * The COMPUTING clear keeps the frames' gen guard although it cannot change anything: a node
-     * disposed during the walk was COMPUTING, so disposeNode pinned its slot with flags 0, and a
-     * pinned slot is released only at cursor depth 0, after this unwind. The guard keeps "no
-     * write to a slot whose gen moved" literal, on a cold path.
+     * The COMPUTING clear keeps the frames' gen guard: a node disposed during the walk was
+     * COMPUTING, so disposeNode pinned its slot with flags 0, and a pin is released at its own frame / cleanup-arm exit, when the last scope owning it closes, or at depth 0 when no arm or scope is open
+     * (F15 as amended by F-b224-1); this frame's own release (R7a, below) runs after the guard.
+     * The guard keeps "no write to a slot whose gen moved" literal, on a cold path.
+     * R7a (F-b224-1): a walk that disposed the node and then threw skips the callers' releases
+     * (refreshComputed's unpinOwn, effectTail), so the throw arm releases the pin itself.
      * Cold: called only when a stale tail exists. K4 (open): a stack overflow AT the entry of
      * this call (or of effectTail / computedRunTail / requeueStaleEffect / stampFarFloor) skips
      * the sever and the consume; the frame is already unwound and the links stay consistent. An
@@ -1181,9 +1184,13 @@ export function createRegistry(config) {
             currentOwner = pw;
             cursorDepth = d;
             activeObserverCurrentDep = fixLen === 0 ? savedCur : (d === 0 ? (fixLen = 0, null) : (activeObserverCurrentDep = null, fixCursor(savedCur, d)));
-            if (!ok && node.gen === g && (node.flags & FLAG_STALE_READ) !== 0) {
-                if ((node.flags & FLAG_EFFECT) !== 0) requeueStaleEffect(node);
-                else { node.flags &= ~FLAG_STALE_READ; stampFarFloor(node); }
+            if (!ok) {
+                if (node.gen === g) {
+                    if ((node.flags & FLAG_STALE_READ) !== 0) {
+                        if ((node.flags & FLAG_EFFECT) !== 0) requeueStaleEffect(node);
+                        else { node.flags &= ~FLAG_STALE_READ; stampFarFloor(node); }
+                    }
+                } else unpinOwn(node);   // R7a (F-b224-1): disposed by the walk, then threw -> the callers' releases are skipped; release here
             }
         }
     }
@@ -1264,7 +1271,8 @@ export function createRegistry(config) {
         // completes the disposal (gen bump, free-list push); the outer call must stop, or
         // it pushes the node onto the free list twice.
         const g = node.gen;
-        runCleanup(node);
+        if (node.firstOwned !== null) disposeOwned(node);   // F-b224-1: runCleanup's two tests; the own cleanup is gen-tested
+        if (node.gen === g && node.cleanupFn !== undefined) runOwnCleanup(node);   // no cleanup on a slot an owned child's cleanup disposed
         if (node.gen !== g) return;
 
         // CROSS-EDGE L2->L1: extract this node's own edges from the graph.
@@ -1338,9 +1346,13 @@ export function createRegistry(config) {
         // inherits them); before the gen bump, so hooks user code registered during teardown go too.
         if (lifecycleCount !== 0) dropLifecycleHooks(node);
         node.gen = (node.gen + 1) | 0;
-        if ((f & FLAG_COMPUTING) !== 0 || (scopeDepth !== 0 && scopeOwned(node))) {
-            node.nextFree = pinnedHead;   // A1.8: running -> pinned until depth 0 (D-b183-3: or a scope's owner)
+        if (node === flushCur) flushCur = null;   // R0c (F-b224-1): the running flush entry's catch then leaves this slot's QUEUED alone
+        if ((f & FLAG_COMPUTING) !== 0) {
+            node.nextFree = pinnedHead;   // A1.8 / F15: running -> pinned; a pin is released at its own frame / cleanup-arm exit, when the last scope owning it closes, or at depth 0 when no arm or scope is open
             pinnedHead = node;
+        } else if (scopeDepth !== 0 && scopeOwned(node)) {
+            node.nextFree = scopePinHead;   // D-b183-3 / SG2: a scope's owner -> scope-pinned; released when its last scope closes
+            scopePinHead = node;
         } else {
             node.nextFree = freeNodeHead;
             freeNodeHead = node;
@@ -1434,13 +1446,15 @@ export function createRegistry(config) {
     }
 
     /**
-     * Free-list miss (cold). A1.8: at depth 0 pinned slots are reusable again, so take
-     * one of those first; otherwise grow by a chunk (or throw under "throw").
+     * Free-list miss (cold). A1.8 / F15 (as amended by F-b224-1): a pin is released at its own frame / cleanup-arm exit, when the last scope owning it closes, or at depth 0 when no arm or scope is open.
+     * At depth 0 the pinned and scope-pinned (SG2) slots are reusable unless a scope or a cleanup
+     * arm is open (releasePinned refuses), so take one of those first; otherwise grow by a chunk
+     * (or throw under "throw").
      * @private
      */
     function nodeMiss() {
         let node;
-        if (pinnedHead !== null && cursorDepth === 0 && releasePinned()) {
+        if ((pinnedHead !== null || scopePinHead !== null) && cursorDepth === 0 && releasePinned()) {   // SG2: scope pins count too
             node = freeNodeHead;
             freeNodeHead = node.nextFree;
             node.nextFree = null;
@@ -1479,16 +1493,26 @@ export function createRegistry(config) {
     }
 
     /**
-     * A1.8: splice every pinned slot into the free list. Callers guarantee
-     * cursorDepth === 0 (no frame left that could hold a pinned node); an open
-     * runWithOwner scope still can, so nothing is released then (D-b183-3): the
-     * miss grows the pool, or throws CapacityError under "throw". Cold.
+     * A1.8: splice every pinned slot (pinnedHead, then the SG2 scope pins on scopePinHead)
+     * into the free list: the depth-0 release of F15 (as amended by F-b224-1: a pin is released at its own frame / cleanup-arm exit, when the last scope owning it closes, or at depth 0 when no arm or scope is open).
+     * Callers guarantee cursorDepth === 0 (no frame left that could hold a pinned node); an
+     * open runWithOwner scope (D-b183-3) or a running cleanup arm (R1bNZ: armDepth !== 0)
+     * still can, so nothing is released then: the miss grows the pool, or throws
+     * CapacityError under "throw". Cold.
      * @private
      */
     function releasePinned() {
-        if (scopeDepth !== 0) return false;
+        if (scopeDepth !== 0 || armDepth !== 0) return false;   // R1bNZ: no release while a cleanup arm runs (its node may be pinned)
         let n = pinnedHead;
         pinnedHead = null;
+        while (n !== null) {
+            const nx = n.nextFree;
+            n.nextFree = freeNodeHead;
+            freeNodeHead = n;
+            n = nx;
+        }
+        n = scopePinHead;
+        scopePinHead = null;
         while (n !== null) {
             const nx = n.nextFree;
             n.nextFree = freeNodeHead;
@@ -1525,7 +1549,7 @@ export function createRegistry(config) {
         // (which unlinks itself from this list) cannot end the cascade early.
         const g = node.gen;
         let child;
-        while ((child = node.firstOwned) !== null) {
+        while (node.gen === g && (child = node.firstOwned) !== null) {   // F-b224-1: stop once a child's cleanup disposed this node
             const next = child.nextOwned;
             node.firstOwned = next;
             if (next !== null) next.prevOwned = null;
@@ -1626,8 +1650,10 @@ export function createRegistry(config) {
      * body's run-start dispatcher; the drain gave the node no links and no stamp (COMPUTING
      * blocked nested runs, runOwnCleanup nulls currentObserver), so the dispatcher's test
      * holds, the cold half diverts to firstRunCleanupE / firstRunCleanupC again, and that
-     * consumes the skip and runs no cleanup. The finally clears a skip the run never reached;
-     * a slot disposed at depth > 0 is not recycled before it.
+     * consumes the skip and runs no cleanup. The finally clears a skip the run never reached.
+     * R6 (F-b224-1): the skip is consumed at the run-start dispatcher before any user code; the
+     * inner run's own-frame exit may now release a slot disposed during the run, and no user code
+     * runs between that release and this finally, so the skip never names a recycled slot.
      * @private
      */
     function runFirstBody(node, isEffect) {
@@ -1650,7 +1676,7 @@ export function createRegistry(config) {
      * cleanup does not skip its body. Consumes runFirstBody's skip first (return: the first body runs with no
      * cleanup). Drains (drainPreRun); nothing threw -> return, the normal path runs the body
      * (d235e505 / r3 behaviour). The node disposed / recycled by a cleanup -> throw the
-     * errors, touch nothing. Else clear COMPUTING | STALE_READ, run the first body
+     * errors, touch nothing but its own pin (unpinOwn at the arm's exit, F-b224-1). Else clear COMPUTING | STALE_READ, run the first body
      * (runFirstBody) and throw E, or an AggregateError of the cleanup errors and the body's
      * error, from the run.
      * @private
@@ -1661,8 +1687,11 @@ export function createRegistry(config) {
         let errs = null;
         try {
             node.flags |= FLAG_COMPUTING;   // L-1: set inside the try (an overflow at drainPreRun's entry clears it)
+            armDepth++;   // R1bNZ: a cleanup arm runs; releasePinned refuses until it exits
             errs = drainPreRun(node);
-        } catch (e) { node.flags &= ~FLAG_COMPUTING; throw e; }
+        } catch (e) { armDepth--; node.flags &= ~FLAG_COMPUTING; throw e; }   // R1bNZ: throw exit
+        armDepth--;   // R1bNZ: normal exit
+        if (node.gen !== g) unpinOwn(node);   // F-b224-1: disposed by a cleanup -> release its own pin at the arm's exit
         if (errs === null) return;
         if (node.gen !== g) throw firstRunErrors(errs);
         node.flags &= ~(FLAG_COMPUTING | FLAG_STALE_READ);
@@ -1671,7 +1700,7 @@ export function createRegistry(config) {
     }
     /**
      * Never-run half of rerunCleanupComputed (D-b175-1 / -3): version 0 means the computed was
-     * never evaluated. Same skip and drain as firstRunCleanupE; returns runCleanupC's "stop"
+     * never evaluated. Same skip, drain and pin release (unpinOwn, F-b224-1) as firstRunCleanupE; returns runCleanupC's "stop"
      * boolean. Nothing threw -> false (the normal path runs the body). The node disposed /
      * recycled by a cleanup or by its first body -> true (swallowed, as the body's catch
      * does). Else clear COMPUTING | STALE_READ, run the first body (runFirstBody) and cache E,
@@ -1686,9 +1715,11 @@ export function createRegistry(config) {
         let errs = null;
         try {
             node.flags |= FLAG_COMPUTING;   // L-1: set inside the try (an overflow at drainPreRun's entry clears it)
+            armDepth++;   // R1bNZ: a cleanup arm runs; releasePinned refuses until it exits
             errs = drainPreRun(node);
-        } catch (e) { node.flags &= ~FLAG_COMPUTING; throw e; }
-        if (node.gen !== g) return true;
+        } catch (e) { armDepth--; node.flags &= ~FLAG_COMPUTING; throw e; }   // R1bNZ: throw exit
+        armDepth--;   // R1bNZ: normal exit
+        if (node.gen !== g) { unpinOwn(node); return true; }   // F-b224-1: disposed by a cleanup -> release its own pin at the arm's exit
         if (errs === null) return false;
         node.flags &= ~(FLAG_COMPUTING | FLAG_STALE_READ);
         runFirstBody(node, false);
@@ -1719,7 +1750,8 @@ export function createRegistry(config) {
      * from the snapshot taken before runCleanup; COMPUTING kept the walk from queueing it)
      * is not absorbed: the node is re-queued (requeueStaleEffect) before the rethrow, so the
      * next pass runs the body with the new values; the needs-run marker is then not needed.
-     * Disposed / recycled by the cleanup (gen moved): rethrow and touch nothing.
+     * Disposed / recycled by the cleanup (gen moved): rethrow and touch nothing but its own pin
+     * (unpinOwn, F-b224-1); a normal exit with the gen moved releases the pin the same way.
      * @private
      */
     function rerunCleanupEffect(node) {
@@ -1727,8 +1759,10 @@ export function createRegistry(config) {
         const g = node.gen, m = node.markEpoch;
         try {
             node.flags |= FLAG_COMPUTING;   // L-1: set inside the try; the catch clears it
+            armDepth++;   // R1bNZ: a cleanup arm runs; releasePinned refuses until it exits
             runCleanup(node);
         } catch (err) {
+            armDepth--;   // R1bNZ: throw exit
             if (node.gen === g) {
                 node.flags &= ~(FLAG_COMPUTING | FLAG_STALE_READ);
                 // S1: every walk that reaches the node (and every STALE_READ flag) stamps markEpoch.
@@ -1736,9 +1770,11 @@ export function createRegistry(config) {
                 else if (node.evalVersion === 0 && node.headDep !== null) {
                     stampFarFloor(node);
                 }
-            }
+            } else unpinOwn(node);   // F-b224-1: disposed by the cleanup -> release its own pin
             throw err;
         }
+        armDepth--;   // R1bNZ: normal exit
+        if (node.gen !== g) unpinOwn(node);   // F-b224-1: disposed by the cleanup -> release its own pin
     }
     /**
      * Cold half of runCleanupC. On a throw with gen unchanged: cache the error as the node's
@@ -1756,8 +1792,8 @@ export function createRegistry(config) {
      * and throws err: that read throws the cleanup's error, the next read re-runs the body
      * with the new values. If the instanceof test or the err read ran user code that moved the
      * node (gen) or its slot (value), throwComputedError throws the wrapper as cached and writes
-     * nothing (D-b193-2). Disposed / recycled by the cleanup (gen moved): swallow, as the
-     * body's catch does for a disposed node. Returns runCleanupC's "stop" boolean from its own
+     * nothing (D-b193-2). Disposed / recycled by the cleanup (gen moved): release its own pin
+     * (unpinOwn, F-b224-1) and swallow, as the body's catch does for a disposed node. Returns runCleanupC's "stop" boolean from its own
      * gen snapshot: true on a throw or a gen move, false when the cleanups completed. A
      * never-evaluated node (version 0) goes to firstRunCleanupC (body-first, D-b175-1).
      * @private
@@ -1767,8 +1803,10 @@ export function createRegistry(config) {
         const g = node.gen, m = node.markEpoch;
         try {
             node.flags |= FLAG_COMPUTING;   // L-1: set inside the try; the catch clears it
+            armDepth++;   // R1bNZ: a cleanup arm runs; releasePinned refuses until it exits
             runCleanup(node);
         } catch (err) {
+            armDepth--;   // R1bNZ: throw exit
             if (node.gen === g) {
                 // S1 (ARG-E2 F1): a write reached this computed while its cleanups ran -> store err
                 // wrapped (undelivered); throwComputedError delivers it once and sets the far floor.
@@ -1776,10 +1814,12 @@ export function createRegistry(config) {
                 node.flags = (node.flags | FLAG_HAS_ERROR) & ~(FLAG_COMPUTING | FLAG_STALE_READ);
                 node.version = globalVersion;
                 node.evalVersion = globalVersion;
-            }
+            } else unpinOwn(node);   // F-b224-1: disposed by the cleanup -> release its own pin
             return true;
         }
-        return node.gen !== g;
+        armDepth--;   // R1bNZ: normal exit
+        if (node.gen !== g) { unpinOwn(node); return true; }   // F-b224-1: disposed by the cleanup -> release its own pin
+        return false;
     }
 
     // === L3 * PROPAGATION / EXECUTION =============================
@@ -1993,7 +2033,8 @@ export function createRegistry(config) {
      * period); a stale entry whose slot holds a legitimately QUEUED resident serves it early (KNOWN,
      * HEAD-equal); a deferred-scheduler resident then gets a second call at its own entry (R1).
      * F3 / F4 (AUD-F G2, unq4): an entry that throws (pre-walk, scheduler, or body) clears
-     * QUEUED in its catch arm when node.evalVersion !== 0. A run clears QUEUED only after its
+     * QUEUED in its catch arm when node.evalVersion !== 0 and flushCur still names the entry's
+     * node (R0c, F-b224-1: disposeNode nulls flushCur at the gen bump). A run clears QUEUED only after its
      * pre-walk, and a scheduler that throws before calling run never reaches it, so without
      * the clear the consumed entry would leave QUEUED set and no later change could schedule
      * the effect ((c) below is a scheduler that throws after calling run). The catch arm runs
@@ -2005,7 +2046,10 @@ export function createRegistry(config) {
      * (a) pre-existing (G1-equal): a scheduled run called outside a flush (a deferred
      * scheduler's thunk) whose pre-walk throws leaves QUEUED set with no entry.
      * (b) a depth-0 dispose that recycles the slot into a QUEUED resident with a live entry,
-     * then a throw: the clear hits the resident and its entry is skipped.
+     * then a throw: the clear hits the resident and its entry is skipped (test/119 (b): the
+     * slot is recycled before the stale entry runs). R0c (F-b224-1) closes only the
+     * during-entry routes: disposeNode nulls flushCur at the gen bump, so a slot disposed and
+     * recycled during the entry keeps its resident's QUEUED.
      * (c) a synchronous scheduler that runs the thunk, writes a dependency, then throws: the
      * entry the write pushed loses QUEUED and is skipped.
      * (d) pre-existing: an effect re-queued for a stale read (evalVersion 0) whose scheduler
@@ -2030,6 +2074,7 @@ export function createRegistry(config) {
 
                 for (let i = 0; i < toRun; i++) {
                     const node = currentQueue[i];
+                    flushCur = node;   // R0c: this entry's node until disposeNode nulls it at the gen bump
                     try {
                         // F21: run only while QUEUED; a stale entry (disposed, recycled into an
                         // un-queued resident, or period already served) -> skip
@@ -2043,7 +2088,7 @@ export function createRegistry(config) {
                         }
                     } catch (err) {
                         flushErrorBuffer[flushErrorCount++] = err;
-                        if (node.evalVersion !== 0) node.flags &= ~FLAG_QUEUED;   // stranded QUEUED (no call: holds at the stack limit)
+                        if (flushCur !== null && node.evalVersion !== 0) node.flags &= ~FLAG_QUEUED;   // stranded QUEUED, only on the entry's own node (R0c); no call: holds at the stack limit
                     }
                 }
             }
@@ -2130,12 +2175,14 @@ export function createRegistry(config) {
         return false;
     }
     // F-b33-1: executeEffect's post-run tail, the last statement of its `finally` (S3, D-AUD-5: a body
-    // that throws after a stale read is re-queued too), out of line for its inlining budget (small: inlines back).
+    // that throws after a stale read is re-queued too), out of line for executeEffect's inlining budget.
     // A throw from the epilogue sever skips it; severStale's throw arm consumes the stale read instead
     // (F5, AUD-F G1). K4 (open): a stack overflow at its own entry skips the re-queue.
-    // Truthiness test, not `!== 0` (D4): 25 B vs 31 keeps it under the small-function inline caps
-    // (Maglev 27 B, TurboFan 30 B); flags is a Smi bit set, so the two forms are the same test.
-    function effectTail(node) { if (node.flags & FLAG_STALE_READ) requeueStaleEffect(node); }
+    // D2 (F-b224-1): else, flags 0 = disposed during its run -> unpinOwn releases its pin at this frame exit.
+    // Truthiness test, not `!== 0` (D4: 25 B vs 31 before D2). With the D2 arm the body is 46 B, over the
+    // small-function inline caps quoted by D4 (Maglev 27 B, TurboFan 30 B); no inlining is claimed here.
+    // flags is a Smi bit set, so the truthiness test and `!== 0` are the same test.
+    function effectTail(node) { if (node.flags & FLAG_STALE_READ) requeueStaleEffect(node); else if (node.flags === 0) unpinOwn(node); }
     function throwEffectCycle() { throw new Error("CycleError: Infinite effect loop detected."); }
     function throwComputedCycle() { throw new Error("CycleError: Circular dependency detected."); }
     // ARG-E2 (F1): the cold throw arm of the computed read closure, pullComputed and peekComputed
@@ -2225,7 +2272,8 @@ export function createRegistry(config) {
         // SELF-DISPOSE / ABA DETECTION: snapshot the gen ONCE, before any user code (the
         // pre-walk's pulls, runCleanup's cleanups, the body). disposeNode bumps gen, so if
         // it advanced the node was disposed -- and, if that happened at depth 0, possibly
-        // recycled into a stranger (a pinned slot is released by the next depth-0 miss).
+        // recycled into a stranger (F15 as amended by F-b224-1: a pin is released at its own frame /
+        // cleanup-arm exit, when the last scope owning it closes, or at depth 0 when no arm or scope is open).
         const savedGen = node.gen;
 
         let needsRun = node.evalVersion === 0;
@@ -2472,7 +2520,7 @@ export function createRegistry(config) {
                 activeObserverCurrentDep = fixLen === 0 ? savedCur : (d === 0 ? (fixLen = 0, null) : (activeObserverCurrentDep = null, fixCursor(savedCur, d)));
                 if (stale !== null) severStale(node, stale);
             }
-            if (node.flags === 0) return;   // disposed during body
+            if (node.flags === 0) { unpinOwn(node); return; }   // disposed during body: D2 (F-b224-1) releases its pin at this frame exit
             if ((node.flags & FLAG_ERR_OR_STALE) !== 0) computedRunTail(node);
             return;
         }
@@ -3065,6 +3113,7 @@ export function createRegistry(config) {
             // S10: gen-safe restore (the #30 idiom) -- fn may dispose the saved owner/observer.
             currentOwner = (pw !== null && pw.gen === pwg) ? pw : null;
             currentObserver = (po !== null && po.gen === pg) ? po : null;
+            if (scoped && node.flags === 0) unpinScope(node);   // SG2 (F-b224-1): a scope on a disposed owner closed -> release its scope pin
         }
     }
     /**
@@ -3243,6 +3292,7 @@ export function createRegistry(config) {
         fixLen = 0;
 
         pinnedHead = null;   // A1.8: pinned slots are released with the rest of the pool
+        scopePinHead = null;   // SG2: scope pins likewise; armDepth is not zeroed here (R1bNZ)
         // C-RESET D-2: the next node / link miss regrows the pools from the constructor config.
         currentNodesCapacity = initialNodesCapacity;
         currentLinkCapacity = initialLinkCapacity;
@@ -4014,6 +4064,59 @@ export function createRegistry(config) {
         }
         return c;
     }
+    /**
+     * F-b224-1 (D2, E, R7a): the node's own frame or cleanup arm has unwound -> release its pinned
+     * slot. A no-op unless `node` is on pinnedHead. Still owned by an open runWithOwner scope (SG2)
+     * -> moved to scopePinHead (released when its last scope closes); else -> the free list. The
+     * scope test runs before the unlink, so an overflow at scopeOwned leaves the node pinned, never
+     * orphaned. 9 call sites: severStale's throw arm (R7a); firstRunCleanupE, firstRunCleanupC, and
+     * rerunCleanupEffect / rerunCleanupComputed (catch and normal exit each) (E); refreshComputed
+     * and effectTail (D2). Linear in the pinned list. Cold. Declared last (LEDGER #70 / D-CS-1).
+     * @private
+     */
+    function unpinOwn(node) {
+        if (pinnedHead === null) return;
+        const so = scopeDepth !== 0 && scopeOwned(node);   // SG2: scope test BEFORE the unlink (an overflow here leaves the node pinned, never orphaned)
+        let p = null, n = pinnedHead;
+        while (n !== null && n !== node) { p = n; n = n.nextFree; }
+        if (n === null) return;
+        if (p === null) pinnedHead = n.nextFree; else p.nextFree = n.nextFree;
+        if (so) { n.nextFree = scopePinHead; scopePinHead = n; return; }   // SG2: frame unwound, a scope on it still open
+        n.nextFree = freeNodeHead; freeNodeHead = n;
+    }
+    // SG2 (F-b224-1): scope pins -- owners disposed while NOT running inside an open runWithOwner scope on
+    // them (D-b183-3), or moved here by unpinOwn when their frame unwound inside one. Released by unpinScope
+    // or releasePinned. Declared last (LEDGER #70 / D-CS-1: no existing context slot moves); nothing reads
+    // it during construction.
+    let scopePinHead = null;
+    /**
+     * SG2 (F-b224-1): a runWithOwner scope on the disposed `node` closed -> release its scope pin to
+     * the free list. Refuses while an outer scope still owns the node (scopeOwned), so the last
+     * scope's close releases it. A no-op unless `node` is on scopePinHead. Cold. Declared last (D-CS-1).
+     * @private
+     */
+    function unpinScope(node) {
+        if (scopeDepth !== 0 && scopeOwned(node)) return;
+        let p = null, n = scopePinHead;
+        while (n !== null && n !== node) { p = n; n = n.nextFree; }
+        if (n === null) return;
+        if (p === null) scopePinHead = n.nextFree; else p.nextFree = n.nextFree;
+        n.nextFree = freeNodeHead; freeNodeHead = n;
+    }
+    // R1bNZ (F-b224-1): cleanup arms running now (firstRunCleanupE / C, rerunCleanupEffect / Computed;
+    // their node may be pinned while the arm still holds it). Each arm increments it inside its try, right
+    // after the COMPUTING set, and decrements it on every exit (catch and normal); releasePinned refuses
+    // while it is non-zero. Never zeroed by destroy / reset (LEDGER-draft 13, U-DESTROY): zeroed by a reset
+    // run inside an arm, it would read -1 after that arm's decrement and refuse every later release.
+    // Declared last (D-CS-1).
+    let armDepth = 0;
+    // R0c (F-b224-1): the node of the flushEffects entry running now. Only one loop writes it (a nested
+    // flushEffects returns at once: isFlushing). disposeNode nulls it at the gen bump, so the entry's catch
+    // clears QUEUED only while it still names the entry's node; the catch reads it only after the loop's
+    // own store. After a flush it may still name the last entry's node: destroy() clears every pooled
+    // node's fields (value / computeFn / cleanupFn / ...), so that reference holds no user data; reset /
+    // destroy do not null it (nothing reads it outside the loop). Declared last (D-CS-1).
+    let flushCur = null;
     // Private rehydration hook: reachable by restore() via REHYDRATE.get(fresh)
     // but held OFF the public object in a module-scope WeakMap, so a live
     // registry exposes no handle to its own rehydrate (invisible to

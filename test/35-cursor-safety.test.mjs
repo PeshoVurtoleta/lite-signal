@@ -1191,63 +1191,184 @@ describe("A1-r2 reviewer blockers", () => {
 // stranger's body); both CAP cases are red on r2-7 (forward-pointer link pinning).
 // ---------------------------------------------------------------------------
 describe("A1-r3 reviewer blockers", () => {
-    it("R2-ABA: a cleanup that disposes its own effect, then recycles the slot at depth 0, never runs the stranger", async () => {
+    // R2-ABA rows re-derived on 29731ff9 (b230 U3-PIN: F-b224-1 ALL3x; C-32 = A-b229-1 / D-b229-1 "(A) Accepted,
+    // re-derive"; probe .handoff/b230/beh/probe/aba.mjs, raw aba.29731ff9.json / aba.b5289277.json). The cleanup that
+    // disposes its own node runs inside a cleanup arm; releasePinned refuses while an arm runs (armDepth, R1bNZ), and
+    // the node's pin is released only at the arm's exit (unpinOwn). So the "-1: the pinned slot" loop leaves the pool
+    // EXACTLY full and the stranger's allocation misses inside the arm: under "throw" that is a CapacityError
+    // (R1-capacity, accepted by D-b227-2) and the stranger is never created; under "grow" the pool grows by one chunk
+    // and the stranger takes a fresh slot. Either way the re-run stops before the body (runs stays 1) and never runs a
+    // stranger; the first allocation after the arm (Y) takes the released slot and is an ordinary signal.
+    // Red on b5289277 (the depth-0 miss released the pin into X: no CapacityError, no growth, X in the own slot).
+    it("R2-ABA: a cleanup that disposes its own effect, then misses at depth 0, never runs the stranger (throw: CapacityError)", async () => {
         const o = await isolated((createRegistry, tryMsg) => {
-            const r = createRegistry();
+            const r = createRegistry({ onCapacityExceeded: "throw" });
             const s = r.signal(0);
-            let stop = null, X = null, runs = 0;
+            const slot = (h) => { const k = Object.getOwnPropertySymbols(h).find((q) => typeof h[q] === "object" && h[q] !== null); return k === undefined ? undefined : h[k]; };
+            let stop = null, X = null, runs = 0, own = null, made = 0, ce = null;
             stop = r.effect(() => {
-                runs++; s();
+                runs++; s(); own = r.getOwner();
                 r.onCleanup(() => {
                     stop();
                     const st = r.stats();
                     let free = st.nodePoolPopulation - st.activeNodes - 1;   // -1: the pinned slot
-                    while (free-- > 0) r.signal(-1);
-                    X = r.signal(5);                                        // free-list miss at depth 0
+                    try { while (free-- > 0) { r.signal(-1); made++; } X = r.signal(5); } catch (e) { ce = e; throw e; }
+                });
+            });
+            let thrown = null;
+            try { s.set(1); } catch (e) { thrown = e; }
+            const st = r.stats();
+            const r0 = runs; s.set(2);
+            let Y = null;
+            const eY = tryMsg(() => { Y = r.signal(9); });   // tolerant: the pool is full here on b5289277 (readable revert diff)
+            return {
+                e1: thrown === null ? null : thrown.constructor.name + ": " + thrown.message,
+                sameError: thrown !== null && thrown === ce, kind: thrown === null ? null : thrown.kind, capacity: thrown === null ? null : thrown.capacity,
+                made, runs, rerun: runs - r0, xNull: X === null,
+                pool: { population: st.nodePoolPopulation, active: st.activeNodes, growths: st.poolGrowths, effects: st.effects },
+                eY, yInOwnSlot: Y !== null && slot(Y) === slot(own), yVal: Y === null ? null : Y(), yKind: Y === null ? null : r.describe(Y).kind,
+            };
+        });
+        // Derivation: default capacity 1024; s + the effect = 2 active. The cleanup disposes the effect (1 active,
+        // pinned), creates 1024 - 1 - 1 = 1022 fillers (pool exactly full), and X's allocation throws the
+        // CapacityError ("nodes", 1024), which s.set(1) rethrows unchanged. The re-run stops before the body
+        // (runs 1); X is never created (the stranger never runs); the arm's exit released the pin, so 1023 active;
+        // a later write re-runs nothing; Y takes the released slot.
+        assert.deepEqual(o, {
+            e1: "CapacityError: CapacityError: nodes capacity (1024) exceeded.",
+            sameError: true, kind: "nodes", capacity: 1024,
+            made: 1022, runs: 1, rerun: 0, xNull: true,
+            pool: { population: 1024, active: 1023, growths: 0, effects: 0 },
+            eY: null, yInOwnSlot: true, yVal: 9, yKind: "signal",
+        });
+    });
+
+    it("R2-ABA: a cleanup that disposes its own effect, then misses at depth 0, never runs the stranger (grow: X === 5)", async () => {
+        const o = await isolated((createRegistry, tryMsg) => {
+            const r = createRegistry({ onCapacityExceeded: "grow" });
+            const s = r.signal(0);
+            const slot = (h) => { const k = Object.getOwnPropertySymbols(h).find((q) => typeof h[q] === "object" && h[q] !== null); return k === undefined ? undefined : h[k]; };
+            let stop = null, X = null, runs = 0, own = null, made = 0;
+            stop = r.effect(() => {
+                runs++; s(); own = r.getOwner();
+                r.onCleanup(() => {
+                    stop();
+                    const st = r.stats();
+                    let free = st.nodePoolPopulation - st.activeNodes - 1;   // -1: the pinned slot
+                    while (free-- > 0) { r.signal(-1); made++; }
+                    X = r.signal(5);                                        // free-list miss inside the arm: grows
                 });
             });
             const e1 = tryMsg(() => s.set(1));
-            return { e1, runs, xVal: X === null ? null : X(), xKind: X === null ? null : r.describe(X).kind };
+            const st = r.stats();
+            const r0 = runs; s.set(2);
+            const Y = r.signal(9);
+            return {
+                e1, made, runs, rerun: runs - r0,
+                xVal: X === null ? null : X(), xKind: X === null ? null : r.describe(X).kind, xInOwnSlot: X === null ? null : slot(X) === slot(own),
+                pool: { population: st.nodePoolPopulation, active: st.activeNodes, growths: st.poolGrowths, effects: st.effects },
+                yInOwnSlot: slot(Y) === slot(own), yVal: Y(), yKind: r.describe(Y).kind,
+            };
         });
-        // Derivation: the effect runs once at creation (1). s.set(1) re-runs it: its cleanup
-        // disposes it, so the re-run must stop before the body (runs stays 1) even though X
-        // now lives in its recycled slot; X is an ordinary signal holding 5.
-        assert.equal(o.e1, null);
-        assert.equal(o.runs, 1);
-        assert.equal(o.xVal, 5);
-        assert.equal(o.xKind, "signal");
+        // Derivation: as the "throw" row, but X's miss grows the pool by one 256-node chunk (1024 -> 1280, 1 growth)
+        // and X takes a fresh slot (not the pinned one): an ordinary signal holding 5. No error; runs stays 1; 1024
+        // active (s + 1022 fillers + X) after the arm released the pin; Y takes the released slot.
+        assert.deepEqual(o, {
+            e1: null, made: 1022, runs: 1, rerun: 0,
+            xVal: 5, xKind: "signal", xInOwnSlot: false,
+            pool: { population: 1280, active: 1024, growths: 1, effects: 0 },
+            yInOwnSlot: true, yVal: 9, yKind: "signal",
+        });
     });
 
-    it("R2-ABA (computed): a cleanup that disposes its own computed, then recycles the slot at depth 0, never runs the stranger", async () => {
+    it("R2-ABA (computed): a cleanup that disposes its own computed, then misses at depth 0, never runs the stranger (throw: CapacityError)", async () => {
         const o = await isolated((createRegistry, tryMsg) => {
-            const r = createRegistry();
+            const r = createRegistry({ onCapacityExceeded: "throw" });
             const s = r.signal(0);
-            let C = null, X = null, runs = 0;
+            const slot = (h) => { const k = Object.getOwnPropertySymbols(h).find((q) => typeof h[q] === "object" && h[q] !== null); return k === undefined ? undefined : h[k]; };
+            let C = null, X = null, runs = 0, made = 0, ce = null;
             C = r.computed(() => {
                 runs++; s();
                 r.onCleanup(() => {
                     r.dispose(C);
                     const st = r.stats();
                     let free = st.nodePoolPopulation - st.activeNodes - 1;   // -1: the pinned slot
-                    while (free-- > 0) r.signal(-1);
-                    X = r.signal(5);
+                    try { while (free-- > 0) { r.signal(-1); made++; } X = r.signal(5); } catch (e) { ce = e; throw e; }
                 });
                 return 1;
             });
             C();
+            const own = slot(C);
             s.set(1);
-            let v;
+            let v = "unset";
             const e1 = tryMsg(() => { v = C(); });
-            return { e1, v, runs, xVal: X === null ? null : X(), xKind: X === null ? null : r.describe(X).kind };
+            const st = r.stats();
+            let v2 = "unset";
+            const e2 = tryMsg(() => { v2 = C(); });
+            let Y = null;
+            const eY = tryMsg(() => { Y = r.signal(9); });   // tolerant: the pool is full here on b5289277 (readable revert diff)
+            return {
+                e1, v: v === undefined ? "undefined" : v, e2, v2: v2 === undefined ? "undefined" : v2,
+                ce: ce === null ? null : ce.constructor.name + ": " + ce.message, kind: ce === null ? null : ce.kind, capacity: ce === null ? null : ce.capacity,
+                made, runs, xNull: X === null,
+                pool: { population: st.nodePoolPopulation, active: st.activeNodes, growths: st.poolGrowths, computeds: st.computeds },
+                eY, yInOwnSlot: Y !== null && slot(Y) === own, yVal: Y === null ? null : Y(), yKind: Y === null ? null : r.describe(Y).kind,
+            };
         });
-        // Derivation: C evaluates once (1). After s.set(1) the read recomputes it: its cleanup
-        // disposes it, so the recompute must stop before the body (runs stays 1) and the read
-        // yields undefined; X, now in C's recycled slot, is an ordinary signal holding 5.
-        assert.equal(o.e1, null);
-        assert.equal(o.v, undefined);
-        assert.equal(o.runs, 1);
-        assert.equal(o.xVal, 5);
-        assert.equal(o.xKind, "signal");
+        // Derivation: C evaluates once (1). The recompute's cleanup disposes C (pinned), fills the pool exactly
+        // (1022 fillers) and X's allocation throws the CapacityError ("nodes", 1024); the cleanup disposed its own
+        // node, so the recompute swallows it (as the body's catch does for a disposed node): the read returns
+        // undefined without throwing, runs stays 1 and X is never created. The arm's exit released the pin
+        // (1023 active); a second read is undefined; Y takes the released slot.
+        assert.deepEqual(o, {
+            e1: null, v: "undefined", e2: null, v2: "undefined",
+            ce: "CapacityError: CapacityError: nodes capacity (1024) exceeded.", kind: "nodes", capacity: 1024,
+            made: 1022, runs: 1, xNull: true,
+            pool: { population: 1024, active: 1023, growths: 0, computeds: 0 },
+            eY: null, yInOwnSlot: true, yVal: 9, yKind: "signal",
+        });
+    });
+
+    it("R2-ABA (computed): a cleanup that disposes its own computed, then misses at depth 0, never runs the stranger (grow: X === 5)", async () => {
+        const o = await isolated((createRegistry, tryMsg) => {
+            const r = createRegistry({ onCapacityExceeded: "grow" });
+            const s = r.signal(0);
+            const slot = (h) => { const k = Object.getOwnPropertySymbols(h).find((q) => typeof h[q] === "object" && h[q] !== null); return k === undefined ? undefined : h[k]; };
+            let C = null, X = null, runs = 0, made = 0;
+            C = r.computed(() => {
+                runs++; s();
+                r.onCleanup(() => {
+                    r.dispose(C);
+                    const st = r.stats();
+                    let free = st.nodePoolPopulation - st.activeNodes - 1;   // -1: the pinned slot
+                    while (free-- > 0) { r.signal(-1); made++; }
+                    X = r.signal(5);                                        // free-list miss inside the arm: grows
+                });
+                return 1;
+            });
+            C();
+            const own = slot(C);
+            s.set(1);
+            let v = "unset";
+            const e1 = tryMsg(() => { v = C(); });
+            const st = r.stats();
+            const Y = r.signal(9);
+            return {
+                e1, v: v === undefined ? "undefined" : v, made, runs,
+                xVal: X === null ? null : X(), xKind: X === null ? null : r.describe(X).kind, xInOwnSlot: X === null ? null : slot(X) === own,
+                pool: { population: st.nodePoolPopulation, active: st.activeNodes, growths: st.poolGrowths, computeds: st.computeds },
+                yInOwnSlot: slot(Y) === own, yVal: Y(), yKind: r.describe(Y).kind,
+            };
+        });
+        // Derivation: as the "throw" row, but X's miss grows the pool (1024 -> 1280, 1 growth) and X takes a fresh
+        // slot: an ordinary signal holding 5. The read yields undefined, runs stays 1; 1024 active; Y takes the
+        // released slot.
+        assert.deepEqual(o, {
+            e1: null, v: "undefined", made: 1022, runs: 1,
+            xVal: 5, xKind: "signal", xInOwnSlot: false,
+            pool: { population: 1280, active: 1024, growths: 1, computeds: 0 },
+            yInOwnSlot: true, yVal: 9, yKind: "signal",
+        });
     });
 
     it("A16: onDisconnect that disposes the RUNNING observer mid-body leaves the rest of the body untracked", async () => {

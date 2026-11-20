@@ -15,6 +15,9 @@
 //   never by HEAD, which has no catch around the scheduler.
 //   9 (reviewer b60) no-throw self-dispose: stale handle must not dispose a slot-reuser. RED on the frozen engine
 //   (birthGen captured after the first run), GREEN on the fixed one.
+// b230 U3-PIN (29731ff9, F-b224-1 ALL3x, A-b229-3): rows 7 / 9 / 11 re-staged -- the stranger is the first allocation
+//   after the pin's own-frame release (no free-list exhaustion). Red on b5289277 by their slot precondition (the pin
+//   is still held there); their oracle's teeth is the nohoist mutant (.handoff/b230/beh/mk-nohoist.cjs: KILLED).
 import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -186,22 +189,26 @@ describe('59: sync-scheduler creation throw disposes the effect', () => {
     // dispose-then-rethrow tail must not kill the stranger (needs `birthGen` hoisted above the first run).
     // Must-fail mutant: the try/catch without the hoist. HEAD passes (no catch). Not vacuous: the pointer equality
     // of the stranger and the self-disposed effect's slot is asserted first.
+    // Re-staged on 29731ff9 (b230 U3-PIN: F-b224-1 ALL3x, A-b229-3; probe .handoff/b230/beh/probe/r59.mjs): the
+    // self-disposed effect's pin is released at its own frame exit (executeEffect's disposed-during-body return ->
+    // unpinOwn, D2), before run() returns, onto the free-list head. The stranger is therefore allocated right after
+    // run(), with no free-list exhaustion (the old staging -- exhaust the list so a depth-0 miss releases the pin --
+    // no longer reaches the slot: the released slot is the first one the fillers take). On b5289277 the slot is still
+    // pinned after run(), so this staging fails the precondition there; the oracle's must-fail is the nohoist mutant
+    // (.handoff/b230/beh/mk-nohoist.cjs on 29731ff9: KILLED, s() undefined).
     it('7 stranger in the freed slot survives the creation-throw dispose', () => {
         const r = mk();
-        let ownerDesc = null, s = null, sameSlot = null, idDiffers = null;
+        let ownerDesc = null, s = null, sameSlot = null, idDiffers = null, stIn = null;
         const res = attempt(() => r.effect(() => {
             ownerDesc = r.getOwner();
             r.dispose(ownerDesc);                     // self-dispose inside the first run
         }, {
             scheduler: (run) => {
                 run();
-                // The self-disposed effect was COMPUTING, so its slot is PINNED (Signal.js disposeNode: pinnedHead), not on
-                // the free list. Free-list size = population - activeNodes - 1 pinned slot. Exhaust exactly that, so the
-                // next allocation misses and nodeMiss releases the pinned slot (cursorDepth 0 after run()).
+                // The pin was released at the effect's own frame exit: nothing is active and the slot is free.
                 const st = r.stats();
-                let free = st.nodePoolPopulation - st.activeNodes - 1;
-                while (free-- > 0) r.signal(-1);
-                s = r.signal(7);
+                stIn = [st.nodePoolPopulation, st.activeNodes, st.effects];
+                s = r.signal(7);                      // the first allocation after the release point
                 // same slot: the node pointer (the one object-valued symbol on a handle) is identical
                 const sym = Object.getOwnPropertySymbols(ownerDesc).find((k) => typeof ownerDesc[k] === 'object' && ownerDesc[k] !== null);
                 sameSlot = sym !== undefined && s[sym] === ownerDesc[sym];
@@ -209,6 +216,7 @@ describe('59: sync-scheduler creation throw disposes the effect', () => {
                 throw boom;
             },
         }));
+        assert.deepEqual(stIn, [256, 0, 0]);
         assert.equal(sameSlot, true, 'precondition: the stranger must land in the self-disposed effect slot');
         assert.equal(idDiffers, true);
         assert.equal(res.threw, true);
@@ -217,12 +225,18 @@ describe('59: sync-scheduler creation throw disposes the effect', () => {
         s.set(8);
         assert.equal(s(), 8);
         assert.equal(s.peek(), 8);
+        const st = r.stats();
+        assert.deepEqual([st.nodePoolPopulation, st.activeNodes, st.signals, st.effects], [256, 1, 1, 0]);
         r.destroy();
     });
 
     // ROW 9 (reviewer b60): an effect that disposes itself in its first run, NO throw. A new node lands in its freed
     // slot; the returned handle (called, or passed to dispose) must not destroy that node (needs birthGen hoisted).
     // Oracle: spec statement "that handle is stale: calling it or dispose(h) is a no-op". Expected s() === 8, signals unchanged.
+    // Re-staged on 29731ff9 (b230 U3-PIN, as row 7): the pin is released at the effect's own frame exit (no scheduler:
+    // executeEffect's return; sync scheduler: the same return inside run()), before effect() returns, so the stranger
+    // is the first allocation after effect() returns. Red on b5289277 by the precondition (slot still pinned there);
+    // the oracle's must-fail is the nohoist mutant (KILLED 4/4: s() undefined, signals 1 -> 0).
     describe('9 no-throw self-dispose: stale handle must not dispose a slot-reuser', () => {
         for (const sched of ['no scheduler', 'sync scheduler']) {
             for (const via of ['call', 'dispose']) {
@@ -232,12 +246,12 @@ describe('59: sync-scheduler creation throw disposes the effect', () => {
                     const opts = sched === 'sync scheduler' ? { scheduler: syncSched } : undefined;
                     const h = r.effect(() => { own = r.getOwner(); r.dispose(own); }, opts);
                     const st = r.stats();
-                    let free = st.nodePoolPopulation - st.activeNodes - 1;   // pinned slot is not on the free list
-                    while (free-- > 0) r.signal(-1);
-                    const s = r.signal(7);
+                    assert.deepEqual([st.nodePoolPopulation, st.activeNodes, st.effects], [256, 0, 0]);   // released, free
+                    const s = r.signal(7);                                    // the first allocation after the release point
                     const sym = Object.getOwnPropertySymbols(own).find((k) => typeof own[k] === 'object' && own[k] !== null);
                     assert.equal(sym !== undefined && s[sym] === own[sym], true, 'precondition: s took the effect slot');
                     const signals = r.stats().signals;
+                    assert.equal(signals, 1);
                     if (via === 'call') h(); else r.dispose(h);
                     s.set(8);
                     assert.equal(s(), 8, 'slot-reuser survives the stale handle');
@@ -259,20 +273,29 @@ describe('59: sync-scheduler creation throw disposes the effect', () => {
         assert.equal(runs, 0); assert.equal(r.stats().effects, 0); assert.equal(r.hasObservers(dep), false);
         r.destroy();
     });
+    // Row 11 re-staged on 29731ff9 (b230 U3-PIN, as row 7): the stranger is the first allocation after run() (the pin
+    // was released at the effect's own frame exit); the gen-wrap forcing is unchanged and the wrap is asserted at the
+    // self-dispose (inside run()) and at the end. Red on b5289277 by the precondition; nohoist mutant KILLED (s()
+    // undefined, gen -2^31+1: the stale tail disposed the stranger).
     it('11 row 7 across the gen wrap (2^31-1 -> -2^31)', () => {
         const r = mk();
         const st0 = r.stats(); let f0 = st0.nodePoolPopulation - st0.activeNodes; while (f0-- > 0) r.signal(-2);
         const t = r.signal(0);
         const sym = Object.getOwnPropertySymbols(t).find((k) => typeof t[k] === 'object' && t[k] !== null);
         const tn = t[sym]; r.dispose(t); tn.gen = 2 ** 31 - 1;          // free-list top, gen at the wrap point
-        let own = null, s = null;
+        let own = null, s = null, genAfterRun = null, stIn = null;
         const res = attempt(() => r.effect(() => { own = r.getOwner(); r.dispose(own); }, { scheduler: (run) => {
-            run(); const st = r.stats(); let f = st.nodePoolPopulation - st.activeNodes - 1; while (f-- > 0) r.signal(-1);
+            run(); genAfterRun = tn.gen;
+            const st = r.stats(); stIn = [st.nodePoolPopulation, st.activeNodes, st.effects];
             s = r.signal(7); throw boom; } }));
         assert.equal(own[sym], tn, 'precondition: effect took the forced slot');
+        assert.equal(genAfterRun, -(2 ** 31), 'the self-dispose crossed the wrap');
+        assert.deepEqual(stIn, [512, 256, 0]);
         assert.equal(s[sym], tn, 'precondition: stranger took it after the wrap');
         assert.equal(tn.gen, -(2 ** 31));
         assert.equal(res.val, boom); assert.equal(s(), 7); s.set(8); assert.equal(s(), 8);
+        const st = r.stats();
+        assert.deepEqual([st.nodePoolPopulation, st.activeNodes, st.signals, st.effects], [512, 257, 257, 0]);
         r.destroy();
     });
 

@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "task": "SPEC-B-S1cd TASK 11 (burst 8 B6): soak calibration -- DEFAULT_OPS, SCEN_MIN(_SMOKE), CHECK_FLOOR(_SMOKE), TAINT_SKIP_MAX",
- "tool": "node bench/soak/calibration/calibrate.mjs --write .handoff/b220/b2b/calib-new.json --import-throughput <the earlier timed run>",
+ "tool": "node bench/soak/calibration/calibrate.mjs --write .handoff/b230/pins/soak-calibration.new.json --import-throughput <the earlier timed run>",
  "guard": "test/41-soak-config.test.mjs (B6 drift guard): config values == cut, every binding cell clears its constant, live smoke re-measure == kernels.<k>.smoke, live main.mjs probe fold == probe.fold",
  "cut": {
   "seed": 12648430,
@@ -374,10 +374,9 @@
   }
  },
  "provenance": {
-  "date": "2026-11-19T19:10:12.693Z",
-  "gitHead": "46e301afc823db55680e4b3136b2f5036bd3ef0f",
+  "date": "2026-11-20T06:48:47.599Z",
+  "gitHead": "645f4b63393dff9cb9b89c9e0fec8ac1fe85d172",
   "gitDirty": [
-   " M .gitignore",
    " M Signal.js",
    " M bench/mirror-runs/alien-signals-rep1.txt",
    " M bench/mirror-runs/alien-signals-rep10.txt",
@@ -399,6 +398,7 @@
    " M bench/mirror-runs/lite-signal-rep7.txt",
    " M bench/mirror-runs/lite-signal-rep8.txt",
    " M bench/mirror-runs/lite-signal-rep9.txt",
+   " M bench/soak/_mustfail.mjs",
    " M bench/soak/parity.json",
    " M harness/VersionMatrix/baselines/1.3.0/broadcast-fanout.json",
    " M harness/VersionMatrix/baselines/1.3.0/broadcast-fanout.rep1.json",
@@ -431,9 +431,13 @@
    " M harness/VersionMatrix/baselines/1.3.0/reactive-graph-mix.rep4.json",
    " M harness/VersionMatrix/baselines/1.3.0/reactive-graph-mix.rep5.json",
    " M test/100-soak-os.test.mjs",
-   " M test/117-audf-g1.test.mjs",
-   " M test/120-create-scope.test.mjs",
+   " M test/118-hot-body-budget.test.mjs",
+   " M test/122-inlined-sets.test.mjs",
+   " M test/35-cursor-safety.test.mjs",
    " M test/45-soak-teeth.test.mjs",
+   " M test/58-f21-stale-queue.test.mjs",
+   " M test/59-sync-scheduler-creation-throw.test.mjs",
+   " M test/64-torture-mustfail.test.mjs",
    " M test/65-hot-body-pins.test.mjs",
    " M test/89-soak-scheduler.test.mjs",
    "?? BRIEF.md",
@@ -493,35 +497,31 @@
    "?? harness/VersionMatrix/baselines/1.5.2/",
    "?? harness/VersionMatrix/baselines/_control-52ba98e9/",
    "?? harness/VersionMatrix/baselines/candidate-1.6.0-24ac539-da5ddb86/",
-   "?? test/123-broadcast-fix.test.mjs",
-   "?? test/fixtures/Signal-da5ddb86.js",
-   "?? test/fixtures/Watch-e0cf8a8d.js",
-   "?? test/fixtures/b123/"
+   "?? test/124-pinned-slots.test.mjs",
+   "?? test/fixtures/b228/"
   ],
-  "engineSha256": "b5289277215cb2cc3f8956e71307791d9b9ff230388a3ca03990ffedfa790775",
+  "engineSha256": "29731ff9103a70c5bf91d7eb52f02ce7ac2330bfc8290bb6576526c9f35fb5d3",
   "engineNote": "sha256 of <root>/Signal.js (the tree kernel), equal at launch, at the end and in kernels.tree.files (--write dies otherwise): the engine actually cut, also on a dirty tree",
   "node": "v26.8.2",
   "v8": "14.6.202.34-node.28",
   "cpu": "Apple M4 Pro",
   "host": "Mac",
   "loadavgBefore": [
-   6.3,
-   4.61,
-   3.71
+   3.23,
+   6.47,
+   4.63
   ],
   "loadavgAfterTimed": null,
   "loadavgAfterTimedNote": "null: untimed run, no timed phase (the imported timed run is throughputRun)",
   "loadavgAfter": [
-   7.7,
-   5.7,
-   4.64
+   6.21,
+   5.33,
+   7.03
   ],
-  "busyNodeBefore": [
-   "74431 68.6 /opt/homebrew/Cellar/node/26.8.2/bin/node"
-  ],
+  "busyNodeBefore": [],
   "busyNodeRule": "other node processes (not this process or its node launcher chain, e.g. the quiet-lock wrapper) >= 10% CPU at launch, as pid pcpu command; [] = none, null = ps failed",
-  "seconds": 1514,
-  "cutSeconds": 791,
+  "seconds": 1675,
+  "cutSeconds": 948,
   "secondsClock": "wall clock (Date.now), whole seconds: seconds = --write entry to the evidence write (every step; the origin of the \"(N s)\" log stamps); cutSeconds = step 1, the cut (the only timed phase under --timed)",
   "timing": "PENDING (untimed run; throughput decides no gate)",
   "pinnedSha256": {
@@ -2409,7 +2409,7 @@
    "files": [
     {
      "path": "Signal.js",
-     "sha256": "b5289277215cb2cc3f8956e71307791d9b9ff230388a3ca03990ffedfa790775"
+     "sha256": "29731ff9103a70c5bf91d7eb52f02ce7ac2330bfc8290bb6576526c9f35fb5d3"
     },
     {
      "path": "Watch.js",

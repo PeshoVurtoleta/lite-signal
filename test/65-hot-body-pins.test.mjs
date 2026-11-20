@@ -47,15 +47,22 @@ const SRC = readFileSync(KPATH, 'utf8');
 // executeEffect + refreshComputed + disposeNode re-pinned on b5289277 (b220, G1 B2b: shape A fix log + G pre-walk guard, PLAN-b215; other 11 unchanged);
 // bytecode (b220, node v26.8.2, bench/bytecode-budget.sh --diff on test/fixtures/bytecode-budget/hot-driver.mjs, da5ddb86 -> b5289277)
 // executeEffect 437 -> 450, refreshComputed 770 -> 782, flushEffects 442 unchanged; disposeNode not compiled by that driver (not measured).
+// flushEffects + executeEffect + nodeMiss + disposeNode + effectTail + refreshComputed re-pinned on 84068786 (b229, U5 B2: the F-b224-1
+// pinned-slot fix, SPEC-b228 U1; other 8 unchanged). executeEffect moved by comment text only (code identical, bytecode 450 = 450).
+// Bytecode (b229, node v26.8.2, bench/bytecode-budget.sh on test/fixtures/bytecode-budget/hot-driver.mjs, b5289277 -> 84068786):
+// flushEffects 442 -> 456, effectTail 25 -> 46, refreshComputed 782 -> 789, executeEffect 450 unchanged; nodeMiss + disposeNode not
+// compiled by that driver (not measured here).
+// executeEffect + disposeNode re-pinned on 29731ff9 (b230 U3-PIN TASK 0: comment literal, bytecode unchanged; bcdiff3 84068786 ->
+// 29731ff9 changed []; other 12 unchanged).
 const PINS = {
-    flushEffects: { sha16: 'b84c9fc740450c13', bytes: 2366 },
-    executeEffect: { sha16: '2ae231bdee8db00a', bytes: 4415 },
+    flushEffects: { sha16: '2164529b22a4d84d', bytes: 2530 },
+    executeEffect: { sha16: '03d2194bf1a25b54', bytes: 4539 },
     createNode: { sha16: '7a8c545056853c6a', bytes: 3780 },
-    nodeMiss: { sha16: 'c6aa7fbe2f7077f0', bytes: 1535 },
-    disposeNode: { sha16: '4002d9f2fb2e64ff', bytes: 6741 },
-    effectTail: { sha16: '1b80da7167ba5bbf', bytes: 93 },
+    nodeMiss: { sha16: '8a2c0338093f1e4e', bytes: 1593 },
+    disposeNode: { sha16: 'fd469f71af0b9af0', bytes: 7401 },
+    effectTail: { sha16: '874fc449501aca31', bytes: 136 },
     pullComputed: { sha16: '115db3c64068c3bc', bytes: 354 },
-    refreshComputed: { sha16: 'df330d73eacf8b5c', bytes: 5492 },
+    refreshComputed: { sha16: 'aa9812dc2c4ba8b8', bytes: 5563 },
     boxGet: { sha16: '2938d89e667b9f07', bytes: 640 },
     boxComputedGet: { sha16: '5940c249c8717ecf', bytes: 618 },
     readSignal: { sha16: 'bb06aefbf682ef8f', bytes: 605 },

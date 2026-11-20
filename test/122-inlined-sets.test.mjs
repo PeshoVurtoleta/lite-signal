@@ -3,8 +3,11 @@
  *
  * Oracle: .handoff/b215/PLAN-b215.md GROUP 2 TASK 1 as amended by A-b220-5 = D-b220-1 "Deterministic flags" (supersedes ASSERTION 1's values and the
  * 1004 cap). Census: .handoff/b215/inlined-sets/census.txt (node v26.8.2, untimed, 3/3 identical): after b5289277 == before da5ddb86 in every mode.
+ * Re-census b229 (U5 B2, .handoff/b228/u5b2/census-coded.txt, node v26.8.2, untimed, 3/3 identical) on 84068786 (the F-b224-1 pinned-slot fix): every
+ * multiset, refusal reason and the Maglev line unchanged; read.set's existing opt code grew 636 -> 650, so READSET_EXISTING and the cap moved.
  * Flags: --no-concurrent-recompilation --single-threaded, NODE_OPTIONS stripped. Under these flags read.set gets its own TurboFan code before the hot
- * function compiles, so the hot function is offered read.set at 279 + 636 (its existing opt code's inlined bytes) = 915, x1.2 = 1098 > 920: refused.
+ * function compiles, so the hot function is offered read.set at 279 + 650 (its existing opt code's inlined bytes) = 929, x1.2 = 1114.8, truncated to
+ * 1114 > 920: refused (b5289277: 279 + 636 = 915, cap 1098).
  * Fable's table (audit/2026-11-19-hotpath-fable: markDownstream / read.set inlined into hotSet, flushEffects refused, cap 1003) holds only under
  * concurrent flags, where compile order races (reads6 gave x4 / x8 / x12 / x16 over 10 runs) -- not a DETERMINISTIC-tier gate.
  *
@@ -34,14 +37,16 @@ const WATCH_LINE = 'export {watch, when, whenAsync} from "./Watch.js";';
 const FLAGS = ["--no-concurrent-recompilation", "--single-threaded"];
 const SPAWN = { encoding: "utf8", timeout: 300000, killSignal: "SIGKILL", maxBuffer: 1 << 28, env: { ...process.env, NODE_OPTIONS: "", NODE_V8_COVERAGE: undefined } };
 
-// Measured on v26.8.2 (census.txt MODE sync; before da5ddb86 == after b5289277).
+// Measured on v26.8.2 (census.txt MODE sync; before da5ddb86 == after b5289277; b229 re-census on 84068786: the same sets, read.set existing 636 -> 650).
 const PIN = {
     setLoop: { inl: { "flushEffects -> read.set": 1, "markDownstream -> read.set": 1 }, ref: {}, hot: "hotSet", sites: 1 },
     setTwo: { inl: { "flushEffects -> read.set": 1, "markDownstream -> read.set": 1 }, ref: {}, hot: "hotSet2", sites: 2 },
     reads6: { inl: { "read -> hotReads6": 8 }, ref: { "refreshComputed : exceeds bytecode limit": 4 } },   // 2 compiles of hotReads6 x 4
 };
-const READSET_SIZE = 279, READSET_EXISTING = 636;                 // the refused read.set candidate in the hot function
-const CAP = Math.trunc(1.2 * (READSET_SIZE + READSET_EXISTING));   // 1098 (V8 reserve_inline_budget_scale_factor 1.2, int truncation)
+const READSET_SIZE = 279, READSET_EXISTING = 650;                 // the refused read.set candidate in the hot function (84068786; 279 / 636 on b5289277)
+// 1114: V8 reserve_inline_budget_scale_factor 1.2 x 929 = 1114.8, truncated. Measured b229 (census-coded.txt, caps 1112..1117 x3): read.set -> hotSet
+// absent at 1112 / 1113, present at 1114..1117, so V8 truncates (rounding up would give 1115). b5289277's 1.2 x 915 = 1098 was integral and proved neither.
+const CAP = Math.trunc(1.2 * (READSET_SIZE + READSET_EXISTING));
 const MAGLEV_READ = ["cannot inline {<SharedFunctionInfo read>}: big function, size (106) >= max-size (100)"];
 
 function stage(buildPath) {
@@ -81,7 +86,7 @@ const mgRead = (dir) => trace(dir, "--trace-maglev-inlining", "sigReads10").spli
 const sorted = (o) => Object.fromEntries(Object.entries(o).sort());
 const matchesSet = (got, wl) => JSON.stringify(sorted(got.inl)) === JSON.stringify(sorted(PIN[wl].inl)) && JSON.stringify(sorted(got.ref)) === JSON.stringify(sorted(PIN[wl].ref));
 const matchesMaglev = (lines) => lines.length >= 1 && JSON.stringify([...new Set(lines)]) === JSON.stringify(MAGLEV_READ);
-function refusal(got, wl) {   // read.set offered to the hot function at 279 + 636 at every call site, never inlined into it
+function refusal(got, wl) {   // read.set offered to the hot function at READSET_SIZE + READSET_EXISTING at every call site, never inlined into it
     const p = PIN[wl];
     return got.readSet.length === p.sites && got.readSet.every((x) => x === READSET_SIZE + "/" + READSET_EXISTING) && !(("read.set -> " + p.hot) in got.inl)
         && got.budgets.every(([, cap]) => cap === 920);
@@ -114,7 +119,7 @@ describe("b215 G2 inlined sets (A-b220-5, deterministic flags, sequential)", () 
             const g = once("live/" + wl, () => tf(LIVE, wl));
             gate(t, wl + " set", matchesSet(g, wl), JSON.stringify(g.inl) + " refused " + JSON.stringify(g.ref));
         });
-        it("[PIN] engine " + wl + ": read.set refused by " + PIN[wl].hot + " at the 920 budget (offered at 279 + existing 636, x" + PIN[wl].sites + " site(s))", (t) => {
+        it("[PIN] engine " + wl + ": read.set refused by " + PIN[wl].hot + " at the 920 budget (offered at " + READSET_SIZE + " + existing " + READSET_EXISTING + ", x" + PIN[wl].sites + " site(s))", (t) => {
             const g = once("live/" + wl, () => tf(LIVE, wl));
             gate(t, wl + " read.set refusal", refusal(g, wl), "read.set targets " + JSON.stringify(g.readSet) + " inlined " + JSON.stringify(g.inl));
         });
@@ -142,12 +147,12 @@ describe("b215 G2 inlined sets (A-b220-5, deterministic flags, sequential)", () 
         assert.equal(matchesMaglev(lines), false, "1.5.2 Maglev matched the pin");
         assert.ok(lines.includes("== Inlining <SharedFunctionInfo read>"), "1.5.2 Maglev did not inline the signal read");
     });
-    it("[MUST-FAIL] cap control setLoop: read.set -> hotSet absent at cap " + (CAP - 1) + ", present at " + CAP + " = trunc(1.2 x (279 + 636))", (t) => {
+    it("[MUST-FAIL] cap control setLoop: read.set -> hotSet absent at cap " + (CAP - 1) + ", present at " + CAP + " = trunc(1.2 x (" + READSET_SIZE + " + " + READSET_EXISTING + "))", (t) => {
         const lo = tf(LIVE, "setLoop", ["--max-inlined-bytecode-size-cumulative=" + (CAP - 1)]);
         const hi = tf(LIVE, "setLoop", ["--max-inlined-bytecode-size-cumulative=" + CAP]);
         const nlo = lo.inl["read.set -> hotSet"] || 0, nhi = hi.inl["read.set -> hotSet"] || 0;
         if (!PINNED) { console.log("# REPORTED cap " + (CAP - 1) + ":" + nlo + " " + CAP + ":" + nhi); return t.skip("REPORTED on " + process.version); }
-        assert.equal(CAP, 1098);
+        assert.equal(CAP, 1114);
         assert.equal(nlo, 0, "read.set inlined into hotSet below the cap");
         assert.equal(nhi, 1, "read.set not inlined into hotSet at the cap");
         assert.ok(hi.budgets.some(([, c]) => c === CAP), "the raised cap was not in effect");

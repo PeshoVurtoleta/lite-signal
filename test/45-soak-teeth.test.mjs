@@ -613,7 +613,30 @@ test('teeth k: P-INTERIM-ERROR-clean is pinned: preb33g2 (no patches), ERROR at 
     };
     const tree = loopBody(readFileSync(join(ROOT, 'Signal.js'), 'utf8'), 'Signal.js');
     assert.ok(tree.indexOf('if((node.flags&FLAG_QUEUED)!==0){') !== -1, 'the tree carries the A2-F21 QUEUED test');
-    assert.equal(loopBody(src, 'P-INTERIM-ERROR-clean kernel'), tree);
+    // b230 U3-PIN D-b230-1: F-b224-1 R0c adds flushCur = node; + flushCur !== null && to the tree loop; preb33g2 is frozen
+    // pre-R0c, so exactly those two tokens (each once) are stripped; any other drift is red
+    const R0C = ['flushCur=node;', 'flushCur!==null&&'];
+    const stripR0c = (t) => {
+        for (const tok of R0C) assert.equal(t.split(tok).length - 1, 1, 'R0c token ' + tok + ' occurs exactly once in the tree flush loop');
+        assert.ok(t.indexOf('constnode=currentQueue[i];flushCur=node;try{') !== -1, 'R0c token flushCur=node; sits after the entry read, before try');
+        assert.ok(t.indexOf('flushErrorBuffer[flushErrorCount++]=err;if(flushCur!==null&&node.evalVersion!==0)') !== -1, 'R0c token flushCur!==null&& sits at the catch QUEUED test');
+        for (const tok of R0C) {
+            assert.equal(t.split(tok).length - 1, 1, 'R0c token ' + tok + ' occurs exactly once in the tree flush loop');
+            t = t.replace(tok, '');
+        }
+        return t;
+    };
+    const treeStripped = stripR0c(tree);
+    const kloop = loopBody(src, 'P-INTERIM-ERROR-clean kernel');
+    assert.equal(kloop, treeStripped);
+    // must-fail: one extra drift token, or a dropped QUEUED test, in the tree loop is red after the same strip
+    assert.throws(() => stripR0c(tree.replace('flushCur=node;', 'flushCur=node;x;')), /sits after the entry read/);   // the token no longer sits right before try{
+    assert.throws(() => stripR0c(tree.replace('flushCur=node;try{', 'try{flushCur=node;')), /sits after the entry read/);   // token moved after try{
+    assert.throws(() => stripR0c(tree.replace('if(flushCur!==null&&node.evalVersion!==0)', 'if(node.evalVersion!==0)').replace('if((node.flags&FLAG_QUEUED)!==0){', 'if(flushCur!==null&&(node.flags&FLAG_QUEUED)!==0){')), /sits at the catch QUEUED test/);
+    assert.notEqual(stripR0c(tree.replace('(node.flags&FLAG_QUEUED)!==0', 'true')), kloop, 'a dropped QUEUED test is drift');
+    // must-fail: a tree loop missing an R0c token (or carrying it twice) fails the occurs-once assert
+    assert.throws(() => stripR0c(tree.replace('flushCur!==null&&', '')), /R0c token flushCur!==null&& occurs exactly once/);
+    assert.throws(() => stripR0c(tree.replace('flushCur=node;', 'flushCur=node;flushCur=node;')), /R0c token flushCur=node; occurs exactly once/);
 });
 
 test('teeth j: wrapJudge re-derives the INCONCLUSIVE causes from the records (never only what the child printed); the header selection is the control\'s', () => {
@@ -939,9 +962,12 @@ test('teeth p: the LIFECYCLE ids have teeth -- L-LC-preb33, P-LC-tree, T-cov-LIF
     // b191 B1b4: throwComputedError's `node.gen === gen` +1 -> 8 / 11; b194 UCE-H: throwComputedError's re-check +1 -> 12;
     // b199 AUD-F G2 B2b on 4b740bdb: G1's new severStale helper `node.gen === g` x2 -> 10 / 12; re-counted b203 U1 on
     // 2141cf2f (createScope): 10 / 12 unchanged, createScope added no such site; b205 U2: 2141cf2f -> da5ddb86 (createScope fail-closed stamp, D-SCOPEAUD-2): re-counted 10 / 12 unchanged;
-    // b220 G1 B2b: da5ddb86 -> b5289277 (shape A + G broadcast fix): re-counted 10 / 12 unchanged)
-    assert.equal(base.split('node.gen === g').length - 1, 10);
-    assert.equal(base.split('node.gen !== g').length - 1, 12);
+    // b220 G1 B2b: da5ddb86 -> b5289277 (shape A + G broadcast fix): re-counted 10 / 12 unchanged;
+    // b230 U3-PIN: b5289277 -> 29731ff9 (F-b224-1 ALL3x): re-counted 12 / 14 -- `=== g` +2 (disposeNode's inlined own-cleanup gate,
+    // disposeOwned's cascade stop), `!== g` +2 (the two `if (node.gen !== g) unpinOwn(node);` cleanup-arm exits)
+    // (.handoff/b230/pins/kernel-shas-29731ff9.txt last line))
+    assert.equal(base.split('node.gen === g').length - 1, 12);
+    assert.equal(base.split('node.gen !== g').length - 1, 14);
     assert.equal(base.split(LC_GEN_STAMP).length - 1, 1, 'the UNREACHABLE gen-stamp line occurs exactly once');
     // T-LC-iter runs exactly the exported LC_ITER_PATCH (the LC_ROWS loop above proves it exactly-once and one-line)
     const iter = CONTROLS.find((x) => x.name === 'T-LC-iter');
@@ -961,12 +987,12 @@ test('teeth p: the LIFECYCLE ids have teeth -- L-LC-preb33, P-LC-tree, T-cov-LIF
     ctl2.find((x) => x.name === 'T-LC-iter').expect.specs = [O7('missed-connect')];
     assert.deepEqual(pairing(CHECKS, ctl2), ['sig:O7:stale-off: T-LC-iter -- no BREACH spec naming oracle=O7 with sig in stale-off']);
     // must-fail: an anchor that occurs twice is stale (patchAll refuses it); the match count is the `node.gen !== g` count above
-    // (b194 UCE-H: 11 -> 12)
+    // (b194 UCE-H: 11 -> 12; b230 U3-PIN: b5289277 -> 29731ff9 (F-b224-1 ALL3x): 12 -> 14)
     const dup = copy(CONTROLS);
     dup.find((x) => x.name === 'T-LC-offlive').patches[0][0] = 'node.gen !== g';
     const sd = staleAnchors(dup);
     assert.equal(sd.length, 1, JSON.stringify(sd));
-    assert.ok(sd[0].name === 'T-LC-offlive' && sd[0].error.includes('12 matches'), sd[0].error);
+    assert.ok(sd[0].name === 'T-LC-offlive' && sd[0].error.includes('14 matches'), sd[0].error);
     // must-fail: the registry without the LIFECYCLE CHECKS leaves all seven ids uncovered
     const c2 = copy(CHECKS);
     for (const id of NEW) delete c2[id];
@@ -979,7 +1005,9 @@ test('teeth p: the LIFECYCLE ids have teeth -- L-LC-preb33, P-LC-tree, T-cov-LIF
 const OW = (o, sig) => 'oracle=' + o + ' lane=OWNER sig=' + sig + ' known=none';
 const OW_ROWS = [
     // [name, the anchor (full line(s)) in the live Signal.js, the mutant's replacement, the row's specs]
-    ['T-owner-cascade', '        while ((child = node.firstOwned) !== null) {\n', '        while (false && (child = node.firstOwned) !== null) {\n',
+    // T-owner-cascade anchor moved on 29731ff9 (b230 U3-PIN: F-b224-1 ALL3x added the `node.gen === g &&` cascade stop; same hunk)
+    ['T-owner-cascade', '        while (node.gen === g && (child = node.firstOwned) !== null) {   // F-b224-1: stop once a child\'s cleanup disposed this node\n',
+        '        while (false && node.gen === g && (child = node.firstOwned) !== null) {\n',
         [OW('O5', 'node-count'), OW('O5', 'link-count'), OW('O5', 'kind-count')]],
     ['T-owner-cleanup', '            if (existing === undefined) currentOwner.cleanupFn = fn;\n',
         '            if (existing === undefined) { /* MUT cleanup: assignment dropped */ }\n', [OW('O4', 'effect-dead')]],
@@ -1070,14 +1098,14 @@ const RC = (sig) => 'oracle=O9 lane=RECYCLE sig=' + sig + ' known=none';
 const RC_ROWS = [
     // [name, the anchor (full line(s)) in the live Signal.js, the mutant's replacement, the row's specs, kernel sha256/8]
     ['T-RC-setgen', '        read.set = (value) => {\n            if (node.gen !== birthGen) return;\n',
-        '        read.set = (value) => {\n            /* MUT */\n', [RC('stale-write')], '645ecc08'],
+        '        read.set = (value) => {\n            /* MUT */\n', [RC('stale-write')], '220756eb'],
     ['T-RC-readgen', '        if (this[NODE_GEN] !== node.gen) return undefined;   // stale handle: slot recycled (ABA guard, matches read())\n',
-        '', [RC('stale-read')], '589e0707'],
-    ['T-RC-dispgen', '        if (api[NODE_GEN] !== node.gen) return;\n', '', [RC('stale-dispose')], 'a4b617fa'],
+        '', [RC('stale-read')], '8b65c57c'],
+    ['T-RC-dispgen', '        if (api[NODE_GEN] !== node.gen) return;\n', '', [RC('stale-dispose')], '624e5ec5'],
     // b137 B4 (PLAN-b137 TASK 7 / A4): the b136 #51 sharedUpdate gen guard reverted to the HEAD aa154b6 line (history: on
     // ea0b64d1 the kernel WAS aa154b6's Signal.js; the C-RESET engine moved the rest of the file, b165 G2 Q3 (a))
     ['T-RC-updgen', '    function sharedUpdate(fn) { const node = this[NODE_PTR]; if (this[NODE_GEN] !== node.gen) return undefined; return this.set(fn(node.value)); }\n',
-        '    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }\n', [RC('stale-write')], '98079a2a'],
+        '    function sharedUpdate(fn) { return this.set(fn(this[NODE_PTR].value)); }\n', [RC('stale-write')], '55eb7679'],
 ];
 // History (b137 A4 -> b165 G2 Q3 (a)): on ROWS_BASE8 ea0b64d1 the T-RC-updgen kernel was byte-equal to `git show aa154b6:Signal.js`
 // (sha256 ec6d7156..., b137 B0 FACTS: k-ec6d7156/Signal.js). Since the C-RESET engine (482a1d98 / d235e505) it is not, so
@@ -1093,10 +1121,11 @@ const RC_ROWS = [
 // .handoff/uceh/evidence/kernel-shas-5af14f0b.txt; 5af14f0b -> 4b740bdb (the AUD-F G2 engine, b199) by AUD-F G2 B2b,
 // .handoff/audf/g2/b2b/kernel-shas-4b740bdb.txt; 4b740bdb -> 2141cf2f (the createScope engine 4e7decc6 plus
 // the b203 comment-only Step 0) by b203 U1, .handoff/cs/b203/u1/kernel-shas-2141cf2f.txt; b205 U2: 2141cf2f -> da5ddb86 (createScope fail-closed stamp, D-SCOPEAUD-2),
-// .handoff/cs/b205/u2/kernel-shas-da5ddb86.txt; b220 G1 B2b: da5ddb86 -> b5289277 (shape A + G broadcast fix), .handoff/b220/b2b/kernel-shas-b5289277.txt).
+// .handoff/cs/b205/u2/kernel-shas-da5ddb86.txt; b220 G1 B2b: da5ddb86 -> b5289277 (shape A + G broadcast fix), .handoff/b220/b2b/kernel-shas-b5289277.txt;
+// b230 U3-PIN: b5289277 -> 29731ff9 (F-b224-1 ALL3x), re-pinned on 29731ff9, .handoff/b230/pins/kernel-shas-29731ff9.txt).
 // It must equal the parity.json Signal.js pin
 // AND the live Signal.js: a parity re-pin without re-pinning these shas (and re-measuring the T-RC / T-SC heads) is red.
-const ROWS_BASE8 = 'b5289277';
+const ROWS_BASE8 = '29731ff9';
 function rowsBase() {
     const base = readFileSync(join(ROOT, 'Signal.js'), 'utf8');
     const live8 = createHash('sha256').update(base).digest('hex').slice(0, 8);
@@ -1179,13 +1208,13 @@ const A_SC_THUNK = '                    if (node.gen === gen && (node.flags & FL
 const SC_ROWS = [
     // [name, the anchor (full line) in the live Signal.js, the mutant's replacement, the row's specs, kernel sha256/8]
     ['T-SC-dropcall', '                                scheduler(node.schedulerThunk);  // reuse cached thunk\n',
-        '                                /* MUT dropcall */\n', [SC('O4', 'effect-dead')], '36be6baa'],
+        '                                /* MUT dropcall */\n', [SC('O4', 'effect-dead')], 'eb574a3e'],
     ['T-SC-wedge', A_SC_THUNK,
-        '                    if (false && node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O4', 'effect-dead')], '2c8743ee'],
+        '                    if (false && node.gen === gen && (node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O4', 'effect-dead')], '02c8135b'],
     ['T-SC-thunkgen', A_SC_THUNK,
-        '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O9', 'stale-thunk')], '9afab674'],
+        '                    if ((node.flags & FLAG_EFFECT) !== 0) executeEffect(node);\n', [SC('O9', 'stale-thunk')], '21158ebc'],
     ['T-SC-syncrun', '                scheduler(node.schedulerThunk);\n',
-        '                /* MUT syncrun */ executeEffect(node);\n', [SC('O9', 'stale-thunk')], '11fb378b'],
+        '                /* MUT syncrun */ executeEffect(node);\n', [SC('O9', 'stale-thunk')], 'd5a9057c'],
 ];
 const SC_ENV = { SOAK_LANES: 'SCHEDULER' };
 const SC_COV_ENV = { SOAK_LANES: 'SCHEDULER', SOAK_MUSTFAIL: 'cov-off:thunk-recycled' };
@@ -1296,39 +1325,40 @@ const REG_ROWS = [
 // re-pin (.handoff/audf/g2/b2b/kernel-shas-4b740bdb.txt), then on 2141cf2f (the createScope engine, b203 U1)
 // (.handoff/cs/b203/u1/kernel-shas-2141cf2f.txt); b205 U2: 2141cf2f -> da5ddb86 (createScope fail-closed stamp, D-SCOPEAUD-2)
 // (.handoff/cs/b205/u2/kernel-shas-da5ddb86.txt); b220 G1 B2b: da5ddb86 -> b5289277 (shape A + G broadcast fix)
-// (.handoff/b220/b2b/kernel-shas-b5289277.txt).
+// (.handoff/b220/b2b/kernel-shas-b5289277.txt); b230 U3-PIN: b5289277 -> 29731ff9 (F-b224-1 ALL3x)
+// (re-pinned on 29731ff9, .handoff/b230/pins/kernel-shas-29731ff9.txt).
 const MUT = '   // MUTANT ';
 const RESET_ROWS = [
     ['T-REG-F10', [['        if (ns !== 0) throw new Error("[lite-signal] destroy: graph not settled (" + NOT_SETTLED_REASON[ns] + ")");\n', '']],
         [REG('O6', 'expected-escape-missing'), REG('O5', 'kind-count'), REG('O5', 'node-count'), REG('O5', 'link-count'),
-            REG('O1', 'computed-mismatch'), REG('O4', 'effect-dead'), REG('O6', 'escape-TypeError')], '70ccdd53'],
+            REG('O1', 'computed-mismatch'), REG('O4', 'effect-dead'), REG('O6', 'escape-TypeError')], '13632515'],
     ['T-RESET-noop', [['        try { errs = batch(resetRounds); } catch (e) { fe = e; fthrew = true; } finally { disposeDepth--; }\n', '        disposeDepth--;' + MUT + 'T-RESET-noop\n']],
         [REG('O6', 'expected-escape-missing'), REG('O5', 'kind-count'), REG('O5', 'node-count'), REG('O5', 'link-count'),
-            REG('O8', 'mirror-links'), REG('OW', 'reset-cleanup')], 'e31e3741'],
+            REG('O8', 'mirror-links'), REG('OW', 'reset-cleanup')], '61965a08'],
     ['T-RESET-nocleanup', [['                        const fc = n.cleanupFn;\n', '                        const fc = n.cleanupFn; n.cleanupFn = undefined;' + MUT + 'T-RESET-nocleanup-A\n']],
-        [REG('OW', 'reset-cleanup')], 'ab0f25a1'],
+        [REG('OW', 'reset-cleanup')], '15bcf77d'],
     ['T-RESET-silent-op2', [['        if (mutationHook !== null) mutationHook(2, node.id, node.flags | 0);\n',
         '        if (mutationHook !== null && disposeDepth === 0) mutationHook(2, node.id, node.flags | 0);' + MUT + 'T-RESET-silent-op2-A\n']],
-        [REG('O8', 'mirror-links')], 'c6914883'],
+        [REG('O8', 'mirror-links')], 'aa3b8010'],
     ['T-RESET-wrap', [['            if (errs.length === 1) throw errs[0];\n', '            if (errs.length === 1) throw new Error(errs[0].message);' + MUT + 'T-RESET-wrap\n']],
-        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], 'b166159e'],
+        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], '38fab092'],
     ['T-RESET-noagg', [['            throw new AggregateError(errs, "reset: cleanups threw");\n', '            throw errs[0];' + MUT + 'T-RESET-noagg\n']],
-        [REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], 'bc452e6a'],
+        [REG('O6', 'expected-escape-missing'), REG('OW', 'reset-cleanup')], '562459a6'],
     ['T-RESET-reason', [['        if (isFlushing) return 1;\n', '        if (currentObserver !== null) return 3;' + MUT + 'T-RESET-reason (moved above isFlushing)\n        if (isFlushing) return 1;\n'],
         ['        if (currentObserver !== null) return 3;\n', '']],
-        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing')], 'cee95536'],
+        [REG('O6', 'escape-Error'), REG('O6', 'expected-escape-missing')], '4eba454b'],
 ];
 // [name, the anchor in the live Signal.js, the replacement (b139 B1b mkmut.mjs), specs, kernel sha256/8 on ROWS_BASE8]
 // (each kernel byte-equal to .handoff/b139-evidence/b1b/mut/<name>/Signal.js, b140 B2b)
 const CAP_ROWS = [
     ['T-cap-node', 'policy === "throw" && nodePool.length >= currentNodesCapacity', 'policy === "throw" && nodePool.length > currentNodesCapacity',
-        [CAP('O6', 'expected-escape-missing')], 'fa8e09f4'],
+        [CAP('O6', 'expected-escape-missing')], 'ba27fd5f'],
     ['T-cap-link', 'policy === "throw" && linkPool.length >= currentLinkCapacity', 'policy === "throw" && linkPool.length > currentLinkCapacity',
-        [CAP('O6', 'expected-escape-missing')], '02482597'],
+        [CAP('O6', 'expected-escape-missing')], '9cde5754'],
     ['T-cap-ceiling', 'const maxLinkLimit = currentLinkCapacity * 16;', 'const maxLinkLimit = currentLinkCapacity * 17;',
-        [CAP('O6', 'expected-escape-missing')], '60973784'],
+        [CAP('O6', 'expected-escape-missing')], 'f943bc58'],
     ['T-cap-residue', '        link.nextFree = freeLinkHead;\n        freeLinkHead = link;\n        activeLinks = (activeLinks - 1) | 0;\n',
-        '        // MUTANT T-cap-residue: link not freed (not pooled, activeLinks not decremented)\n', [CAP('O5', 'link-count')], '14a916e9'],
+        '        // MUTANT T-cap-residue: link not freed (not pooled, activeLinks not decremented)\n', [CAP('O5', 'link-count')], '8f7ae2b7'],
 ];
 const shape = (c) => [c.run, c.base, c.env, c.argv, c.patches, c.arm, c.expect.exit, c.expect.kind, c.expect.lines, c.expect.specs];
 
@@ -1626,10 +1656,10 @@ const A_SNAP_EV = '                    node.evalVersion = evs[i];   // D-M: the 
 // [name, anchor in the live Signal.js restore() pass 1, replacement, spec sig, kernel sha256/8 on ROWS_BASE8]; each kernel is
 // byte-equal to .handoff/r8-evidence/A0/kernels/M-OS-<x>/Signal.js (the A0 measured tamper kernels, R8-16)
 const SNAP_ROWS = [
-    ['T-SNAP-roundtrip', A_SNAP_EV + '                    node.markEpoch = mes[i];\n', A_SNAP_EV, 'roundtrip', 'fa1d943a'],
+    ['T-SNAP-roundtrip', A_SNAP_EV + '                    node.markEpoch = mes[i];\n', A_SNAP_EV, 'roundtrip', '548d5923'],
     ['T-SNAP-refire', '                handle = disposeFn;\n',
-        '                handle = disposeFn;\n                try { fn(); } catch (e) { /* M-OS-refire */ }\n', 'refire', 'dba22914'],
-    ['T-SNAP-clean', A_SNAP_EV, '                    node.evalVersion = 0;   // M-OS-clean\n', 'clean-bit', '07c3b2c0'],
+        '                handle = disposeFn;\n                try { fn(); } catch (e) { /* M-OS-refire */ }\n', 'refire', '1fed7eb5'],
+    ['T-SNAP-clean', A_SNAP_EV, '                    node.evalVersion = 0;   // M-OS-clean\n', 'clean-bit', '2b1e2609'],
 ];
 // The frozen pre-C1 build (git archive 7548461, rebased as dc7ed8f; .handoff is gitignored, so this row SKIPS without it)
 const FROZEN_MAIN = join(ROOT, '.handoff', 'r8-evidence', 'before-C-7548461', 'bench', 'soak', 'main.mjs');

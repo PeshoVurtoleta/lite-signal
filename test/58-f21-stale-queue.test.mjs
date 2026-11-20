@@ -14,7 +14,8 @@
 // Kernel: LITE_SIGNAL_KERNEL (absolute path to a Signal.js with a sibling Watch.js), default ../Signal.js.
 //
 // RED-FIRST on HEAD 740edfc (proven): probe-f21 (a), P2_Afirst (b), P3 (c), P8 (c), d, D1 (f), rows 7 and 8 (e), PX3.
-// PRESERVATION / KNOWN rows (green on HEAD and on the fix): P5, P7, P2_Bfirst, row 3, C1, C3, U1, R2-ABA, self-dispose,
+// PRESERVATION / KNOWN rows (green on HEAD and on the fix): P5, P7, P2_Bfirst, row 3, C1, C3, U1, R2-ABA (re-derived b230 U3-PIN on 29731ff9:
+// throw + grow rows, red on b5289277 by design, see the rows), self-dispose,
 // keep-QUEUED (deferred scheduler: one scheduler call per pending period), KNOWN R1, KNOWN R2.
 // Mutants (DELTA 2 item 4) and the row that kills each:
 //   Q1 no QUEUED test (= HEAD) ................. probe-f21
@@ -37,7 +38,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 const KPATH = process.env.LITE_SIGNAL_KERNEL ?? new URL('../Signal.js', import.meta.url).pathname;
-const { createRegistry } = await import(KPATH);
+const { createRegistry, CapacityError } = await import(KPATH);
 
 test('kernel under test', (t) => {
     const sha = createHash('sha256').update(readFileSync(KPATH)).digest('hex');
@@ -278,25 +279,81 @@ describe("F21 preservation and mutant rows", () => {
         r.destroy();
     });
 
-    it("R2-ABA (preservation): a cleanup that disposes its own effect, then misses at depth 0, never runs the stranger", () => {
-        const r = createRegistry();
+    // R2-ABA (preservation) re-derived on 29731ff9 (b230 U3-PIN: F-b224-1 ALL3x; C-32 = A-b229-1 / D-b229-1; probe
+    // .handoff/b230/beh/probe/aba.mjs). The cleanup runs inside a cleanup arm; releasePinned refuses while an arm runs
+    // (armDepth, R1bNZ) and the own pin is released only at the arm's exit (unpinOwn), so the "-1: the pinned slot"
+    // loop leaves the pool exactly full and the stranger's allocation misses inside the arm: CapacityError under
+    // "throw" (R1-capacity, accepted by D-b227-2; the stranger is never created), a one-chunk growth under "grow" (the
+    // stranger takes a fresh slot). The re-run never runs a stranger either way. Red on b5289277 (the depth-0 miss
+    // released the pin into X: no error, no growth, X in the own slot).
+    it("R2-ABA (preservation): a cleanup that disposes its own effect, then misses at depth 0, never runs the stranger (throw: CapacityError)", () => {
+        const r = createRegistry({ onCapacityExceeded: 'throw' });
         const s = r.signal(0);
-        let stop = null, X = null, runs = 0;
+        let stop = null, X = null, runs = 0, own = null, made = 0, ce = null;
         stop = r.effect(() => {
-            runs++; s();
+            runs++; s(); own = r.getOwner();
             r.onCleanup(() => {
                 stop();
                 const st = r.stats();
                 let free = st.nodePoolPopulation - st.activeNodes - 1;   // -1: the pinned slot
-                while (free-- > 0) r.signal(-1);
-                X = r.signal(5);                                        // free-list miss at depth 0
+                try { while (free-- > 0) { r.signal(-1); made++; } X = r.signal(5); } catch (e) { ce = e; throw e; }
             });
         });
-        // Derivation (test/35 R2-ABA): runs stays 1 (re-run stops before the body); X is an ordinary signal = 5.
+        let thrown = null;
+        try { s.set(1); } catch (e) { thrown = e; }
+        // Derivation (test/35 R2-ABA throw row): s + effect = 2 active of 1024; 1022 fillers fill the pool exactly;
+        // X's miss throws CapacityError("nodes", 1024), rethrown unchanged by s.set(1); runs stays 1; X never exists;
+        // the arm's exit released the pin (1023 active); the next allocation takes the released slot.
+        assert.ok(thrown instanceof CapacityError);
+        assert.equal(thrown, ce);
+        assert.equal(thrown.message, 'CapacityError: nodes capacity (1024) exceeded.');
+        assert.equal(thrown.kind, 'nodes');
+        assert.equal(thrown.capacity, 1024);
+        assert.equal(made, 1022);
+        assert.equal(runs, 1);
+        assert.equal(X, null);
+        const st = r.stats();
+        assert.deepEqual([st.nodePoolPopulation, st.activeNodes, st.poolGrowths, st.effects], [1024, 1023, 0, 0]);
+        const r0 = runs; s.set(2);
+        assert.equal(runs - r0, 0);
+        const Y = r.signal(9);
+        const sym = Object.getOwnPropertySymbols(Y).find((k) => typeof Y[k] === 'object' && Y[k] !== null);
+        assert.equal(Y[sym], own[sym]);
+        assert.equal(Y(), 9);
+        r.destroy();
+    });
+
+    it("R2-ABA (preservation): a cleanup that disposes its own effect, then misses at depth 0, never runs the stranger (grow: X === 5)", () => {
+        const r = createRegistry({ onCapacityExceeded: 'grow' });
+        const s = r.signal(0);
+        let stop = null, X = null, runs = 0, own = null, made = 0;
+        stop = r.effect(() => {
+            runs++; s(); own = r.getOwner();
+            r.onCleanup(() => {
+                stop();
+                const st = r.stats();
+                let free = st.nodePoolPopulation - st.activeNodes - 1;   // -1: the pinned slot
+                while (free-- > 0) { r.signal(-1); made++; }
+                X = r.signal(5);                                        // free-list miss inside the arm: grows
+            });
+        });
+        // Derivation (test/35 R2-ABA grow row): X's miss grows the pool one chunk (1024 -> 1280, 1 growth) and X
+        // takes a fresh slot; runs stays 1; X is an ordinary signal = 5; 1024 active; the next allocation takes the
+        // released slot.
         assert.equal(tryMsg(() => s.set(1)), null);
+        assert.equal(made, 1022);
         assert.equal(runs, 1);
         assert.equal(X(), 5);
         assert.equal(r.describe(X).kind, "signal");
+        const sym = Object.getOwnPropertySymbols(X).find((k) => typeof X[k] === 'object' && X[k] !== null);
+        assert.equal(X[sym] === own[sym], false);
+        const st = r.stats();
+        assert.deepEqual([st.nodePoolPopulation, st.activeNodes, st.poolGrowths, st.effects], [1280, 1024, 1, 0]);
+        const r0 = runs; s.set(2);
+        assert.equal(runs - r0, 0);
+        const Y = r.signal(9);
+        assert.equal(Y[sym], own[sym]);
+        assert.equal(Y(), 9);
         r.destroy();
     });
 

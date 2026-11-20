@@ -14,7 +14,12 @@
  *
  * BUDGET (19 gated names through the script (14 + the five cleanup-path inlinees added in b203) + read.set measured raw, the script's fn regex refuses a dot): executeEffect, flushEffects, read (two closures),
  * read.set, markDownstream, batch (two), peekComputed, pullComputed, pullMoved, sharedComputedPeek, sharedSignalPeek, effectTail, runCleanupC, runCleanupE,
- * fireRecompute, onCleanup, runOwnCleanup, runCleanup, rerunCleanupEffect, rerunCleanupComputed. refreshComputed (770 on v26, never inlined: a host, not an inlinee) is REPORTED only.
+ * fireRecompute, onCleanup, runOwnCleanup, runCleanup, rerunCleanupEffect, rerunCleanupComputed. refreshComputed (789 on v26.8.2 at 84068786, 782 at b5289277;
+ * never inlined: a host, not an inlinee) is REPORTED only.
+ *
+ * b229 (U5 B2 TASK 7, SPEC-b228 U5): [PIN v26.8.2, REPORTED elsewhere] the exact length table of every BUDGET name + read.set, one row per name, measured on
+ * 84068786 (the F-b224-1 pinned-slot fix; .handoff/b228/u5b2/lengths.txt). Red on b5289277 exactly flushEffects (442), effectTail (25), rerunCleanupEffect
+ * (177), rerunCleanupComputed (198). flushEffects (456) is the largest gated body: 4 B headroom under 460, so it gets its own boundary control.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -31,6 +36,14 @@ const ENGINE_PATH = process.env.AUDF_SIGNAL || fileURLToPath(new URL("../Signal.
 const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/Signal-5af14f0b.js", import.meta.url));
 const WATCH_LINE = 'export {watch, when, whenAsync} from "./Watch.js";';
 const CAP = 460;
+const PIN_KEY = "v26.8.2";
+const PINNED = process.version === PIN_KEY;
+// Exact bytecode lengths on PIN_KEY, Signal.js 84068786 (b229, sorted ascending; two closures for read / batch / onCleanup). read.set is measured raw.
+const LENGTHS = {
+    executeEffect: [450], flushEffects: [456], read: [106, 196], markDownstream: [194], batch: [16, 108], peekComputed: [82], pullComputed: [79],
+    pullMoved: [64], sharedComputedPeek: [36], sharedSignalPeek: [33], effectTail: [46], runCleanupC: [24], runCleanupE: [21], fireRecompute: [15],
+    onCleanup: [16, 93], runOwnCleanup: [203], runCleanup: [28], rerunCleanupEffect: [234], rerunCleanupComputed: [246], "read.set": [279],
+};
 const skip = process.platform === "win32" ? "bash script: POSIX hosts only" : false;
 const SPAWN = { encoding: "utf8", timeout: 300000, killSignal: "SIGKILL", maxBuffer: 1 << 26 };
 
@@ -74,7 +87,17 @@ function rawLens(drv, fn) {
     return lens;
 }
 
-let LIVE = null, FIX = null;
+let LIVE = null, FIX = null, TABLE = null;
+// One report-mode run over every BUDGET name + the raw read.set probe, shared by the table rows (sorted ascending per name).
+function table() {
+    if (TABLE) return TABLE;
+    const r = script(["--fn", GATED.join(","), "--node-version", process.version], LIVE.drv);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const t = {};
+    for (const f of GATED) t[f] = lensOf(r.stdout, f).slice().sort((a, b) => a - b);
+    t["read.set"] = rawLens(LIVE.drv, "read.set").slice().sort((a, b) => a - b);
+    return (TABLE = t);
+}
 before(() => { if (!skip) { LIVE = stage(ENGINE_PATH); FIX = stage(FIXTURE_PATH); } });
 after(() => { for (const s of [LIVE, FIX]) if (s) rmSync(s.dir, { recursive: true, force: true }); });
 
@@ -134,6 +157,19 @@ describe("A1 hot-body bytecode budget (sequential, POSIX)", () => {
         assert.equal(v.v, "OVER");
         if (process.version.startsWith("v26.")) assert.equal(v.why, "length(s) 462 > max 460");   // TASK 0 (d), node 26.3.1 and 26.8.2
     });
+    it("[PIN] boundary control: max = measured length - 1 gives OVER (exit 1), max = measured length gives WITHIN (exit 0), for the live flushEffects (the largest on v26.8.2)", { skip }, () => {
+        const rep = script(["--fn", "flushEffects", "--node-version", process.version], LIVE.drv);
+        assert.equal(rep.status, 0, rep.stdout + rep.stderr);
+        const lens = lensOf(rep.stdout, "flushEffects");
+        assert.equal(lens.length, 1);
+        const L = lens[0];
+        const below = script(["--max", "flushEffects=" + (L - 1), "--node-version", process.version], LIVE.drv);
+        assert.equal(below.status, 1, below.stdout + below.stderr);
+        assert.equal(verdictOf(below.stdout, "flushEffects").v, "OVER");
+        const at = script(["--max", "flushEffects=" + L, "--node-version", process.version], LIVE.drv);
+        assert.equal(at.status, 0, at.stdout + at.stderr);
+        assert.equal(verdictOf(at.stdout, "flushEffects").v, "WITHIN");
+    });
     it("[PIN] boundary control: max = measured length - 1 gives OVER (exit 1), max = measured length gives WITHIN (exit 0), for the live executeEffect", { skip }, () => {
         const rep = script(["--fn", "executeEffect", "--node-version", process.version], LIVE.drv);
         assert.equal(rep.status, 0, rep.stdout + rep.stderr);
@@ -146,5 +182,23 @@ describe("A1 hot-body bytecode budget (sequential, POSIX)", () => {
         const at = script(["--max", "executeEffect=" + L, "--node-version", process.version], LIVE.drv);
         assert.equal(at.status, 0, at.stdout + at.stderr);
         assert.equal(verdictOf(at.stdout, "executeEffect").v, "WITHIN");
+    });
+});
+
+describe("[PIN " + PIN_KEY + ", REPORTED elsewhere] exact BUDGET length table (b229, 84068786)", () => {
+    it("[PIN] the table covers exactly the 19 BUDGET names + read.set", () => {
+        assert.deepEqual(Object.keys(LENGTHS), [...GATED, "read.set"]);
+    });
+    for (const f of [...GATED, "read.set"]) {
+        it("[PIN] engine " + f + " = " + LENGTHS[f].join(","), { skip }, (t) => {
+            const got = table()[f];
+            if (!PINNED) { console.log("# REPORTED " + f + " on " + process.version + " (pins are " + PIN_KEY + " only): " + got.join(",")); return t.skip("REPORTED on " + process.version); }
+            assert.deepEqual(got, LENGTHS[f], f + ": length(s) " + got.join(",") + ", pinned " + LENGTHS[f].join(","));
+        });
+    }
+    it("[REPORTED] engine: the largest gated length and its headroom under 460", { skip }, () => {
+        let mx = 0, at = "";
+        for (const f of GATED) for (const l of table()[f]) if (l > mx) { mx = l; at = f; }
+        console.log("# REPORTED " + process.version + " largest gated length " + mx + " (" + at + "), headroom " + (CAP - mx) + " of " + CAP + "; read.set " + table()["read.set"].join(","));
     });
 });

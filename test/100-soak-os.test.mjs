@@ -524,8 +524,9 @@ async function loadMutant(name) {
     const n = LIVE_SRC.split(from).length - 1;
     assert.equal(n, 1, name + ': patch site must match exactly once, got ' + n);
     const src = LIVE_SRC.replace(from, () => to);
-    // A0 kernels re-cut on Signal.js b5289277 (b220 G1 B2b: da5ddb86 -> b5289277 (shape A + G broadcast fix)) (== test/45 SNAP_ROWS shas,
-    // .handoff/b220/b2b/a0-recut.log); the da5ddb86 cut (b205 U2, createScope fail-closed stamp) is A0/kernels-da5ddb86/,
+    // A0 kernels re-cut on Signal.js 29731ff9 (b230 U3-PIN: b5289277 -> 29731ff9 (F-b224-1 ALL3x)) (== test/45 SNAP_ROWS shas,
+    // .handoff/b230/pins/a0-recut.log); the b5289277 cut (b220 G1 B2b, shape A + G broadcast fix) is A0/kernels-b5289277/,
+    // the da5ddb86 cut (b205 U2, createScope fail-closed stamp) is A0/kernels-da5ddb86/,
     // the 2141cf2f cut (the createScope engine, b203 U1) is A0/kernels-2141cf2f/,
     // the 4b740bdb cut (AUD-F G2 B2b, b199) is A0/kernels-4b740bdb/,
     // the 5af14f0b cut (UCE-H B4, b194) is A0/kernels-5af14f0b/, the 2043b9f6 cut (L-1 B3, b192) is A0/kernels-2043b9f6/, the f6ff4cf3 cut

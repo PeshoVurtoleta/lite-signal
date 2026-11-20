@@ -92,10 +92,11 @@ const A_CONN = '        const e = lifecycleMap.get(source);\n        if (e === u
 const A_DISC = '        if (e === undefined) return;\n        const po = currentObserver, pg = po !== null ? po.gen : 0;\n' +
     '        const g = node.gen;\n';
 // kind -> list of [anchor, replacement] pairs; every anchor must occur exactly once in the kernel.
-// slow / lslow / val verbatim from the b61 qa recipe.
+// slow / lslow / val verbatim from the b61 qa recipe; slow re-anchored on 29731ff9 (b230 U3-PIN: F-b224-1 ALL3x split the
+// scope pin into its own `scopePinHead` arm, so the free-list push now follows that arm; same hunk, same 1-in-1000 skip).
 const MUTANTS = {
-    slow: [['            pinnedHead = node;\n        } else {\n            node.nextFree = freeNodeHead;',
-        '            pinnedHead = node;\n        } else if ((statTotalDisposals % 1000) !== 999) {\n' +
+    slow: [['            scopePinHead = node;\n        } else {\n            node.nextFree = freeNodeHead;',
+        '            scopePinHead = node;\n        } else if ((statTotalDisposals % 1000) !== 999) {\n' +
             '            node.nextFree = freeNodeHead;']],
     lslow: [['            sLink.nextFree = freeLinkHead;\n            freeLinkHead = sLink;\n',
         '            if ((statTotalDisposals % 1000) !== 999) { sLink.nextFree = freeLinkHead;\n' +

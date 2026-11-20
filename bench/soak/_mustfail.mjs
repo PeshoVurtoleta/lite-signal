@@ -374,7 +374,8 @@ const LC_COV_ENV = Object.freeze({ SOAK_LANES: 'LIFECYCLE', SOAK_MUSTFAIL: 'cov-
 // 21a4e3ac; on ec6d7156 they were 158a58b3 / ce6677c3 / 195121be / 7ef2a2db /
 // b8135782, .handoff/b127-evidence/b5/). Each anchor occurs exactly once (patchAll).
 // :1450 disposeOwned's pop-from-the-front loop (8-space indent).
-const A_OW_CASCADE = '        while ((child = node.firstOwned) !== null) {\n';
+// b230 U3-PIN: moved on 29731ff9 (F-b224-1 ALL3x added the `node.gen === g &&` stop to the cascade loop); same hunk, same mutant.
+const A_OW_CASCADE = '        while (node.gen === g && (child = node.firstOwned) !== null) {   // F-b224-1: stop once a child\'s cleanup disposed this node\n';
 // :2577 onCleanup's first registration (12-space indent).
 const A_OW_CLEANUP = '            if (existing === undefined) currentOwner.cleanupFn = fn;\n';
 // :1478 runOwnCleanup's multi-cleanup FIFO loop (12-space indent; the fifo and this rows share it).
@@ -949,7 +950,7 @@ export const CONTROLS = deepFreeze([
     // and O1e effect-stale 38 / 50, O4 effect-dead 4 / 50 are not specs.
     M('T-owner-cascade', 'tree', OW_ENV, ['--smoke'], {
         exit: 1, kind: 'match', lines: [], specs: ['oracle=O5 lane=OWNER sig=node-count known=none', 'oracle=O5 lane=OWNER sig=link-count known=none', 'oracle=O5 lane=OWNER sig=kind-count known=none'],
-    }, { patches: [[A_OW_CASCADE, '        while (false && (child = node.firstOwned) !== null) {\n']] }),
+    }, { patches: [[A_OW_CASCADE, '        while (false && node.gen === g && (child = node.firstOwned) !== null) {\n']] }),
     // cleanup: onCleanup drops the first registration, so no cleanup ever fires and the lane's sentinel write is lost:
     // O4 effect-dead 50 / 50 (O1e 0 / 50).
     M('T-owner-cleanup', 'tree', OW_ENV, ['--smoke'], {
