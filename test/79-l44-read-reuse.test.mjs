@@ -14,6 +14,7 @@ import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import v8 from 'node:v8';
 import { GcProfiler, measureAllocs } from '@zakkster/lite-gc-profiler';
 import { createLeakTracker } from '@zakkster/lite-leak';
 
@@ -113,6 +114,16 @@ function linkStep(kind) {
     step.runs = () => runs; step.sink = () => sink;
     return step;
 }
+function spaceUsed() {
+    const o = {};
+    for (const s of v8.getHeapSpaceStatistics()) o[s.space_name] = s.space_used_size;
+    return o;
+}
+function spaceDeltas(a, b) {
+    const d = {};
+    for (const k of Object.keys(b)) { const x = b[k] - (a[k] ?? 0); if (x >= 1024 || x <= -1024) d[k] = x; }
+    return d;
+}
 async function check(step, iters, batches = 4) {
     // Tiering / feedback / code-object survivors are one-time (~10 KB, seen as 0.098 B/op over 1e5): finish them
     // BEFORE the measured window -- long warm-up on the same step, a forced gc, then a second warm-up round.
@@ -123,16 +134,22 @@ async function check(step, iters, batches = 4) {
     globalThis.gc();
     const m = measureAllocs(step, { iterations: iters, batches, warmup: 20000 });
     assert.notEqual(m.bytesPerCall, null, 'unmeasured is not zero');
+    spaceDeltas(spaceUsed(), spaceUsed());   // warm the class-19 instrument outside the bracket: its own (re)compile is ~2 KB/window of old_space
     globalThis.gc();
     await new Promise((res) => setTimeout(res, 50));
     const gcp = new GcProfiler().start();
     const h0 = process.memoryUsage().heapUsed;
+    // CI class 19 (e034dc8 ubuntu node 26: whole-window 0.533808 B/op), unreproduced locally (local v26.8.2 arm64 / v26.3.1 x64; CI v26.13.1; 56 runs: taskpolicy -b,
+    // recompilation delay 100/300, x64 Rosetta node, 4 parallel drivers). D-b223-1 instrument + watch: the per-V8-space
+    // deltas below attribute the next red (code_space / trusted_space = JIT install, trusted_space also lazily compiled bytecode (a hint, not exclusive); new/old/large_object = JS heap). Not a fix.
+    const sp0 = spaceUsed();
     for (let i = 0; i < 1000000; i++) step();
     await new Promise((res) => setTimeout(res, 50));
     const sum = gcp.summary(); gcp.stop();
     globalThis.gc(); const grewBpo = (process.memoryUsage().heapUsed - h0) / 1000000;
+    const spaces = spaceDeltas(sp0, spaceUsed());
     assert.equal(sum.gc.minor, 0, 'scavenge in 1e6 reads: transient per-read alloc');
-    assert.ok(grewBpo < 0.5, 'whole-window retained B/op ' + grewBpo);
+    assert.ok(grewBpo < 0.5, 'whole-window retained B/op ' + grewBpo + ' spaces ' + JSON.stringify(spaces));
     assert.ok(step.runs() > iters * 4, 'effect really re-ran per step: ' + step.runs());
     assert.ok(step.sink() !== 0, 'reads returned numbers');
     // Per-batch heap deltas carry a few KB of harness/JIT noise in random batches (seen 4-58 KB per 1e5 reads, not per
@@ -142,7 +159,7 @@ async function check(step, iters, batches = 4) {
     for (const b of m.batchBytes) if (b !== null && b < minB) minB = b;
     assert.ok(minB !== Infinity, 'at least one measured batch');
     return { minBpo: minB / iters, bpo: m.bytesPerCall, major: sum.gc.major, minor: sum.gc.minor, grewBpo,
-             batchBytes: m.batchBytes, inverted: m.invertedBatches };
+             batchBytes: m.batchBytes, inverted: m.invertedBatches, spaces };
 }
 async function transientControl() {
     const r = createRegistry();
