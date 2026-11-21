@@ -270,11 +270,15 @@ export function destroyReuse(S, ctl, k) {
     o.push(safe(() => JSON.stringify(sv.stats()))); return o;
 }
 // p6 (b218 matrix): C2 disposes cursor sources of C1 and the effect, recycles, throws; caught = C1 catches, else the throw unwinds through C1's restore.
-export function p6(S, ctl, caught) {
+// hook (b243 XA1): t1 (read only by C1) gets an onDisconnect that disposes t (read only by the depth-0 effect): the unwind's severStale(C1)
+// frees t1's link, the hook runs inside that sever frame (cursorDepth 2, currentObserver C1) and t's link (target = the effect, NOT the live
+// frame) is logged, so the S-site restore takes the cold arm. Without the hook the S-site entry was C1's own link (live frame: filtered by XA1).
+export function p6(S, ctl, caught, hook) {
     const out = []; const r = S.createRegistry({ maxNodes: 64, maxLinks: 256 });
     const trig = r.signal(0), s = r.signal(1), s1 = r.signal(2), t = r.signal(3), t1 = r.signal(4);
     let on = false, f = null;
     const K = r.computed(() => trig() + 7);
+    if (hook) r.observeObservers(t1, { onDisconnect: () => { out.push("hook:" + safe(() => r.dispose(t))); } });
     const C2 = r.computed(() => { trig(); if (on) { on = false; r.dispose(s); r.dispose(s1); f = r.signal(5); f(); throw new Error("boom"); } return 1; });
     const C1 = r.computed(() => { let v = trig(); if (caught) { try { v += C2(); } catch (e) { v += 1000; } } else v += C2(); v += s1() | 0; v += K(); v += t1(); return v; });
     r.effect(() => { let v = trig(), e = ""; try { v += C1(); } catch (x) { e = "/" + x.message; } v += K(); v += s() | 0; v += t(); out.push("run:" + v + e); });

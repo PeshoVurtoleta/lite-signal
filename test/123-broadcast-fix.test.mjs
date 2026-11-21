@@ -3,6 +3,8 @@
 // rows 1a-1d are hand-derived (comment above each row); every other pinned list was measured on head b5289277 (node v26.8.2, untimed) and,
 // PINS entries with fix: true are also deepEqual on the da5ddb86 fixture (afterDirty_* trivially: the fixture has no plant); 3b bounds head against the fixture. Engine under test: env LS_ENGINE (abs path),
 // default R/Signal.js. Head-only rows are expected RED on the frozen before build (that red is the must-fail evidence).
+// b243 (XA1 B2, PLAN-XA1 TASK 3): 1g / 1i / 2e re-pinned for the XA1 live-frame filter on head a7202c9b (node v26.8.2, untimed); the
+// XA1 frozen build is test/fixtures/Signal-29731ff9.js (1g / 1i / 2e are red there: that red is the must-fail evidence for the re-pins).
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdtempSync, copyFileSync, existsSync } from "node:fs";
@@ -234,8 +236,9 @@ describe("ASSERTION 2 G + fuzz + controls", () => {
             assert.equal(f.diffs, 7, pol); assert.equal(f.first.p, 49, pol);
         }
     });
-    it("2e must-fail control MU-NOLOG (A-b216-1: delete repairCursor's whole `if (cursorDepth > 1) { ... fixLen = n + 3; }` block): fuzz diverges from the fixture (>= 1 / 300)", () => {
-        const text = readFileSync(ENG, "utf8"); const a = "if (cursorDepth > 1) { const n = fixLen; fixLog[n] = sLink; fixLog[n + 1] = nDep; fixLog[n + 2] = cursorDepth; fixLen = n + 3; }";
+    // b243: the anchor is the XA1 repairCursor line (live-frame filter, D-b240-1); MU-NOLOG still deletes the whole guarded append.
+    it("2e must-fail control MU-NOLOG (A-b216-1: delete repairCursor's whole `if (cursorDepth > 1 && sLink.target !== currentObserver) { ... fixLen = n + 3; }` block): fuzz diverges from the fixture (>= 1 / 300)", () => {
+        const text = readFileSync(ENG, "utf8"); const a = "if (cursorDepth > 1 && sLink.target !== currentObserver) { const n = fixLen; fixLog[n] = sLink; fixLog[n + 1] = nDep; fixLog[n + 2] = cursorDepth; fixLen = n + 3; }";
         assert.equal(text.split(a).length - 1, 1, "NOLOG anchor: exactly 1 match");
         const f = fuzz(stageFix(), stageEng(text.replace(a, "")), 300, 12345, "grow");
         assert.ok(f.diffs >= 1, "MU-NOLOG must diverge: " + f.diffs);
@@ -357,17 +360,19 @@ function fixLogLines(text) {
 const FIXLOG_LINES = [
     "const fixLog = [];",
     "for (let i = 0; i < 48; i++) fixLog.push(null);",
-    "if (cursorDepth > 1) { const n = fixLen; fixLog[n] = sLink; fixLog[n + 1] = nDep; fixLog[n + 2] = cursorDepth; fixLen = n + 3; }",
+    "if (cursorDepth > 1 && sLink.target !== currentObserver) { const n = fixLen; fixLog[n] = sLink; fixLog[n + 1] = nDep; fixLog[n + 2] = cursorDepth; fixLen = n + 3; }",
     "const n = fixLen; fixLog[n] = l; fixLog[n + 1] = null; fixLog[n + 2] = cursorDepth; fixLen = n + 3;",
     "for (let i = 0; i < fixLog.length; i++) fixLog[i] = null;",
     "if (fixLog[i + 2] > k) {",
     "if (c !== null && fixLog[i] === c) c = fixLog[i + 1];",
     "fixLog[i + 2] = k;",
+    "fixLog.length = 48;",   // b243 (XA1 D-b240-5): destroy() trim
+    "fixLog.length = 48;",   // b243 (XA1 D-b240-5): reset() trim
 ].sort();
 // The 4 forms that evaded the b217 regex census (engine review r2): each staged copy adds one line and must fail.
 const EVADE = ["fixLog[n + 3] = null;", "fixLog[n]=null;", "fixLog.fill(null, 0, n);", "const u = \"//\"; fixLog[n] = null;"];
 describe("ASSERTION 1 fixLog census", () => {
-    it("1g every code line mentioning fixLog equals the whitelist (8 lines); staged copies adding each of the 4 r2 evading forms fail the census", () => {
+    it("1g every code line mentioning fixLog equals the whitelist (10 lines); staged copies adding each of the 4 r2 evading forms fail the census", () => {
         const text = readFileSync(ENG, "utf8");
         assert.deepEqual(fixLogLines(text), FIXLOG_LINES);
         const a = "    function repairCursor(sLink, nDep) {\n";
@@ -408,7 +413,8 @@ const PINS = {
     "destroyReuse_E": { o: ["E0:4","E0:4",null,"destroyed","E1:4","E1:4",null,"after:3","{\"signals\":2,\"computeds\":1,\"effects\":1,\"activeLinks\":4,\"pooledLinks\":16380,\"linkPoolCapacity\":16384,\"nodePoolCapacity\":4096,\"nodePoolPopulation\":256,\"linkPoolPopulation\":1024,\"activeNodes\":4,\"totalAllocations\":5,\"totalDisposals\":1,\"poolGrowths\":0}"], cnt: {"S":0,"E":0,"R":2}, fix: true },
     "destroyReuse_S": { o: [4,null,"hook:4",null,"destroyed",4,null,"hook:4",null,"after:4","{\"signals\":5,\"computeds\":2,\"effects\":1,\"activeLinks\":5,\"pooledLinks\":16379,\"linkPoolCapacity\":16384,\"nodePoolCapacity\":4096,\"nodePoolPopulation\":256,\"linkPoolPopulation\":1024,\"activeNodes\":8,\"totalAllocations\":9,\"totalDisposals\":1,\"poolGrowths\":0}"], cnt: {"S":0,"E":0,"R":4}, fix: true },
     "p6Caught": { o: ["run:25","run:1025",null,"run:1031",null,"run:36",null,"L10 N8","reset L0"], cnt: {"S":0,"E":0,"R":3}, fix: true },
-    "p6Uncaught": { o: ["run:25","run:12/boom",null,"run:18/boom",null,"run:36",null,"L10 N8","reset L0"], cnt: {"S":1,"E":0,"R":3}, fix: true },
+    "p6Uncaught": { o: ["run:25","run:12/boom",null,"run:18/boom",null,"run:36",null,"L10 N8","reset L0"], cnt: {"S":0,"E":0,"R":2}, fix: true },
+    "p6UncaughtHook": { o: ["run:25","hook:undefined","run:NaN/boom",null,null,"run:NaN",null,"L9 N7","hook:undefined","reset L0"], cnt: {"S":1,"E":0,"R":2}, fix: true },
     "caseA": { o: ["run:6","run:5",null,"run:11",null,"run:13",null,"L6 N5","reset L0"], cnt: {"S":0,"E":0,"R":2}, fix: true },
     "G_eff": { o: ["E:2","E:20",null,"E:22",null,"E:24",null,"E:26",null,"E:28",null,"E:30",null,"#RUNS C:7,E:7","E:2030","{\"subs\":[],\"links\":[2,2],\"once\":[\"C/s c:1,0\"],\"reset\":\"ok L0\"}"], cnt: {"S":0,"E":0,"R":0}, fix: true },
     "G_cc": { o: [3,21,23,25,27,29,31,"#RUNS C1:7,C2:7","{\"subs\":[],\"links\":[2,2],\"once\":[\"C1/s c:1,0\"],\"reset\":\"ok L0\"}"], cnt: {"S":0,"E":0,"R":0}, fix: true },
@@ -429,7 +435,7 @@ const IN = {
     seq_RES_none: (S, c) => seqIn(S, c, "RES", "none"),
     nest_dirtyE_none: (S, c) => nest(S, c, "dirtyE", "none"), nest_dirtyR_none: (S, c) => nest(S, c, "dirtyR", "none"), nest_dirtyS_none: (S, c) => nest(S, c, "dirtyS", "none"), nest_clean_none: (S, c) => nest(S, c, "clean", "none"),
     destroyReuse_R: (S, c) => destroyReuse(S, c, "R"), destroyReuse_E: (S, c) => destroyReuse(S, c, "E"), destroyReuse_S: (S, c) => destroyReuse(S, c, "S"),
-    p6Caught: (S, c) => p6(S, c, true), p6Uncaught: (S, c) => p6(S, c, false), caseA: (S) => caseA(S),
+    p6Caught: (S, c) => p6(S, c, true), p6Uncaught: (S, c) => p6(S, c, false), p6UncaughtHook: (S, c) => p6(S, c, false, true), caseA: (S) => caseA(S),
     G_eff: (S, c) => G(S, c, "eff", 2147483644), G_cc: (S, c) => G(S, c, "cc", 2147483644), G_effcc: (S, c) => G(S, c, "effcc", 2147483644), G_del3b: (S, c) => gDel3b(S, c),
     S3: (S, c) => s3Stale(S, c, { act: "self", two: true, pad: 0, after: false, drop: true, dup: false }),
     afterDirty_R: (S, c) => afterDirty(S, c, "R"), afterDirty_E: (S, c) => afterDirty(S, c, "E"), afterDirty_S: (S, c) => afterDirty(S, c, "S"),
@@ -486,13 +492,17 @@ describe("b219 STEP B rows (kill the ruled sweep survivors)", () => {
     // 1i (A-b219-4 = D-b219-1): per-site CALL counts of the cold-arm `fixCursor(savedCur, d)` (counting, non-throwing plant). Spec: a nested tree with no
     // logged fix and the first tree after a dirty tree of each root kind (effect / top-level computed / depth-0 severStale) and after destroy() make 0 calls
     // (the fast arm `fixLen === 0 ? savedCur` / the depth-0 clear); a logged fix makes >= 1 call at its site (reach). The other pins are the exact head counts.
+    // b243 (XA1): p6Uncaught's only S-site entry (and one R-site entry) was C1's OWN link freed by the unwind's severStale(C1) = a live-frame entry,
+    // now filtered: S 1 -> 0, R 3 -> 2 (the frozen 29731ff9 build still gives S 1 / R 3). p6UncaughtHook keeps an S-site call from the same unwind
+    // with a NON-live entry: t1's onDisconnect (inside that sever frame) disposes t, whose link targets the depth-0 effect (S 1 / E 0 / R 2 head).
     it("1i cold-arm call counts: 0 for a clean nested tree and for the clean tree after a dirty R / E / S tree; >= 1 where a fix is logged; exact head counts elsewhere", async () => {
         const clean = await lrow("nest_clean_none"); assert.deepEqual(clean.cnt, { S: 0, E: 0, R: 0 }, "clean nested tree");
         for (const k of ["R", "E", "S"]) { const r = await lrow("afterDirty_" + k); assert.deepEqual(JSON.parse(r.o[0]), { S: 0, E: 0, R: 0 }, "clean tree after dirty " + k); }
         assert.ok((await lrow("nest_dirtyE_none")).cnt.E >= 1, "reach E site (nested effect with a logged fix)");
         assert.ok((await lrow("nest_dirtyS_none")).cnt.S >= 1, "reach S site");
         assert.ok((await lrow("first_R_r2")).cnt.R >= 1, "reach R site");
-        for (const id of ["nest_clean_none", "nest_dirtyE_none", "nest_dirtyR_none", "nest_dirtyS_none", "p6Caught", "p6Uncaught", "caseA", "seq_RES_none", "destroyReuse_R", "destroyReuse_E", "destroyReuse_S", "afterDirty_R", "afterDirty_E", "afterDirty_S", "S3"])
+        assert.ok((await pinned("p6UncaughtHook")).cnt.S >= 1, "reach S site through the unwind's severStale with a non-live entry (trace pinned, same on the fixture)");
+        for (const id of ["nest_clean_none", "nest_dirtyE_none", "nest_dirtyR_none", "nest_dirtyS_none", "p6Caught", "p6Uncaught", "p6UncaughtHook", "caseA", "seq_RES_none", "destroyReuse_R", "destroyReuse_E", "destroyReuse_S", "afterDirty_R", "afterDirty_E", "afterDirty_S", "S3"])
             assert.deepEqual((await lrow(id)).cnt, PINS[id].cnt, id + " per-site call counts");
     });
     // 1o (A-b219-7 attempt (a), fixCursor-L4009-CMP-5 `i < n` -> `i <= n`): tree 1 logs TWO entries (C1 disposes s0 then s) and the planted overflow at C1's

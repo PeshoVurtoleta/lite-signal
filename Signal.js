@@ -787,22 +787,23 @@ export function createRegistry(config) {
     // A1 cursor-repair log (F15; b215 shape A, LEDGER #20 / #33): each frame (executeEffect /
     // refreshComputed / severStale) saves the outer re-tracking cursor in a LOCAL (savedCur) on
     // entry and restores it on exit, so the common path writes no memory per frame. While
-    // cursorDepth > 1, repairCursor appends an entry for every spliced link of a running
-    // frame that is not the live cursor (repaired in place; an entry no saved cursor matches
-    // is inert), and dropCursors one per dep link of the dying node: an entry
+    // cursorDepth > 1, repairCursor appends an entry for every spliced link that is not the live cursor
+    // (repaired in place) and whose target is not currentObserver (the live frame; an entry no saved cursor matches
+    // is inert), and dropCursors one per dep link of a dying node other than currentObserver: an entry
     // (link, replacement, cursorDepth) inline (D-b216-1: a call there would be a new stack-overflow
     // site). A frame's restore reads fixLen: 0 takes
     // savedCur as is; otherwise the cold arm applies the log through fixCursor, and
     // a depth-0 restore clears the log (fixLen = 0) with no call (at depth 0 there is no outer
     // frame and the live cursor is always null). An entry applies only to frames below the depth
     // it was logged at. Holds links and Smi depths only; preallocated to 48 slots (16 entries),
-    // grows only by appending at index === length (stays packed), never shrinks: a cold
-    // high-water growth. Slots at index >= fixLen are never read.
+    // grows only by appending at index === length (stays packed), is cleared (fixLen = 0) at a
+    // k === 1 restore in fixCursor, and is trimmed back to 48 slots by destroy() / reset()
+    // (shrinking keeps it packed). Slots at index >= fixLen are never read.
     // cursorDepth is a Smi and balanced on every exit path: every push sits right before a
     // `try` whose `finally` pops; a frame's `finally` pops before its first call (K2, AUD-F G1),
     // and the epilogue severTail runs through severStale, which pushes its own depth and pops it
     // in its own `finally`. destroy() and reset() refuse while any frame is in flight (C-RESET D-4), so they
-    // never see cursorDepth !== 0; destroy() nulls the log slots and clears fixLen.
+    // never see cursorDepth !== 0; destroy() trims the log to 48 slots, nulls them and clears fixLen; reset() trims it.
     // fixLen and fixCursor are declared at the END of createRegistry (LEDGER #70: a binding
     // added here would shift every later context slot).
     const fixLog = [];
@@ -1204,20 +1205,22 @@ export function createRegistry(config) {
     function repairCursor(sLink, nDep) {
         if (activeObserverCurrentDep === sLink) { activeObserverCurrentDep = nDep; return; }
         // At most one match: one frame per owner, one owner per link.
-        if (cursorDepth > 1) { const n = fixLen; fixLog[n] = sLink; fixLog[n + 1] = nDep; fixLog[n + 2] = cursorDepth; fixLen = n + 3; }
+        if (cursorDepth > 1 && sLink.target !== currentObserver) { const n = fixLen; fixLog[n] = sLink; fixLog[n + 1] = nDep; fixLog[n + 2] = cursorDepth; fixLen = n + 3; }
     }
     /**
      * Drop every cursor into a dying running node's dep list. The live-cursor test is the
-     * functional part. The logged drops (one null fix per dep link, only while a frame is
-     * suspended) are DEFENSE IN DEPTH (no probe can observe them): a dead frame's saved
-     * cursor only ever returns to that dead frame, which can no longer link (allocateLink's
-     * flags gate) or sever (the gen guard). Nulling it keeps a link recycled into another
-     * frame's list from steering the dead frame's restore. @private
+     * functional part: it handles the running node's own frame. The logged drops (one null
+     * fix per dep link, only while a frame is suspended and only when the dying node is not
+     * the live frame, the same live-frame filter as repairCursor) stay as DEFENSE IN DEPTH
+     * (D-b240-2; no probe can observe them): a dead frame's saved cursor only ever returns
+     * to that dead frame, which can no longer link (allocateLink's flags gate) or sever (the
+     * gen guard). Nulling it keeps a link recycled into another frame's list from steering
+     * the dead frame's restore. @private
      */
     function dropCursors(node) {
         const c = activeObserverCurrentDep;
         if (c !== null && c.target === node) activeObserverCurrentDep = null;
-        if (cursorDepth > 1) {
+        if (cursorDepth > 1 && node !== currentObserver) {
             for (let l = node.headDep; l !== null; l = l.nextDep) {
                 const n = fixLen; fixLog[n] = l; fixLog[n + 1] = null; fixLog[n + 2] = cursorDepth; fixLen = n + 3;
             }
@@ -3287,12 +3290,15 @@ export function createRegistry(config) {
         }
         linkPool.length = 0;
         freeLinkHead = null;
-        // Saved cursors of long-unwound frames (the guard proved cursorDepth === 0).
+        // Saved cursors of long-unwound frames (the guard proved cursorDepth === 0): trim the log back to
+        // its 48 preallocated slots (shrinking keeps it packed), then null them.
+        fixLog.length = 48;
         for (let i = 0; i < fixLog.length; i++) fixLog[i] = null;
         fixLen = 0;
 
         pinnedHead = null;   // A1.8: pinned slots are released with the rest of the pool
         scopePinHead = null;   // SG2: scope pins likewise; armDepth is not zeroed here (R1bNZ)
+        flushCur = null;
         // C-RESET D-2: the next node / link miss regrows the pools from the constructor config.
         currentNodesCapacity = initialNodesCapacity;
         currentLinkCapacity = initialLinkCapacity;
@@ -3392,6 +3398,7 @@ export function createRegistry(config) {
         // on an abnormal one reset throws and the next nodeMiss releases them.
         disposeDepth++;
         try { errs = batch(resetRounds); } catch (e) { fe = e; fthrew = true; } finally { disposeDepth--; }
+        fixLog.length = 48;
         if (resetFail !== null) {
             const a = resetFail;
             resetFail = null;
@@ -4054,6 +4061,7 @@ export function createRegistry(config) {
     let fixLen = 0;
     // k = the depth of the frame being resumed (it owns c). Entries apply to frames BELOW the depth they were
     // logged at; once applied to frame k they are lowered to k, so a cursor saved later is never touched.
+    // Full scan (D-b240-1); a k === 1 restore then clears the log (D-b240-5).
     function fixCursor(c, k) {
         const n = fixLen;
         for (let i = 0; i < n; i += 3) {
@@ -4062,6 +4070,8 @@ export function createRegistry(config) {
                 fixLog[i + 2] = k;
             }
         }
+        // Every entry is now <= 1, and level-1 entries apply only to frame 0, which never reads the log.
+        if (k === 1) fixLen = 0;
         return c;
     }
     /**
