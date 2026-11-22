@@ -279,8 +279,12 @@ describe("A-RESET-SCOPE (H19)", () => {
 
 // A-R7: severStale's X disposed by a 1->0 onDisconnect (N = 3000). Coded: thr1 3000 iterations, pool 1024, hw 1, pins == unpins ==
 // 3000. Before: pool 3072 under grow, CE at 1019-1020 under throw (thr0 also differs on before: D2 releases the pin at the frame exit).
+// b245 XA6 (D-b240-7, MERGE M10): on thr0 the kinds C0 / E0 are red on BEFORE only through the instrument field `unpins` (the other
+// five kinds differ in the tuple itself). CTLR7 is reached on C0 / E0 but leaves both thr0 rows green (r7-under-CTLR7.log in
+// .handoff/b245/xa6/b2/: thr1 red, thr0 green), so the title names no teeth row for them.
+const R7_THR0_PIN = "; C0 / E0 = NON-REGRESSION PIN (BEFORE red = unpins; D-b240-7); teeth: none (green under CTLR7)";
 describe("A-R7 (disposed by the epilogue's onDisconnect)", () => {
-    for (const thr of [1, 0]) for (const pol of POLS) it("A-R7 thr" + thr + " " + pol + ": full tuple of " + R7_KINDS.length + " kinds", async () => {
+    for (const thr of [1, 0]) for (const pol of POLS) it("A-R7 thr" + thr + " " + pol + ": full tuple of " + R7_KINDS.length + " kinds" + (thr === 0 ? R7_THR0_PIN : ""), async () => {
         const E = await eng(""), got = {};
         for (const k of R7_KINDS) got[k] = r7Row(E, k, thr === 1, pol);
         const want = {}; for (const k of R7_KINDS) want[k] = EXP["r7/" + k + "/" + thr + "/" + pol];
@@ -293,8 +297,10 @@ describe("A-R7 (disposed by the epilogue's onDisconnect)", () => {
 });
 // A-R7-ESW: R0's holder inside R7 -- scheduler creates effect Y (+ queues it by a write) and rethrows. Coded: yRuns 6000 for 3000
 // iterations = y 2 per iteration (Y keeps its queued run), both policies. CTLR0c (drop disposeNode's flushCur null): y 1.
+// b245 XA6 (D-b240-7, MERGE M10): red on BEFORE through R7a's pin leak (pool 3072 / CE), not R0c; R0c's teeth = the CTLR0c rows below
+// (the thr1 rows go red under CTLR0c: esw-under-CTLR0c.log in .handoff/b245/xa6/b2/).
 describe("A-R7-ESW", () => {
-    for (const pol of POLS) it("A-R7-ESW thr1 " + pol + ": y 2 (yRuns 6000 / 3000 iterations)", async () => {
+    for (const pol of POLS) it("A-R7-ESW thr1 " + pol + ": y 2 (yRuns 6000 / 3000 iterations); NON-REGRESSION PIN (BEFORE red = R7a; D-b240-7); teeth: A-R7-ESW CTLR0c", async () => {
         const r = r7Row(await eng(""), "ESW", true, pol);
         assert.equal(r.log.yRuns, 6000); assert.equal(r.iters, 3000); assert.equal(r.log.yRuns / r.iters, 2);
         assert.deepEqual(r, EXP["r7/ESW/1/" + pol]);

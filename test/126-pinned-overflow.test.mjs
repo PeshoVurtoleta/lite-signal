@@ -1,7 +1,8 @@
 // 126-pinned-overflow.test.mjs -- b232 STEP 2 (maintainer ruling D-b231-1 "(A) Host-keyed rows").
-// Purpose: kill six pinned-slot engine mutants (F-b224-1 fix) that survive every behavioural row (test/124, test/125) because they
+// Purpose: kill six pinned-slot engine mutants (F-b224-1 fix; + four NODEC-normal, b245 XA6 OV-D2N) that survive every behavioural
+// row (test/124, test/125) because they
 // differ only AFTER a stack overflow inside a function's FIRST call (V8 lazy-compile stack check, consumed once per process). Each
-// cell is therefore one fresh `node --jitless` child (fixtures/b232/{d2b,d2fe,noflags}.mjs), judged by SITE (D-b216-4), never by k.
+// cell is therefore one fresh `node --jitless` child (fixtures/b232/{d2b,d2fe,d2n,noflags}.mjs), judged by SITE (D-b216-4), never by k.
 // HOST_KEY = darwin && arm64 && node v26.8.2 (D-b222-1): the overflow sites are frame-size / host bound. Off-key: one
 // "# REPORTED <row> ..." line + t.skip BEFORE any spawn. LS_B232_OFFKEY=1 forces the off-key path (check of the skip path only).
 // Families -> mutants (row titles start with the family token; the b231 battery maps on them):
@@ -11,16 +12,27 @@
 //                                              B site unpinOwn<-effectTail; k1 x k2 grid, one cell per process)
 //   OV-SOLATE  UO-SOLATE                       (effS strand, no arm)
 //   OV-NOFLAGS H18-NOFLAGS                     (no cell where FN ran and the call still threw: coded; mutant k 366..368 top runWithOwner)
+//   OV-D2N     FE-NODEC-normal, FC-NODEC-normal, RE-NODEC-normal, RC-NODEC-normal  (b245 XA6, D-b240-7; LEDGER #82 (6): before it
+//                                              only the ZEROARM-* control rows killed them. arm = one NORMAL-exit cleanup arm --
+//                                              FE firstRunCleanupE, FC firstRunCleanupC, RE rerunCleanupEffect, RC
+//                                              rerunCleanupComputed; the cleanup runs once and does not throw -- then the effS
+//                                              strand cell unpinOwn<-effectTail, then the depth-0 gap readout; one coded row per
+//                                              family; each must-fail row: own arm mutated, the other three arms coded)
 // Oracle = b231 probes (.handoff/b228/mutants/probe-{d2b,d2fe,noflags}.mjs; PROGRESS-2.md "Survivor classification"), measured on
 // node v26.8.2 darwin-arm64 against the coded build 29731ff9. Expected values are the measured tuples quoted there (exact, not signs):
-// coded depth-0 gap 1 "grow" / 0 "CapacityError"; mutant on its own arm 0 / -1. Engine under test: env LS_ENGINE (abs path; its
+// coded depth-0 gap 1 "grow" / 0 "CapacityError"; mutant on its own arm 0 / -1. OV-D2N oracle = the b245 B0 probe
+// (.handoff/b245/xa6/probe/{d2n.mjs,run-e.mjs,e-padded.json,e-abs.json}, head a7202c9b): coded 1 / 0 at 7 site cells k 370..376 per
+// family x policy (sweep k 360..385); each NODEC-normal mutant 0 / -1 on its own arm, the other three arms coded.
+// Engine under test: env LS_ENGINE (abs path; its
 // Watch.js beside it; the battery points it at a mutant, so the CODED rows must go red), default ../Signal.js. The must-fail rows stage
-// the six mutants IN-TEST from the LIVE ../Signal.js text (fixtures/b232/mutants.mjs, count-checked, byte-identical to
-// .handoff/b228/mutants/work/<ID>/Signal.js) and so are independent of LS_ENGINE. Every spawnSync has timeout + SIGKILL and asserts
+// the mutants IN-TEST from the LIVE ../Signal.js text (fixtures/b232/mutants.mjs, count-checked, byte-identical to
+// .handoff/b228/mutants/work/<ID>/Signal.js; the NODEC-normal four to the B0 probe's staged copies, sha256/8 0d769e7e FE, a4c9fa91 FC,
+// 2da557aa RE, b87928ef RC on a7202c9b) and so are independent of LS_ENGINE. Every spawnSync has timeout + SIGKILL and asserts
 // res.error === undefined, res.signal === null, res.status === 0 (a timed-out child fails the row).
 // Cost (node v26.8.2 darwin-arm64, untimed wall, host load ~6, so indicative): OV-D2B 4 cells (k 360..385 swept inside each child) ~0.6 s coded,
 // ~0.6 s per must-fail; OV-SOLATE 2 cells ~0.3 s each row; OV-D2FE 144 cells coded (2 arms x 2 pols x k1 370..375 x k2 372..377) ~8 s, 72 cells
-// per must-fail row ~4 s; OV-NOFLAGS 1 cell (k 0..400 inside) ~1.5 s per row. Whole file ~22 s.
+// per must-fail row ~4 s; OV-NOFLAGS 1 cell (k 0..400 inside) ~1.5 s per row. Whole file ~22 s (b232). b245 (untimed wall, load1 ~2.4):
+// OV-D2N 2 cells per coded row ~0.3 s, 8 cells per must-fail row ~1.3 s; whole file ~28 s.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { join, dirname } from "node:path";
@@ -126,6 +138,33 @@ describe("OV-D2FE (FE-NODEC-catch, FC-NODEC-catch): first-run arm site A, then e
             if (!HOST_KEY) return offKey(t, "OV-D2FE must-fail " + m);
             const eng = mutant(m);
             for (const pol of ["grow", "throw"]) expectFeMut(d2fe(eng, arm, pol), MUTD[pol], CODED[pol], m + " " + arm + "/" + pol);
+        });
+    }
+});
+
+// ---- D2N: one child per (arm, pol); normal-exit arms (b245 XA6, D-b240-7) ----
+// armed = "<arm>:<cleanup runs>": the arm's cleanup ran once and returned (a "<arm>:threw:<site>" value fails the row).
+const NFAM = ["FE", "FC", "RE", "RC"];
+function d2n(eng, arm, pol) {
+    const o = JSON.parse(cell("d2n.mjs", [eng, arm, pol, "360", "385"]));
+    const site = o.cells.filter((c) => c.site === STRAND);
+    for (const c of site) assert.equal(c.armed, arm + ":1", "arm " + arm + " cleanup did not run once to a normal exit at k " + c.k);
+    return site.map((c) => ({ gap: c.gap, end: c.end }));
+}
+describe("OV-D2N (FE / FC / RE / RC-NODEC-normal): normal-exit cleanup arm, then effS strand, then the depth-0 gap", () => {
+    for (const arm of NFAM) it("OV-D2N coded: arm " + arm + " (normal exit) -> gap 1 grow, gap 0 CapacityError at every unpinOwn<-effectTail cell", (t) => {
+        if (!HOST_KEY) return offKey(t, "OV-D2N " + arm);
+        for (const pol of ["grow", "throw"]) expectSite(d2n(ENG, arm, pol), CODED[pol], "coded " + arm + "/" + pol);
+    });
+    for (const arm of NFAM) {
+        const m = arm + "-NODEC-normal";
+        it("OV-D2N must-fail: " + m + " -> its own arm reads 0 grow / -1 CapacityError (normal-exit decrement dropped); the other three arms stay coded", (t) => {
+            if (!HOST_KEY) return offKey(t, "OV-D2N must-fail " + m);
+            const eng = mutant(m);
+            for (const pol of ["grow", "throw"]) {
+                expectSite(d2n(eng, arm, pol), MUTD[pol], m + " own arm " + arm + "/" + pol);
+                for (const o of NFAM) if (o !== arm) expectSite(d2n(eng, o, pol), CODED[pol], m + " other arm " + o + "/" + pol);
+            }
         });
     }
 });

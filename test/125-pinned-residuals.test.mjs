@@ -398,7 +398,10 @@ describe("A-R1-UDESTROY-PLAIN", () => {
     assert.deepEqual(noPs(got[0]), noPs(want[0]));
   });
 });
-describe("A-ARM-THROW: a throwing cleanup in each arm family leaves armDepth balanced (N 2000; pool 1024, hw 1)", () => {
+// b245 XA6 (D-b240-7, MERGE M9 / M10): red on BEFORE b5289277 only through the Ic anchor miss, and it kills 0 of the 8 NODEC
+// mutants (armthrow-under-mutants.txt in .handoff/b245/xa6/b2/), so it is a non-regression pin. The armDepth decrement teeth are
+// test/126: OV-D2B / OV-D2FE (throw exit, NODEC-catch) and OV-D2N (normal exit, NODEC-normal).
+describe("A-ARM-THROW: NON-REGRESSION PIN (BEFORE red = anchor; D-b240-7); teeth: OV-D2B / OV-D2FE (catch), OV-D2N (normal) -- a throwing cleanup in each arm family (N 2000; pool 1024, hw 1)", () => {
   for (const F of ["RE", "RC", "FE", "FC"]) for (const pol of POLS) it(F + " x " + pol, async () => {
     const Ic = await ieng("Ic", "");
     const got = byPol(unwindRows(Ic.E, Ic), pol).filter((r) => r.row === "unwind/" + F + "/" + pol);

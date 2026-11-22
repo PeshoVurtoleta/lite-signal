@@ -574,17 +574,32 @@ describe('KERNEL: one real-engine must-fail per check (ASSERTION 2)', () => {
 });
 
 // ---- GC (ASSERTION 3): a child under --expose-gc; 1e6 pass-path calls each, plus a fresh-{} control -----------------
+// CI class 20 (b245): ci run 44951668428 (macos-latest, node 24) failed cleanClass at 0.502656 B/op with minor 0, major 0. The row read
+// process.memoryUsage().heapUsed, which also counts compile output (code / trusted / old space) that a delayed concurrent compiler lands
+// inside the window (a false red; measured locally under --concurrent-recompilation-delay=300, a stress proxy), and, read pre-gc, the
+// new-space residue left since the last scavenge (why the CONTROL below is judged post-gc). Per the
+// class-18 law (LEDGER "A heap-delta GC row's child runs --single-threaded"), the child refuses to measure without --single-threaded
+// (exit 3, tooth row below) and sums only the JS heap spaces; code + trusted and heapUsed deltas are REPORTED only, in the messages.
+// The control is judged post-gc (retBpo): pre-gc it reads the new-space residue since its last scavenge. The LO and NS rows are the B/op
+// must-fails: LO proves new_large_object_space is summed, NS proves new_space is summed.
 const GC_CHILD = `
 import * as O from ${JSON.stringify(ORACLES_URL.href)};
 import { GcProfiler } from ${JSON.stringify(import.meta.resolve('@zakkster/lite-gc-profiler'))};
+import { getHeapSpaceStatistics } from 'node:v8';
+const JS_SPACES = ['new_space', 'old_space', 'new_large_object_space', 'large_object_space'];
+const CODE_SPACES = ['code_space', 'trusted_space', 'code_large_object_space', 'trusted_large_object_space'];
+if (!process.execArgv.includes('--single-threaded')) { console.error('gc child: GC modes need --single-threaded'); process.exit(3); }
+for (const n of JS_SPACES) if (!getHeapSpaceStatistics().some((s) => s.space_name === n)) { console.error('gc child: no heap space ' + n); process.exit(6); }
 if (typeof globalThis.gc !== 'function') { console.log(JSON.stringify({ error: 'no gc' })); process.exit(3); }
+function spaces() { let u = 0, k = 0; for (const s of getHeapSpaceStatistics()) { if (JS_SPACES.includes(s.space_name)) u += s.space_used_size; else if (CODE_SPACES.includes(s.space_name)) k += s.space_used_size; } return [u, k]; }
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const base = { kind: 'computed', flags: 1, value: 5, version: 2, ownerId: null, ownerPos: -1, deps: [1], subPos: [0], markEpoch: 2 };
 const CLEAN = Object.freeze({ ...base, id: 3, clean: true, evalVersion: 2 });
 const NEVER = Object.freeze({ ...base, id: 8, clean: false, evalVersion: 0, markEpoch: 0 });
 const DIRTY = Object.freeze({ ...base, id: 7, clean: false, evalVersion: 2, markEpoch: 3 });
 const RECS = [CLEAN, NEVER, DIRTY];
-let sink = 0, i = 0, lastBox = null;
+let sink = 0, i = 0, lastBox = null, loN = 0, nsN = 0;
+const loKeep = [], nsKeep = [];
 const steps = {
     refire: () => { i = (i + 1) | 0; sink = (sink + (O.checkOsRefire('L', 0) === null ? 1 : 2)) | 0; },
     cleanBit: () => {
@@ -595,6 +610,18 @@ const steps = {
     },
     cleanClass: () => { i = (i + 1) | 0; sink = (sink + O.osCleanClass(RECS[i % 3]).length) | 0; },
     control: () => { i = (i + 1) | 0; lastBox = { v: i }; sink = (sink + (O.checkOsRefire('L', 0) === null ? lastBox.v & 1 : 2)) | 0; },
+    // B/op must-fail: refire's work plus ONE retained large array on this step's 500,000th call (inside the measured calls 400,001..1,400,000).
+    lo: () => {
+        i = (i + 1) | 0; loN = (loN + 1) | 0;
+        if (loN === 500000) loKeep.push(new Array(150000).fill(0));
+        sink = (sink + (O.checkOsRefire('L', 0) === null ? 1 : 2)) | 0;
+    },
+    // new_space must-fail: refire's work plus SIX retained regular-size arrays on this step's 500,000th call.
+    ns: () => {
+        i = (i + 1) | 0; nsN = (nsN + 1) | 0;
+        if (nsN === 500000) for (let a = 0; a < 6; a++) nsKeep.push(new Array(12000).fill(0));
+        sink = (sink + (O.checkOsRefire('L', 0) === null ? 1 : 2)) | 0;
+    },
 };
 async function window(step, iters) {
     for (let k = 0; k < 300000; k++) step();
@@ -602,41 +629,77 @@ async function window(step, iters) {
     for (let k = 0; k < 100000; k++) step();
     globalThis.gc(); await sleep(50);
     const gcp = new GcProfiler().start();
+    const s0 = spaces();
     const h0 = process.memoryUsage().heapUsed;
     for (let k = 0; k < iters; k++) step();
     await sleep(50);
+    const h1 = process.memoryUsage().heapUsed;
+    const s1 = spaces();
     const sum = gcp.summary(); gcp.stop();
-    globalThis.gc();
-    return { minor: sum.gc.minor, major: sum.gc.major, grewBpo: (process.memoryUsage().heapUsed - h0) / iters };
+    globalThis.gc(); await sleep(20);
+    const s2 = spaces();
+    return {
+        minor: sum.gc.minor, major: sum.gc.major,
+        jsBpo: (s1[0] - s0[0]) / iters, retBpo: (s2[0] - s0[0]) / iters,
+        codeBpo: (s1[1] - s0[1]) / iters, huBpo: (h1 - h0) / iters,
+    };
 }
 const out = {};
-for (const name of ['refire', 'cleanBit', 'cleanClass', 'control']) out[name] = await window(steps[name], 1000000);
+for (const name of ['refire', 'cleanBit', 'cleanClass', 'control', 'lo', 'ns']) out[name] = await window(steps[name], 1000000);
 out.sink = sink;
+out.loKept = loKeep.length;
+out.nsKept = nsKeep.length;
 console.log(JSON.stringify(out));
 `;
+const GC_SPAWN = { cwd: ROOT, encoding: 'utf8', timeout: 120000, killSignal: 'SIGKILL' };
 describe('GC: pass paths allocate nothing (ASSERTION 3)', () => {
     let res = null, err = null;
     const run = () => {
         if (res !== null || err !== null) return;
-        const r = spawnSync(process.execPath, ['--expose-gc', '--input-type=module', '-e', GC_CHILD], { cwd: ROOT, encoding: 'utf8', timeout: 120000, killSignal: 'SIGKILL' });
-        if (r.status !== 0) { err = new Error('gc child exit ' + r.status + ' signal ' + r.signal + ': ' + r.stderr); return; }
+        const r = spawnSync(process.execPath, ['--expose-gc', '--single-threaded', '--input-type=module', '-e', GC_CHILD], GC_SPAWN);
+        if (r.status !== 0 || r.signal !== null) { err = new Error('gc child exit ' + r.status + ' signal ' + r.signal + ': ' + r.stderr); return; }
         res = JSON.parse(r.stdout.trim().split('\n').pop());
     };
     for (const name of ['refire', 'cleanBit', 'cleanClass']) {
-        it(name + ': 1e6 calls, minor 0, major 0, retained growth < 0.5 B/op', () => {
+        it(name + ': 1e6 calls, minor 0, major 0, JS-heap growth < 0.5 B/op (--single-threaded)', () => {
             run();
             if (err !== null) throw err;
             const m = res[name];
             assert.equal(m.minor, 0, name + ' scavenged: transient per-call alloc ' + JSON.stringify(m));
             assert.equal(m.major, 0, name + ' major ' + JSON.stringify(m));
-            assert.ok(m.grewBpo < 0.5, name + ' B/op ' + m.grewBpo);
+            assert.ok(Number.isFinite(m.jsBpo) && m.jsBpo < 0.5, name + ' JS-heap B/op ' + JSON.stringify(m));
         });
     }
-    it('CONTROL (a fresh {} per call into a sink, same harness): minor >= 1, transient (growth < 0.5 B/op)', () => {
+    it('CONTROL (a fresh {} per call into a sink, same harness): minor >= 1, transient: post-gc JS-heap growth < 0.5 B/op', () => {
         run();
         if (err !== null) throw err;
         const m = res.control;
         assert.ok(m.minor >= 1, 'control must scavenge: ' + JSON.stringify(m));
-        assert.ok(m.grewBpo < 0.5, 'control must be transient, not retained: ' + m.grewBpo);
+        assert.ok(Number.isFinite(m.retBpo) && m.retBpo < 0.5, 'control must be transient, not retained: ' + JSON.stringify(m));
+    });
+    it('LO tooth (refire plus ONE retained 150,000-element array in the window): minor 0, major 0, JS-heap growth >= 0.5 B/op', () => {
+        run();
+        if (err !== null) throw err;
+        const m = res.lo;
+        assert.equal(res.loKept, 1, 'lo step must retain exactly one array: ' + JSON.stringify(res));
+        assert.equal(m.minor, 0, 'lo scavenged: ' + JSON.stringify(m));
+        assert.equal(m.major, 0, 'lo major ' + JSON.stringify(m));
+        assert.ok(Number.isFinite(m.jsBpo) && m.jsBpo >= 0.5, 'the JS-space sum missed a retained sub-scavenge allocation: ' + JSON.stringify(m));
+    });
+    it('NS tooth (six regular-size arrays retained inside the window): JS-heap growth >= 0.5 B/op (proves new_space is summed)', () => {
+        run();
+        if (err !== null) throw err;
+        const m = res.ns;
+        // minor / major are REPORTED only: the retained arrays stay inside the JS-space sum whether or not a scavenge moves them.
+        assert.equal(res.nsKept, 6, 'ns step must retain exactly six arrays: ' + JSON.stringify(res));
+        assert.ok(Number.isFinite(m.jsBpo) && m.jsBpo >= 0.5, 'the JS-space sum missed retained new-space allocations: ' + JSON.stringify(m));
+    });
+    it('refusal tooth (CI20): the gc child refuses to measure without --single-threaded (exit 3)', () => {
+        const r = spawnSync(process.execPath, ['--expose-gc', '--input-type=module', '-e', GC_CHILD], GC_SPAWN);
+        assert.equal(r.error, undefined);
+        assert.equal(r.signal, null);
+        assert.equal(r.status, 3, 'exit ' + r.status + ' stdout ' + String(r.stdout).slice(0, 200));
+        assert.ok(String(r.stderr).includes('GC modes need --single-threaded'), String(r.stderr).slice(-300));
+        assert.equal(String(r.stdout).trim(), '', 'a JSON line was printed');
     });
 });

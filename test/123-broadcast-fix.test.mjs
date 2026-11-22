@@ -5,6 +5,9 @@
 // default R/Signal.js. Head-only rows are expected RED on the frozen before build (that red is the must-fail evidence).
 // b243 (XA1 B2, PLAN-XA1 TASK 3): 1g / 1i / 2e re-pinned for the XA1 live-frame filter on head a7202c9b (node v26.8.2, untimed); the
 // XA1 frozen build is test/fixtures/Signal-29731ff9.js (1g / 1i / 2e are red there: that red is the must-fail evidence for the re-pins).
+// b245 (XA6 B1, PLAN-XA6 TASKS 1-3): 3b bound 600000 -> 100000 with an in-row 29731ff9 bytes control and a heap-snapshot lane
+// (fixtures/b123/snap3b-child.mjs) with an in-row MU-NONULLLOOP control; new rows 3c (M11 SS-NULL, coded) and 1p (M12 MU-NONULLCHK reach +
+// EQUIVALENT witness), inputs in fixtures/b123/xa6.mjs; the 1g note records M-DESTROY-NOFIXLEN (M13) as EQUIVALENT (notSettled).
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdtempSync, copyFileSync, existsSync } from "node:fs";
@@ -15,6 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { makeShapes } from "./fixtures/b123/shapes.mjs";
 import { caseA, caseB, gtOvf, noclrOvf, noclrA, invariants, seq as seqIn, first, nest, destroyReuse, p6, noclrRR, G, gDel3b, s3Stale, afterDirty } from "./fixtures/b123/lower.mjs";
+import { ssTail, nullCur } from "./fixtures/b123/xa6.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -354,6 +358,12 @@ describe("ASSERTION 3 GC", () => {
 // so a null c never matches a logged link (REACH MATRIX: nullLink 0 on 33 inputs). The census covers EVERY line that mentions fixLog:
 // lines whose trimmed text starts with "//" are dropped (comment-only); every other line is whitespace-normalised and kept WHOLE (no
 // trailing-comment stripping, so a "//" inside a string cannot hide a store). The sorted list must deepEqual the reviewed whitelist.
+// b245 (XA6, PLAN-XA6 A5): row 1p reaches fixCursor with c === null on the cold arm (1 call, fixLen 3) and asserts MU-NONULLCHK's trace equal
+// (EQUIVALENT witness). M-DESTROY-NOFIXLEN (M13: drop destroy()'s `fixLen = 0;`) is EQUIVALENT by its guard, not by its log: destroy() / reset()
+// called from a cleanup arm at cursorDepth 2 read fixLen 6 / 9 at entry, but notSettled refuses each ("graph not settled (flush in progress)")
+// before any write; every read past the guard is 0 (b245 B0: 0 nonzero of 1850 post-guard reads over 24 in-arm shapes (RC / FC / FE / RE x
+// destroy / reset / reset+destroy x with or without a logged entry in the arm) + a k 0..900 overflow sweep, each followed by settled reset() /
+// destroy()). No coded row; its only kill is TEXT: the destroyTail pin below.
 function fixLogLines(text) {
     return text.split("\n").filter((l) => l.includes("fixLog")).map((l) => l.trim().replace(/\s+/g, " ")).filter((l) => !l.startsWith("//")).sort();
 }
@@ -521,16 +531,103 @@ describe("b219 STEP B rows (kill the ruled sweep survivors)", () => {
         assert.equal(inv.links[0], inv.links[1], "activeLinks vs the sum of forEachSource");
         assert.deepEqual(inv.comp, ["C3 ran 2x then 2x on h"], "computed clause (pinned head artifact)");
     });
-    // 3b (A-b219-3, destroy-L3242 CMP-1 / -3 / -4, DEL-1, DEL-2, LOG-1): destroy() releases the logged links. gc-child mode destroy: a registry logs 10,000 drop
-    // entries (30,000 slots), destroy(), the api is held, gc: retained bytes (heapUsed after minus heapUsed before building; negative = the pools were released).
-    // Measured (node v26.8.2, --expose-gc --single-threaded, 3 identical repeats): head -15150144, da5ddb86 fixture (no log) -15424168, head without the null loop
-    // -14350400. So head retains 274024 B more than the fixture (the grown fixLog array itself) and a missing null loop 1074 KB more: the bound is 600000.
-    // Teeth: the battery's MU-NONULLLOOP / sweep destroy-L3242-DEL-1 / DEL-2 (loop deleted) are killed by this row. (Comparing against the fixture, not a
-    // staged copy of the engine under test, keeps the row independent of mutants that change what is logged: those are ruled behaviourally inert, A-b219-5.)
-    it("3b destroy releases the logged links: 10,000 logged entries, destroy(), api held: head retains < 600000 B more than the da5ddb86 fixture", () => {
+    // 3b (A-b219-3, destroy-L3242 CMP-1 / -3 / -4, DEL-1, DEL-2, LOG-1; b245 XA6 TASK 2 = PLAN-XA6 A2 / A3): destroy() releases the logged links.
+    // gc-child mode destroy: a registry logs 10,000 drop entries (30,000 slots), destroy(), the api is held, gc: retained bytes (heapUsed after minus
+    // heapUsed before building; negative = the pools were released). B0 measured (b245, node v26.8.2 darwin-arm64, --expose-gc --single-threaded
+    // --max-old-space-size=512, 3 runs per build, untimed; .handoff/b245/xa6/probe/g.json): head a7202c9b retains 4,592 B more than the da5ddb86
+    // fixture (no log), 3 of 3; the XA1 frozen build 29731ff9 (destroy() nulls but does not trim: the grown 30,000-slot fixLog array stays)
+    // 275,048 / 275,120 / 275,048 B more. Bound: head - fixture < 100,000 B (< 10 B per logged entry); in-row must-fail: 29731ff9 - fixture >= 200,000 B.
+    // The bytes lane is blind to MU-NONULLLOOP (drop destroy()'s null loop: 752 B more than head, 3 of 3, far under the bound): after the trim the
+    // 48 kept slots still hold up to 16 logged links (48 slots / 3 per entry). Its tooth is the snapshot lane (fixtures/b123/snap3b-child.mjs: the
+    // same shape, then a node:v8 heap snapshot; exit 3 without --single-threaded / --expose-gc, exit 4 on a parse / count failure): the live
+    // ReactiveLink / ReactiveNode objects on head equal the fixture's (B0: 4096 / 11028 on both, 3 of 3 = the import-time pools, so the assert is
+    // relative, never an absolute 0); in-row control MU-NONULLLOOP (count-checked removal of the null loop from the engine text) holds >= 16 more
+    // ReactiveLink (B0: +16 exactly, 3 of 3). (Comparing against the fixture, not a staged copy of the engine under test, keeps the row independent
+    // of mutants that change what is logged: those are ruled behaviourally inert, A-b219-5.)
+    it("3b destroy releases the logged links: 10,000 logged entries, destroy(), api held: head retains < 100000 B more than the da5ddb86 fixture (must-fail 29731ff9 >= 200000 B more); heap snapshot ReactiveLink / ReactiveNode counts equal the fixture's (must-fail MU-NONULLLOOP >= 16 more links)", (t) => {
         const FL = ["--expose-gc", "--single-threaded", "--max-old-space-size=512"];
-        const h = child([GCCH, stageEng(), "0", "destroy"], FL), f = child([GCCH, stageFix(), "0", "destroy"], FL);
-        assert.equal(h.destroy, "ok"); assert.equal(f.destroy, "ok");
-        assert.ok(h.retained - f.retained < 600000, "head retained " + h.retained + " vs fixture " + f.retained + " (diff " + (h.retained - f.retained) + ")");
+        const F29 = join(HERE, "fixtures", "Signal-29731ff9.js"), SNAP = join(HERE, "fixtures", "b123", "snap3b-child.mjs");
+        assert.equal(s8(F29), "29731ff9", "control fixture Signal-29731ff9.js sha256/8");
+        const h = child([GCCH, stageEng(), "0", "destroy"], FL), f = child([GCCH, stageFix(), "0", "destroy"], FL), x = child([GCCH, stage(F29, readFileSync(F29, "utf8"), FIXW), "0", "destroy"], FL);
+        t.diagnostic("retained head " + h.retained + " fixture " + f.retained + " 29731ff9 " + x.retained + " (head - fixture " + (h.retained - f.retained) + ", 29731ff9 - fixture " + (x.retained - f.retained) + ")");
+        assert.deepEqual([h.destroy, f.destroy, x.destroy], ["ok", "ok", "ok"], "destroy() head / fixture / 29731ff9");
+        assert.ok(h.retained - f.retained < 100000, "head retained " + h.retained + " vs fixture " + f.retained + " (diff " + (h.retained - f.retained) + ")");
+        assert.ok(x.retained - f.retained >= 200000, "must-fail control 29731ff9 (no trim) retained " + x.retained + " vs fixture " + f.retained + " (diff " + (x.retained - f.retained) + ")");
+        const sh = child([SNAP, stageEng()], FL), sf = child([SNAP, stageFix()], FL);
+        t.diagnostic("snapshot ReactiveLink / ReactiveNode head " + sh.ReactiveLink + " / " + sh.ReactiveNode + " fixture " + sf.ReactiveLink + " / " + sf.ReactiveNode);
+        assert.deepEqual([sh.destroy, sf.destroy], ["ok", "ok"], "snapshot child destroy() head / fixture");
+        assert.deepEqual([sh.ReactiveLink, sh.ReactiveNode], [sf.ReactiveLink, sf.ReactiveNode], "live ReactiveLink / ReactiveNode after destroy(): head vs fixture");
+        const NL = "        for (let i = 0; i < fixLog.length; i++) fixLog[i] = null;\n";
+        const text = readFileSync(ENG, "utf8");
+        assert.equal(text.split(NL).length - 1, 1, "MU-NONULLLOOP anchor (destroy()'s null loop): exactly 1 match");
+        const sm = child([SNAP, stageEng(text.replace(NL, () => ""))], FL);
+        t.diagnostic("snapshot MU-NONULLLOOP " + sm.ReactiveLink + " / " + sm.ReactiveNode);
+        assert.equal(sm.destroy, "ok", "snapshot child destroy() MU-NONULLLOOP");
+        assert.ok(sm.ReactiveLink - sh.ReactiveLink >= 16, "must-fail control MU-NONULLLOOP holds " + sm.ReactiveLink + " ReactiveLink vs head " + sh.ReactiveLink + " (needs >= 16 more)");
+    });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// b245 XA6 B1 (PLAN-XA6 TASK 3, D-b240-7): cross-audit test teeth for M11 (coded) and M12 (reach + EQUIVALENT witness). Inputs: fixtures/b123/xa6.mjs.
+// Every plant / mutant is staged from the engine-under-test text with a count-checked anchor (temp copy; R/Signal.js is never written).
+const SSA = "        const savedCur = activeObserverCurrentDep;\n        cursorDepth = d + 1;   // Smi, as in the frames";
+const NCA = "                if (c !== null && fixLog[i] === c) c = fixLog[i + 1];";
+const FCA = "    function fixCursor(c, k) {\n        const n = fixLen;\n";
+describe("b245 XA6 rows (M11 SS-NULL, M12 MU-NONULLCHK)", () => {
+    // 3c (A4; M11 SS-NULL = severStale's `const savedCur = activeObserverCurrentDep;` -> `const savedCur = null;`, anchor = the once-matching pair of lines
+    // in severStale, ON-3). Input ssTail: E (depth 0) reads trig, C, x, y; C's re-run inside E drops its tail dep b, so severStale(C, link(b)) runs at
+    // d === 1 with E's live cursor (link x) as savedCur and fixLen 0, and its restore takes savedCur as is. F (made after E) also reads x, y.
+    // Hand derivation: head restores E's cursor and E re-walks x, y in place (E[trig,C,x,y], 7 links once b's link is freed). SS-NULL restores null:
+    // E's re-reads of x / y miss the cursor and allocateLink's same-pass dedup sees F's tail links, so E gets duplicate x / y links (grow:
+    // E[trig,C,x,y,x,y], L9) or, at maxLinks 8 (the 8 links held before the write; b's freed link takes the first duplicate), the second duplicate
+    // throws CapacityError out of trig.set (throw). Measured b245 on head a7202c9b (node v26.8.2, untimed): SS_TRACE under both policies, the same on
+    // the da5ddb86 fixture; SS-NULL as derived. Reach (counting plant at the same anchor): one severStale call at d === 1 with savedCur !== null per run.
+    const SS_TRACE = ["E:15", "F:5", "L8", "E:17", null, "E[trig,C,x,y]", "C[trig]", "F[x,y]", "L7", "E:35", "F:23", null, "E:62", "F:50", null, "E[trig,C,x,y]", "L7", "reset L0"];
+    it("3c severStale at d === 1 restores the suspended frame's cursor (ssTail, maxLinks 8): exact head trace + forEachSource lists under grow and throw, same on the fixture; reach 1 per run; in-row must-fail SS-NULL (duplicate links / CapacityError) (kills SS-NULL)", async () => {
+        const S = await load(ENG), Fx = await load(stageFix());
+        for (const pol of ["grow", "throw"]) {
+            assert.deepEqual(ssTail(S, pol, 8), SS_TRACE, "head " + pol);
+            assert.deepEqual(ssTail(Fx, pol, 8), SS_TRACE, "fixture da5ddb86 " + pol);
+        }
+        const text = readFileSync(ENG, "utf8");
+        assert.equal(text.split(SSA).length - 1, 1, "SS-NULL / reach anchor (severStale's savedCur line + depth push): exactly 1 match");
+        const P = await load(stageEng(text.replace(SSA, () => SSA.replace("activeObserverCurrentDep;\n", "activeObserverCurrentDep;\n        if (globalThis.__XA6SS !== undefined) globalThis.__XA6SS(d, savedCur);\n"))));
+        const reach = []; globalThis.__XA6SS = (d, c) => { reach.push(d + ":" + (c === null ? "null" : "cur")); };
+        try {
+            for (const pol of ["grow", "throw"]) {
+                reach.length = 0;
+                assert.deepEqual(ssTail(P, pol, 8), SS_TRACE, "reach plant copy " + pol);
+                assert.deepEqual(reach, ["1:cur"], "reach " + pol + ": severStale calls (d:savedCur) = one at d === 1 with savedCur !== null");
+            }
+        } finally { delete globalThis.__XA6SS; }
+        const M = await load(stageEng(text.replace(SSA, () => SSA.replace("const savedCur = activeObserverCurrentDep;", "const savedCur = null;"))));
+        const g = ssTail(M, "grow", 8), th = ssTail(M, "throw", 8);
+        assert.deepEqual([g[5], g[8]], ["E[trig,C,x,y,x,y]", "L9"], "must-fail SS-NULL grow: duplicate x / y links, got " + JSON.stringify(g));
+        assert.ok(String(th[3]).startsWith("E:CapacityError"), "must-fail SS-NULL throw: CapacityError at maxLinks 8, got " + JSON.stringify(th));
+    });
+    // 1p (A5; M12 MU-NONULLCHK = fixCursor's `c !== null && fixLog[i] === c` -> `fixLog[i] === c`). Input nullCur: C1 (depth 1) reads C2 LAST, so the cursor
+    // C1 saves for C2's frame is null; C2 disposes b1 (a dep of the suspended C1: one logged entry) and C2's restore calls fixCursor(null, 2) with fixLen 3
+    // (counting plant at fixCursor's entry: exactly one call with c === null and fixLen > 0). REACH ROW, NO TEETH: MU-NONULLCHK is EQUIVALENT (slots
+    // i % 3 === 0 below fixLen hold only non-null links, see the 1g note, so a null c never matches; a slot past a reset() trim reads undefined, not null).
+    // Killing-input attempts (b245, .handoff/b245/xa6/b1/MUSTFAIL.txt): this input; fuzz-child da5ddb86 vs MU-NONULLCHK, 2000 programs grow seed 777 and
+    // throw seed 4242 (64 / 256), 300 programs grow / throw seed 12345 (20 / 30: 46 growths / 387 catches), 1000 programs grow seed 99 (12 / 16: 1581
+    // growths); test/123 rows 1a-1f / 1h-1o with the mutant as the engine under test: all pass (1g reds on its census: TEXT). 0 diffs everywhere.
+    // The mutant's trace on this input is asserted EQUAL (an equivalence witness: it reds if a later engine change makes the null check
+    // load-bearing, so the ruling cannot go stale silently). With the mutant as the engine under test this row reds only at the MU-NONULLCHK anchor
+    // check (TEXT, as 1g), after its trace and reach asserts have passed: never book that as a coded kill.
+    const NC_TRACE = ["E:11", "E:30", null, "E[s0,C1,w]", "C1[a,b2,C2]", "C2[a]", "L7", "E:55", null, "E:91", null, "E:171", null, "E[s0,C1,w]", "C1[a,b2,C2]", "L7", "reset L0"];
+    it("1p fixCursor reached with c === null on the cold arm (nullCur): exact head trace, same on the fixture; reach exactly 1; MU-NONULLCHK gives the identical trace (EQUIVALENT witness, reach row, no teeth)", async () => {
+        assert.deepEqual(nullCur(await load(ENG)), NC_TRACE, "head");
+        assert.deepEqual(nullCur(await load(stageFix())), NC_TRACE, "fixture da5ddb86");
+        const text = readFileSync(ENG, "utf8");
+        assert.equal(text.split(FCA).length - 1, 1, "reach anchor (fixCursor entry): exactly 1 match");
+        const P = await load(stageEng(text.replace(FCA, () => FCA + "        if (c === null && n > 0 && globalThis.__XA6FC !== undefined) globalThis.__XA6FC(k, n);\n")));
+        const reach = []; globalThis.__XA6FC = (k, n) => { reach.push(k + "/" + n); };
+        try {
+            assert.deepEqual(nullCur(P), NC_TRACE, "reach plant copy");
+            assert.deepEqual(reach, ["2/3"], "reach: fixCursor(c === null) calls as k/fixLen = one at k 2, fixLen 3");
+        } finally { delete globalThis.__XA6FC; }
+        assert.equal(text.split(NCA).length - 1, 1, "MU-NONULLCHK anchor (fixCursor's null check): exactly 1 match");
+        assert.deepEqual(nullCur(await load(stageEng(text.replace(NCA, () => NCA.replace("c !== null && ", ""))))), NC_TRACE, "MU-NONULLCHK equivalence witness: identical trace");
     });
 });
