@@ -1,0 +1,52 @@
+# ==== BENCH STAMP v1 (machine-generated -- do not hand-edit) ====
+# date        : 2026-11-23T21:33:19.297Z
+# protocol    : isolated-per-engine  reps=5
+# host        : Apple M4 Pro  darwin/arm64  node v26.8.2  gc=on
+# engine      : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js
+# engine.sha  : a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+# harness     : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/benchmark.mjs
+# harness.sha : 417f5b76ca10bdbd3407d7a9ad28287406e215a5b83f32789d117c8324556743
+# config      : {"kairos":{"maxNodes":1064,"prealloc":"eager","onCapacityExceeded":"grow"},"broadcast":{"maxNodes":1016,"prealloc":"eager","onCapacityExceeded":"grow"},"deepChain":{"maxNodes":272,"prealloc":"eager","onCapacityExceeded":"grow"},"mux":{"maxNodes":272,"prealloc":"eager","onCapacityExceeded":"grow"},"dynamicDag":{"maxNodes":993,"maxLinks":11532,"prealloc":"eager","onCapacityExceeded":"grow"},"selectiveDag":{"maxNodes":993,"maxLinks":7688,"prealloc":"eager","onCapacityExceeded":"grow"}}
+# extra       : {"warmup":2,"iterations":20000}
+# ================================================================
+#STAMP {"kind":"bench-stamp/v1","date":"2026-11-23T21:33:19.297Z","protocol":"isolated-per-engine","reps":5,"node":"v26.8.2","arch":"arm64","platform":"darwin","cpu":"Apple M4 Pro","gcExposed":true,"enginePath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js","engineSha256":"a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89","harnessPath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/benchmark.mjs","harnessSha256":"417f5b76ca10bdbd3407d7a9ad28287406e215a5b83f32789d117c8324556743","config":{"kairos":{"maxNodes":1064,"prealloc":"eager","onCapacityExceeded":"grow"},"broadcast":{"maxNodes":1016,"prealloc":"eager","onCapacityExceeded":"grow"},"deepChain":{"maxNodes":272,"prealloc":"eager","onCapacityExceeded":"grow"},"mux":{"maxNodes":272,"prealloc":"eager","onCapacityExceeded":"grow"},"dynamicDag":{"maxNodes":993,"maxLinks":11532,"prealloc":"eager","onCapacityExceeded":"grow"},"selectiveDag":{"maxNodes":993,"maxLinks":7688,"prealloc":"eager","onCapacityExceeded":"grow"}},"extra":{"warmup":2,"iterations":20000}}
+Config: WARMUP=2  RUNS=5  ITERATIONS=20,000
+
+--------------------------------------------------------------------------------------------------
+KAIROS -- 1 source -> 1000 computeds -> 1 aggregating effect
+--------------------------------------------------------------------------------------------------
+lite-signal         median=  528.44ms min=  528.29ms ops/s=37K    heapMed= 3.7KB    heapP95= 126.9KB  retained= 1161.8KB sink=[x]
+
+--------------------------------------------------------------------------------------------------
+BROADCAST -- 1 source -> 1000 effects
+--------------------------------------------------------------------------------------------------
+lite-signal         median=  275.20ms min=  275.06ms ops/s=72K    heapMed= 0.5KB    heapP95= 3.4KB    retained= 776.6KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DEEP CHAIN -- 256-deep computed chain -> 1 effect
+--------------------------------------------------------------------------------------------------
+lite-signal         median=  170.43ms min=  170.34ms ops/s=117K   heapMed= 0.5KB    heapP95= 58.1KB   retained= 327.3KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+MUX -- 256 inputs -> 1 sum computed -> 1 effect
+--------------------------------------------------------------------------------------------------
+lite-signal         median=   20.10ms min=   19.96ms ops/s=994K   heapMed= 0.5KB    heapP95= 19.4KB   retained= 268.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DYNAMIC DAG -- sqrt-layered, FAN=6 deps, read order flips each iter
+--------------------------------------------------------------------------------------------------
+lite-signal         median= 3576.25ms min= 3559.25ms ops/s=5K     heapMed= 3319.9KB heapP95= 6386.8KB retained= 1704.4KB sink=[x]
+
+--------------------------------------------------------------------------------------------------
+SELECTIVE DAG -- sqrt-layered, 4 candidates, 2 read per iter (set churn)
+--------------------------------------------------------------------------------------------------
+lite-signal         median= 2028.00ms min= 2014.29ms ops/s=9K     heapMed= 7786.8KB heapP95= 7837.0KB retained= 1313.6KB sink=[x]
+
+Notes:
+  heapMed = median per-timed-run heapUsed(+arrayBuffers) delta, GC before the run, no closing GC; not an allocation measurement
+  heapP95 = 95th-pctile of the same per-run deltas; not an allocation measurement
+  retained = post-run post-GC heap minus the pre-setup heap, floored at 0 (live graph + pools)
+  sink [x] = every written slot exact vs bench/lib/sink-oracle.mjs after EACH timed run; check=residue rows
+    (solid/broadcast) pass when slot j holds src + k for some k % 32 === j (effect order varies)
+  retained is > 0 on a correct run: the graph and its pools are still live at that read.
+  BENCH_SINK_SUM (anti-DCE): 1331373289766912.00

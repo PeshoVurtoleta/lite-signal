@@ -1,49 +1,60 @@
-#STAMP {"kind":"bench-stamp/v1","date":"2026-10-11T23:07:55.367Z","protocol":"isolated-per-row","reps":3,"node":"v26.8.2","arch":"arm64","platform":"darwin","cpu":"Apple M4 Pro","gcExposed":true,"enginePath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js","engineSha256":"bfd063e5773c550887535059bbf6934f8058d0f60337de0686b89e156a678b1a","harnessPath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/mirror.mjs","harnessSha256":"64d218de0688566a34a0e94f7bd7f133d49d34e4a54dc050810aa3ffb06c7ad1","config":{"maxNodes":131072,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"grow"},"extra":{"ceiling_ms":1500,"quick":false,"adapter":"andrii-canonical","scenario":"pure pull"}}
-framework , test , time , metrics
-lite-signal            , 32x8 - 4 sources - pull (pure pull)                          , 0.86     , nodesRecomputed=224 nodesVisited=224 edgesTraversed=896 sinkReads=32 flushPasses=undefined poolGrowths=0
-lite-signal            , 8x64 - 1 sources - pull (linear chain - 1 source - pull (linear pull)) , 0.93     , nodesRecomputed=504 nodesVisited=504 edgesTraversed=504 sinkReads=8 flushPasses=undefined poolGrowths=0
-lite-signal            , 64x4 - 8 sources - pull (wide tree - 8 sources - pull (branchy pull)) , 0.86     , nodesRecomputed=192 nodesVisited=192 edgesTraversed=1536 sinkReads=64 flushPasses=undefined poolGrowths=0
-lite-signal            , 32x8 - 4 sources - push (pure push)                          , 93.24    , nodesRecomputed=910133 nodesVisited=910133 edgesTraversed=3640532 sinkReads=220010 flushPasses=undefined poolGrowths=0
-lite-signal            , 10x5 - 2 sources - read 20% (simple component)               , 144.37   , nodesRecomputed=3180010 nodesVisited=3180010 edgesTraversed=6360020 sinkReads=1200002 flushPasses=undefined poolGrowths=0
-lite-signal            , 10x10 - 6 sources - dynamic - read 20% (dynamic component)   , 116.89   , nodesRecomputed=1140002 nodesVisited=1140002 edgesTraversed=6839919 sinkReads=30002 flushPasses=undefined poolGrowths=0
-lite-signal            , 1000x12 - 4 sources - dynamic (large web app)                , 260.51   , nodesRecomputed=1473783 nodesVisited=1473783 edgesTraversed=5891769 sinkReads=7001000 flushPasses=undefined poolGrowths=0
-lite-signal            , 1000x5 - 25 sources (wide dense)                             , 326.45   , nodesRecomputed=735756 nodesVisited=735756 edgesTraversed=18393900 sinkReads=3001000 flushPasses=undefined poolGrowths=0
-lite-signal            , 5x500 - 3 sources (deep)                                     , 100.22   , nodesRecomputed=1246502 nodesVisited=1246502 edgesTraversed=3739506 sinkReads=2505 flushPasses=undefined poolGrowths=0
-lite-signal            , avoidablePropagation                                         , 100.72   , 
-lite-signal            , broadPropagation                                             , 196.14   , 
-lite-signal            , deepPropagation                                              , 74.73    , 
-lite-signal            , diamond                                                      , 111.30   , 
-lite-signal            , mux                                                          , 185.99   , 
-lite-signal            , repeatedObservers                                            , 27.97    , 
-lite-signal            , triangle                                                     , 47.99    , 
-lite-signal            , unstable                                                     , 43.23    , 
-lite-signal            , manyEffectsFromOneSource                                     , 126.96   , checksum=180075672000
-lite-signal            , manySourcesIntoOneComputedEffectWithDirect                   , 63.45    , checksum=1372929289844
-lite-signal            , manySourcesIntoOneComputedEffect                             , 61.09    , checksum=1331323690944
-lite-signal            , manySourcesIntoOneDirectEffect                               , 33.24    , checksum=41605598900
-lite-signal            , molBench                                                     , 170.26   , 
-lite-signal            , createDataSignals                                            , 5.09     , 
-lite-signal            , createComputations0to1                                       , 14.08    , 
-lite-signal            , createComputations1to1                                       , 15.11    , 
-lite-signal            , createComputations2to1                                       , 3.98     , 
-lite-signal            , createComputations4to1                                       , 2.96     , 
-lite-signal            , createComputations1000to1                                    , 0.03     , 
-lite-signal            , createComputations1to2                                       , 14.05    , 
-lite-signal            , createComputations1to4                                       , 13.81    , 
-lite-signal            , createComputations1to8                                       , 9.08     , 
-lite-signal            , createComputations1to1000                                    , 16.67    , 
-lite-signal            , updateComputations1to1                                       , 2.97     , 
-lite-signal            , updateComputations2to1                                       , 1.55     , 
-lite-signal            , updateComputations4to1                                       , 1.56     , 
-lite-signal            , updateComputations1000to1                                    , 0.04     , 
-lite-signal            , updateComputations1to2                                       , 2.18     , 
-lite-signal            , updateComputations1to4                                       , 1.51     , 
-lite-signal            , updateComputations1to1000                                    , 0.11     , 
-lite-signal            , 64x6 - 4 sources - dynamic - read 12% (dashboard selective reads) , 231.15   , nodesRecomputed=3011443 nodesVisited=3011443 edgesTraversed=12045738 sinkReads=960008 flushPasses=undefined poolGrowths=0
-lite-signal            , 24x8 - 3 sources - dynamic - read 40% (editor derived state) , 290.70   , nodesRecomputed=4687562 nodesVisited=4687562 edgesTraversed=14062602 sinkReads=900010 flushPasses=undefined poolGrowths=0
-lite-signal            , 120x7 - 5 sources - dynamic - read 18% (kanban board)        , 179.90   , nodesRecomputed=1865999 nodesVisited=1865999 edgesTraversed=9329694 sinkReads=660022 flushPasses=undefined poolGrowths=0
-lite-signal            , 40x10 - 4 sources - dynamic - read 60% (entity detail page)  , 372.31   , nodesRecomputed=3984199 nodesVisited=3984199 edgesTraversed=15936758 sinkReads=720024 flushPasses=undefined poolGrowths=0
-lite-signal            , 256->512x32 - fanIn 4 - layered-dag - 4 sources (layered full-drain cold) , 68.74    , nodesRecomputed=249624 nodesVisited=249624 edgesTraversed=998496 sinkReads=61952 flushPasses=undefined poolGrowths=0
-lite-signal            , 256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 320 (layered full-drain warm) , 64.41    , nodesRecomputed=235200 nodesVisited=235200 edgesTraversed=940800 sinkReads=61952 flushPasses=undefined poolGrowths=0
-lite-signal            , 256->512x32 - fanIn 8 - layered-dag - 8 sources - burst 16 - warm 256 - per-batch (layered burst flush warm) , 907.53   , nodesRecomputed=1529088 nodesVisited=1529088 edgesTraversed=12232704 sinkReads=49664 flushPasses=undefined poolGrowths=0
-lite-signal            , 256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm 256 (stable diamond mesh warm) , 5.04     , nodesRecomputed=24576 nodesVisited=24576 edgesTraversed=196608 sinkReads=49664 flushPasses=undefined poolGrowths=0
+# ==== BENCH STAMP v1 (machine-generated -- do not hand-edit) ====
+# date        : 2026-11-23T22:18:21.861Z
+# protocol    : isolated-per-engine  reps=3
+# host        : Apple M4 Pro  darwin/arm64  node v26.8.2  gc=on
+# engine      : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js
+# engine.sha  : a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+# harness     : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/mirror.mjs
+# harness.sha : c5006fcba8586e90e94e7bc0a9f6fccceb9a497fb022fa90ab8f251e2c8abc98
+# config      : {"maxNodes":262144,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"throw"}
+# extra       : {"ceiling_ms":1500,"quick":false,"adapter":"destroy","scenario":"all","captureId":"20261123T221116Z-c3010561","refLibs":{},"load1":1.71533203125}
+# ================================================================
+#STAMP {"kind":"bench-stamp/v1","date":"2026-11-23T22:18:21.861Z","protocol":"isolated-per-engine","reps":3,"node":"v26.8.2","arch":"arm64","platform":"darwin","cpu":"Apple M4 Pro","gcExposed":true,"enginePath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js","engineSha256":"a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89","harnessPath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/mirror.mjs","harnessSha256":"c5006fcba8586e90e94e7bc0a9f6fccceb9a497fb022fa90ab8f251e2c8abc98","config":{"maxNodes":262144,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"throw"},"extra":{"ceiling_ms":1500,"quick":false,"adapter":"destroy","scenario":"all","captureId":"20261123T221116Z-c3010561","refLibs":{},"load1":1.71533203125}}
+framework              , test                                                         , time     , metrics
+lite-signal            , 64x6 - 4 sources - dynamic - read 12% (dashboard selective reads) , 188.59   , nodesRecomputed=2642029 nodesVisited=2642029 edgesTraversed=10568081 sinkReads=960008 sum=982883328 poolGrowths=0
+lite-signal            , 24x8 - 3 sources - dynamic - read 40% (editor derived state) , 268.20   , nodesRecomputed=4736332 nodesVisited=4736332 edgesTraversed=14208887 sinkReads=900010 sum=1968220290 poolGrowths=0
+lite-signal            , 120x7 - 5 sources - dynamic - read 18% (kanban board)        , 162.73   , nodesRecomputed=1765496 nodesVisited=1765496 edgesTraversed=8827231 sinkReads=660022 sum=10309364930 poolGrowths=0
+lite-signal            , 40x10 - 4 sources - dynamic - read 60% (entity detail page)  , 354.21   , nodesRecomputed=3984210 nodesVisited=3984210 edgesTraversed=15936789 sinkReads=720024 sum=188726387776 poolGrowths=0
+lite-signal            , 256->512x32 - fanIn 4 - layered-dag - 4 sources (layered full-drain cold) , 38.44    , nodesRecomputed=249624 nodesVisited=249624 edgesTraversed=998496 sinkReads=61952 sum=1.4676229585043317e+24 poolGrowths=0
+lite-signal            , 256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 320 (layered full-drain warm) , 31.85    , nodesRecomputed=235200 nodesVisited=235200 edgesTraversed=940800 sinkReads=61952 sum=4.1462377719595485e+24 poolGrowths=0
+lite-signal            , 256->512x32 - fanIn 8 - layered-dag - 8 sources - burst 16 - warm 256 - per-batch (layered burst flush warm) , 472.85   , nodesRecomputed=1529088 nodesVisited=1529088 edgesTraversed=12232704 sinkReads=49664 sum=2.284204969563251e+35 poolGrowths=0
+lite-signal            , 256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm 256 (stable diamond mesh warm) , 4.72     , nodesRecomputed=24576 nodesVisited=24576 edgesTraversed=196608 sinkReads=49664 sum=1.4238251541763473e+34 poolGrowths=0
+lite-signal            , 32x8 - 4 sources - pull (pure pull)                          , 0.50     , nodesRecomputed=224 nodesVisited=224 edgesTraversed=896 sinkReads=32 sum=5242355712 poolGrowths=0
+lite-signal            , 8x64 - 1 sources - pull (linear chain - 1 source - pull (linear pull)) , 0.42     , nodesRecomputed=504 nodesVisited=504 edgesTraversed=504 sinkReads=8 sum=79992 poolGrowths=0
+lite-signal            , 64x4 - 8 sources - pull (wide tree - 8 sources - pull (branchy pull)) , 0.36     , nodesRecomputed=192 nodesVisited=192 edgesTraversed=1536 sinkReads=64 sum=327647232 poolGrowths=0
+lite-signal            , 32x8 - 4 sources - push (pure push)                          , 87.43    , nodesRecomputed=910133 nodesVisited=910133 edgesTraversed=3640532 sinkReads=220010 sum=5242355712 poolGrowths=0
+lite-signal            , 10x5 - 2 sources - read 20% (simple component)               , 155.33   , nodesRecomputed=3180010 nodesVisited=3180010 edgesTraversed=6360020 sinkReads=1200002 sum=19200092 poolGrowths=0
+lite-signal            , 10x10 - 6 sources - dynamic - read 20% (dynamic component)   , 113.19   , nodesRecomputed=1140004 nodesVisited=1140004 edgesTraversed=6839936 sinkReads=30002 sum=302310877104 poolGrowths=0
+lite-signal            , 1000x12 - 4 sources - dynamic (large web app)                , 246.87   , nodesRecomputed=1473786 nodesVisited=1473786 edgesTraversed=5891713 sinkReads=7001000 sum=29355933696000 poolGrowths=0
+lite-signal            , 1000x5 - 25 sources (wide dense)                             , 295.42   , nodesRecomputed=735756 nodesVisited=735756 edgesTraversed=18393900 sinkReads=3001000 sum=1171484375000 poolGrowths=0
+lite-signal            , 5x500 - 3 sources (deep)                                     , 95.47    , nodesRecomputed=1246502 nodesVisited=1246502 edgesTraversed=3739506 sinkReads=2505 sum=3.0239642676898464e+241 poolGrowths=0
+lite-signal            , avoidablePropagation                                         , 107.06   , checksum=6
+lite-signal            , broadPropagation                                             , 215.21   , checksum=99
+lite-signal            , deepPropagation                                              , 76.31    , checksum=99
+lite-signal            , diamond                                                      , 124.93   , checksum=2500
+lite-signal            , mux                                                          , 185.05   , checksum=190
+lite-signal            , repeatedObservers                                            , 27.23    , checksum=2970
+lite-signal            , triangle                                                     , 52.48    , checksum=1035
+lite-signal            , unstable                                                     , 41.33    , checksum=3960
+lite-signal            , manyEffectsFromOneSource                                     , 142.58   , checksum=180075672000
+lite-signal            , manySourcesIntoOneComputedEffectWithDirect                   , 50.88    , checksum=1372929289844
+lite-signal            , manySourcesIntoOneComputedEffect                             , 48.56    , checksum=1331323690944
+lite-signal            , manySourcesIntoOneDirectEffect                               , 7.03     , checksum=41605598900
+lite-signal            , molBench                                                     , 159.03   , checksum=9616
+lite-signal            , createDataSignals                                            , 12.65    , 
+lite-signal            , createComputations0to1                                       , 13.21    , 
+lite-signal            , createComputations1to1                                       , 26.05    , 
+lite-signal            , createComputations2to1                                       , 15.65    , 
+lite-signal            , createComputations4to1                                       , 7.58     , 
+lite-signal            , createComputations1000to1                                    , 4.20     , 
+lite-signal            , createComputations1to2                                       , 26.43    , 
+lite-signal            , createComputations1to4                                       , 23.78    , 
+lite-signal            , createComputations1to8                                       , 23.14    , 
+lite-signal            , createComputations1to1000                                    , 23.38    , 
+lite-signal            , updateComputations1to1                                       , 13.25    , 
+lite-signal            , updateComputations2to1                                       , 8.34     , 
+lite-signal            , updateComputations4to1                                       , 5.48     , 
+lite-signal            , updateComputations1000to1                                    , 6.43     , 
+lite-signal            , updateComputations1to2                                       , 12.26    , 
+lite-signal            , updateComputations1to4                                       , 11.65    , 
+lite-signal            , updateComputations1to1000                                    , 14.63    , 

@@ -1,0 +1,52 @@
+# ==== BENCH STAMP v1 (machine-generated -- do not hand-edit) ====
+# date        : 2026-11-23T21:28:03.612Z
+# protocol    : isolated-per-engine  reps=5
+# host        : Apple M4 Pro  darwin/arm64  node v26.8.2  gc=on
+# engine      : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js
+# engine.sha  : a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+# harness     : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/benchmark.mjs
+# harness.sha : 417f5b76ca10bdbd3407d7a9ad28287406e215a5b83f32789d117c8324556743
+# config      : (reference libs / n-a)
+# extra       : {"warmup":2,"iterations":20000}
+# ================================================================
+#STAMP {"kind":"bench-stamp/v1","date":"2026-11-23T21:28:03.612Z","protocol":"isolated-per-engine","reps":5,"node":"v26.8.2","arch":"arm64","platform":"darwin","cpu":"Apple M4 Pro","gcExposed":true,"enginePath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js","engineSha256":"a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89","harnessPath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/benchmark.mjs","harnessSha256":"417f5b76ca10bdbd3407d7a9ad28287406e215a5b83f32789d117c8324556743","config":null,"extra":{"warmup":2,"iterations":20000}}
+Config: WARMUP=2  RUNS=5  ITERATIONS=20,000
+
+--------------------------------------------------------------------------------------------------
+KAIROS -- 1 source -> 1000 computeds -> 1 aggregating effect
+--------------------------------------------------------------------------------------------------
+solid               median= 2136.10ms min= 2133.33ms ops/s=9K     heapMed= 9871.9KB heapP95= 12192.2KB retained= 847.2KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+BROADCAST -- 1 source -> 1000 effects
+--------------------------------------------------------------------------------------------------
+solid               median= 1106.09ms min= 1100.52ms ops/s=18K    heapMed= 5470.8KB heapP95= 8413.9KB retained= 365.1KB  check=residue sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DEEP CHAIN -- 256-deep computed chain -> 1 effect
+--------------------------------------------------------------------------------------------------
+solid               median=  553.11ms min=  552.88ms ops/s=36K    heapMed= 3003.4KB heapP95= 3206.6KB retained= 246.9KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+MUX -- 256 inputs -> 1 sum computed -> 1 effect
+--------------------------------------------------------------------------------------------------
+solid               median=  212.62ms min=  211.84ms ops/s=94K    heapMed= 17214.8KB heapP95= 17215.1KB retained= 191.3KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DYNAMIC DAG -- sqrt-layered, FAN=6 deps, read order flips each iter
+--------------------------------------------------------------------------------------------------
+solid               median= 5006.60ms min= 5003.20ms ops/s=3K     heapMed= 28257.0KB heapP95= 29143.3KB retained= 1237.8KB sink=[x]
+
+--------------------------------------------------------------------------------------------------
+SELECTIVE DAG -- sqrt-layered, 4 candidates, 2 read per iter (set churn)
+--------------------------------------------------------------------------------------------------
+solid               median= 3572.62ms min= 3568.26ms ops/s=5K     heapMed= 12692.7KB heapP95= 12949.1KB retained= 1008.4KB sink=[x]
+
+Notes:
+  heapMed = median per-timed-run heapUsed(+arrayBuffers) delta, GC before the run, no closing GC; not an allocation measurement
+  heapP95 = 95th-pctile of the same per-run deltas; not an allocation measurement
+  retained = post-run post-GC heap minus the pre-setup heap, floored at 0 (live graph + pools)
+  sink [x] = every written slot exact vs bench/lib/sink-oracle.mjs after EACH timed run; check=residue rows
+    (solid/broadcast) pass when slot j holds src + k for some k % 32 === j (effect order varies)
+  retained is > 0 on a correct run: the graph and its pools are still live at that read.
+  BENCH_SINK_SUM (anti-DCE): 1331373289766912.00

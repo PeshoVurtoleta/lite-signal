@@ -1,0 +1,1 @@
+{"kind":"bench-capture-complete/v1","writer":"run-all-mirror.sh","protocol":"isolated-per-engine","reps":10,"engines":["lite-signal","alien-signals","reflex-quant"],"captureId":"20261123T221116Z-c3010561"}

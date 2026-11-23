@@ -1,49 +1,60 @@
-#STAMP {"kind":"bench-stamp/v1","date":"2026-10-11T23:07:19.457Z","protocol":"isolated-per-row","reps":3,"node":"v26.8.2","arch":"arm64","platform":"darwin","cpu":"Apple M4 Pro","gcExposed":true,"enginePath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js","engineSha256":"bfd063e5773c550887535059bbf6934f8058d0f60337de0686b89e156a678b1a","harnessPath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/mirror.mjs","harnessSha256":"64d218de0688566a34a0e94f7bd7f133d49d34e4a54dc050810aa3ffb06c7ad1","config":{"maxNodes":131072,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"grow"},"extra":{"ceiling_ms":1500,"quick":false,"adapter":"andrii-canonical","scenario":"dashboard selective reads"}}
-framework , test , time , metrics
-alien-signals          , 64x6 - 4 sources - dynamic - read 12% (dashboard selective reads) , 192.76   , nodesRecomputed=3011443 nodesVisited=3011443 edgesTraversed=12045738 sinkReads=960008
-alien-signals          , 24x8 - 3 sources - dynamic - read 40% (editor derived state) , 244.50   , nodesRecomputed=4687562 nodesVisited=4687562 edgesTraversed=14062602 sinkReads=900010
-alien-signals          , 120x7 - 5 sources - dynamic - read 18% (kanban board)        , 151.06   , nodesRecomputed=1866001 nodesVisited=1866001 edgesTraversed=9329704 sinkReads=660022
-alien-signals          , 40x10 - 4 sources - dynamic - read 60% (entity detail page)  , 328.57   , nodesRecomputed=3984199 nodesVisited=3984199 edgesTraversed=15936758 sinkReads=720024
-alien-signals          , 256->512x32 - fanIn 4 - layered-dag - 4 sources (layered full-drain cold) , 31.47    , nodesRecomputed=249624 nodesVisited=249624 edgesTraversed=998496 sinkReads=61952
-alien-signals          , 256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 320 (layered full-drain warm) , 26.95    , nodesRecomputed=235200 nodesVisited=235200 edgesTraversed=940800 sinkReads=61952
-alien-signals          , 256->512x32 - fanIn 8 - layered-dag - 8 sources - burst 16 - warm 256 - per-batch (layered burst flush warm) , 318.28   , nodesRecomputed=1529088 nodesVisited=1529088 edgesTraversed=12232704 sinkReads=49664
-alien-signals          , 256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm 256 (stable diamond mesh warm) , 3.99     , nodesRecomputed=24576 nodesVisited=24576 edgesTraversed=196608 sinkReads=49664
-alien-signals          , 32x8 - 4 sources - pull (pure pull)                          , 0.41     , nodesRecomputed=224 nodesVisited=224 edgesTraversed=896 sinkReads=32
-alien-signals          , 8x64 - 1 sources - pull (linear chain - 1 source - pull (linear pull)) , 0.71     , nodesRecomputed=504 nodesVisited=504 edgesTraversed=504 sinkReads=8
-alien-signals          , 64x4 - 8 sources - pull (wide tree - 8 sources - pull (branchy pull)) , 0.39     , nodesRecomputed=192 nodesVisited=192 edgesTraversed=1536 sinkReads=64
-alien-signals          , 32x8 - 4 sources - push (pure push)                          , 74.15    , nodesRecomputed=910133 nodesVisited=910133 edgesTraversed=3640532 sinkReads=220010
-alien-signals          , 10x5 - 2 sources - read 20% (simple component)               , 114.22   , nodesRecomputed=3180010 nodesVisited=3180010 edgesTraversed=6360020 sinkReads=1200002
-alien-signals          , 10x10 - 6 sources - dynamic - read 20% (dynamic component)   , 108.13   , nodesRecomputed=1140002 nodesVisited=1140002 edgesTraversed=6839919 sinkReads=30002
-alien-signals          , 1000x12 - 4 sources - dynamic (large web app)                , 239.45   , nodesRecomputed=1473783 nodesVisited=1473783 edgesTraversed=5891769 sinkReads=7001000
-alien-signals          , 1000x5 - 25 sources (wide dense)                             , 354.83   , nodesRecomputed=735756 nodesVisited=735756 edgesTraversed=18393900 sinkReads=3001000
-alien-signals          , 5x500 - 3 sources (deep)                                     , 88.67    , nodesRecomputed=1246502 nodesVisited=1246502 edgesTraversed=3739506 sinkReads=2505
-alien-signals          , avoidablePropagation                                         , 64.80    , 
-alien-signals          , broadPropagation                                             , 142.06   , 
-alien-signals          , deepPropagation                                              , 45.93    , 
-alien-signals          , diamond                                                      , 90.59    , 
-alien-signals          , mux                                                          , 171.22   , 
-alien-signals          , repeatedObservers                                            , 26.46    , 
-alien-signals          , triangle                                                     , 32.57    , 
-alien-signals          , unstable                                                     , 38.32    , 
-alien-signals          , manyEffectsFromOneSource                                     , 107.66   , checksum=180075672000
-alien-signals          , manySourcesIntoOneComputedEffectWithDirect                   , 97.57    , checksum=1372929289844
-alien-signals          , manySourcesIntoOneComputedEffect                             , 92.15    , checksum=1331323690944
-alien-signals          , manySourcesIntoOneDirectEffect                               , 29.93    , checksum=41605598900
-alien-signals          , molBench                                                     , 163.24   , 
-alien-signals          , createDataSignals                                            , 2.59     , 
-alien-signals          , createComputations0to1                                       , 2.15     , 
-alien-signals          , createComputations1to1                                       , 7.41     , 
-alien-signals          , createComputations2to1                                       , 2.94     , 
-alien-signals          , createComputations4to1                                       , 2.13     , 
-alien-signals          , createComputations1000to1                                    , 0.02     , 
-alien-signals          , createComputations1to2                                       , 5.07     , 
-alien-signals          , createComputations1to4                                       , 3.66     , 
-alien-signals          , createComputations1to8                                       , 2.40     , 
-alien-signals          , createComputations1to1000                                    , 2.28     , 
-alien-signals          , updateComputations1to1                                       , 1.90     , 
-alien-signals          , updateComputations2to1                                       , 0.92     , 
-alien-signals          , updateComputations4to1                                       , 0.46     , 
-alien-signals          , updateComputations1000to1                                    , 0.01     , 
-alien-signals          , updateComputations1to2                                       , 0.90     , 
-alien-signals          , updateComputations1to4                                       , 0.45     , 
-alien-signals          , updateComputations1to1000                                    , 0.03     , 
+# ==== BENCH STAMP v1 (machine-generated -- do not hand-edit) ====
+# date        : 2026-11-23T22:17:14.815Z
+# protocol    : isolated-per-engine  reps=3
+# host        : Apple M4 Pro  darwin/arm64  node v26.8.2  gc=on
+# engine      : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js
+# engine.sha  : a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+# harness     : /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/mirror.mjs
+# harness.sha : c5006fcba8586e90e94e7bc0a9f6fccceb9a497fb022fa90ab8f251e2c8abc98
+# config      : {"maxNodes":262144,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"throw"}
+# extra       : {"ceiling_ms":1500,"quick":false,"adapter":"destroy","scenario":"all","captureId":"20261123T221116Z-c3010561","refLibs":{"alien-signals":"3.2.1"},"load1":1.9208984375}
+# ================================================================
+#STAMP {"kind":"bench-stamp/v1","date":"2026-11-23T22:17:14.815Z","protocol":"isolated-per-engine","reps":3,"node":"v26.8.2","arch":"arm64","platform":"darwin","cpu":"Apple M4 Pro","gcExposed":true,"enginePath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js","engineSha256":"a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89","harnessPath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/mirror.mjs","harnessSha256":"c5006fcba8586e90e94e7bc0a9f6fccceb9a497fb022fa90ab8f251e2c8abc98","config":{"maxNodes":262144,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"throw"},"extra":{"ceiling_ms":1500,"quick":false,"adapter":"destroy","scenario":"all","captureId":"20261123T221116Z-c3010561","refLibs":{"alien-signals":"3.2.1"},"load1":1.9208984375}}
+framework              , test                                                         , time     , metrics
+alien-signals          , 64x6 - 4 sources - dynamic - read 12% (dashboard selective reads) , 134.07   , nodesRecomputed=2642029 nodesVisited=2642029 edgesTraversed=10568081 sinkReads=960008 sum=982883328
+alien-signals          , 24x8 - 3 sources - dynamic - read 40% (editor derived state) , 193.61   , nodesRecomputed=4736332 nodesVisited=4736332 edgesTraversed=14208887 sinkReads=900010 sum=1968220290
+alien-signals          , 120x7 - 5 sources - dynamic - read 18% (kanban board)        , 110.48   , nodesRecomputed=1765496 nodesVisited=1765496 edgesTraversed=8827231 sinkReads=660022 sum=10309364930
+alien-signals          , 40x10 - 4 sources - dynamic - read 60% (entity detail page)  , 233.67   , nodesRecomputed=3984210 nodesVisited=3984210 edgesTraversed=15936789 sinkReads=720024 sum=188726387776
+alien-signals          , 256->512x32 - fanIn 4 - layered-dag - 4 sources (layered full-drain cold) , 26.52    , nodesRecomputed=249624 nodesVisited=249624 edgesTraversed=998496 sinkReads=61952 sum=1.4676229585043317e+24
+alien-signals          , 256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 320 (layered full-drain warm) , 17.52    , nodesRecomputed=235200 nodesVisited=235200 edgesTraversed=940800 sinkReads=61952 sum=4.1462377719595485e+24
+alien-signals          , 256->512x32 - fanIn 8 - layered-dag - 8 sources - burst 16 - warm 256 - per-batch (layered burst flush warm) , 199.71   , nodesRecomputed=1529088 nodesVisited=1529088 edgesTraversed=12232704 sinkReads=49664 sum=2.284204969563251e+35
+alien-signals          , 256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm 256 (stable diamond mesh warm) , 3.54     , nodesRecomputed=24576 nodesVisited=24576 edgesTraversed=196608 sinkReads=49664 sum=1.4238251541763473e+34
+alien-signals          , 32x8 - 4 sources - pull (pure pull)                          , 0.40     , nodesRecomputed=224 nodesVisited=224 edgesTraversed=896 sinkReads=32 sum=5242355712
+alien-signals          , 8x64 - 1 sources - pull (linear chain - 1 source - pull (linear pull)) , 0.24     , nodesRecomputed=504 nodesVisited=504 edgesTraversed=504 sinkReads=8 sum=79992
+alien-signals          , 64x4 - 8 sources - pull (wide tree - 8 sources - pull (branchy pull)) , 0.23     , nodesRecomputed=192 nodesVisited=192 edgesTraversed=1536 sinkReads=64 sum=327647232
+alien-signals          , 32x8 - 4 sources - push (pure push)                          , 52.33    , nodesRecomputed=910133 nodesVisited=910133 edgesTraversed=3640532 sinkReads=220010 sum=5242355712
+alien-signals          , 10x5 - 2 sources - read 20% (simple component)               , 109.91   , nodesRecomputed=3180010 nodesVisited=3180010 edgesTraversed=6360020 sinkReads=1200002 sum=19200092
+alien-signals          , 10x10 - 6 sources - dynamic - read 20% (dynamic component)   , 94.55    , nodesRecomputed=1140004 nodesVisited=1140004 edgesTraversed=6839936 sinkReads=30002 sum=302310877104
+alien-signals          , 1000x12 - 4 sources - dynamic (large web app)                , 169.76   , nodesRecomputed=1473786 nodesVisited=1473786 edgesTraversed=5891713 sinkReads=7001000 sum=29355933696000
+alien-signals          , 1000x5 - 25 sources (wide dense)                             , 290.14   , nodesRecomputed=735756 nodesVisited=735756 edgesTraversed=18393900 sinkReads=3001000 sum=1171484375000
+alien-signals          , 5x500 - 3 sources (deep)                                     , 66.36    , nodesRecomputed=1246502 nodesVisited=1246502 edgesTraversed=3739506 sinkReads=2505 sum=3.0239642676898464e+241
+alien-signals          , avoidablePropagation                                         , 68.96    , checksum=6
+alien-signals          , broadPropagation                                             , 144.08   , checksum=99
+alien-signals          , deepPropagation                                              , 45.91    , checksum=99
+alien-signals          , diamond                                                      , 88.57    , checksum=2500
+alien-signals          , mux                                                          , 139.77   , checksum=190
+alien-signals          , repeatedObservers                                            , 22.10    , checksum=2970
+alien-signals          , triangle                                                     , 31.07    , checksum=1035
+alien-signals          , unstable                                                     , 35.69    , checksum=3960
+alien-signals          , manyEffectsFromOneSource                                     , 111.60   , checksum=180075672000
+alien-signals          , manySourcesIntoOneComputedEffectWithDirect                   , 58.08    , checksum=1372929289844
+alien-signals          , manySourcesIntoOneComputedEffect                             , 55.55    , checksum=1331323690944
+alien-signals          , manySourcesIntoOneDirectEffect                               , 4.94     , checksum=41605598900
+alien-signals          , molBench                                                     , 164.33   , checksum=9616
+alien-signals          , createDataSignals                                            , 1.64     , 
+alien-signals          , createComputations0to1                                       , 2.98     , 
+alien-signals          , createComputations1to1                                       , 5.57     , 
+alien-signals          , createComputations2to1                                       , 4.04     , 
+alien-signals          , createComputations4to1                                       , 3.38     , 
+alien-signals          , createComputations1000to1                                    , 2.04     , 
+alien-signals          , createComputations1to2                                       , 5.53     , 
+alien-signals          , createComputations1to4                                       , 5.69     , 
+alien-signals          , createComputations1to8                                       , 5.67     , 
+alien-signals          , createComputations1to1000                                    , 5.41     , 
+alien-signals          , updateComputations1to1                                       , 13.02    , 
+alien-signals          , updateComputations2to1                                       , 8.39     , 
+alien-signals          , updateComputations4to1                                       , 5.69     , 
+alien-signals          , updateComputations1000to1                                    , 7.75     , 
+alien-signals          , updateComputations1to2                                       , 12.43    , 
+alien-signals          , updateComputations1to4                                       , 9.77     , 
+alien-signals          , updateComputations1to1000                                    , 8.93     , 
