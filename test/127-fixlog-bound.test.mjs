@@ -5,6 +5,15 @@
 // under test, staged in os.tmpdir(); an anchor that does not match exactly once FAILS the row). Rows are expected RED on the frozen
 // build; the head rows go green only once XA1 B1 lands. Heavy children run one at a time with --max-old-space-size=2048 (CI heap
 // is smaller than a dev Mac). Retained-byte bounds are the plan's; no timing.
+// CI class 21 (b246): run 45082846598 (ubuntu, node 24) failed the A4 reset row in `npm run test:gc` (frozen 3232904 head 3225296 diff 7608)
+// and passed it in the same job's `npm test`. The child read process.memoryUsage().heapUsed, which also counts code / trusted space (compile
+// output a concurrent compiler can land inside the bracket). Per the class-18 law (LEDGER: a heap-delta GC row's child runs --single-threaded,
+// refuses to measure otherwise, and sums only the JS heap spaces) the trim / grow / d1 children now run under GCF (--single-threaded, exit 3
+// without it: tooth rows in "CI21 heap-delta law"), gate on the new + old + new-LO + LO sum (fixtures/b127/js-heap.mjs), and print the
+// code / heapUsed / per-space deltas as `rep` (REPORTED only; every heap message prints the JSON of each child compared). Bounds unchanged.
+// Numbers below: .handoff/b246/c21/MEASURE.txt (node 26.8.2 + 24.15.0, plain + `taskpolicy -b` with --concurrent-recompilation-delay=300,
+// 5 reps each: zero spread per build; quoted values are node 26 plain). A4 gap = the fixLog backing store, 271,152 B in large_object_space.
+// The CI log has no per-space numbers: compile output vs a late large-object release is NOT determined (b246 FACTS); a recurrence whose rep.lo is ~ +271 KB is a retention finding, not noise -- do not re-run.
 // Controls (PLAN-XA1 TASK 5): RF-DEL = repairCursor filter removed (the frozen line); RF-INV = its `!==` flipped to `===`;
 // DF-DEL = dropCursors filter removed; TRUNC-DEL = `if (k === 1) fixLen = 0;` deleted; TRIM-D-DEL / TRIM-R-DEL = the
 // `fixLog.length = 48;` of destroy() / reset() deleted; FLUSHCUR-DEL = destroy()'s `flushCur = null;` deleted.
@@ -58,6 +67,8 @@ const raw = (script, args, flags) => {
 const child = (script, args, flags) => JSON.parse(raw(script, args, flags).stdout.trim().split("\n").pop());
 const t_diag = (m) => console.log("# " + m);
 const HEAVY = ["--expose-gc", "--max-old-space-size=2048"];
+const GCF = ["--single-threaded", ...HEAVY];   // CI21: every trim / grow / d1 heap-delta child (snap-child counts nodes, keeps HEAVY)
+const J = (o) => JSON.stringify(o);
 
 // ---- anchors on the engine under test (post-B1 text, PLAN-XA1 SPEC; each count-checked to 1 by plant()) ----
 const R_HEAD = "        if (cursorDepth > 1 && sLink.target !== currentObserver) { const n = fixLen; fixLog[n] = sLink; fixLog[n + 1] = nDep; fixLog[n + 2] = cursorDepth; fixLen = n + 3; }";
@@ -136,38 +147,40 @@ describe("A1 premise fuzz (seeds 12345 and 777, 300 programs each)", () => {
 
 // A2 -- GC budget / high-water.
 describe("A2 GC budget", () => {
-    // grow: one depth-2 frame disposes 200000 of its own signals. Plan: retained after reset(): head < 256 KB vs frozen >= 4 MB (measured 7.0 MB).
+    // grow: one depth-2 frame disposes 200000 of its own signals. Plan: retained after reset(): head < 256 KB vs frozen >= 4 MB (JS-space sum,
+    // b246: frozen 6,965,728 B after reset, head 10,368 B after reset / 10,200 B after the flush; RF-DEL 6,965,616 B after the flush).
     it("opus grow N = 200000: retained after reset() head < 256 KB, frozen >= 4 MB; head also < 256 KB right after the flush", () => {
-        const h = child(FX("grow-child.mjs"), [stageEng(), "200000", "grow"], HEAVY);
-        const f = child(FX("grow-child.mjs"), [stageFroz(), "200000", "grow"], HEAVY);
-        assert.ok(f.retainedAfterResetB >= 4 * 1024 * 1024, "frozen after reset " + f.retainedAfterResetB);
-        assert.ok(h.retainedAfterResetB < 256 * 1024, "head after reset " + h.retainedAfterResetB + " (frozen " + f.retainedAfterResetB + ")");
-        assert.ok(h.retainedAfterFlushB < 256 * 1024, "head after flush " + h.retainedAfterFlushB);
+        const h = child(FX("grow-child.mjs"), [stageEng(), "200000", "grow"], GCF);
+        const f = child(FX("grow-child.mjs"), [stageFroz(), "200000", "grow"], GCF);
+        assert.ok(f.retainedAfterResetB >= 4 * 1024 * 1024, "frozen after reset " + f.retainedAfterResetB + " " + J({ h, f }));
+        assert.ok(h.retainedAfterResetB < 256 * 1024, "head after reset " + h.retainedAfterResetB + " (frozen " + f.retainedAfterResetB + ") " + J({ h, f }));
+        assert.ok(h.retainedAfterFlushB < 256 * 1024, "head after flush " + h.retainedAfterFlushB + " " + J({ h, f }));
     });
     it("control RF-DEL (repairCursor filter removed): grow retains >= 4 MB right after the flush (the trim of reset() hides it later), head < 256 KB", () => {
-        const c = child(FX("grow-child.mjs"), [stageEng(RF_DEL(engText())), "200000", "grow"], HEAVY);
-        assert.ok(c.retainedAfterFlushB >= 4 * 1024 * 1024, "RF-DEL after flush " + c.retainedAfterFlushB);
+        const c = child(FX("grow-child.mjs"), [stageEng(RF_DEL(engText())), "200000", "grow"], GCF);
+        assert.ok(c.retainedAfterFlushB >= 4 * 1024 * 1024, "RF-DEL after flush " + c.retainedAfterFlushB + " " + J({ c }));
     });
-    it("neon d1 (flat shape: 4000 self-disposing computeds x 20 deps): retained after destroy() head <= 160 KB, frozen >= 1 MB (this child: frozen 1,559,968 B post-destroy, head -501,760 B)", () => {
-        const h = child(FX("d1-child.mjs"), [stageEng(), "flat"], HEAVY);
-        const f = child(FX("d1-child.mjs"), [stageFroz(), "flat"], HEAVY);
-        assert.ok(f.postDestroyB >= 1024 * 1024, "frozen post-destroy " + f.postDestroyB);
-        assert.ok(h.postDestroyB <= 160 * 1024, "head post-destroy " + h.postDestroyB + " (frozen " + f.postDestroyB + ")");
+    it("neon d1 (flat shape: 4000 self-disposing computeds x 20 deps): retained after destroy() head <= 160 KB, frozen >= 1 MB", () => {
+        // JS-space sum, b246: frozen 1,470,144 B post-destroy (LO +2,060,768), head -590,088 B.
+        const h = child(FX("d1-child.mjs"), [stageEng(), "flat"], GCF);
+        const f = child(FX("d1-child.mjs"), [stageFroz(), "flat"], GCF);
+        assert.ok(f.postDestroyB >= 1024 * 1024, "frozen post-destroy " + f.postDestroyB + " " + J({ h, f }));
+        assert.ok(h.postDestroyB <= 160 * 1024, "head post-destroy " + h.postDestroyB + " (frozen " + f.postDestroyB + ") " + J({ h, f }));
     });
-    // deep shape: children at depth 3 under a depth-2 frame built in the effect's first run (no k === 1 clear between them). Measured on this host:
-    // head ~230 KB (baseline of the shape), DF-DEL ~2.2 MB (frozen 2,174,240 equals DF-DEL); so the gate is the DIFFERENCE >= 1 MB, not the plan's absolute 160 KB.
+    // deep shape: children at depth 3 under a depth-2 frame built in the effect's first run (no k === 1 clear between them). JS-space sum, b246:
+    // head 136,528 B (baseline of the shape), DF-DEL 2,077,056 B (diff 1,940,528); so the gate is the DIFFERENCE >= 1 MB, not the plan's absolute 160 KB.
     it("control DF-DEL (dropCursors filter removed): d1 deep shape (4000 x 20 deps) retains >= 1 MB more than head before destroy()", () => {
-        const h = child(FX("d1-child.mjs"), [stageEng(), "deep", "4000"], HEAVY);
-        assert.ok(h.preDestroyB < 1024 * 1024, "head deep pre-destroy " + h.preDestroyB);
-        const c = child(FX("d1-child.mjs"), [stageEng(DF_DEL(engText())), "deep", "4000"], HEAVY);
+        const h = child(FX("d1-child.mjs"), [stageEng(), "deep", "4000"], GCF);
+        assert.ok(h.preDestroyB < 1024 * 1024, "head deep pre-destroy " + h.preDestroyB + " " + J({ h }));
+        const c = child(FX("d1-child.mjs"), [stageEng(DF_DEL(engText())), "deep", "4000"], GCF);
         t_diag("DF-DEL " + c.preDestroyB + " head " + h.preDestroyB);
-        assert.ok(c.preDestroyB - h.preDestroyB >= 1024 * 1024, "DF-DEL pre-destroy " + c.preDestroyB + " vs head " + h.preDestroyB);
+        assert.ok(c.preDestroyB - h.preDestroyB >= 1024 * 1024, "DF-DEL pre-destroy " + c.preDestroyB + " vs head " + h.preDestroyB + " " + J({ h, c }));
     });
     // quad: 3000 prebuilt computeds read inside the frame, one self-disposing signal each. Hand check: frozen scans 1..N entries at the N k=2
     // restores (sum 1..N = N(N+1)/2) plus N at E's k=1 restore: 3000 x 3001 / 2 + 3000 = 4,504,500 = 3000 x 3003 / 2 (the plan's measured value).
     it("opus quad N = 3000: head 0 fixCursor calls; frozen scans exactly 4,504,500 entries", () => {
-        const h = child(FX("grow-child.mjs"), [stageEng(counted(engText())), "3000", "quad"], HEAVY);
-        const f = child(FX("grow-child.mjs"), [stageFroz(counted(frozText())), "3000", "quad"], HEAVY);
+        const h = child(FX("grow-child.mjs"), [stageEng(counted(engText())), "3000", "quad"], GCF);
+        const f = child(FX("grow-child.mjs"), [stageFroz(counted(frozText())), "3000", "quad"], GCF);
         assert.equal(f.iters, 4504500, "frozen scanned entries (calls " + f.calls + ")");
         assert.equal(h.calls, 0, "head fixCursor calls (iters " + h.iters + ")");
         assert.equal(h.iters, 0);
@@ -198,18 +211,19 @@ describe("A3 truncation", () => {
 
 // A4 -- trim and retention.
 describe("A4 trim / retention", () => {
-    const tr = (text, mode) => child(FX("trim-child.mjs"), [text, mode], HEAVY).retained;
+    // JS-space sum, b246: reset frozen 2,607,504 / head 2,336,752 / TRIM-R-DEL 2,607,504 (gap 270,752); destroy gap 270,968, |TRIM-D-DEL - frozen| 232.
+    const tr = (text, mode) => child(FX("trim-child.mjs"), [text, mode], GCF);
     it("3b shape K = 10000 then reset(): head retains >= 200,000 B less than frozen; control TRIM-R-DEL within 50,000 B of frozen", () => {
         const f = tr(stageFroz(), "reset"), h = tr(stageEng(), "reset");
-        assert.ok(f - h >= 200000, "frozen " + f + " head " + h + " diff " + (f - h));
+        assert.ok(f.retained - h.retained >= 200000, "frozen " + f.retained + " head " + h.retained + " diff " + (f.retained - h.retained) + " " + J({ f, h }));
         const c = tr(stageEng(TRIM_R_DEL(engText())), "reset");
-        assert.ok(Math.abs(c - f) <= 50000, "TRIM-R-DEL " + c + " vs frozen " + f);
+        assert.ok(Math.abs(c.retained - f.retained) <= 50000, "TRIM-R-DEL " + c.retained + " vs frozen " + f.retained + " " + J({ f, h, c }));
     });
     it("3b shape K = 10000 then destroy(): head retains >= 200,000 B less than frozen; control TRIM-D-DEL within 50,000 B of frozen", () => {
         const f = tr(stageFroz(), "destroy"), h = tr(stageEng(), "destroy");
-        assert.ok(f - h >= 200000, "frozen " + f + " head " + h + " diff " + (f - h));
+        assert.ok(f.retained - h.retained >= 200000, "frozen " + f.retained + " head " + h.retained + " diff " + (f.retained - h.retained) + " " + J({ f, h }));
         const c = tr(stageEng(TRIM_D_DEL(engText())), "destroy");
-        assert.ok(Math.abs(c - f) <= 50000, "TRIM-D-DEL " + c + " vs frozen " + f);
+        assert.ok(Math.abs(c.retained - f.retained) <= 50000, "TRIM-D-DEL " + c.retained + " vs frozen " + f.retained + " " + J({ f, h, c }));
     });
     // Elements-kind probe, primary form: V8's own trace, window cut by mark.mjs transitions (V8 prints on its own stdio buffer).
     // The window also holds the pre-existing activeQueue PACKED_SMI -> PACKED lines in markDownstream (the frozen build prints them too), so the
@@ -255,5 +269,29 @@ describe("A4 trim / retention", () => {
         assert.equal(delta(stageFroz()), 1, "frozen");
         assert.equal(delta(stageEng()), 0, "head");
         assert.equal(delta(stageEng(FLUSHCUR_DEL(engText()))), 1, "FLUSHCUR-DEL");
+    });
+});
+
+// CI21 -- the heap-delta law for the trim / grow / d1 children (b246; template test/100 CI20 refusal tooth). Each child calls guard() before
+// its mode dispatch: without --single-threaded it prints "heap-delta rows need --single-threaded" and exits 3 (HEAD children: exit 0 + JSON).
+describe("CI21 heap-delta law", () => {
+    const refuse = (script, args) => {
+        const r = spawnSync(process.execPath, [...HEAVY, FX(script), stageEng(), ...args], { encoding: "utf8", timeout: 300000, killSignal: "SIGKILL" });
+        assert.equal(r.error, undefined);
+        assert.equal(r.signal, null);
+        assert.equal(r.status, 3, "exit " + r.status + " stdout " + String(r.stdout).slice(0, 200));
+        assert.ok(String(r.stderr).includes("need --single-threaded"), String(r.stderr).slice(-300));
+        assert.equal(String(r.stdout), "", "a JSON line was printed");
+    };
+    it("refusal tooth (CI21): trim-child refuses to measure without --single-threaded (exit 3)", () => refuse("trim-child.mjs", ["reset"]));
+    it("refusal tooth (CI21): grow-child refuses to measure without --single-threaded (exit 3)", () => refuse("grow-child.mjs", ["200000", "grow"]));
+    it("refusal tooth (CI21): d1-child refuses to measure without --single-threaded (exit 3)", () => refuse("d1-child.mjs", ["flat"]));
+    it("JS-heap sum (CI21): jsSum = new + old + new-LO + LO exactly; throws when any is missing", async () => {
+        const H = await import(pathToFileURL(FX("js-heap.mjs")).href);
+        const js = [["new_space", 1], ["old_space", 2], ["new_large_object_space", 4], ["large_object_space", 8]];
+        const other = [["code_space", 16], ["trusted_space", 32], ["code_large_object_space", 64], ["trusted_large_object_space", 128], ["read_only_space", 256], ["shared_space", 512]];
+        const st = (pairs) => pairs.map(([space_name, space_used_size]) => ({ space_name, space_used_size }));
+        assert.deepEqual([H.jsSum(st([...js, ...other])), H.codeSum(st([...js, ...other]))], [15, 240]);
+        for (const [n] of js) assert.throws(() => H.jsSum(st([...js.filter((x) => x[0] !== n), ...other])), new RegExp("no heap space " + n + "$"), "missing " + n);
     });
 });
