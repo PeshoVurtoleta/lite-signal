@@ -44,7 +44,7 @@ sequenceDiagram
             L->>S: write to SINK[slot]
         end
         H->>H: stop timer
-        H->>V: record delta heap (raw alloc pressure)
+        H->>V: record delta heap (not an allocation measurement)
         H->>V: forceGc() + record retained heap
         H->>S: sum SINK -> BENCH_SINK_SUM
         Note over H,S: if SINK[sinkSlot] == 0 -> run is invalid
@@ -233,7 +233,7 @@ graph LR
 A single line in the report looks like this (illustrative values, not a measurement):
 
 ```
-lite-signal         median=   80.18ms min=   79.49ms ops/s=249K   heapMed= 15.1KB   heapP95= 16.0KB   retained=-20.1KB   sink=[x]
+lite-signal         median=   80.18ms min=   79.49ms ops/s=249K   heapMed= 15.1KB   heapP95= 16.0KB   retained= 20.1KB   sink=[x]
 ```
 
 Field by field:
@@ -241,9 +241,9 @@ Field by field:
 - **median** -- the middle timing across `RUNS` inner runs (5 by default). Robust against single outliers.
 - **min** -- the fastest of those runs. Compare against median: if `median` is dramatically higher than `min`, the workload is hitting GC or another transient cost on some runs.
 - **ops/s** -- derived from median: `ITERATIONS / (median / 1000)`. The headline number.
-- **heapMed** -- median over runs of the per-run heap growth (heapUsed + arrayBuffers), in kilobytes. Measures *transient allocation pressure*. A library that's "fast but allocates 4 MB per loop" still puts GC pressure on a real application.
-- **heapP95** -- 95th percentile of the same per-run heap deltas, in kilobytes (tail allocation).
-- **retained** -- heap that survives the post-run `forceGc()`. This is the steady-state cost. Should be close to zero for any well-behaved library; meaningfully positive means real state is accumulating across iterations (potential leak).
+- **heapMed** -- median over runs of the per-run heap growth (heapUsed + arrayBuffers), in kilobytes. Read at the end of the run with no closing GC (the baseline is read after a forced GC before the run), so once a run allocates more than the young generation the delta reads young-generation fill, not the run's allocation. It is NOT an allocation measurement; zero-GC is gated by `npm run test:torture`.
+- **heapP95** -- 95th percentile of the same per-run heap deltas, in kilobytes (the tail of the same gauge; same caveat).
+- **retained** -- post-run post-GC heap minus the pre-setup heap, floored at 0. The live graph and its pools are still held at that read, so it is > 0 on a correct run.
 - **sink** -- `[x]` if the scenario's `SINK[sinkSlot] !== 0`, `[ ]` if not. A `[ ]` sink invalidates the run entirely.
 
 A row with `sink=[ ]` means the harness detected dead-code elimination or a missing effect run. **Don't trust the timing on any row that doesn't show `sink=[x]`.**
@@ -252,8 +252,8 @@ A "healthy" row -- one whose numbers can be trusted as a real characterization o
 
 - `sink=[x]` -- every expected effect fired
 - `median` within a few percent of `min` -- distribution is tight, no GC interference
-- `heapMed` low and consistent across runs -- the hot path isn't allocating
-- `retained` near `0KB` (slightly negative is normal -- V8's post-run GC often reclaims more than the loop allocated)
+- `heapMed` consistent across runs (a stability check on the gauge, not evidence that the hot path is not allocating)
+- `retained` > 0 (the live graph and its pools are still held at that read; the harness floors it at 0, so it never prints negative)
 
 ### Reading variance honestly
 
@@ -335,7 +335,7 @@ If a library's default execution mode is async-batched, the adapter must configu
 Being explicit about scope is part of methodology:
 
 - **Cold-start performance.** All measurements are post-warmup. A library's startup cost is a separate concern not addressed here.
-- **Memory footprint of the graph itself.** delta heap captures transient allocation; the static memory cost of holding the graph is reported indirectly through `retained` only on workloads where the graph is large (~1000 nodes).
+- **Memory footprint of the graph itself.** No column isolates it: `retained` counts the live graph and its pools together.
 - **Concurrent or multi-threaded access.** Reactive libraries in this ecosystem are all single-threaded by design.
 - **Browser-specific behaviour.** Measurements are taken in Node. JIT behaviour in Chromium is similar but not identical.
 - **Time-to-first-paint or rendering-layer costs.** This harness measures the reactive substrate, not what's built on top of it.
@@ -377,7 +377,7 @@ Results live in [`resultsReactive.txt`](./resultsReactive.txt).
 | Origin | written for this repo | community suite (not ours) |
 | Drive | one `set` per iter, bare | full suite, `dyn` rows batched |
 | Reports | throughput + heapMed / heapP95 + retained + sink | wall-time per named test |
-| Purpose | prove the zero-GC hot path | apples-to-apples vs the field |
+| Purpose | time the hot path on six first-party shapes | apples-to-apples vs the field |
 
 The `dyn` rows in particular are the stricter test: they wrap the entire
 iteration loop in one `batch()` and re-read every leaf per write, which is where

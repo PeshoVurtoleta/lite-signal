@@ -12,7 +12,7 @@ Each has one job and one fixed configuration. They never borrow config from each
 
 | instrument | file | config | measures |
 | :--- | :--- | :--- | :--- |
-| **Microscope** | `benchmark.mjs` | **eager, right-sized pools, default flush** (lite's *recommended production* config) | throughput + allocation on six first-party shapes, with the anti-DCE sink |
+| **Microscope** | `benchmark.mjs` | **eager, right-sized pools, default flush** (lite's *recommended production* config) | time on six first-party shapes, with the anti-DCE sink (its `heapMed` / `heapP95` columns are not an allocation measurement; see "Reading the output") |
 | **Mirror** | `mirror.mjs` + `sweep.mjs` | **Andrii's committed adapter config**: `262144 / 1048576 / lazy / throw / destroy()+rebuild` (his adapter at fb10dd9, liteSignal.ts:4-15; `mirror.mjs` builds the same config and, per reset, destroys the registry and creates a fresh one) | cross-framework standing on a port of the community suite; rows are joined to his log by `vs-andrii.mjs`, which voids a row whose counters differ |
 | **Version economics** | `harness/toe-to-toe` | frozen per-version engines | lite-vs-lite deltas across versions and capability-on costs |
 
@@ -28,7 +28,7 @@ Requires `--expose-gc` on every command. Install deps first (`npm i`).
 # 1. Check the mirror's 9 counter-bearing dynamic rows against the counters from Andrii's log (must print 9/9 MATCH; the other rows are not checked).
 node --expose-gc bench/mirror.mjs --self-verify
 
-# 2. The zero-GC microscope — lite's recommended config, six first-party shapes.
+# 2. The microscope (time only; zero-GC is gated by `npm run test:torture`, not here) — lite's recommended config, six first-party shapes.
 node --expose-gc bench/benchmark.mjs
 
 # 3a. The cross-framework sweep -- per-row cold-process isolation, round-robin, sentinel.
@@ -99,7 +99,7 @@ Failures set a non-zero exit and print `INVALID RUN`. A number that failed a gua
 
 V8's escape analysis deletes computations it can prove have no observable effect. Every effect in the microscope writes its value into a `Float64Array(4096)` rooted on `globalThis`; after each timed loop the sink is summed into `BENCH_SINK_SUM` and checked against a hand-computed expected value. Any elided or skipped work changes the sum and tags the row `sink=[ ]`. The sum is a contract, not a soft check, and it is identical for every library — the workload is fixed, so a "faster" adapter that writes less is caught on the first run.
 
-Properties that make it un-foldable: a typed array (typed-element store IC V8 cannot elide), rooted on `globalThis` (always reachable), read *after* the loop (every write is load-bearing), indexed with a power-of-two bitmask (`& (SIZE-1)`, no per-write division). `--expose-gc` is mandatory or the heap columns are meaningless.
+Properties that make it un-foldable: a typed array (typed-element store IC V8 cannot elide), rooted on `globalThis` (always reachable), read *after* the loop (every write is load-bearing), indexed with a power-of-two bitmask (`& (SIZE-1)`, no per-write division). `--expose-gc` is mandatory or the heap readings are meaningless.
 
 ---
 
@@ -125,8 +125,8 @@ lite-signal   median=  21.83ms min=  21.76ms ops/s=916K   heapMed= 0.0KB   heapP
 The numbers in this block are a layout example, not a measurement.
 
 - **median / min** — median of `RUNS` timed runs; min alongside so distribution tightness is visible.
-- **heapMed** — MEDIAN transient heap per timed run, GC-fenced around *each* run. (v3 fix: the old single Δheap smeared one run's GC across the average and needed an apology paragraph. Per-run fencing removed both.)
-- **heapP95** — 95th-percentile of the same per-run deltas — the allocation tail, shown separately instead of hidden in a mean.
+- **heapMed** -- median over runs of (heapUsed + arrayBuffers read at the end of the run) minus (the same sum read after a forced GC just before the run). There is no GC at the end of the run, so once a run allocates more than the young generation the delta reads young-generation fill, not the run's allocation. It is NOT an allocation measurement and no published figure rests on it; a corrected gauge is planned after 1.6.0.
+- **heapP95** -- 95th percentile of the same per-run deltas; the same caveat applies.
 - **retained** -- post-run post-GC heap minus the pre-setup heap, floored at 0 (live graph + pools); > 0 on a correct run.
 - **sink** — `[x]` if the anti-DCE sum matched; `[ ]` invalidates the row.
 
@@ -134,13 +134,13 @@ The numbers in this block are a layout example, not a measurement.
 
 ## Results: how to read them honestly
 
-The claim that reproduces on any host is about **allocation, not raw propagation speed**. Representative M4 Pro / Node 26 microscope figures (lite's recommended eager config):
+The microscope publishes **time only**; its `heapMed` / `heapP95` columns are withdrawn (see `heapMed` above). The zero-GC claim is gated by `npm run test:torture` (lite-leak + lite-gc-profiler) and the node:test GC-count tests, not by this microscope (`npm run torture` is the scenario runner, a different thing). Throughput on lite's recommended eager config:
 
-- (pending the next run log) the earlier `retained = 0.0KB` figure came from the pre-fix retained instrument, which read ~0 by construction; it and the `heapMed` ratios quoted beside it from the same run are restated from the new bench-runs logs, not carried over.
+- The DYNAMIC DAG and SELECTIVE DAG payload values leave the small-integer range, so the allocation those rows show is V8 number boxing in the benchmark body, not engine allocation.
 - On **throughput**, lite is competitive-to-winning on this shape set: ahead on BROADCAST, MUX, and SELECTIVE DAG; ahead of alien on DYNAMIC DAG; within ~11% of alien on KAIROS.
 - The consistent **weakness is deep/layered propagation** (DEEP CHAIN: alien ~2× faster). A flatter representation wins when the propagation path is long rather than wide. This is real and unhidden.
 
-Under the **mirror** (Andrii's lazy cross-framework adapter, a stricter neutral ranking), lite is slower on the dynamic/app propagation shapes while remaining dominant on allocation. Both pictures are true; the honest headline is **"competitive throughput with one-to-four orders of magnitude less GC pressure"** — not "fastest reactive engine." Any public number cites its `(stamp, protocol)` or it is not made.
+Under the **mirror** (Andrii's lazy cross-framework adapter, a stricter neutral ranking), lite is slower on the dynamic/app propagation shapes. Both pictures are true; the honest headline is **"competitive throughput on the microscope shapes"** — not "fastest reactive engine." Any public number cites its `(stamp, protocol)` or it is not made.
 
 > Note on adapters: a reused, warmed **singleton** registry across a micro-benchmark suite skips pool-growth and teardown that fresh-per-test instances pay. Andrii's committed adapter resets (`destroy()` + fresh registry) between benches, which is the fair setup. The mirror's `reset()` does the same (`mirror.mjs`: `reg.destroy()`, then `createRegistry(LITE_CONFIG)`); the microscope pre-sizes per scenario. Neither reuses a warmed pool across unrelated shapes to flatter a comparison.
 
@@ -148,7 +148,7 @@ Under the **mirror** (Andrii's lazy cross-framework adapter, a stricter neutral 
 
 ## Structure probes (`lib/structure-probe.mjs`)
 
-A timing regression is far more actionable with its structural cause attached. The probe reads `onGraphMutation` and folds `recomputed / maxRecompute / flushPasses / churnPerRecompute / poolGrowths` into the mirror's metrics column (free; absent on reference engines). It reproduces `harness/burst-dag.mjs`'s numbers exactly. Already useful: on the burst shape lite reports `maxRecompute=1, flushPasses=0` — zero redundant work — so its burst cost is per-node path length, not waste.
+`lib/structure-probe.mjs` exists: it reads `onGraphMutation` and counts `recomputed / maxRecompute / flushPasses / churnPerRecompute / poolGrowths`. Nothing imports it and `mirror.mjs` does not fold its metrics into the metrics column, so it is not wired in and no result here rests on it. Wiring it is planned after 1.6.0.
 
 ---
 

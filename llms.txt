@@ -702,39 +702,33 @@ The deliberate engineering for `watch`'s "0 per fire" is the hoisted `untrackedF
 ## Benchmark snapshot (Node 26.3.1, Apple M4 Pro darwin/arm64, default eager, median across reps -- @1.5.0-beta.0)
 
 v3 microscope (`benchmark.mjs`, six first-party shapes) head-to-head vs alien-signals
-(time = median execution; heap = average transient delta-heap per rep; lite-signal
+(time = median execution; lite-signal
 numbers are @1.5.0-beta.0, hot paths byte-identical to 1.4.0 -- 1.5.0 adds only the
 `signalBox` / `computedBox` non-callable handle and `createRoot`, neither on the
 steady-state read/write path; third-party engines bumped since 1.4.0 sweep --
 alien-signals 3.1.2 -> 3.2.1 in particular; host changed from 2016 Intel MacBook /
 Node 22 to Apple M4 Pro / Node 26, which lowers the run-to-run noise floor):
 
-| Scenario                         | lite vs alien (time) | transient heap (lite / alien) |
-| -------------------------------- | -------------------- | ----------------------------- |
-| MUX (256 sigs -> sum -> effect)  | **+34.6% faster**    | 0 KB / 781 KB (100% less)     |
-| SELECTIVE DAG (set churn)        | **+20.0% faster**    | 7.7 MB / 78.0 MB (10.2x)      |
-| DYNAMIC DAG (FAN=6, read flips)  | **+18.4% faster**    | 3.1 MB / 60.7 MB (19.5x)      |
-| BROADCAST (1 -> 1000 effects)    | -1.2% (parity)       | ~0 KB / ~0 KB (both zero)     |
-| KAIROS (1 -> 1000 computeds)     | -15.7%               | 23 KB / 802 KB (34.8x)        |
-| DEEP CHAIN (256-deep -> effect)  | -76.9%               | 0.5 KB / 1062 KB (>2000x)     |
+| Scenario                         | lite vs alien (time) |
+| -------------------------------- | -------------------- |
+| MUX (256 sigs -> sum -> effect)  | **+34.6% faster**    |
+| SELECTIVE DAG (set churn)        | **+20.0% faster**    |
+| DYNAMIC DAG (FAN=6, read flips)  | **+18.4% faster**    |
+| BROADCAST (1 -> 1000 effects)    | -1.2% (parity)       |
+| KAIROS (1 -> 1000 computeds)     | -15.7%               |
+| DEEP CHAIN (256-deep -> effect)  | -76.9%               |
 
-lite-signal's time wins on the M4 Pro sweep cluster on the allocation-heavy dynamic
-shapes (object pool allocates near-nothing; alien churns the nursery), plus MUX fan-in
+lite-signal's time wins on the M4 Pro sweep cluster on the dynamic
+shapes, plus MUX fan-in
 aggregation -- the patterns that dominate live UI under input churn. The wins narrow
-versus the older Intel sweep (fast machine has less GC pause to hide behind, so
-alien's raw propagation surfaces more) but the ordering is intact. BROADCAST is a true
-tie on this host (both under the GC delta floor). Two losses: KAIROS -15.7%
+versus the older Intel sweep but the ordering is intact. BROADCAST is a true
+tie on this host. Two losses: KAIROS -15.7%
 (1000 shared-source computeds -- alien's flatter representation prices in the walk
 cheaper on M4-class silicon) and DEEP CHAIN -76.9% (the same architectural weak spot
 the honest framing has always named; recursive JS-stack computed resolution loses to
-alien's flatter chain on hot new cores by a wider margin than on old Intel). On
-allocation, lite wins 5/6 shapes and is one to four orders of magnitude below alien on
-every shape where GC pressure exists at all.
+alien's flatter chain on hot new cores by a wider margin than on old Intel).
 
-**The differentiated position is ALLOCATION, not raw propagation speed** -- competitive
-throughput with dramatically lower GC pressure, not "fastest dynamic-graph engine".
-That headline reproduces across hosts, sweeps, and third-party version bumps because
-the object pool is the mechanism, not a tuning knob.
+Heap column withdrawn: the earlier column read heapUsed after a forced GC before each run and again at the run's end with no closing GC, so past one young generation it showed young-generation fill, not the run's allocation. This release publishes benchmark time only.
 
 Mirror sweep (`bench/r.txt`, Andrii's canonical adapter verbatim, isolated-per-row,
 10 reps, lite vs alien only on the same M4 Pro host) reproduces the same picture
@@ -748,11 +742,6 @@ identical work, not DCE. Retracking verified correct by `retracking.difftest.mjs
 (20,000 direct + 10,000 batched writes, 0 disagreements vs published 1.1.5).
 `prealloc: "lazy"` trades a little first-construction allocation on the dynamic shapes
 for a smaller resident heap and faster cold start; steady state identical.
-
-Retained heap after forced GC: typically negative for all libs (V8 compacts).
-The one exception: lite-signal shows ~+23 KB retained on KAIROS, which is the
-pre-allocated pool holding the live 1002-node graph in steady state. This is
-the design: the pool IS the working memory. Not a leak.
 
 ## Common idioms
 

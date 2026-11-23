@@ -199,12 +199,11 @@ if (primary && extras.length) {
 }
 
 L.push("HONEST FRAMING (the claim that reproduces):");
-L.push("  lite-signal's differentiated position is ALLOCATION, not raw propagation speed.");
 L.push("  On these shapes lite runs at parity-to-behind alien on throughput (weak on deep/");
-L.push("  layered propagation -- the DEEP CHAIN / burst family), while allocating one to four");
-L.push("  orders of magnitude less transient heap (see bench/benchmark.mjs heap columns, the");
-L.push("  zero-GC microscope). The headline is 'competitive throughput with dramatically lower");
-L.push("  GC pressure', not 'fastest dynamic-graph engine'.");
+L.push("  layered propagation -- the DEEP CHAIN / burst family). This report measures time");
+L.push("  only; for what the bench/benchmark.mjs microscope columns do and do not measure,");
+L.push("  see bench/README.md \"Reading the output\". The headline is not 'fastest");
+L.push("  dynamic-graph engine'.");
 L.push("");
 L.push("STANDING RULES (enforced by the harness, not by prose):");
 for (const line of RULE1[stamp.protocol]) L.push(line);
