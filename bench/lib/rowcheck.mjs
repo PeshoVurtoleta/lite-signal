@@ -17,7 +17,7 @@
 //             host, node, harness sha, engine sha, protocol, config and adapter across every
 //             file of every engine; extra.quick === the expected value (false for a
 //             publishable capture) and extra.captureId === the COMPLETE marker's captureId
-//             in every file.
+//             in every file; a marker captureId that does not match CAPTURE_ID_RE is refused.
 //
 // checkStamps' "config equal across engines" is a MIRROR rule: every mirror process echoes
 // the same LITE_CONFIG. Never call it on a microscope capture (benchmark.mjs / aggregate.mjs),

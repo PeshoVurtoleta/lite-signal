@@ -91,7 +91,7 @@ export function sentinelDrift(baselineTime, sentinelTime) {
 // once with that order and once with the first two terms swapped and keeps the better
 // whole schedule. Pooled ordered-pair balance follows from the pooled permutation counts.
 // Neither pooled balance nor zero self pairs is guaranteed for every (S, reps) (3 x 3 x 10:
-// spread 2, 1 self pair); for the sweep's 3 x 47 x 10 the A1 probe pins permutation counts
+// spread 2, 1 self pair); for the sweep's 3 x 47 x 10 test/135 pins permutation counts
 // 79/79/78/78/78/78, within-block pairs 156..158 and 0 self pairs.
 // Scenarios keep their list order within a wave and rotate between waves by
 // floor(wave*S/reps) slots, so each scenario visits spread-out positions of the wave; a

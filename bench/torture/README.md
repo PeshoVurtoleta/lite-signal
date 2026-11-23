@@ -10,7 +10,7 @@ The harness has one job: **tell the truth** about how a reactive library behaves
 
 Four constraints guide every line in the harness.
 
-**1. Observable work, always.** Every effect writes its current value into a shared `Float64Array(4096)` that lives on `globalThis`. After each timed loop, the entire sink is summed into `BENCH_SINK_SUM` and printed. If any effect failed to run -- for any reason, including optimizer aggression -- the sink slot stays zero and the run is tagged `sink=[ ]`. The check is non-zero only (`SINK[sinkSlot] !== 0`), not a comparison against an expected sum.
+**1. Observable work, always.** Every effect writes its current value into a shared `Float64Array(4096)` that lives on `globalThis`. The sink is zeroed before every timed run, and after each run every slot the scenario writes is checked EXACTLY against an independently computed value (`bench/lib/sink-oracle.mjs`). If any effect failed to run -- for any reason, including optimizer aggression -- its slot is stale or zero, the run is tagged `sink=[ ]`, prints `INVALID RUN` and exits 1. solid-js / BROADCAST is checked with an order-independent residue rule instead (`check=residue`).
 
 **2. Same drive sequence for everyone.** Each scenario exposes a single `drive(i)` function that performs *one* signal write. The outer loop calls `drive(i)` exactly `ITERATIONS` times for every library. Libraries cannot get faster by writing less.
 
@@ -46,14 +46,14 @@ sequenceDiagram
         H->>H: stop timer
         H->>V: record delta heap (not an allocation measurement)
         H->>V: forceGc() + record retained heap
-        H->>S: sum SINK -> BENCH_SINK_SUM
-        Note over H,S: if SINK[sinkSlot] == 0 -> run is invalid
+        H->>S: check every written slot vs sink-oracle.mjs
+        Note over H,S: any slot != expected -> run is invalid (residue rule: solid broadcast)
     end
 
     H->>H: report median +/- min, heapMed, heapP95, retained, sink=[x]/[ ]
 ```
 
-The `--expose-gc` flag is required so the harness can call `global.gc()` between runs. Without it, retained-heap measurements are noisy and delta heap conflates real allocation with GC scheduling artifacts.
+The `--expose-gc` flag is required so the harness can call `global.gc()` between runs. Turning it on does not make the per-run heap delta an allocation measurement: there is no GC at the end of a run, so once a run allocates more than the young generation the delta reads young-generation fill (those columns are withdrawn; see CHANGELOG "Fixed -- docs: microscope heap figures withdrawn").
 
 ---
 
@@ -81,8 +81,8 @@ graph LR
     end
 
     subgraph VALIDATE["after run"]
-        SUM["sum = sum SINK[i]"]
-        CHECK{"SINK[sinkSlot] != 0?"}
+        SUM["after EACH timed run (sink zeroed before it)"]
+        CHECK{"every written slot == oracle value?"}
     end
 
     D --> C1 --> C2 --> S0
@@ -100,10 +100,10 @@ Why these three properties, specifically:
 
 - **Typed array, not a plain JS array.** Float64Array writes go through a typed-element store IC that V8 cannot fold into a noop. With a plain `Array`, V8 can in some cases prove the write is dead and elide it.
 - **Lives on `globalThis`.** A local variable, even one closed over by the effect, can sometimes be proven unreachable. A global-rooted slot is always observable.
-- **Read by `summing(SINK)` *after* the timed loop, but tracked at the typed-array level by the validator.** The post-loop sum makes every individual write a load-bearing operation: change any single one of them and the sum is wrong.
+- **Read and compared *after* each timed run.** The exact per-slot check makes every individual write a load-bearing operation: change any single one of them and a slot is wrong.
 - **Indexed with bitwise mask, not modulo.** Sink-slot arithmetic uses `& (SINK_SIZE - 1)` rather than `% SINK_SIZE`. `SINK_SIZE` is a power of two specifically so this rewrite is legal; the mask compiles to a single bitwise instruction instead of an integer-division op, keeping the harness's own per-write overhead at floor.
 
-`BENCH_SINK_SUM` is printed once at the end for manual comparison only; the harness does not compare it. A run is rejected (INVALID RUN) only when a scenario's `SINK[sinkSlot]` is still 0 after its timed loop.
+`BENCH_SINK_SUM` (the sum of the whole sink) is still printed once at the end for manual reading only; nothing checks it. A run is rejected (INVALID RUN, exit 1) when, after any timed run, a slot the scenario writes differs from its expected value in `bench/lib/sink-oracle.mjs` (solid-js / BROADCAST: when it fails the residue rule `0 <= got - src < N` and `(got - src) mod 32 === slot`, which is weaker by design).
 
 ---
 
@@ -244,7 +244,7 @@ Field by field:
 - **heapMed** -- median over runs of the per-run heap growth (heapUsed + arrayBuffers), in kilobytes. Read at the end of the run with no closing GC (the baseline is read after a forced GC before the run), so once a run allocates more than the young generation the delta reads young-generation fill, not the run's allocation. It is NOT an allocation measurement; zero-GC is gated by `npm run test:torture`.
 - **heapP95** -- 95th percentile of the same per-run heap deltas, in kilobytes (the tail of the same gauge; same caveat).
 - **retained** -- post-run post-GC heap minus the pre-setup heap, floored at 0. The live graph and its pools are still held at that read, so it is > 0 on a correct run.
-- **sink** -- `[x]` if the scenario's `SINK[sinkSlot] !== 0`, `[ ]` if not. A `[ ]` sink invalidates the run entirely.
+- **sink** -- `[x]` if every timed run's sink slots matched the oracle exactly (the residue rule on a `check=residue` row), `[ ]` if not. A `[ ]` sink invalidates the run entirely.
 
 A row with `sink=[ ]` means the harness detected dead-code elimination or a missing effect run. **Don't trust the timing on any row that doesn't show `sink=[x]`.**
 
@@ -279,7 +279,7 @@ npm install                            # locks library versions
 node --expose-gc bench/benchmark.mjs   # ~3 minutes on commodity hardware
 ```
 
-Output goes to stdout in the format above. `--expose-gc` is mandatory; without it, `forceGc()` becomes a no-op and `heapMed`/`heapP95`/`retained` will be noisy.
+Output goes to stdout in the format above. `--expose-gc` is not needed for the sink check; it makes `forceGc()` real for the pre-run baseline and the `retained` read (without it the harness warns, the stamp says `gc=OFF` and `aggregate.mjs` refuses the rep). The `heapMed`/`heapP95` deltas are not an allocation measurement either way.
 
 The exact dependency versions used to produce any given [`results.txt`](./results.txt) are recorded by `package-lock.json` at that commit. To reproduce a specific historical measurement, check out the commit that produced it and run from a fresh `npm install`.
 
@@ -318,11 +318,11 @@ frameworks["your-library"] = {
 };
 ```
 
-The harness will call `drive(i)` for every `i in [0, ITERATIONS)`. The effect at the tip of every workload **must** write its observable value into `SINK[sinkSlot + offset]` so the post-run sum picks up the work. Any working implementation leaves a non-zero sink value and will report `sink=[x]`. **If an adapter forgets to write into `SINK`, the library will appear "fast" but the harness will flag `sink=[ ]` and the numbers are considered invalid** -- fast numbers without a passing (non-zero) sink check are the single most common way reactive benchmarks get gamed, accidentally or otherwise. The validator exists to catch this on the very first run.
+The harness will call `drive(i)` for every `i in [0, ITERATIONS)`. The effect at the tip of every workload **must** write its observable value into `SINK[sinkSlot + offset]` so the post-run check picks up the work. Any working implementation leaves exactly the oracle value and will report `sink=[x]`. **If an adapter forgets to write into `SINK`, the library will appear "fast" but the harness will flag `sink=[ ]` and the numbers are considered invalid** -- fast numbers without a passing (exact) sink check are the single most common way reactive benchmarks get gamed, accidentally or otherwise. The validator exists to catch this on the very first run.
 
 ### Synchronous propagation is the contract
 
-This harness measures **synchronous propagation throughput**: the time between `drive(i)` being called and the resulting effects writing into the sink. The drive loop runs synchronously to completion, then the harness reads the sink and checks that each scenario's sink slot is non-zero -- all on the same tick.
+This harness measures **synchronous propagation throughput**: the time between `drive(i)` being called and the resulting effects writing into the sink. The drive loop runs synchronously to completion, then the harness checks every sink slot the scenario writes against `bench/lib/sink-oracle.mjs` -- all on the same tick.
 
 A library whose effects are deferred to a microtask, an animation frame, or any other queue *will* break this measurement: the synchronous loop will finish, the timer will stop, and the validation will run before any effects have fired. The row will show an artificially small time AND `sink=[ ]`. Neither number is fair to the library.
 

@@ -15,7 +15,7 @@
 # refuses. COMPLETE (protocol, reps, engines, captureId; tmp + rename) is written LAST, only
 # when every process exited 0; report.mjs refuses a capture dir without it (D-b187-4).
 #
-# Every run generates a fresh CAPTURE_ID (UTC time + 8 random hex digits; an inherited
+# Every run generates a fresh CAPTURE_ID (UTC second + 8 random hex digits; an inherited
 # CAPTURE_ID is overridden) and exports it, so every mirror.mjs process stamps it; it is
 # written into COMPLETE, and report.mjs (lib/rowcheck.mjs) refuses a rep file whose stamp
 # carries another id (b251 M16).

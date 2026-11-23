@@ -6,17 +6,27 @@
 // guard is only worth having if it BLOCKS -- so every check here contributes to a
 // single verdict and the harness sets process.exitCode on failure.
 //
-// Four guard families:
-//   1. deadSink        -- an effect never re-ran in the timed loop (existing check).
+// Guard families:
+//   1. sink            -- an effect never re-ran in the timed loop. The microscope uses
+//                         checkSinkExact (every written slot equals the independent oracle
+//                         value of bench/lib/sink-oracle.mjs after EACH timed run) and, for
+//                         solid-js / broadcast only, checkSinkResidue (order-independent,
+//                         weaker by design, D-b250-2). checkDeadSink (finite and non-zero)
+//                         is the older, weaker check.
 //   2. counterAgreement -- on a DETERMINISTIC shape, every framework must report the
-//                          same work (edgesTraversed / nodesRecomputed). This is F6:
-//                          equal counters PROVE equal work, which is a stronger anti-DCE
-//                          than the sink -- it catches an engine that silently skips
-//                          propagation even while leaving a nonzero sink.
-//   3. checksum        -- fanBench-style: the accumulated checksum must match across
-//                          frameworks (Andrii prints checksum= on those rows).
-//   4. expected        -- pull/push shapes carry hard expected {sum, count}; a mismatch
-//                          is a correctness failure, not a slow row.
+//                          same work (edgesTraversed / nodesRecomputed) or result sum. This
+//                          is F6: equal counters PROVE equal work, which is a stronger
+//                          anti-DCE than the sink -- it catches an engine that silently
+//                          skips propagation even while leaving a nonzero sink. mirror.mjs
+//                          runs it across the engines of ONE process; across per-engine
+//                          processes lib/rowcheck.mjs repeats it over the rep files.
+//   3. checksum        -- fanBench-style: the accumulated checksum (kairo / fan / mol rows)
+//                         must match across frameworks (Andrii prints checksum= on those rows).
+//   4. expected        -- checkExpected compares a {sum, count} pair with a given vector. The
+//                         mirror does not use it (its dynamic rows are checked by
+//                         counterAgreement on edgesTraversed and sum); only _selftest calls it.
+//
+// Also here: resolveRun, the strict FW / ITERATIONS parser of benchmark.mjs (b250 M4 + M6).
 //
 // Plus an AGGREGATOR guard: refuse to merge rep files whose stamps are inconsistent
 // (mixed engine hashes, mixed protocols, mixed hosts) or missing. This is what makes

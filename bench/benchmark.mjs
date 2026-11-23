@@ -6,7 +6,8 @@
  *
  * 1. ANTI-DCE SINK
  * Each effect writes its current observable output to a Float64Array slot.
- * After the timed loop, we sum the entire sink and print it (BENCH_SINK_SUM).
+ * After each timed run every written slot is checked exactly against the sink oracle
+ * (bench/lib/sink-oracle.mjs); the sink sum (BENCH_SINK_SUM) is informational only.
  * This makes the work observable to V8's escape analysis and prevents
  * dead-code elimination.
  *
@@ -50,7 +51,7 @@ import * as solid from "solid-js/dist/solid.js";
 const WARMUP = 2;
 const RUNS = 5;
 // FW / ITERATIONS resolve here, before anything prints (b250 G1, M4 + M6). A refusal
-// (unknown / empty / duplicate FW key, ITERATIONS not a plain integer in [2, 2^30-1])
+// (unknown / empty / duplicate FW key, ITERATIONS not a plain integer in [257, 2^30-1], D-b250-1)
 // exits 2 with no #STAMP line, so a bad invocation never leaves a stamped capture.
 const RUN = resolveRun(process.env, ENGINE_KEYS);
 if (!RUN.ok) {
