@@ -1,0 +1,37 @@
+# ==== BENCH STAMP v1 (machine-generated -- do not hand-edit) ====
+# protocol    : isolated-per-engine  reps=5
+# ================================================================
+#STAMP {"kind":"bench-stamp/v1","date":"2026-11-23T00:00:00.000Z","protocol":"isolated-per-engine","reps":5,"node":"v22.0.0","arch":"arm64","platform":"darwin","cpu":"Fixture CPU","gcExposed":true,"enginePath":"file:///fixture/Signal.js","engineSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","harnessPath":"file:///fixture/benchmark.mjs","harnessSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","config":null,"extra":{"warmup":2,"iterations":20000}}
+Config: WARMUP=2  RUNS=5  ITERATIONS=20,000
+
+--------------------------------------------------------------------------------------------------
+KAIROS -- 1 source -> 1000 computeds -> 1 aggregating effect
+--------------------------------------------------------------------------------------------------
+alien-signals       median=    9.00ms min=    8.10ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+BROADCAST -- 1 source -> 1000 effects
+--------------------------------------------------------------------------------------------------
+alien-signals       median=   22.00ms min=   19.80ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DEEP CHAIN -- 256-deep computed chain -> 1 effect
+--------------------------------------------------------------------------------------------------
+alien-signals       median=    4.50ms min=    4.05ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+MUX -- 256 inputs -> 1 sum computed -> 1 effect
+--------------------------------------------------------------------------------------------------
+alien-signals       median=    8.00ms min=    7.20ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DYNAMIC DAG -- sqrt-layered, FAN=6 deps, read order flips each iter
+--------------------------------------------------------------------------------------------------
+alien-signals       median=   35.00ms min=   31.50ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+SELECTIVE DAG -- sqrt-layered, 4 candidates, 2 read per iter (set churn)
+--------------------------------------------------------------------------------------------------
+alien-signals       median=   17.00ms min=   15.30ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+Notes:

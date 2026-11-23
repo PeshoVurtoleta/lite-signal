@@ -23,6 +23,8 @@
 // F2 unrepeatable: the aggregator counts files and reads stamps; it cannot be told
 // "median of 10" when five files are present or when three were captured on a laptop.
 
+import { PROTOCOLS } from "./stamp.mjs";
+
 export function makeVerdict() {
     return { failures: [], ok: true };
 }
@@ -34,8 +36,89 @@ function fail(v, msg) {
 
 // --- per-row checks --------------------------------------------------------------
 
+// Fail closed: only a finite non-zero value passes. SINK is a Float64Array, so NaN is the
+// reachable non-number; NaN and +-Infinity fail here (b250 G1, M3).
 export function checkDeadSink(v, label, sinkValue) {
-    if (!(sinkValue !== 0)) fail(v, `DEAD SINK: ${label} finished with sink=0 (effect never re-ran; timing measures nothing)`);
+    if (!(Number.isFinite(sinkValue) && sinkValue !== 0)) fail(v, `DEAD SINK: ${label} finished with sink=${sinkValue} (effect never re-ran or wrote a non-finite value; timing measures nothing)`);
+}
+
+// Exact sink check against an independent oracle value (bench/lib/sink-oracle.mjs).
+// Passes only on a finite non-zero expected value AND got === expected (a NaN, 0 or
+// non-finite expected value fails closed: an oracle that cannot anchor the row is no
+// anchor). Called between timed runs, never inside one. Allocates only on failure: the
+// label is a caller-owned string built once per row, and the passing path touches only
+// its number arguments.
+export function checkSinkExact(v, label, got, expected) {
+    if (Number.isFinite(expected) && expected !== 0 && got === expected) return;
+    fail(v, `SINK MISMATCH: ${label} got=${got} expected=${expected} (stale, dead or wrong propagation in the timed run)`);
+}
+
+// Order-independent sink check (D-b250-2), used ONLY where the engine's effect re-run order
+// is not creation order (solid-js / broadcast: solid re-orders observers as computeds
+// re-track, so which effect of a residue class writes last varies run to run). Slot j of a
+// BROADCAST row passes iff d = got - src satisfies 0 <= d < n and d % 32 === j, i.e. the
+// slot holds src + k for SOME effect k of its residue class, written with the final source
+// value of THIS run (the sink is reset before each run). Weaker than checkSinkExact by
+// design; the failure text and the row output say so. Allocates only on failure.
+export function checkSinkResidue(v, label, got, src, slot, n) {
+    const d = got - src;
+    if (d >= 0 && d < n && d % 32 === slot) return;
+    fail(v, `SINK RESIDUE MISMATCH (residue check): ${label} got=${got} src=${src} slot=${slot} n=${n} (no effect k with k % 32 === slot, 0 <= k < n wrote src + k in the timed run)`);
+}
+
+// --- run resolution (FW / ITERATIONS; b250 G1, M4 + M6) --------------------------
+
+export const DEFAULT_ITERATIONS = 20000;
+// D-b250-1: MUX N + 1 (the only microscope scenario driving a modular index; the ruling text
+// says "largest scenario N + 1", which holds among modular-index scenarios -- kairos /
+// broadcast N = 1000 drive src.set(i) and need only >= 2). MUX drives sigs[i % N] = i with N = 256; at
+// ITERATIONS <= 256 every timed run re-writes the values warm-up already wrote, nothing
+// changes, the effect never re-runs and the loop measures nothing. benchmark.mjs refuses
+// (exit 2) at start-up if any scenario N >= ITERATIONS_MIN, so the two cannot drift silently.
+export const ITERATIONS_MIN = 257;
+const ITERATIONS_MAX = 0x3FFFFFFF;   // 2^30 - 1: the drive index stays a Smi on every V8 build
+const ITERATIONS_RE = /^[1-9][0-9]*$/;
+
+// env: a process.env-like object. engineKeys: the declared engine keys (frameworks.mjs).
+// Returns { ok: true, libs, protocol, iterations } or { ok: false, reason }.
+//   FW unset         -> every engine, PROTOCOLS.SMOKE (one shared process).
+//   FW = one key     -> that engine, PROTOCOLS.PER_ENGINE.
+//   FW = 2+ keys     -> those engines, PROTOCOLS.SMOKE.
+//   FW set to "", an empty token, an unknown key or a duplicate -> refusal.
+//   ITERATIONS unset -> DEFAULT_ITERATIONS; else a plain decimal integer in (D-b250-1: min 257)
+//   [ITERATIONS_MIN, ITERATIONS_MAX] (no sign, no leading zero, no "-0", no exponent).
+export function resolveRun(env, engineKeys) {
+    let libs;
+    let protocol;
+    const fw = env.FW;
+    if (fw === undefined) {
+        libs = engineKeys.slice();
+        protocol = PROTOCOLS.SMOKE;
+    } else {
+        if (typeof fw !== "string") return { ok: false, reason: "FW must be a string" };
+        const toks = fw.split(",").map((s) => s.trim());
+        libs = [];
+        for (const k of toks) {
+            if (k === "") return { ok: false, reason: `FW=${JSON.stringify(fw)} has an empty engine key` };
+            if (!engineKeys.includes(k)) return { ok: false, reason: `FW: unknown engine "${k}" (known: ${engineKeys.join(", ")})` };
+            if (libs.includes(k)) return { ok: false, reason: `FW: duplicate engine "${k}"` };
+            libs.push(k);
+        }
+        protocol = libs.length === 1 ? PROTOCOLS.PER_ENGINE : PROTOCOLS.SMOKE;
+    }
+    let iterations = DEFAULT_ITERATIONS;
+    const it = env.ITERATIONS;
+    if (it !== undefined) {
+        if (typeof it !== "string" || !ITERATIONS_RE.test(it)) {
+            return { ok: false, reason: `ITERATIONS=${JSON.stringify(it)} is not a plain positive decimal integer` };
+        }
+        const n = Number(it);
+        if (!(n >= ITERATIONS_MIN && n <= ITERATIONS_MAX)) {
+            return { ok: false, reason: `ITERATIONS=${it} is outside [${ITERATIONS_MIN}, ${ITERATIONS_MAX}]` };
+        }
+        iterations = n;
+    }
+    return { ok: true, libs, protocol, iterations };
 }
 
 // rows: [{ framework, value }] for ONE scenario. All must be equal (===) or within an

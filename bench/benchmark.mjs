@@ -32,8 +32,12 @@
 
 import {createRegistry} from "../Signal.js";
 import {median, summarizeSamples} from "./lib/stats.mjs";
-import {makeStamp, printStamp, PROTOCOLS} from "./lib/stamp.mjs";
+import {makeStamp, printStamp} from "./lib/stamp.mjs";
+import {makeVerdict, reportVerdict, checkSinkExact, checkSinkResidue, resolveRun, ITERATIONS_MIN} from "./lib/guards.mjs";
+import {expectedSink, sinkCheckMode, finalSource, RESIDUE_ROWS} from "./lib/sink-oracle.mjs";
 import {ENGINE_KEYS} from "./frameworks.mjs";
+import {writeSync} from "node:fs";
+const RESIDUE_ROWS_TEXT = RESIDUE_ROWS.join(", ");
 import * as alien from "alien-signals";
 import * as reflex from "reflex-quant";
 import * as preact from "@preact/signals-core";
@@ -45,7 +49,16 @@ import * as solid from "solid-js/dist/solid.js";
 // --- Config ------------------------------------------------------------------
 const WARMUP = 2;
 const RUNS = 5;
-const ITERATIONS = 20_000;//20000
+// FW / ITERATIONS resolve here, before anything prints (b250 G1, M4 + M6). A refusal
+// (unknown / empty / duplicate FW key, ITERATIONS not a plain integer in [2, 2^30-1])
+// exits 2 with no #STAMP line, so a bad invocation never leaves a stamped capture.
+const RUN = resolveRun(process.env, ENGINE_KEYS);
+if (!RUN.ok) {
+    writeSync(2, "REFUSING: " + RUN.reason + "\n");
+    process.exit(2);
+}
+const ITERATIONS = RUN.iterations;   // default 20000
+const SRC_FINAL = finalSource(ITERATIONS);   // the value the last drive(i) of a run writes
 const SINK_SIZE = 4096;
 
 // --- Anti-DCE sink (shared across all libs and benchmarks) -------------------
@@ -100,10 +113,25 @@ function fmtKB(n) {
 // The bench timer wraps the `drive` calls. `sinkOffset` is the start slot in
 // the shared sink array reserved for this benchmark instance.
 
+// Frozen lite registry configs (b250 G1, M4): ONE object per scenario, handed BY
+// REFERENCE to createRegistry in the lite adapters below and echoed by the stamp (the
+// single-reference rule in lib/stamp.mjs). The values are the adapters' former inline
+// literals evaluated at each scenario's N (SCENARIOS below); liteConfigDrift() re-derives
+// them from N at start-up and the run refuses (exit 2) on any difference.
+const LITE_CONFIGS = Object.freeze({
+    kairos: Object.freeze({maxNodes: 1000 + 64, prealloc: "eager", onCapacityExceeded: "grow"}),
+    broadcast: Object.freeze({maxNodes: 1000 + 16, prealloc: "eager", onCapacityExceeded: "grow"}),
+    deepChain: Object.freeze({maxNodes: 256 + 16, prealloc: "eager", onCapacityExceeded: "grow"}),
+    mux: Object.freeze({maxNodes: 256 + 16, prealloc: "eager", onCapacityExceeded: "grow"}),
+    // W = L = 31 at N = 960 (W = max(4, ceil(sqrt N)), L = max(2, ceil(N / W)))
+    dynamicDag: Object.freeze({maxNodes: 31 * 31 + 32, maxLinks: 31 * 31 * 6 * 2, prealloc: "eager", onCapacityExceeded: "grow"}),
+    selectiveDag: Object.freeze({maxNodes: 31 * 31 + 32, maxLinks: 31 * 31 * 4 * 2, prealloc: "eager", onCapacityExceeded: "grow"})
+});
+
 const ADAPTERS = {
     "lite-signal": {
         kairos(N, sinkSlot) {
-            const r = createRegistry({maxNodes: N + 64, prealloc: "eager", onCapacityExceeded: "grow"});
+            const r = createRegistry(LITE_CONFIGS.kairos);
             const src = r.signal(0);
             const cs = new Array(N);
             for (let i = 0; i < N; i++) cs[i] = r.computed(() => src() * (i + 1));
@@ -115,7 +143,7 @@ const ADAPTERS = {
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
         broadcast(N, sinkSlot) {
-            const r = createRegistry({maxNodes: N + 16, prealloc: "eager", onCapacityExceeded: "grow"});
+            const r = createRegistry(LITE_CONFIGS.broadcast);
             const src = r.signal(0);
             for (let i = 0; i < N; i++) {
                 const k = i;
@@ -124,7 +152,7 @@ const ADAPTERS = {
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
         deepChain(N, sinkSlot) {
-            const r = createRegistry({maxNodes: N + 16, prealloc: "eager", onCapacityExceeded: "grow"});
+            const r = createRegistry(LITE_CONFIGS.deepChain);
             const src = r.signal(0);
             let prev = src;
             for (let i = 0; i < N; i++) {
@@ -136,7 +164,7 @@ const ADAPTERS = {
             return {drive: (i) => src.set(i), teardown: () => r.destroy()};
         },
         mux(N, sinkSlot) {
-            const r = createRegistry({maxNodes: N + 16, prealloc: "eager", onCapacityExceeded: "grow"});
+            const r = createRegistry(LITE_CONFIGS.mux);
             const sigs = new Array(N);
             for (let i = 0; i < N; i++) sigs[i] = r.signal(0);
             const sum = r.computed(() => {
@@ -152,7 +180,7 @@ const ADAPTERS = {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
             const L = Math.max(2, Math.ceil(N / W));
             const FAN = 6;
-            const r = createRegistry({maxNodes: W * L + 32, maxLinks: W * L * FAN * 2, prealloc: "eager", onCapacityExceeded: "grow"});
+            const r = createRegistry(LITE_CONFIGS.dynamicDag);
             const src = r.signal(0);
             let prevLayer = [src];
             for (let layer = 0; layer < L; layer++) {
@@ -183,7 +211,7 @@ const ADAPTERS = {
             const W = Math.max(4, Math.ceil(Math.sqrt(N)));
             const L = Math.max(2, Math.ceil(N / W));
             const POOL = 4;   // 4 candidate deps per computed
-            const r = createRegistry({maxNodes: W * L + 32, maxLinks: W * L * POOL * 2, prealloc: "eager", onCapacityExceeded: "grow"});
+            const r = createRegistry(LITE_CONFIGS.selectiveDag);
             const src = r.signal(0);
             let prevLayer = [src];
             const PAIRS = [[0, 1], [0, 2], [1, 3], [2, 3]];
@@ -196,87 +224,6 @@ const ADAPTERS = {
                         const which = src() & 3;
                         const a = PAIRS[which][0], b = PAIRS[which][1];
                         return cand[a]() + cand[b]();
-                    }));
-                }
-                prevLayer = newLayer;
-            }
-            const tip = prevLayer;
-            r.effect(() => {
-                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
-                SINK[sinkSlot] = s;
-            });
-            return {drive: (i) => src.set(i), teardown: () => r.destroy()};
-        },
-        largeWebApp(N, sinkSlot) {
-            const LAYERS = 12;
-            const W = Math.max(4, Math.ceil(N / LAYERS));
-            const SOURCES = 4;
-            const r = createRegistry({maxNodes: W * LAYERS + SOURCES + 16, maxLinks: W * LAYERS * 4, prealloc: "eager", onCapacityExceeded: "grow"});
-            const sources = new Array(SOURCES);
-            for (let s = 0; s < SOURCES; s++) sources[s] = r.signal(0);
-            let prevLayer = sources;
-            for (let layer = 0; layer < LAYERS; layer++) {
-                const newLayer = [];
-                for (let w = 0; w < W; w++) {
-                    const a = prevLayer[(w * 7) % prevLayer.length];
-                    const b = prevLayer[(w * 11 + 3) % prevLayer.length];
-                    const c = prevLayer[(w * 13 + 5) % prevLayer.length];
-                    newLayer.push(r.computed(() => (sources[0]() & 1) ? (a() + b()) : (a() + c())));
-                }
-                prevLayer = newLayer;
-            }
-            const tip = prevLayer;
-            r.effect(() => {
-                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
-                SINK[sinkSlot] = s;
-            });
-            return {drive: (i) => sources[i % SOURCES].set(i), teardown: () => r.destroy()};
-        },
-        wideDense(N, sinkSlot) {
-            const LAYERS = 5;
-            const W = Math.max(4, Math.ceil(N / LAYERS));
-            const SOURCES = 25;
-            const FAN = 5;
-            const r = createRegistry({maxNodes: W * LAYERS + SOURCES + 16, maxLinks: W * LAYERS * FAN * 2, prealloc: "eager", onCapacityExceeded: "grow"});
-            const sources = new Array(SOURCES);
-            for (let s = 0; s < SOURCES; s++) sources[s] = r.signal(0);
-            let prevLayer = sources;
-            for (let layer = 0; layer < LAYERS; layer++) {
-                const newLayer = [];
-                for (let w = 0; w < W; w++) {
-                    const deps = new Array(FAN);
-                    for (let k = 0; k < FAN; k++) deps[k] = prevLayer[(w * (k * 2 + 3)) % prevLayer.length];
-                    newLayer.push(r.computed(() => deps[0]() + deps[1]() + deps[2]() + deps[3]() + deps[4]()));
-                }
-                prevLayer = newLayer;
-            }
-            const tip = prevLayer;
-            r.effect(() => {
-                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
-                SINK[sinkSlot] = s;
-            });
-            return {drive: (i) => sources[i % SOURCES].set(i), teardown: () => r.destroy()};
-        },
-        smallSelective(N, sinkSlot) {
-            const LAYERS = 6;
-            const W = Math.max(4, Math.ceil(N / LAYERS));
-            const POOL = 6;
-            const r = createRegistry({maxNodes: W * LAYERS + 16, maxLinks: W * LAYERS * POOL, prealloc: "eager", onCapacityExceeded: "grow"});
-            const src = r.signal(0);
-            let prevLayer = [src];
-            for (let layer = 0; layer < LAYERS; layer++) {
-                const newLayer = [];
-                for (let w = 0; w < W; w++) {
-                    const cand = new Array(POOL);
-                    for (let k = 0; k < POOL; k++) cand[k] = prevLayer[(w * 7 + k * 5) % prevLayer.length];
-                    newLayer.push(r.computed(() => {
-                        const m = src() & 7;
-                        let s = 0;
-                        if (m & 1) s += cand[0]();
-                        if (m & 2) s += cand[1]();
-                        if (m & 4) s += cand[2]();
-                        s += cand[3]();
-                        return s;
                     }));
                 }
                 prevLayer = newLayer;
@@ -384,84 +331,6 @@ const ADAPTERS = {
                         const which = src() & 3;
                         const a = PAIRS[which][0], b = PAIRS[which][1];
                         return cand[a]() + cand[b]();
-                    }));
-                }
-                prevLayer = newLayer;
-            }
-            const tip = prevLayer;
-            const dispose = alien.effect(() => {
-                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
-                SINK[sinkSlot] = s;
-            });
-            return {drive: (i) => src(i), teardown: () => dispose()};
-        },
-        largeWebApp(N, sinkSlot) {
-            const LAYERS = 12;
-            const W = Math.max(4, Math.ceil(N / LAYERS));
-            const SOURCES = 4;
-            const sources = new Array(SOURCES);
-            for (let s = 0; s < SOURCES; s++) sources[s] = alien.signal(0);
-            let prevLayer = sources;
-            for (let layer = 0; layer < LAYERS; layer++) {
-                const newLayer = [];
-                for (let w = 0; w < W; w++) {
-                    const a = prevLayer[(w * 7) % prevLayer.length];
-                    const b = prevLayer[(w * 11 + 3) % prevLayer.length];
-                    const c = prevLayer[(w * 13 + 5) % prevLayer.length];
-                    newLayer.push(alien.computed(() => (sources[0]() & 1) ? (a() + b()) : (a() + c())));
-                }
-                prevLayer = newLayer;
-            }
-            const tip = prevLayer;
-            const dispose = alien.effect(() => {
-                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
-                SINK[sinkSlot] = s;
-            });
-            return {drive: (i) => sources[i % SOURCES](i), teardown: () => dispose()};
-        },
-        wideDense(N, sinkSlot) {
-            const LAYERS = 5;
-            const W = Math.max(4, Math.ceil(N / LAYERS));
-            const SOURCES = 25;
-            const FAN = 5;
-            const sources = new Array(SOURCES);
-            for (let s = 0; s < SOURCES; s++) sources[s] = alien.signal(0);
-            let prevLayer = sources;
-            for (let layer = 0; layer < LAYERS; layer++) {
-                const newLayer = [];
-                for (let w = 0; w < W; w++) {
-                    const deps = new Array(FAN);
-                    for (let k = 0; k < FAN; k++) deps[k] = prevLayer[(w * (k * 2 + 3)) % prevLayer.length];
-                    newLayer.push(alien.computed(() => deps[0]() + deps[1]() + deps[2]() + deps[3]() + deps[4]()));
-                }
-                prevLayer = newLayer;
-            }
-            const tip = prevLayer;
-            const dispose = alien.effect(() => {
-                let s = 0; for (let i = 0; i < tip.length; i++) s += tip[i]();
-                SINK[sinkSlot] = s;
-            });
-            return {drive: (i) => sources[i % SOURCES](i), teardown: () => dispose()};
-        },
-        smallSelective(N, sinkSlot) {
-            const LAYERS = 6;
-            const W = Math.max(4, Math.ceil(N / LAYERS));
-            const POOL = 6;
-            const src = alien.signal(0);
-            let prevLayer = [src];
-            for (let layer = 0; layer < LAYERS; layer++) {
-                const newLayer = [];
-                for (let w = 0; w < W; w++) {
-                    const cand = new Array(POOL);
-                    for (let k = 0; k < POOL; k++) cand[k] = prevLayer[(w * 7 + k * 5) % prevLayer.length];
-                    newLayer.push(alien.computed(() => {
-                        const m = src() & 7;
-                        let s = 0;
-                        if (m & 1) s += cand[0]();
-                        if (m & 2) s += cand[1]();
-                        if (m & 4) s += cand[2]();
-                        s += cand[3]();
-                        return s;
                     }));
                 }
                 prevLayer = newLayer;
@@ -852,8 +721,8 @@ const SCENARIOS = [
     // produced a shape name that carried three different verdicts across the repo's
     // tables (results.txt -8%, resultsReactive +16.9%, Andrii log -24%). The real shapes
     // now run in bench/mirror.mjs under their real names, with counters and expected-value
-    // verification. One shape name = one definition, repo-wide. The dead adapter methods
-    // for these three keys remain below unused and can be deleted at leisure.
+    // verification. One shape name = one definition, repo-wide. Their dead lite / alien
+    // adapter methods were deleted in b250 (G1, M19).
 ];
 
 // Engine list comes from frameworks.mjs (the single source of truth). Assert every
@@ -862,19 +731,59 @@ const SCENARIOS = [
 const ALL_LIBS = ENGINE_KEYS;
 for (const k of ALL_LIBS) if (!ADAPTERS[k]) throw new Error(`frameworks.mjs declares engine "${k}" but benchmark.mjs ADAPTERS has no implementation for it`);
 
+// LITE_CONFIGS drift check (cold, before the stamp): re-derive each config from the
+// scenario's N with the adapters' former formulas; any difference refuses the run.
+function liteConfigDrift() {
+    const want = (maxNodes, maxLinks) => maxLinks === undefined
+        ? {maxNodes, prealloc: "eager", onCapacityExceeded: "grow"}
+        : {maxNodes, maxLinks, prealloc: "eager", onCapacityExceeded: "grow"};
+    const keys = Object.keys(LITE_CONFIGS);
+    if (keys.length !== SCENARIOS.length) return "LITE_CONFIGS has " + keys.length + " entries for " + SCENARIOS.length + " scenarios";
+    for (const sc of SCENARIOS) {
+        const N = sc.N;
+        const W = Math.max(4, Math.ceil(Math.sqrt(N)));
+        const L = Math.max(2, Math.ceil(N / W));
+        const w = sc.key === "kairos" ? want(N + 64)
+            : sc.key === "dynamicDag" ? want(W * L + 32, W * L * 6 * 2)
+            : sc.key === "selectiveDag" ? want(W * L + 32, W * L * 4 * 2)
+            : want(N + 16);
+        const got = LITE_CONFIGS[sc.key];
+        if (!got || !Object.isFrozen(got) || JSON.stringify(got) !== JSON.stringify(w)) {
+            return "LITE_CONFIGS." + sc.key + " = " + JSON.stringify(got) + " drifted from " + JSON.stringify(w);
+        }
+    }
+    return null;
+}
+// D-b250-1: MUX is the one scenario that drives a modular index (sigs[i % N] = i); its N
+// reaching ITERATIONS_MIN would re-open the dead timed loop. The other scenarios drive
+// src.set(i), which changes the source on every run once ITERATIONS >= 2.
+const MUX_SC = SCENARIOS.find((sc) => sc.key === "mux");
+if (!MUX_SC || !(MUX_SC.N < ITERATIONS_MIN)) {
+    writeSync(2, "REFUSING: mux N=" + (MUX_SC && MUX_SC.N) + " is not below ITERATIONS_MIN=" + ITERATIONS_MIN + " (lib/guards.mjs)\n");
+    process.exit(2);
+}
+const CONFIG_DRIFT = liteConfigDrift();
+if (CONFIG_DRIFT !== null) {
+    writeSync(2, "REFUSING: " + CONFIG_DRIFT + "\n");
+    process.exit(2);
+}
+
 
 // FW filter: run ONE engine per cold process to avoid cross-engine inline-cache
 // pollution. Each engine has its own ReactiveNode/signal shape; running several
 // through the shared drive()/set() call sites in one process degrades their ICs
 // monomorphic -> megamorphic, so engines later in the list measure slow.
-// Usage:  FW=140 node --expose-gc bench/benchmark.mjs > run-140.txt
+// Usage:  FW=lite-signal node --expose-gc bench/benchmark.mjs > run-lite.txt
 //         (repeat per engine, then assemble the table from the per-process files)
-const LIBS = process.env.FW
-    ? process.env.FW.split(",").map((s) => s.trim()).filter((s) => ALL_LIBS.includes(s))
-    : ALL_LIBS;
+// Resolved by resolveRun at the top: one FW key = isolated-per-engine; FW unset or 2+
+// keys = shared-process-smoke (never publishable; aggregate refuses it).
+const LIBS = RUN.libs;
 
 // --- Runner ------------------------------------------------------------------
-function runOne(lib, scenarioKey, N, sinkSlot) {
+// expected: [[offset, value], ...] from expectedSink; labels: one prebuilt string per
+// pair. Both are built before the timed runs; the checks run between runs only.
+// residue: true only for sinkCheckMode(...) === "residue" rows (D-b250-2).
+function runOne(lib, scenarioKey, N, sinkSlot, verdict, expected, labels, residue) {
     const adapter = ADAPTERS[lib][scenarioKey];
     if (!adapter) return null; // Lib doesn't implement this scenario -- caller prints "n/a".
     // Pre-setup baseline, read after a forced GC and BEFORE the adapter builds the graph:
@@ -894,12 +803,17 @@ function runOne(lib, scenarioKey, N, sinkSlot) {
         const samples = [];
         const heapDeltas = [];
         for (let r = 0; r < RUNS; r++) {
+            resetSink();   // M3: only a value written by THIS timed run can pass the check below
             forceGC();
             const heapBefore = heapKB();
             const t0 = performance.now();
             for (let i = 0; i < ITERATIONS; i++) drive(i);
             samples.push(performance.now() - t0);
-            heapDeltas.push(heapKB() - heapBefore);   // transient alloc for THIS run
+            heapDeltas.push(heapKB() - heapBefore);   // heapUsed delta, no closing GC (not an allocation measurement)
+            for (let e = 0; e < expected.length; e++) {
+                if (residue) checkSinkResidue(verdict, labels[e], SINK[sinkSlot + expected[e][0]], SRC_FINAL, expected[e][0], N);
+                else checkSinkExact(verdict, labels[e], SINK[sinkSlot + expected[e][0]], expected[e][1]);
+            }
         }
         forceGC();
         // retained = post-run post-GC heap minus the pre-setup heap, floored at 0: the live
@@ -916,15 +830,16 @@ function pad(s, n) {
     return s + " ".repeat(Math.max(0, n - s.length));
 }
 
-// Machine stamp (Session 1): the microscope's job is lite at its RECOMMENDED production
-// config -- eager prealloc, right-sized pools, default flush. That config lives in the
-// per-scenario adapters above; the stamp records mode + host + engine sha so this table
-// is never confused with the mirror's (which runs Andrii's lazy config).
+// Machine stamp (Session 1; b250 G1 M4): the microscope's job is lite at its RECOMMENDED
+// production config -- eager prealloc, right-sized pools, default flush. The stamp echoes
+// the frozen LITE_CONFIGS table the lite adapters hand to createRegistry (null when lite is
+// not in this run) and the protocol resolveRun derived from FW, so this table is never
+// confused with the mirror's (which runs Andrii's lazy config).
 printStamp(makeStamp({
     enginePath: new URL("../Signal.js", import.meta.url).href,
     harnessPath: import.meta.url,
-    config: {mode: "microscope: eager, per-scenario right-sized pools, default flush"},
-    protocol: process.env.FW ? PROTOCOLS.PER_ENGINE : PROTOCOLS.PER_ENGINE,
+    config: LIBS.includes("lite-signal") ? LITE_CONFIGS : null,
+    protocol: RUN.protocol,
     reps: RUNS,
     extra: {warmup: WARMUP, iterations: ITERATIONS},
 }));
@@ -933,27 +848,29 @@ if (!hasGC) console.log("!  Run with --expose-gc for accurate heap numbers.");
 console.log("");
 
 let sinkSlot = 0;
-const deadSinks = [];   // lib/scenario pairs whose effects never ran -- see the guard below
+const verdict = makeVerdict();   // every sink mismatch lands here -- see the guard below
 for (const sc of SCENARIOS) {
+    const expected = expectedSink(sc.key, sc.N, ITERATIONS);
     console.log("-".repeat(98));
     console.log(sc.title);
     console.log("-".repeat(98));
     for (const lib of LIBS) {
         resetSink();
-        const result = runOne(lib, sc.key, sc.N, sinkSlot);
+        const residue = sinkCheckMode(lib, sc.key) === "residue";
+        const labels = expected.map((p) => `${lib} / ${sc.key} sink[+${p[0]}]` + (residue ? " (residue check)" : ""));
+        const failsBefore = verdict.failures.length;
+        const result = runOne(lib, sc.key, sc.N, sinkSlot, verdict, expected, labels, residue);
         if (result === null) {
             console.log(pad(lib, 20) + "(not implemented for this scenario)");
             continue;
         }
         const {samples, heapDeltas, retained} = result;
         const {min, median: median_, ops} = statSummary(samples);
-        // SINK sanity: must be non-zero if effects ran with non-zero iteration values.
-        // Every scenario drives its source with i > 0, so a correct run ALWAYS leaves a
-        // non-zero value here. A zero means the effect never re-ran during the timed loop
-        // and the timing is measuring nothing -- see the INVALID RUN guard at the bottom.
-        const sinkValue = SINK[sinkSlot];
-        const sinkOk = sinkValue !== 0 ? "[x]" : "[ ]";
-        if (sinkValue === 0) deadSinks.push(`${lib} / ${sc.key}`);
+        // SINK check (b250 G1, M3): the sink is reset before EVERY timed run and every slot
+        // the scenario writes is checked exactly against bench/lib/sink-oracle.mjs after it.
+        // [x] = all RUNS exact; [ ] = at least one stale, dead or wrong value (INVALID RUN).
+        // check=residue rows (D-b250-2, solid / broadcast) pass on the residue rule instead.
+        const sinkOk = verdict.failures.length === failsBefore ? "[x]" : "[ ]";
         const heapMed = median(heapDeltas);
         const heapP95 = summarizeSamples(heapDeltas).p95;
         console.log(
@@ -964,6 +881,7 @@ for (const sc of SCENARIOS) {
             " heapMed=" + pad(fmtKB(heapMed), 9) +
             " heapP95=" + pad(fmtKB(heapP95), 9) +
             " retained=" + pad(fmtKB(retained), 9) +
+            (residue ? " check=residue" : "") +
             " sink=" + sinkOk
         );
         sinkSlot = (sinkSlot + 64) & (SINK_SIZE - 1);
@@ -972,9 +890,11 @@ for (const sc of SCENARIOS) {
 }
 
 console.log("Notes:");
-console.log("  heapMed = MEDIAN transient heap per timed run, GC-fenced each run (raw alloc pressure)");
-console.log("  heapP95 = 95th-pctile of the same per-run deltas (tail alloc); no more single-smear average (F9)");
+console.log("  heapMed = median per-timed-run heapUsed(+arrayBuffers) delta, GC before the run, no closing GC; not an allocation measurement");
+console.log("  heapP95 = 95th-pctile of the same per-run deltas; not an allocation measurement");
 console.log("  retained = post-run post-GC heap minus the pre-setup heap, floored at 0 (live graph + pools)");
+console.log("  sink [x] = every written slot exact vs bench/lib/sink-oracle.mjs after EACH timed run; check=residue rows");
+console.log("    (" + RESIDUE_ROWS_TEXT + ") pass when slot j holds src + k for some k % 32 === j (effect order varies)");
 console.log("  retained is > 0 on a correct run: the graph and its pools are still live at that read.");
 console.log("  BENCH_SINK_SUM (anti-DCE):", sinkSum().toFixed(2));
 
@@ -993,13 +913,10 @@ console.log("  BENCH_SINK_SUM (anti-DCE):", sinkSum().toFixed(2));
 // through `r.batch(...)` or call `r.flush()` per iteration, or its effects never
 // deliver. The reference libraries (alien/preact/solid) all deliver eagerly, so
 // eager is the only apples-to-apples mode for THIS harness.
-if (deadSinks.length > 0) {
-    console.log("");
-    console.log("!".repeat(98));
-    console.log("INVALID RUN -- " + deadSinks.length + " scenario(s) finished with a DEAD SINK (sink=[ ]).");
-    console.log("The effect never re-ran during the timed loop; these timings measure nothing.");
-    for (const d of deadSinks) console.log("    ! " + d);
-    console.log("Do NOT publish these numbers. See the VALIDITY GUARD note in bench/benchmark.mjs.");
-    console.log("!".repeat(98));
-    process.exitCode = 1;
-}
+//
+// b250 (G1, M3): the old check (slot 0 !== 0, read once after all runs) passed a no-op
+// drive() on BROADCAST / DEEP CHAIN (their creation run had already written the slot) and
+// any stall after warm-up. Now the sink is reset before each timed run and every written
+// slot is checked exactly against an independent oracle; any mismatch prints INVALID RUN
+// and exits 1 (lib/guards.mjs reportVerdict).
+reportVerdict(verdict);

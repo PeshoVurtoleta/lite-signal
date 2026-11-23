@@ -1,0 +1,12 @@
+{
+  "_cut": "cd test/fixtures/g1-aggregate && node <frozen 252942e bench_aggregate-9bf7c2a4.mjs, copied beside frameworks.mjs + lib/> --reps 3 ; medians re-derived by hand from the rep files",
+  "columns": ["@zakkster/lite-signal", "alien-signals"],
+  "rows": {
+    "KAIROS": ["11.00ms", "11.50ms"],
+    "BROADCAST": ["20.50ms", "21.00ms"],
+    "DEEP CHAIN": ["6.00ms", "4.25ms"],
+    "MUX": ["8.25ms", "9.00ms"],
+    "DYNAMIC DAG": ["40.00ms", "36.00ms"],
+    "SELECTIVE DAG": ["14.00ms", "17.00ms"]
+  }
+}

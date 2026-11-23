@@ -1,0 +1,37 @@
+# ==== BENCH STAMP v1 (machine-generated -- do not hand-edit) ====
+# protocol    : isolated-per-engine  reps=5
+# ================================================================
+#STAMP {"kind":"bench-stamp/v1","date":"2026-11-23T00:00:00.000Z","protocol":"isolated-per-engine","reps":5,"node":"v22.0.0","arch":"arm64","platform":"darwin","cpu":"Fixture CPU","gcExposed":true,"enginePath":"file:///fixture/Signal.js","engineSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","harnessPath":"file:///fixture/benchmark.mjs","harnessSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","config":{"mode":"fixture"},"extra":{"warmup":2,"iterations":20000}}
+Config: WARMUP=2  RUNS=5  ITERATIONS=20,000
+
+--------------------------------------------------------------------------------------------------
+KAIROS -- 1 source -> 1000 computeds -> 1 aggregating effect
+--------------------------------------------------------------------------------------------------
+lite-signal         median=   12.00ms min=   10.80ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+BROADCAST -- 1 source -> 1000 effects
+--------------------------------------------------------------------------------------------------
+lite-signal         median=   19.50ms min=   17.55ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DEEP CHAIN -- 256-deep computed chain -> 1 effect
+--------------------------------------------------------------------------------------------------
+lite-signal         median=    7.00ms min=    6.30ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+MUX -- 256 inputs -> 1 sum computed -> 1 effect
+--------------------------------------------------------------------------------------------------
+lite-signal         median=    8.75ms min=    7.88ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+DYNAMIC DAG -- sqrt-layered, FAN=6 deps, read order flips each iter
+--------------------------------------------------------------------------------------------------
+lite-signal         median=   41.00ms min=   36.90ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+--------------------------------------------------------------------------------------------------
+SELECTIVE DAG -- sqrt-layered, 4 candidates, 2 read per iter (set churn)
+--------------------------------------------------------------------------------------------------
+lite-signal         median=   14.00ms min=   12.60ms ops/s=1800K  heapMed= 12.5KB   heapP95= 14.0KB   retained= 100.0KB  sink=[x]
+
+Notes:
