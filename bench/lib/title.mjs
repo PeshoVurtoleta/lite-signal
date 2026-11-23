@@ -1,8 +1,8 @@
 // bench/lib/title.mjs -- port of src perfLogging.makeTitle + benchMetadata, so the
 // mirror emits the SAME test-title string Andrii's log uses. His test column is
 //   `${makeTitle(config)} (${config.name})`  truncated to 60 chars.
-// Emitting the raw config.name instead is why the first join matched 0 rows; this fixes
-// the join key to be byte-identical to his.
+// Emitting the raw config.name instead is why the first join matched 0 rows. The mirror
+// emits the title UNtruncated, so the two sides agree only on joinKey() below.
 
 function percent(n) { return Math.round(n * 100) + "%"; }
 
@@ -26,11 +26,19 @@ export function makeTitle(config) {
     return `${dagShape}${graphLabel}${sources}${dyn}${read}${execMode}${burst}${warmup}${sinkMode}`;
 }
 
-// The full test column as his log writes it (title + name in parens), untruncated.
-// The 60-char truncation is applied at emit time by the padder, exactly as his
-// columnWidth.test = 60 does.
+// The full test column (title + name in parens), untruncated. His log cuts this column at
+// columnWidth.test = 60 chars and pads it; the mirror's pad() pads but NEVER truncates,
+// so a local row carries the full string (7 of the 47 titles are longer than 60).
 export function testColumn(config) {
     return `${makeTitle(config)} (${config.name || ""})`;
+}
+
+// The join key both sides reduce to: the first 60 chars (his column width), trailing
+// spaces trimmed (his CSV cell is trimmed, and a cut can end on a space). Joining on the
+// raw title silently dropped every long row; two titles that share a key cannot be told
+// apart in his log, so a caller must refuse a key collision, never pick one.
+export function joinKey(s) {
+    return s.slice(0, 60).trimEnd();
 }
 
 function estimateNodes(config) {

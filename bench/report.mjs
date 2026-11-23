@@ -11,11 +11,17 @@
 // counters; the counter join is bench/vs-andrii.mjs). The protocol prose comes from the
 // stamp, so a per-engine capture is never described as per-row. It refuses (exit 1) a
 // dir without the COMPLETE marker the writers leave on exit 0, a marker that disagrees
-// with the stamps or the files, and unequal rep counts across engines (D-b187-4).
+// with the stamps or the files, and unequal rep counts across engines (D-b187-4), and any
+// capture lib/rowcheck.mjs refuses (b251 M7 / M16): fewer than 2 engines, a counter that
+// differs across one engine's reps, edgesTraversed / sum / checksum that differ across
+// engines, a missing token, a zero sum / checksum, or stamps that disagree across engines
+// (host, node, harness / engine sha, protocol, config, adapter), quick=true, or a captureId
+// other than the COMPLETE marker's. A report that passes prints VALIDATED in its header.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { collectEngine, loadRepFiles } from "./lib/collect.mjs";
+import { checkCapture } from "./lib/rowcheck.mjs";
 
 const RUN_DIR = process.argv[2] || join(new URL(".", import.meta.url).pathname, "mirror-runs");
 const ANDRII = process.argv[3] || null;
@@ -93,6 +99,14 @@ if (!hardFail) {
 if (!hardFail && stamp && !Object.hasOwn(PROTOCOL_PROSE, stamp.protocol)) {
     hardFail = `unknown protocol "${stamp.protocol}" in the stamp -- no description of how these rows were measured`;
 }
+// cross-file row + cross-engine stamp check (b251): the in-process guards compare nothing
+// when each process ran one engine, so the capture is re-checked from the files on disk
+let validated = null;
+if (!hardFail) {
+    const rc = checkCapture(RUN_DIR, engines, marker, { quick: false });
+    if (rc.ok) validated = rc;
+    else hardFail = "rowcheck: " + rc.reason;
+}
 
 if (hardFail) {
     console.error("REFUSING to generate a report: " + hardFail);
@@ -107,15 +121,17 @@ const RULE1 = {
         "  1. Built only from a dir with the COMPLETE marker sweep.mjs writes on a clean exit 0:",
         "     every child returned a stamp and a row within SWEEP_TIMEOUT_MS, exited 0 and printed no",
         "     #GUARD line, each engine's stamps agree (engine sha, protocol, host) over REPS",
-        "     files, and the sentinel re-measure stayed within DRIFT_TOL. The mirror's counter /",
-        "     checksum agreement guards compare engines inside ONE process, so with one engine",
-        "     per child they check nothing here.",
+        "     files, the rows passed lib/rowcheck.mjs, and the sentinel re-measure stayed within",
+        "     DRIFT_TOL. The mirror's in-process counter / checksum guards compare engines inside",
+        "     ONE process, so with one engine per child they check nothing; rowcheck compares the",
+        "     rep files across engines instead.",
     ],
     "isolated-per-engine": [
         "  1. Built only from a dir with the COMPLETE marker run-all-mirror.sh writes after every",
-        "     FW=<engine> mirror.mjs process exited 0. No sentinel ran, and the mirror's counter /",
-        "     checksum agreement guards compare engines inside ONE process, so with one engine",
-        "     per process they check nothing here.",
+        "     FW=<engine> mirror.mjs process exited 0. No sentinel ran. The mirror's in-process",
+        "     counter / checksum guards compare engines inside ONE process, so with one engine",
+        "     per process they check nothing; lib/rowcheck.mjs compares the rep files across",
+        "     engines instead.",
     ],
 };
 const now = new Date().toISOString();
@@ -131,6 +147,7 @@ if (stamp) {
     L.push(`Adapter  : ${JSON.stringify(stamp.config)}  teardown=${stamp.extra?.adapter ?? "(not stamped)"}`);
     L.push(`Generated: ${now}`);
 }
+L.push(`VALIDATED: ${validated.rows} rows, ${validated.cells} of ${validated.cellsTotal} engine cells (${validated.engines} engines), ${validated.files} rep files, capture ${marker.captureId} (bench/lib/rowcheck.mjs)`);
 L.push("");
 if (stamp) for (const line of PROTOCOL_PROSE[stamp.protocol]) L.push(line);
 L.push("This file checks no counters against Andrii's log, and neither mirror.mjs --self-verify");
@@ -208,7 +225,12 @@ L.push("");
 L.push("STANDING RULES (enforced by the harness, not by prose):");
 for (const line of RULE1[stamp.protocol]) L.push(line);
 L.push("     report.mjs itself checked: the marker (protocol, reps, engines vs the files), one");
-L.push("     engine sha / protocol / host per engine, and equal rep counts across engines.");
+L.push("     engine sha / protocol / host per engine, equal rep counts across engines, and every");
+L.push("     row in every rep file. lib/rowcheck.mjs checked: every counter equal across each");
+L.push("     engine's reps; edgesTraversed, sum and checksum equal across engines; no required");
+L.push("     token missing and no zero sum / checksum; every row on >= 2 engines; one host, node,");
+L.push("     harness sha, engine sha, protocol, config and adapter across all stamps; quick=false");
+L.push("     and the COMPLETE marker's captureId in every stamp.");
 L.push("  2. The mirror is a port of Andrii's suite, not a copy; a counter divergence for");
 L.push("     identical engine bytes is a harness bug (run mirror.mjs --self-verify). Shape");
 L.push("     edits only by re-porting.");

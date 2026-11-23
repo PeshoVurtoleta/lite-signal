@@ -1,9 +1,12 @@
 // bench/lib/mirror-config.mjs -- Andrii's dynamic perfTests, ported from his src config.ts
 // (a port, not a copy). These are the "dynamic" suite rows; kairo/fan/mol/S live in the
-// harness alongside. Correctness is verified by CROSS-ENGINE AGREEMENT in mirror.mjs
-// (lite and alien must produce the same result sum + counters on each shape), not by
-// hand-transcribed `expected` vectors -- his config.ts vectors proved stale against his
-// own current log, so the mirror checks engines against each other instead.
+// harness alongside. Upstream (12f169b) validates every dynamic row in-process against a
+// library-independent reference: dynamicBench.ts:54 fills a missing expected sum from
+// expectedGraphSum(config) (util/referenceGraph.ts). The mirror does not port that reference;
+// its dynamic rows are checked by CROSS-ENGINE AGREEMENT instead (mirror.mjs: engines in one
+// process must report the same edgesTraversed and result sum; every row prints sum= so a
+// capture can be compared across per-engine processes), plus the counter match against the
+// document (mirror.mjs --self-verify).
 //
 // Grouped exactly as his config.ts comments group them, so the port is auditable
 // against the source side-by-side.

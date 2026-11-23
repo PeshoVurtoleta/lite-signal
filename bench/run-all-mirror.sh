@@ -12,8 +12,13 @@
 # mix old and new reps). Each process writes <engine>-rep<k>.txt.partial, renamed to .txt
 # only when it exits 0; a mirror process that exits non-zero (a guard fired) stops the run
 # (set -e) and its rep is left as .txt.partial, which report.mjs ignores and the next run
-# refuses. COMPLETE (protocol, reps, engines; tmp + rename) is written LAST, only when every
-# process exited 0; report.mjs refuses a capture dir without it (D-b187-4).
+# refuses. COMPLETE (protocol, reps, engines, captureId; tmp + rename) is written LAST, only
+# when every process exited 0; report.mjs refuses a capture dir without it (D-b187-4).
+#
+# Every run generates a fresh CAPTURE_ID (UTC time + 8 random hex digits; an inherited
+# CAPTURE_ID is overridden) and exports it, so every mirror.mjs process stamps it; it is
+# written into COMPLETE, and report.mjs (lib/rowcheck.mjs) refuses a rep file whose stamp
+# carries another id (b251 M16).
 #
 #   REPS=10 bash bench/run-all-mirror.sh
 set -e
@@ -42,6 +47,14 @@ if [ -e mirror-runs/COMPLETE ]; then
 fi
 mkdir -p mirror-runs
 
+# format: bench/lib/rowcheck.mjs CAPTURE_ID_RE (the one definition; this regex is a copy)
+CAPTURE_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
+if ! [[ "$CAPTURE_ID" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$ ]]; then
+  echo "run-all-mirror: could not generate a capture id (got '$CAPTURE_ID')" >&2
+  exit 2
+fi
+export CAPTURE_ID
+
 # scheduleLines(engines, reps) -> lines "engine rep", round-robin with rotated waves.
 SCHEDULE=$(REPS="$REPS" node --input-type=module -e '
   import { scheduleLines } from "./lib/schedule.mjs";
@@ -50,7 +63,7 @@ SCHEDULE=$(REPS="$REPS" node --input-type=module -e '
   console.log(scheduleLines(engines, reps).join("\n"));
 ' $ENGINES)
 
-echo "mirror: $(echo "$ENGINES" | wc -w | tr -d ' ') engine(s) x $REPS rep(s), round-robin, one cold process each"
+echo "mirror: $(echo "$ENGINES" | wc -w | tr -d ' ') engine(s) x $REPS rep(s), round-robin, one cold process each, capture $CAPTURE_ID"
 while read -r eng rep; do
   [ -z "$eng" ] && continue
   echo "=== $eng (rep $rep) ==="
@@ -60,8 +73,8 @@ done <<< "$SCHEDULE"
 
 # Completion marker, LAST, only reached when every process exited 0 (set -e).
 ENG_JSON=$(printf '"%s",' $ENGINES)
-printf '{"kind":"bench-capture-complete/v1","writer":"run-all-mirror.sh","protocol":"isolated-per-engine","reps":%s,"engines":[%s]}\n' \
-  "$REPS" "${ENG_JSON%,}" > mirror-runs/COMPLETE.tmp
+printf '{"kind":"bench-capture-complete/v1","writer":"run-all-mirror.sh","protocol":"isolated-per-engine","reps":%s,"engines":[%s],"captureId":"%s"}\n' \
+  "$REPS" "${ENG_JSON%,}" "$CAPTURE_ID" > mirror-runs/COMPLETE.tmp
 mv mirror-runs/COMPLETE.tmp mirror-runs/COMPLETE
 
 echo "Done. Per-engine files + COMPLETE in bench/mirror-runs/. Report with: node bench/report.mjs"

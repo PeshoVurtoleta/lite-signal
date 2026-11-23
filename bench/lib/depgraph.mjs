@@ -243,7 +243,10 @@ export function makeGraph(framework, config, counter) {
 // at fb10dd9: push = one withBatch(writeBatch) per iteration under the leaf effects; mixed
 // per-update = one withBatch(write) per write, leaves read OUTSIDE it; every other row = one
 // withBatch(writeBatch) per iteration, mixed per-batch reading the leaves after it; then a
-// final read() outside any batch. One difference: his push effects are created inside
+// final read() outside any batch. Push effects are attached ONCE per graph: the first
+// runGraph() on a graph (the warm-up, when the row has one) creates them and stores
+// { latest } on graph.push; later calls on the same graph reuse them, so a warm push row
+// does not subscribe a second set (b251 M17). One difference: his push effects are created inside
 // fixtureScope (a scope effect, fixtureScope.ts); here they are bare effects: the lite
 // adapter's reset() (destroy) disposes them; the alien adapter's reset() is a no-op, so its push effects
 // stay subscribed to the retired graph (never written again), unlike his, which disposes every
@@ -276,10 +279,16 @@ export function runGraph(graph, config, framework) {
         const read = () => { let sum = 0; for (const leaf of readLeaves) sum += trackedRead(leaf); return sum; };
 
         if (mode === "push") {
-            const latest = new Array(readLeaves.length).fill(0);
-            readLeaves.forEach((leaf, i) => framework.effect(() => { latest[i] = trackedRead(leaf); }));
+            let push = graph.push;
+            if (push === undefined) {
+                const latest = new Array(readLeaves.length).fill(0);
+                readLeaves.forEach((leaf, i) => framework.effect(() => { latest[i] = trackedRead(leaf); }));
+                push = graph.push = { latest };
+            } else if (push.latest.length !== readLeaves.length) {
+                throw new Error(`push graph reused with ${readLeaves.length} read leaves; its effects cover ${push.latest.length}`);
+            }
             for (let iteration = 0; iteration < iterations; iteration++) framework.withBatch(writeBatch);
-            return latest.reduce((t, v) => t + v, 0);
+            return push.latest.reduce((t, v) => t + v, 0);
         }
 
         for (let iteration = 0; iteration < iterations; iteration++) {

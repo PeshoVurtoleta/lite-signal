@@ -11,11 +11,19 @@
 //   node --expose-gc bench/mirror.mjs --self-verify    # counters vs the document, then exit
 //
 // Output: his 4-column CSV `framework , test , time , metrics`, preceded by a machine
-// stamp. Metrics carry counters (nodesRecomputed/nodesVisited/edgesTraversed/sinkReads)
-// and, on lite rows, the pool fingerprint (flushPasses/poolGrowths). SLOW/CAPPED rows
-// carry `SLOW/CAPPED samples=N ceiling=Xms` exactly as his log marks them.
+// stamp. Dynamic rows carry counters (nodesRecomputed/nodesVisited/edgesTraversed/sinkReads),
+// the result `sum=` of the timed run and, on lite rows, the pool fingerprint
+// (flushPasses/poolGrowths); kairo / fan / mol rows carry `checksum=`. SLOW/CAPPED rows
+// carry `SLOW/CAPPED samples=N ceiling=Xms` as his log marks them, N = the samples taken
+// before the ceiling stopped sampling (all of them are kept; the time is their median).
+// The stamp's extra names the capture (`captureId` = env CAPTURE_ID, null when unset), the
+// reference libraries this process imported (`refLibs` {name: version}) and load1.
 
 import { performance } from "node:perf_hooks";
+import { readFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import os from "node:os";
 import { createRegistry } from "../Signal.js";
 import { makeGraph, runGraph, Counter } from "./lib/depgraph.mjs";
 import { DYNAMIC_TESTS, scaleQuick } from "./lib/mirror-config.mjs";
@@ -78,14 +86,24 @@ function liteAdapter() {
     };
 }
 
+// Engines this harness can drive, in row order, and why a reference engine failed to import.
+const KNOWN_FW = ["lite-signal", "alien-signals", "reflex-quant"];
+const LOAD_ERRORS = new Map();  // name -> import error
+// Fail closed: stderr reason, exit 2, nothing on stdout (called before the stamp).
+function refuse(msg) { console.error("mirror: " + msg); process.exitCode = 2; }
+
 async function alienAdapter() {
     let alien;
-    try { alien = await import("alien-signals"); } catch { return null; }
+    try { alien = await import("alien-signals"); } catch (e) { LOAD_ERRORS.set("alien-signals", e); return null; }
     const { signal, computed, effect, startBatch, endBatch } = alien;
+    // Handles exactly as upstream js-reactivity-benchmark 12f169b src/frameworks/alienSignals.ts:13-24:
+    // the signal function IS read and write ({read: data, write: data}; alien's signal checks
+    // arity), the computed function IS read. The effect wrapper stays because upstream wraps it
+    // too (:25-29): alien treats a returned function as a cleanup, the harness ignores it.
     return {
         name: "alien-signals",
-        signal: (v) => { const s = signal(v); return { read: () => s(), write: (x) => s(x) }; },
-        computed: (fn) => { const c = computed(fn); return { read: () => c() }; },
+        signal: (v) => { const s = signal(v); return { read: s, write: s }; },
+        computed: (fn) => ({ read: computed(fn) }),
         effect: (fn) => { effect(() => { fn(); }); },
         withBatch: (fn) => { startBatch(); try { fn(); } finally { endBatch(); } },
         withBuild: (fn) => fn(),
@@ -99,7 +117,7 @@ async function alienAdapter() {
 // body is wrapped like alien's: reflex-quant treats a returned function as a cleanup.
 async function reflexAdapter() {
     let rq;
-    try { rq = await import("reflex-quant"); } catch { return null; }
+    try { rq = await import("reflex-quant"); } catch (e) { LOAD_ERRORS.set("reflex-quant", e); return null; }
     const { signal, computed, effect, get, set, batch } = rq;
     return {
         name: "reflex-quant",
@@ -111,6 +129,23 @@ async function reflexAdapter() {
         reset() {},
         poolMetrics() { return null; },
     };
+}
+
+// Version of the copy of `name` this process imports: walk up from its resolved entry to the
+// package.json that names it. Fails closed (throws): a stamp must not name a library it cannot
+// identify.
+function refLibVersion(name) {
+    let dir = dirname(fileURLToPath(import.meta.resolve(name)));
+    for (;;) {
+        const pj = join(dir, "package.json");
+        if (existsSync(pj)) {
+            const j = JSON.parse(readFileSync(pj, "utf8"));
+            if (j.name === name && typeof j.version === "string" && j.version !== "") return j.version;
+        }
+        const up = dirname(dir);
+        if (up === dir) throw new Error("stamp: cannot determine the version of " + name);
+        dir = up;
+    }
 }
 
 // --- measured run of one config on one framework -------------------------------------
@@ -128,27 +163,28 @@ function measureOnce(framework, cfg) {
     return { time, sum, snapshot: counter.snapshot() };
 }
 
-// Repeat until either REPEATS samples or the ceiling is hit; report median (or the
-// single capped sample). Returns { time, capped, samples, snapshot, sum }.
+// Repeat until either REPEATS samples or a sample crosses the ceiling; report the median of
+// every sample taken (a capped row keeps every sample taken, including the one that crossed it).
+// Returns { time, capped, samples, snapshot, sum }.
 function measure(framework, cfg) {
     const times = [];
-    let last = null;
+    let last = null, capped = false;
     for (let i = 0; i < REPEATS; i++) {
         last = measureOnce(framework, cfg);
         times.push(last.time);
         framework.reset();
-        if (last.time > CEILING_MS) return { time: last.time, capped: true, samples: 1, snapshot: last.snapshot, sum: last.sum };
+        if (last.time > CEILING_MS) { capped = true; break; }
     }
-    return { time: summarizeSamples(times).median, capped: false, samples: times.length, snapshot: last.snapshot, sum: last.sum };
+    return { time: summarizeSamples(times).median, capped, samples: times.length, snapshot: last.snapshot, sum: last.sum };
 }
 
 // --- CSV row (his 4-column format) ---------------------------------------------------
 function pad(s, n) { s = String(s); return s + " ".repeat(Math.max(0, n - s.length)); }
 function metricsStr(res, pool, capped) {
     const parts = [];
-    if (capped) parts.push(`SLOW/CAPPED samples=1 ceiling=${Math.round(CEILING_MS)}ms`);
+    if (capped) parts.push(`SLOW/CAPPED samples=${res.samples} ceiling=${Math.round(CEILING_MS)}ms`);
     const s = res.snapshot;
-    parts.push(`nodesRecomputed=${s.nodesRecomputed} nodesVisited=${s.nodesVisited} edgesTraversed=${s.edgesTraversed} sinkReads=${s.sinkReads}`);
+    parts.push(`nodesRecomputed=${s.nodesRecomputed} nodesVisited=${s.nodesVisited} edgesTraversed=${s.edgesTraversed} sinkReads=${s.sinkReads} sum=${res.sum}`);
     if (pool) parts.push((typeof pool.flushPasses === "number" ? `flushPasses=${pool.flushPasses} ` : "") + `poolGrowths=${pool.poolGrowths}`);
     return parts.join(" ");
 }
@@ -193,13 +229,28 @@ async function runSelfVerify() {
 async function main() {
     if (SELF_VERIFY) { await runSelfVerify(); return; }
 
+    // FW set: every engine it names must be known AND load, else exit 2 before the stamp.
+    // FW unset: a reference engine joins only if installed, but at least one adapter must load.
+    if (FW) for (const n of FW) if (!KNOWN_FW.includes(n)) return refuse(`unknown FW engine "${n}" (known: ${KNOWN_FW.join(", ")})`);
+    const adapters = [];
+    if (!FW || FW.has("lite-signal")) adapters.push(liteAdapter());
+    if (!FW || FW.has("alien-signals")) { const a = await alienAdapter(); if (a) adapters.push(a); else if (FW) return refuse("FW names alien-signals but it cannot be imported: " + LOAD_ERRORS.get("alien-signals")); }
+    if (!FW || FW.has("reflex-quant")) { const a = await reflexAdapter(); if (a) adapters.push(a); else if (FW) return refuse("FW names reflex-quant but it cannot be imported: " + LOAD_ERRORS.get("reflex-quant")); }
+    if (adapters.length === 0) return refuse("no engine adapter loaded");
+    // the reference libraries this process imported (lite is named by engineSha256)
+    const refLibs = {};
+    for (const fw of adapters) if (fw.name !== "lite-signal") refLibs[fw.name] = refLibVersion(fw.name);
+
     const stamp = makeStamp({
         enginePath: new URL("../Signal.js", import.meta.url).href,
         harnessPath: import.meta.url,
         config: LITE_CONFIG,
         protocol: FW && FW.size === 1 ? (SCENARIO ? PROTOCOLS.PER_ROW : PROTOCOLS.PER_ENGINE) : PROTOCOLS.SMOKE,
         reps: REPEATS,
-        extra: { ceiling_ms: CEILING_MS, quick: QUICK, adapter: "destroy", scenario: SCENARIO || "all" },
+        extra: {
+            ceiling_ms: CEILING_MS, quick: QUICK, adapter: "destroy", scenario: SCENARIO || "all",
+            captureId: process.env.CAPTURE_ID ?? null, refLibs, load1: os.loadavg()[0],
+        },
     });
     if (ROWS_ONLY) {
         // child mode: machine stamp line + rows, no pretty block, no header
@@ -215,10 +266,6 @@ async function main() {
     if (SCENARIO && tests.length === 0 && !microRows().some((r) => r.name === SCENARIO)) {
         console.error("unknown scenario: " + SCENARIO); process.exitCode = 2; return;
     }
-    const adapters = [];
-    if (!FW || FW.has("lite-signal")) adapters.push(liteAdapter());
-    if (!FW || FW.has("alien-signals")) { const a = await alienAdapter(); if (a) adapters.push(a); }
-    if (!FW || FW.has("reflex-quant")) { const a = await reflexAdapter(); if (a) adapters.push(a); }
 
     const verdict = G.makeVerdict();
     const byTest = new Map();   // edgesTraversed, for counter-agreement across engines
@@ -251,25 +298,26 @@ async function main() {
         }
     }
     // --- micro-suites (kairo / fan / mol / sBench): the other 30 rows of the field ----
-    // Timing-only shapes (no dependency-graph counters); fan rows carry a checksum that
-    // must agree across engines (checksum guard). Together with the dynamic rows above
+    // Timing-only shapes (no dependency-graph counters); kairo / fan / mol rows carry a
+    // checksum that must agree across engines (checksum guard). kairo and mol also check
+    // their outputs against closed forms in-process (micro-suites.mjs; a mismatch throws). Together with the dynamic rows above
     // this is the full 47-row js-reactivity-benchmark field -- benchmarkReactive.mjs is
     // now redundant and retired.
     let micro = microRows();
     if (SCENARIO) micro = micro.filter((r) => r.name === SCENARIO);
-    const fanChecksums = new Map();  // row -> [{framework, checksum}]
+    const checksums = new Map();  // row -> [{framework, checksum}]
     for (const fw of adapters) {
         for (const r of micro) {
             const out = r.run(fw);
             const metrics = out.checksum !== undefined ? `checksum=${out.checksum}` : "";
             console.log([pad(fw.name, 22), pad(r.name, 60), pad(out.time.toFixed(2), 8), metrics].join(" , "));
             if (out.checksum !== undefined) {
-                if (!fanChecksums.has(r.name)) fanChecksums.set(r.name, []);
-                fanChecksums.get(r.name).push({ framework: fw.name, checksum: out.checksum });
+                if (!checksums.has(r.name)) checksums.set(r.name, []);
+                checksums.get(r.name).push({ framework: fw.name, checksum: out.checksum });
             }
         }
     }
-    for (const [row, entries] of fanChecksums) G.checkChecksum(verdict, row, entries);
+    for (const [row, entries] of checksums) G.checkChecksum(verdict, row, entries);
 
     // counter-agreement guard across engines (skip solid/s-js semantics-divergent rows; not run here)
     for (const [test, rows] of byTest) G.checkCounterAgreement(verdict, test, "edgesTraversed", rows);

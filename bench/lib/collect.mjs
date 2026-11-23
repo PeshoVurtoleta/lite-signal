@@ -23,6 +23,8 @@ export function loadRepFiles(dir, engineKey) {
 
 // Guarded collect for ONE engine. rowParser(text) -> Map<test, number>.
 // Returns { ok, reason?, engineSha?, protocol?, host?, perTest: Map<test, medianNumber> }.
+// Refuses a row that is missing from any rep file (b251 M16): a row present in 1 of 10
+// reps would otherwise publish a 1-sample "median".
 export function collectEngine(dir, engineKey, claimedReps, rowParser) {
     const files = loadRepFiles(dir, engineKey);
     const consistent = assertStampsConsistent(files);
@@ -43,6 +45,9 @@ export function collectEngine(dir, engineKey, claimedReps, rowParser) {
     const perTest = new Map();
     const perTestSpread = new Map();   // test -> (max-min)/median as % across reps
     for (const [test, vals] of acc) {
+        if (vals.length !== files.length) {
+            return { ok: false, reason: `row "${test}" is in ${vals.length} of ${files.length} rep file(s) -- a median over fewer reps than claimed` };
+        }
         const m = median(vals);
         perTest.set(test, m);
         perTestSpread.set(test, m > 0 ? (Math.max(...vals) - Math.min(...vals)) / m * 100 : 0);

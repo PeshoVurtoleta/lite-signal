@@ -5,10 +5,13 @@
 //     carries inline caches / JIT state / heap from one row into another. This is the
 //     inversion the roadmap called for (F4): the validator forks per row; now we do too.
 //
-//  2. ROUND-ROBIN REP SCHEDULING (F3). Instead of `for eng; for rep` -- which pins the
-//     newest engine to the hottest chassis and faked the monotonic deepChain slowdown
-//     across sha-identical engines -- each rep wave runs every combo once in a rotated
-//     order, spreading thermal drift across all columns. (schedule.mjs' fix.)
+//  2. SCENARIO-MAJOR WILLIAMS SCHEDULING (F3, M8). Instead of `for eng; for rep` -- which
+//     pins the newest engine to the hottest chassis and faked the monotonic deepChain
+//     slowdown across sha-identical engines -- each rep wave runs every (engine, scenario)
+//     once, scenario by scenario: a scenario's engines run back to back as one block, and
+//     the engine order inside a block cycles through a Williams design (every position and
+//     every ordered engine pair equally often), so a drifting host never biases one whole
+//     engine. Scenario order rotates between waves. (schedule.mjs buildScenarioMajor.)
 //
 //  3. SENTINEL DRIFT. The first-scheduled combo is re-measured dead last. If its time
 //     disagrees with its first measurement by more than DRIFT_TOL, the host drifted
@@ -16,8 +19,19 @@
 //
 //  4. STAMP-CONSISTENT AGGREGATION (F2). Rows are grouped into <engine>-rep<N>.txt
 //     files; collect.mjs refuses to merge them unless stamps agree (one engine hash,
-//     one protocol, one host) and the file count matches the claimed reps. "Median of
-//     10 over 5 files" cannot happen -- the aggregator counts.
+//     one protocol, one host), the file count matches the claimed reps and every row is
+//     in every rep. "Median of 10 over 5 files" cannot happen -- the aggregator counts.
+//     Then lib/rowcheck.mjs re-checks the files across engines (b251 M7 / M16): counters
+//     equal across reps, edgesTraversed / sum / checksum equal across engines, one host /
+//     node / harness / engine / protocol / config / adapter, and this capture's id in every
+//     stamp. A refusal is a guard failure (exit 1, no COMPLETE).
+//
+// Every sweep generates a fresh CAPTURE_ID (an inherited CAPTURE_ID is overridden), passes
+// it to every child (mirror.mjs stamps it) and writes it into COMPLETE; report.mjs refuses
+// a stamp whose captureId differs from the marker's. A rep file keeps only its first
+// child's stamp, so EVERY child's stamp (and the sentinel's) is checked as it arrives: well
+// formed, this CAPTURE_ID, and equal to the first accepted child's on host / node / shas /
+// protocol / config / adapter / quick; a mismatch is a guard failure and the row is dropped.
 //
 //   node --expose-gc bench/sweep.mjs                 # full: all scenarios, REPS reps
 //   QUICK=1 REPS=2 SUBSET=cheap node --expose-gc bench/sweep.mjs   # fast demo
@@ -28,7 +42,9 @@
 // SWEEP_TIMEOUT_MS=<ms> (integer 1..2^31-1, default 120000, nominal) bounds each child:
 // on expiry the child is killed with SIGKILL (a SIGTERM can be trapped), the row is
 // recorded as a failure and the sweep exits non-zero at the end.
-// Only a clean verdict (exit 0) writes <dir>/COMPLETE (protocol, reps, engines; tmp +
+// A bad DRIFT_TOL or REPS exits 2 before the first fork (DRIFT_TOL is validated when
+// schedule.mjs loads, so the sweep loads it dynamically and turns the throw into exit 2).
+// Only a clean verdict (exit 0) writes <dir>/COMPLETE (protocol, reps, engines, captureId; tmp +
 // rename) as the LAST step; report.mjs refuses a dir without it, and the sweep refuses
 // to start where one exists (D-b187-4).
 //
@@ -43,7 +59,7 @@ import { microRows } from "./lib/micro-suites.mjs";
 import { parseStampFromText } from "./lib/stamp.mjs";
 import { collectEngine } from "./lib/collect.mjs";
 import * as G from "./lib/guards.mjs";
-import { DRIFT_TOL, sentinelDrift } from "./lib/schedule.mjs";
+import { checkCapture, makeChildStampGuard, makeCaptureId } from "./lib/rowcheck.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIRROR = join(HERE, "mirror.mjs");
@@ -67,12 +83,15 @@ const scenarioNames = process.env.SUBSET === "cheap"
     : [...DYNAMIC_TESTS.map((t) => t.name), ...microRows().map((r) => r.name)];  // full 47-row field
 
 const ENGINES = ["lite-signal", "alien-signals", "reflex-quant"];
+// one id per capture: UTC second + 8 random hex digits (rowcheck CAPTURE_ID_RE, the same
+// format run-all-mirror.sh writes); every child stamps it
+const CAPTURE_ID = makeCaptureId();
 
 // --- fork one (engine, scenario) row in its own cold process -------------------------
 function runRow(engine, scenario) {
     return new Promise((resolve) => {
         const child = fork(MIRROR, [], {
-            env: { ...process.env, FW: engine, SCENARIO: scenario, ROWS_ONLY: "1", QUICK: QUICK ? "1" : "" },
+            env: { ...process.env, FW: engine, SCENARIO: scenario, ROWS_ONLY: "1", QUICK: QUICK ? "1" : "", CAPTURE_ID },
             execArgv: [...process.execArgv.filter((a) => a !== "--expose-gc"), "--expose-gc"],
             stdio: ["ignore", "pipe", "pipe", "ipc"],
         });
@@ -104,23 +123,23 @@ function parseChild(out) {
     return { stamp, row, guards };
 }
 
-// --- build the round-robin schedule of (engine, scenario) combos across reps ---------
-function buildSweep() {
-    const combos = [];
-    for (const e of ENGINES) for (const s of scenarioNames) combos.push({ engine: e, scenario: s });
-    const steps = [];
-    for (let wave = 0; wave < REPS; wave++) {
-        // rotate combo order each wave so no combo is pinned to the hot (last) slot
-        const rot = wave % combos.length;
-        for (let k = 0; k < combos.length; k++) {
-            const c = combos[(rot + k) % combos.length];
-            steps.push({ ...c, rep: wave + 1 });
-        }
-    }
-    return { combos, steps };
-}
-
 async function main() {
+    // schedule.mjs validates DRIFT_TOL when it loads (it throws on a bad value): load it
+    // here so a bad env value is a clean exit 2, like every other bad input
+    let S;
+    try { S = await import("./lib/schedule.mjs"); } catch (e) {
+        console.error("sweep: " + (e && e.message ? e.message : String(e)));
+        process.exitCode = 2;
+        return;
+    }
+    const { DRIFT_TOL, sentinelDrift, buildScenarioMajor } = S;
+    // scenario-major Williams schedule (M8); buildScenarioMajor refuses bad REPS / names
+    let steps;
+    try { steps = buildScenarioMajor(ENGINES, scenarioNames, REPS); } catch (e) {
+        console.error("sweep: " + (e && e.message ? e.message : String(e)));
+        process.exitCode = 2;
+        return;
+    }
     // refuse, never delete: an existing capture is the maintainer's, not ours
     if (existsSync(RUN_DIR)) {
         const reps = readdirSync(RUN_DIR).filter((f) => /-rep.*\.txt$/.test(f));
@@ -139,14 +158,18 @@ async function main() {
     }
     mkdirSync(RUN_DIR, { recursive: true });
 
-    const { combos, steps } = buildSweep();
     console.log(`sweep: ${ENGINES.length} engine(s) x ${scenarioNames.length} scenario(s) x ${REPS} rep(s) = ${steps.length} cold processes`);
-    console.log(`protocol: isolated-per-row, round-robin, sentinel drift @ ${(DRIFT_TOL * 100).toFixed(0)}%, child timeout ${CHILD_TIMEOUT_MS} ms`);
+    console.log(`protocol: isolated-per-row, scenario-major Williams, sentinel drift @ ${(DRIFT_TOL * 100).toFixed(0)}%, child timeout ${CHILD_TIMEOUT_MS} ms`);
+    console.log(`capture: ${CAPTURE_ID}`);
     console.log(`output: ${RUN_DIR}\n`);
 
     const verdict = G.makeVerdict();
+    // every child's stamp, not only the first per rep file: well-formed, this capture's id,
+    // and equal to the first accepted child's on host / node / shas / protocol / config /
+    // adapter / quick (lib/rowcheck.mjs makeChildStampGuard)
+    const childStamp = makeChildStampGuard(CAPTURE_ID, { quick: QUICK });
     const stampByFile = new Map();   // engine-rep -> stamp (written once)
-    const firstCombo = combos[0];
+    const firstCombo = steps[0];
     let firstTime = null, sentinelTime = null;
 
     // helper to append a row to <engine>-rep<N>.txt, writing the stamp header once
@@ -176,6 +199,8 @@ async function main() {
             verdict.failures.push(`${step.engine}/${step.scenario} rep${step.rep}: no row/stamp (exit ${code}). stderr: ${(err || "").split("\n")[0]}`);
             continue;
         }
+        const cs = childStamp(step.engine, `${step.engine}/${step.scenario} rep${step.rep}`, stamp);
+        if (!cs.ok) { verdict.ok = false; verdict.failures.push(`stamp check: ${cs.reason}; row discarded`); continue; }
         if (code !== 0) { verdict.ok = false; verdict.failures.push(`${step.engine}/${step.scenario} rep${step.rep}: child exited ${code} after printing its row (its guards may not have run). stderr: ${(err || "").split("\n")[0]}`); }
         for (const g of guards) { verdict.ok = false; verdict.failures.push(`${step.engine}/${step.scenario}: ${g}`); }
         writeRow(step.engine, step.rep, stamp, row);
@@ -190,6 +215,10 @@ async function main() {
     process.stdout.write("\r" + " ".repeat(40) + "\r");
     const sent = await runRow(firstCombo.engine, firstCombo.scenario);
     const sp = parseChild(sent.out);
+    if (!sent.timedOut) {
+        const cs = sp.stamp ? childStamp(firstCombo.engine, `sentinel ${firstCombo.engine}/${firstCombo.scenario}`, sp.stamp) : { ok: false, reason: "the sentinel child printed no stamp" };
+        if (!cs.ok) { verdict.ok = false; verdict.failures.push(`stamp check: ${cs.reason}`); }
+    }
     if (sent.timedOut) {
         verdict.ok = false;
         verdict.failures.push(`sentinel ${firstCombo.engine}/${firstCombo.scenario}: TIMEOUT -- child killed (SIGKILL) after ${CHILD_TIMEOUT_MS} ms`);
@@ -218,6 +247,10 @@ async function main() {
         if (!c.ok) { verdict.ok = false; verdict.failures.push(`aggregate ${e}: ${c.reason}`); continue; }
         perEngine[e] = c;
     }
+    // cross-file rows + cross-engine stamps (b251 M7 / M16); a QUICK sweep expects quick=true
+    // stamps (report.mjs then refuses the capture as a smoke run)
+    const rc = checkCapture(RUN_DIR, ENGINES, { captureId: CAPTURE_ID }, { quick: QUICK });
+    if (!rc.ok) { verdict.ok = false; verdict.failures.push(`rowcheck: ${rc.reason}`); }
 
     // per-shape spread flag: the single-shape sentinel does not guard per-row variance
     // on the heavy shapes (burst/layered swing ~15% run-to-run). SPREAD_WARN marks any
@@ -286,10 +319,10 @@ async function main() {
 
     if (!G.reportVerdict(verdict)) return;
     // completion marker (D-b187-4): LAST state write, clean verdict only; tmp + rename
-    const marker = { kind: "bench-capture-complete/v1", writer: "sweep.mjs", protocol: perEngine[ENGINES[0]].protocol, reps: REPS, engines: ENGINES };
+    const marker = { kind: "bench-capture-complete/v1", writer: "sweep.mjs", protocol: perEngine[ENGINES[0]].protocol, reps: REPS, engines: ENGINES, captureId: CAPTURE_ID };
     writeFileSync(join(RUN_DIR, "COMPLETE.tmp"), JSON.stringify(marker) + "\n");
     renameSync(join(RUN_DIR, "COMPLETE.tmp"), join(RUN_DIR, "COMPLETE"));
-    console.log("\nsweep OK -- stamp-consistent, rep count verified, sentinel stable. Numbers are publishable.");
+    console.log("\nsweep OK -- stamp-consistent, rep count verified, rows validated across engines, sentinel stable. Numbers are publishable.");
 }
 
 main();

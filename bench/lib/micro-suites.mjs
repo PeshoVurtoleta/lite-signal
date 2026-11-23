@@ -8,15 +8,21 @@
 // `busy()` heavy-work stub, fan's checksum + seeded mutation, mol's fib(16) hard()).
 // Iteration counts are this harness's own (kairo 1000x loop, mol 1e4 passes; runners below).
 // Reporting matches his fastestTest: median over BENCH_RUNS repeats, each rebuilding the
-// graph outside the timed window. fan rows carry a `checksum=` for the checksum guard.
+// graph outside the timed window. kairo, fan and mol rows return a `checksum` (mirror.mjs
+// prints `checksum=` and the checksum guard compares it across engines). kairo checksums are
+// the leaf values after the timed loop, checked against KAIRO_EXPECT (closed form); mol's is
+// the sum of the last pass's effect outputs, and its final G is checked against upstream's
+// expectedMol(2, 2)[1]. Every check runs after t1 and throws on a mismatch.
 
 import { summarizeSamples } from "./stats.mjs";
 
 const BENCH_RUNS = process.env.BENCH_RUNS ? +process.env.BENCH_RUNS : (process.env.QUICK === "1" ? 1 : 5);
 const COUNT = process.env.QUICK === "1" ? 1e3 : 1e5;   // sBench base; QUICK shrinks it
 
-// kairo/util busy(): a fixed heavy-work stub (100-iteration spin) used by avoidable.
-function busy() { let a = 0; for (let i = 0; i < 100; i++) a++; return a; }
+// kairo/util busy(): a fixed heavy-work stub (100-iteration spin) used by avoidable. Its
+// result is stored in a module sink slot so the spin cannot be deleted as dead code.
+const SINK = new Float64Array(1);
+function busy() { let a = 0; for (let i = 0; i < 100; i++) a++; SINK[0] += a; }
 
 // fastestTest-equivalent: median over BENCH_RUNS rebuild+measure repeats.
 function measureMedian(repeat) {
@@ -26,8 +32,9 @@ function measureMedian(repeat) {
 }
 
 // ---------------------------------------------------------------- kairo (8) ----------
-// Each case builds a graph and returns an `iter` closure that performs its own fixed
-// update loop; the timed window is one iter() call on a fresh, settled graph.
+// Each case builds a graph and returns { iter, leaves }: `iter` performs its own fixed
+// update loop (the timed window is KAIRO_LOOPS iter() calls on a fresh, settled graph);
+// `leaves` are the nodes whose values are read after t1 into the row checksum.
 const kairoCases = {
     avoidablePropagation(fw) {
         const head = fw.signal(0);
@@ -37,7 +44,7 @@ const kairoCases = {
         const c4 = fw.computed(() => c3.read() + 2);
         const c5 = fw.computed(() => c4.read() + 3);
         fw.effect(() => { c5.read(); busy(); });
-        return () => { for (let i = 0; i < 1000; i++) fw.withBatch(() => head.write(i)); };
+        return { iter: () => { for (let i = 0; i < 1000; i++) fw.withBatch(() => head.write(i)); }, leaves: [c5] };
     },
     broadPropagation(fw) {
         const head = fw.signal(0); let last = head;
@@ -47,43 +54,43 @@ const kairoCases = {
             fw.effect(() => { cur2.read(); });
             last = cur2;
         }
-        return () => { for (let i = 0; i < 50; i++) fw.withBatch(() => head.write(i)); };
+        return { iter: () => { for (let i = 0; i < 50; i++) fw.withBatch(() => head.write(i)); }, leaves: [last] };
     },
     deepPropagation(fw) {
         const len = 50; const head = fw.signal(0); let cur = head;
         for (let i = 0; i < len; i++) { const c = cur; cur = fw.computed(() => c.read() + 1); }
         fw.effect(() => { cur.read(); });
-        return () => { for (let i = 0; i < 50; i++) fw.withBatch(() => head.write(i)); };
+        return { iter: () => { for (let i = 0; i < 50; i++) fw.withBatch(() => head.write(i)); }, leaves: [cur] };
     },
     diamond(fw) {
         const width = 5; const head = fw.signal(0); const cur = [];
         for (let i = 0; i < width; i++) cur.push(fw.computed(() => head.read() + 1));
         const sum = fw.computed(() => cur.map((x) => x.read()).reduce((a, b) => a + b, 0));
         fw.effect(() => { sum.read(); });
-        return () => { for (let i = 0; i < 500; i++) fw.withBatch(() => head.write(i)); };
+        return { iter: () => { for (let i = 0; i < 500; i++) fw.withBatch(() => head.write(i)); }, leaves: [sum] };
     },
     mux(fw) {
         const heads = new Array(100).fill(null).map(() => fw.signal(0));
         const m = fw.computed(() => Object.fromEntries(heads.map((h) => h.read()).entries()));
         const splited = heads.map((_, index) => fw.computed(() => m.read()[index])).map((x) => fw.computed(() => x.read() + 1));
         splited.forEach((x) => fw.effect(() => x.read()));
-        return () => {
+        return { iter: () => {
             for (let i = 0; i < 10; i++) fw.withBatch(() => heads[i].write(i));
             for (let i = 0; i < 10; i++) fw.withBatch(() => heads[i].write(i * 2));
-        };
+        }, leaves: splited };
     },
     repeatedObservers(fw) {
         const size = 30; const head = fw.signal(0);
         const cur = fw.computed(() => { let r = 0; for (let i = 0; i < size; i++) r += head.read(); return r; });
         fw.effect(() => { cur.read(); });
-        return () => { for (let i = 0; i < 100; i++) fw.withBatch(() => head.write(i)); };
+        return { iter: () => { for (let i = 0; i < 100; i++) fw.withBatch(() => head.write(i)); }, leaves: [cur] };
     },
     triangle(fw) {
         const width = 10; const head = fw.signal(0); let cur = head; const list = [];
         for (let i = 0; i < width; i++) { const c = cur; list.push(cur); cur = fw.computed(() => c.read() + 1); }
         const sum = fw.computed(() => list.map((x) => x.read()).reduce((a, b) => a + b, 0));
         fw.effect(() => { sum.read(); });
-        return () => { for (let i = 0; i < 100; i++) fw.withBatch(() => head.write(i)); };
+        return { iter: () => { for (let i = 0; i < 100; i++) fw.withBatch(() => head.write(i)); }, leaves: [sum] };
     },
     unstable(fw) {
         const head = fw.signal(0);
@@ -91,28 +98,76 @@ const kairoCases = {
         const inverse = fw.computed(() => -head.read());
         const cur = fw.computed(() => { let r = 0; for (let i = 0; i < 20; i++) r += head.read() % 2 ? double.read() : inverse.read(); return r; });
         fw.effect(() => { cur.read(); });
-        return () => { for (let i = 0; i < 100; i++) fw.withBatch(() => head.write(i)); };
+        return { iter: () => { for (let i = 0; i < 100; i++) fw.withBatch(() => head.write(i)); }, leaves: [cur] };
     },
 };
+// Sum of a case's leaves after the timed loop, in closed form from the case's last writes
+// (every iter() ends with the same writes, so the value does not depend on KAIRO_LOOPS).
+// A case with no entry here reads as undefined and throws (fail closed).
+const KAIRO_EXPECT = Object.freeze({
+    avoidablePropagation: 0 + 1 + 2 + 3,          // c2 is constant 0: c5 = ((0 + 1) + 2) + 3
+    broadPropagation: (50 - 1) + (50 - 1) + 1,    // last cur2 = head + 49 + 1, head = 49
+    deepPropagation: (50 - 1) + 50,               // head + len, head = 49
+    diamond: 5 * ((500 - 1) + 1),                 // width * (head + 1), head = 499
+    mux: 2 * ((9 * 10) / 2) + 10 + 90,            // 100 leaves heads[i] + 1; heads[i] = 2i for i < 10, else 0
+    repeatedObservers: 30 * (100 - 1),            // size * head, head = 99
+    triangle: 10 * (100 - 1) + (9 * 10) / 2,      // sum over i < 10 of (head + i), head = 99
+    unstable: 20 * 2 * (100 - 1),                 // head = 99 is odd: 20 reads of double = 2 * head
+});
+function kairoChecksum(leaves) {
+    let s = 0;
+    for (let k = 0; k < leaves.length; k++) s += leaves[k].read();
+    return s;
+}
 
 // ---------------------------------------------------------------- mol (1) -------------
 function fib(n) { return n < 2 ? 1 : fib(n - 1) + fib(n - 2); }
 function hard(n) { return n + fib(16); }
+// MOL_D (D-b249-1): "upstream" (default) = D mutates ONE items array in place and returns it,
+// as upstream 12f169b molBench.ts:37-42 does (an engine's equality cut-off may then stop
+// propagation out of D). "fresh" = opt-in diagnostic: D returns a fresh array of fresh items
+// on every run. Any other value throws at import (fail closed).
+const MOL_D = process.env.MOL_D === undefined ? "upstream" : process.env.MOL_D;
+if (MOL_D !== "upstream" && MOL_D !== "fresh") {
+    throw new Error(`MOL_D=${JSON.stringify(MOL_D)}: expected "upstream" (default) or "fresh"`);
+}
+// upstream 12f169b molBench.ts:13-24, verbatim logic: [hard(g), g, hard(f)] for final A = a, B = b.
+function expectedMol(a, b) {
+    let previous = 1, current = 1;
+    for (let i = 2; i <= 16; i++) [previous, current] = [current, previous + current];
+    const c = (a % 2) + (b % 2);
+    const delta = (a % 2) - (b % 2);
+    const e = c + a + delta + current;
+    const f = (2 + delta || b) + current;
+    const g = c + (c || e % 2) + 4 + delta + f;
+    return [g + current, g, f + current];
+}
+// The last timed pass writes A = 2 + 2i (even) and B = 2; G depends on A and B only through
+// A % 2 and B % 2 (E enters as E % 2), so the final G is expectedMol(2, 2)[1] = 1604 for every i.
+const MOL_G_EXPECT = expectedMol(2, 2)[1];
+// molBuild returns { iter, G, res }: iter(i) is one timed pass; G and res are read after t1.
 function molBuild(fw) {
     const nums = [0, 1, 2, 3, 4]; const res = [];
     return fw.withBuild(() => {
         const A = fw.signal(0), B = fw.signal(0);
         const C = fw.computed(() => (A.read() % 2) + (B.read() % 2));
         const Ditems = nums.map(() => ({ x: 0 }));
-        const D = fw.computed(() => { const a = A.read() % 2, b = B.read() % 2; for (let i = 0; i < nums.length; i++) Ditems[i].x = nums[i] + a - b; return Ditems; });
+        const D = MOL_D === "upstream"
+            ? fw.computed(() => { const a = A.read() % 2, b = B.read() % 2; for (let i = 0; i < nums.length; i++) Ditems[i].x = nums[i] + a - b; return Ditems; })
+            : fw.computed(() => { const a = A.read() % 2, b = B.read() % 2; const out = new Array(nums.length); for (let i = 0; i < nums.length; i++) out[i] = { x: nums[i] + a - b }; return out; });
         const E = fw.computed(() => hard(C.read() + A.read() + D.read()[0].x));
         const F = fw.computed(() => hard(D.read()[2].x || B.read()));
         const G = fw.computed(() => C.read() + (C.read() || E.read() % 2) + D.read()[4].x + F.read());
         fw.effect(() => res.push(hard(G.read())));
         fw.effect(() => res.push(G.read()));
         fw.effect(() => res.push(hard(F.read())));
-        return (i) => { res.length = 0; fw.withBatch(() => { B.write(1); A.write(1 + i * 2); }); fw.withBatch(() => { A.write(2 + i * 2); B.write(2); }); };
+        return { iter: (i) => { res.length = 0; fw.withBatch(() => { B.write(1); A.write(1 + i * 2); }); fw.withBatch(() => { A.write(2 + i * 2); B.write(2); }); }, G, res };
     });
+}
+function molChecksum(res) {
+    let s = 0;
+    for (let k = 0; k < res.length; k++) s += res[k];
+    return s;
 }
 
 // ---------------------------------------------------------------- fan (4) -------------
@@ -122,7 +177,45 @@ const nextSeed = (s) => (Math.imul(s, 1664525) + 1013904223) >>> 0;
 const makeSources = (fw) => Array.from({ length: SOURCE_COUNT }, (_, i) => fw.signal(i));
 const makeTotal = (fw, s) => fw.computed(() => { let sum = 0; for (let i = 0; i < s.length; i++) sum += s[i].read(); return sum; });
 const readEvery16th = (s) => { let sum = 0; for (let i = 0; i < SOURCE_COUNT; i += DIRECT_STRIDE) sum += s[i].read(); return sum; };
+// FAN_VERBATIM=1 keeps the mirror's previous per-step draw: a `new Set` plus its iterator per
+// timed step (upstream 12f169b fanBench.ts:19-77 precomputes its schedule outside the timed run,
+// as the default mode here does). Unset or "0" = the cached schedule; any other value throws.
+const FAN_VERBATIM_ENV = process.env.FAN_VERBATIM;
+if (FAN_VERBATIM_ENV !== undefined && FAN_VERBATIM_ENV !== "0" && FAN_VERBATIM_ENV !== "1") {
+    throw new Error(`FAN_VERBATIM=${JSON.stringify(FAN_VERBATIM_ENV)}: expected "1", "0" or unset`);
+}
+const FAN_VERBATIM = FAN_VERBATIM_ENV === "1";
+// The mutation schedule, built once per process on the first runner (outside every timed
+// window): the source indices of each step in the order the per-step Set yields them (same
+// LCG, same insertion order), for the 1000 warm-up steps plus FAN_ITERS timed steps one runner
+// performs. Written values are the running count ++value, as before.
+const FAN_STEPS = 1000 + FAN_ITERS;
+let FAN_SCHED = null;
+function fanSchedule() {
+    if (FAN_SCHED !== null) return FAN_SCHED;
+    const sched = new Int32Array(FAN_STEPS * MUT_PER_STEP);
+    let seed = 0x9e3779b9;
+    for (let step = 0; step < FAN_STEPS; step++) {
+        const changed = new Set();
+        while (changed.size < MUT_PER_STEP) { seed = nextSeed(seed); changed.add(seed % SOURCE_COUNT); }
+        let k = step * MUT_PER_STEP;
+        for (const idx of changed) sched[k++] = idx;
+    }
+    FAN_SCHED = sched;
+    return sched;
+}
 function mutationRunner(fw, sources, readChecksum) {
+    if (!FAN_VERBATIM) {
+        const sched = fanSchedule();
+        let pos = 0, value = 0;
+        // one batch body per runner: no closure, Set or iterator per timed step
+        const writeStep = () => { for (let k = 0; k < MUT_PER_STEP; k++) sources[sched[pos++]].write(++value); };
+        return (iters) => {
+            if (!(pos + iters * MUT_PER_STEP <= sched.length)) throw new Error(`fan: ${iters} steps past the ${FAN_STEPS}-step schedule`);
+            for (let step = 0; step < iters; step++) fw.withBatch(writeStep);
+            return readChecksum();
+        };
+    }
     let seed = 0x9e3779b9, value = 0;
     return (iters) => {
         for (let step = 0; step < iters; step++) fw.withBatch(() => {
@@ -272,23 +365,37 @@ const SBENCH_SINK = { value: undefined };
 const KAIRO_LOOPS = process.env.QUICK === "1" ? 25 : 1000;
 function runKairo(fw, name) {
     const build = kairoCases[name];
-    const w = fw.withBuild(() => build(fw)); w(); globalThis.gc?.(); fw.reset();
+    const expect = KAIRO_EXPECT[name];
+    const w = fw.withBuild(() => build(fw)); w.iter(); globalThis.gc?.(); fw.reset();
+    let checksum = 0;
     const time = measureMedian(() => {
-        const iter = fw.withBuild(() => build(fw));
+        const k = fw.withBuild(() => build(fw));
+        const iter = k.iter;
         iter();   // settle (un-timed)
         const t0 = performance.now();
         for (let i = 0; i < KAIRO_LOOPS; i++) iter();
         const t = performance.now() - t0;
+        checksum = kairoChecksum(k.leaves);
+        if (checksum !== expect) throw new Error(`${name}: leaf checksum ${checksum}, expected ${expect}`);
         fw.reset();
         return t;
     });
-    return { time };
+    return { time, checksum };
 }
 function runMol(fw) {
-    const w = molBuild(fw); w(1); globalThis.gc?.(); fw.reset();
+    const w = molBuild(fw); w.iter(1); globalThis.gc?.(); fw.reset();
     const iters = process.env.QUICK === "1" ? 1e3 : 1e4;
-    const time = measureMedian(() => { const iter = molBuild(fw); iter(0); const t0 = performance.now(); for (let i = 0; i < iters; i++) iter(i); const t = performance.now() - t0; fw.reset(); return t; });
-    return { time };
+    let checksum = 0;
+    const time = measureMedian(() => {
+        const m = molBuild(fw); const iter = m.iter; iter(0);
+        const t0 = performance.now(); for (let i = 0; i < iters; i++) iter(i); const t = performance.now() - t0;
+        checksum = molChecksum(m.res);
+        const g = m.G.read();
+        if (g !== MOL_G_EXPECT) throw new Error(`molBench: final G ${g}, expected ${MOL_G_EXPECT} (stale final derivation)`);
+        fw.reset();
+        return t;
+    });
+    return { time, checksum };
 }
 function runFan(fw, name) {
     const build = fanCases[name];
