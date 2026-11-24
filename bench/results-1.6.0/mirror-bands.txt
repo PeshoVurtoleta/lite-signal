@@ -1,0 +1,114 @@
+# bands.mjs table: mirror
+# input dir: /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/mirror-runs
+# loader: bench/lib/collect.mjs collectEngine (reused unchanged)
+# captureId: 20261123T221116Z-c3010561
+# engineSha(lite stamp): a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+# reps: 10 per engine (lite, alien, reflex-quant)
+# protocol: isolated-per-engine | isolated-per-engine shared harness
+# host: Apple M4 Pro node v26.8.2
+# script sha256: 411ece0fe197371b694aecd118cb069403bd0cce5aa53e6c7e22e0d9d644a8c1
+# date: 2026-11-24
+# spread = (max-min)/median of the 10 per-rep medians; band = larger of the two engines' spreads; delta = (other-lite)/other, + = lite faster; |delta| <= band = inside band
+
+== lite vs alien (mirror) ==
+64x6 - 4 sources - dynamic - read 12% (dashboard selective reads) lite=188.09 sp=3.0% alien=135.69 sp=4.4% delta=-38.6% band=4.4% verdict=alien ahead
+24x8 - 3 sources - dynamic - read 40% (editor derived state) lite=271.89 sp=3.1% alien=197.05 sp=3.4% delta=-38.0% band=3.4% verdict=alien ahead
+120x7 - 5 sources - dynamic - read 18% (kanban board) lite=161.22 sp=2.9% alien=111.15 sp=2.0% delta=-45.0% band=2.9% verdict=alien ahead
+40x10 - 4 sources - dynamic - read 60% (entity detail page) lite=354.35 sp=4.7% alien=236.16 sp=5.7% delta=-50.0% band=5.7% verdict=alien ahead
+256->512x32 - fanIn 4 - layered-dag - 4 sources (layered full-drain cold) lite=37.27 sp=8.9% alien=26.59 sp=3.8% delta=-40.2% band=8.9% verdict=alien ahead
+256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 320 (layered full-drain warm) lite=31.77 sp=7.6% alien=17.50 sp=5.2% delta=-81.6% band=7.6% verdict=alien ahead
+256->512x32 - fanIn 8 - layered-dag - 8 sources - burst 16 - warm 256 - per-batch (layered burst flush warm) lite=466.12 sp=4.4% alien=197.57 sp=2.6% delta=-135.9% band=4.4% verdict=alien ahead
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm 256 (stable diamond mesh warm) lite=4.64 sp=5.4% alien=3.50 sp=7.4% delta=-32.6% band=7.4% verdict=alien ahead
+32x8 - 4 sources - pull (pure pull) lite=0.50 sp=10.0% alien=0.43 sp=9.3% delta=-16.3% band=10.0% verdict=alien ahead
+8x64 - 1 sources - pull (linear chain - 1 source - pull (linear pull)) lite=0.41 sp=12.0% alien=0.24 sp=8.2% delta=-69.4% band=12.0% verdict=alien ahead
+64x4 - 8 sources - pull (wide tree - 8 sources - pull (branchy pull)) lite=0.36 sp=2.8% alien=0.23 sp=4.3% delta=-56.5% band=4.3% verdict=alien ahead
+32x8 - 4 sources - push (pure push) lite=87.22 sp=3.5% alien=53.01 sp=6.2% delta=-64.5% band=6.2% verdict=alien ahead
+10x5 - 2 sources - read 20% (simple component) lite=155.80 sp=2.5% alien=109.79 sp=3.9% delta=-41.9% band=3.9% verdict=alien ahead
+10x10 - 6 sources - dynamic - read 20% (dynamic component) lite=113.45 sp=5.3% alien=93.24 sp=2.6% delta=-21.7% band=5.3% verdict=alien ahead
+1000x12 - 4 sources - dynamic (large web app) lite=246.41 sp=2.3% alien=169.51 sp=1.4% delta=-45.4% band=2.3% verdict=alien ahead
+1000x5 - 25 sources (wide dense) lite=294.19 sp=2.2% alien=290.80 sp=3.1% delta=-1.2% band=3.1% verdict=inside band
+5x500 - 3 sources (deep) lite=95.00 sp=2.8% alien=66.02 sp=2.1% delta=-43.9% band=2.8% verdict=alien ahead
+avoidablePropagation lite=106.59 sp=1.9% alien=67.37 sp=4.2% delta=-58.2% band=4.2% verdict=alien ahead
+broadPropagation lite=213.00 sp=1.7% alien=143.81 sp=5.0% delta=-48.1% band=5.0% verdict=alien ahead
+deepPropagation lite=76.32 sp=2.7% alien=45.44 sp=2.8% delta=-67.9% band=2.8% verdict=alien ahead
+diamond lite=126.20 sp=4.2% alien=87.18 sp=3.5% delta=-44.8% band=4.2% verdict=alien ahead
+mux lite=188.14 sp=5.1% alien=142.23 sp=3.5% delta=-32.3% band=5.1% verdict=alien ahead
+repeatedObservers lite=27.35 sp=1.2% alien=22.02 sp=2.0% delta=-24.3% band=2.0% verdict=alien ahead
+triangle lite=53.11 sp=3.4% alien=31.23 sp=3.6% delta=-70.0% band=3.6% verdict=alien ahead
+unstable lite=42.02 sp=3.7% alien=35.39 sp=11.6% delta=-18.7% band=11.6% verdict=alien ahead
+manyEffectsFromOneSource lite=141.95 sp=3.7% alien=110.56 sp=3.6% delta=-28.4% band=3.7% verdict=alien ahead
+manySourcesIntoOneComputedEffectWithDirect lite=50.75 sp=2.9% alien=57.66 sp=2.8% delta=+12.0% band=2.9% verdict=lite ahead
+manySourcesIntoOneComputedEffect lite=48.50 sp=3.1% alien=55.38 sp=2.3% delta=+12.4% band=3.1% verdict=lite ahead
+manySourcesIntoOneDirectEffect lite=6.71 sp=6.0% alien=4.98 sp=3.8% delta=-34.8% band=6.0% verdict=alien ahead
+molBench lite=163.40 sp=4.9% alien=163.19 sp=4.5% delta=-0.1% band=4.9% verdict=inside band
+createDataSignals lite=11.93 sp=7.2% alien=1.65 sp=10.9% delta=-623.3% band=10.9% verdict=alien ahead
+createComputations0to1 lite=12.80 sp=5.0% alien=2.97 sp=20.9% delta=-331.0% band=20.9% verdict=alien ahead
+createComputations1to1 lite=25.68 sp=4.2% alien=5.58 sp=21.1% delta=-360.2% band=21.1% verdict=alien ahead
+createComputations2to1 lite=15.46 sp=4.0% alien=4.04 sp=22.6% delta=-283.0% band=22.6% verdict=alien ahead
+createComputations4to1 lite=7.38 sp=8.8% alien=3.39 sp=11.8% delta=-117.8% band=11.8% verdict=alien ahead
+createComputations1000to1 lite=4.20 sp=9.3% alien=2.04 sp=3.9% delta=-105.1% band=9.3% verdict=alien ahead
+createComputations1to2 lite=25.94 sp=4.9% alien=5.54 sp=20.0% delta=-368.1% band=20.0% verdict=alien ahead
+createComputations1to4 lite=23.40 sp=2.9% alien=5.74 sp=18.1% delta=-307.9% band=18.1% verdict=alien ahead
+createComputations1to8 lite=22.70 sp=4.7% alien=5.66 sp=18.0% delta=-301.1% band=18.0% verdict=alien ahead
+createComputations1to1000 lite=22.79 sp=6.5% alien=5.47 sp=19.2% delta=-316.6% band=19.2% verdict=alien ahead
+updateComputations1to1 lite=13.26 sp=3.2% alien=12.96 sp=2.4% delta=-2.3% band=3.2% verdict=inside band
+updateComputations2to1 lite=8.41 sp=2.5% alien=8.46 sp=1.9% delta=+0.6% band=2.5% verdict=inside band
+updateComputations4to1 lite=5.47 sp=4.9% alien=5.70 sp=3.0% delta=+4.0% band=4.9% verdict=inside band
+updateComputations1000to1 lite=6.46 sp=2.2% alien=7.78 sp=3.2% delta=+17.0% band=3.2% verdict=lite ahead
+updateComputations1to2 lite=12.30 sp=2.5% alien=12.59 sp=5.7% delta=+2.2% band=5.7% verdict=inside band
+updateComputations1to4 lite=11.61 sp=3.5% alien=9.87 sp=8.7% delta=-17.6% band=8.7% verdict=alien ahead
+updateComputations1to1000 lite=14.59 sp=9.0% alien=8.96 sp=3.8% delta=-62.7% band=9.0% verdict=alien ahead
+
+== lite vs reflex-quant (mirror) ==
+64x6 - 4 sources - dynamic - read 12% (dashboard selective reads) lite=188.09 sp=3.0% reflex-quant=162.38 sp=3.0% delta=-15.8% band=3.0% verdict=reflex-quant ahead
+24x8 - 3 sources - dynamic - read 40% (editor derived state) lite=271.89 sp=3.1% reflex-quant=237.87 sp=6.3% delta=-14.3% band=6.3% verdict=reflex-quant ahead
+120x7 - 5 sources - dynamic - read 18% (kanban board) lite=161.22 sp=2.9% reflex-quant=132.09 sp=2.4% delta=-22.0% band=2.9% verdict=reflex-quant ahead
+40x10 - 4 sources - dynamic - read 60% (entity detail page) lite=354.35 sp=4.7% reflex-quant=286.26 sp=6.8% delta=-23.8% band=6.8% verdict=reflex-quant ahead
+256->512x32 - fanIn 4 - layered-dag - 4 sources (layered full-drain cold) lite=37.27 sp=8.9% reflex-quant=29.49 sp=5.7% delta=-26.4% band=8.9% verdict=reflex-quant ahead
+256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 320 (layered full-drain warm) lite=31.77 sp=7.6% reflex-quant=23.48 sp=11.2% delta=-35.3% band=11.2% verdict=reflex-quant ahead
+256->512x32 - fanIn 8 - layered-dag - 8 sources - burst 16 - warm 256 - per-batch (layered burst flush warm) lite=466.12 sp=4.4% reflex-quant=247.37 sp=10.4% delta=-88.4% band=10.4% verdict=reflex-quant ahead
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm 256 (stable diamond mesh warm) lite=4.64 sp=5.4% reflex-quant=3.91 sp=23.0% delta=-18.7% band=23.0% verdict=inside band
+32x8 - 4 sources - pull (pure pull) lite=0.50 sp=10.0% reflex-quant=0.54 sp=1.9% delta=+7.4% band=10.0% verdict=inside band
+8x64 - 1 sources - pull (linear chain - 1 source - pull (linear pull)) lite=0.41 sp=12.0% reflex-quant=0.35 sp=34.3% delta=-18.6% band=34.3% verdict=inside band
+64x4 - 8 sources - pull (wide tree - 8 sources - pull (branchy pull)) lite=0.36 sp=2.8% reflex-quant=0.23 sp=117.4% delta=-56.5% band=117.4% verdict=inside band
+32x8 - 4 sources - push (pure push) lite=87.22 sp=3.5% reflex-quant=67.63 sp=5.5% delta=-29.0% band=5.5% verdict=reflex-quant ahead
+10x5 - 2 sources - read 20% (simple component) lite=155.80 sp=2.5% reflex-quant=125.53 sp=3.9% delta=-24.1% band=3.9% verdict=reflex-quant ahead
+10x10 - 6 sources - dynamic - read 20% (dynamic component) lite=113.45 sp=5.3% reflex-quant=103.00 sp=6.8% delta=-10.1% band=6.8% verdict=reflex-quant ahead
+1000x12 - 4 sources - dynamic (large web app) lite=246.41 sp=2.3% reflex-quant=192.70 sp=2.8% delta=-27.9% band=2.8% verdict=reflex-quant ahead
+1000x5 - 25 sources (wide dense) lite=294.19 sp=2.2% reflex-quant=275.07 sp=2.8% delta=-7.0% band=2.8% verdict=reflex-quant ahead
+5x500 - 3 sources (deep) lite=95.00 sp=2.8% reflex-quant=81.36 sp=4.1% delta=-16.8% band=4.1% verdict=reflex-quant ahead
+avoidablePropagation lite=106.59 sp=1.9% reflex-quant=70.97 sp=3.6% delta=-50.2% band=3.6% verdict=reflex-quant ahead
+broadPropagation lite=213.00 sp=1.7% reflex-quant=154.30 sp=6.2% delta=-38.0% band=6.2% verdict=reflex-quant ahead
+deepPropagation lite=76.32 sp=2.7% reflex-quant=62.57 sp=5.1% delta=-22.0% band=5.1% verdict=reflex-quant ahead
+diamond lite=126.20 sp=4.2% reflex-quant=99.16 sp=5.8% delta=-27.3% band=5.8% verdict=reflex-quant ahead
+mux lite=188.14 sp=5.1% reflex-quant=156.15 sp=8.1% delta=-20.5% band=8.1% verdict=reflex-quant ahead
+repeatedObservers lite=27.35 sp=1.2% reflex-quant=19.30 sp=5.9% delta=-41.7% band=5.9% verdict=reflex-quant ahead
+triangle lite=53.11 sp=3.4% reflex-quant=39.66 sp=8.1% delta=-33.9% band=8.1% verdict=reflex-quant ahead
+unstable lite=42.02 sp=3.7% reflex-quant=36.61 sp=13.6% delta=-14.8% band=13.6% verdict=reflex-quant ahead
+manyEffectsFromOneSource lite=141.95 sp=3.7% reflex-quant=122.91 sp=11.0% delta=-15.5% band=11.0% verdict=reflex-quant ahead
+manySourcesIntoOneComputedEffectWithDirect lite=50.75 sp=2.9% reflex-quant=55.17 sp=5.3% delta=+8.0% band=5.3% verdict=lite ahead
+manySourcesIntoOneComputedEffect lite=48.50 sp=3.1% reflex-quant=52.64 sp=5.5% delta=+7.9% band=5.5% verdict=lite ahead
+manySourcesIntoOneDirectEffect lite=6.71 sp=6.0% reflex-quant=4.38 sp=3.6% delta=-53.1% band=6.0% verdict=reflex-quant ahead
+molBench lite=163.40 sp=4.9% reflex-quant=160.26 sp=6.4% delta=-2.0% band=6.4% verdict=inside band
+createDataSignals lite=11.93 sp=7.2% reflex-quant=2.21 sp=7.3% delta=-441.3% band=7.3% verdict=reflex-quant ahead
+createComputations0to1 lite=12.80 sp=5.0% reflex-quant=8.54 sp=8.4% delta=-50.0% band=8.4% verdict=reflex-quant ahead
+createComputations1to1 lite=25.68 sp=4.2% reflex-quant=12.83 sp=7.9% delta=-100.2% band=7.9% verdict=reflex-quant ahead
+createComputations2to1 lite=15.46 sp=4.0% reflex-quant=4.52 sp=12.2% delta=-241.9% band=12.2% verdict=reflex-quant ahead
+createComputations4to1 lite=7.38 sp=8.8% reflex-quant=3.66 sp=6.0% delta=-102.1% band=8.8% verdict=reflex-quant ahead
+createComputations1000to1 lite=4.20 sp=9.3% reflex-quant=1.98 sp=14.2% delta=-112.4% band=14.2% verdict=reflex-quant ahead
+createComputations1to2 lite=25.94 sp=4.9% reflex-quant=13.04 sp=6.6% delta=-99.0% band=6.6% verdict=reflex-quant ahead
+createComputations1to4 lite=23.40 sp=2.9% reflex-quant=12.73 sp=5.6% delta=-83.7% band=5.6% verdict=reflex-quant ahead
+createComputations1to8 lite=22.70 sp=4.7% reflex-quant=12.43 sp=5.8% delta=-82.7% band=5.8% verdict=reflex-quant ahead
+createComputations1to1000 lite=22.79 sp=6.5% reflex-quant=12.29 sp=3.8% delta=-85.4% band=6.5% verdict=reflex-quant ahead
+updateComputations1to1 lite=13.26 sp=3.2% reflex-quant=9.51 sp=7.0% delta=-39.4% band=7.0% verdict=reflex-quant ahead
+updateComputations2to1 lite=8.41 sp=2.5% reflex-quant=6.61 sp=1.2% delta=-27.2% band=2.5% verdict=reflex-quant ahead
+updateComputations4to1 lite=5.47 sp=4.9% reflex-quant=4.76 sp=2.1% delta=-14.8% band=4.9% verdict=reflex-quant ahead
+updateComputations1000to1 lite=6.46 sp=2.2% reflex-quant=7.06 sp=4.2% delta=+8.6% band=4.2% verdict=lite ahead
+updateComputations1to2 lite=12.30 sp=2.5% reflex-quant=9.89 sp=2.4% delta=-24.4% band=2.5% verdict=reflex-quant ahead
+updateComputations1to4 lite=11.61 sp=3.5% reflex-quant=9.61 sp=2.4% delta=-20.8% band=3.5% verdict=reflex-quant ahead
+updateComputations1to1000 lite=14.59 sp=9.0% reflex-quant=10.86 sp=4.0% delta=-34.3% band=9.0% verdict=reflex-quant ahead
+
+lite vs alien: lite-ahead-outside-band 3/47, inside-band 6, alien-ahead-outside-band 38
+lite vs reflex-quant: lite-ahead-outside-band 3/47, inside-band 5, reflex-quant-ahead-outside-band 39
+lowest median per row (ties at 2 decimals counted apart): lite 3, alien 33, reflex-quant 10, ties 1; total 47
+  of those leads, outside the band (lead over the runner-up engine > larger of the two spreads): lite 3/3, alien 27/33, reflex-quant 7/10

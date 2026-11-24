@@ -400,10 +400,13 @@ checked against known-good values, and the `dyn` leaf-sums are cross-checked for
 agreement across every framework in the run. A framework whose adapter throws or
 disagrees is excluded from the comparison rather than silently reported.
 
-### How to read the current numbers
+### How to read the numbers (v1.2.x history)
 
-[`resultsReactive.txt`](./resultsReactive.txt) holds the most recent
-medianed run. At v1.2.x, lite-signal:
+History, dated v1.2.x: the bullets below describe that release's medianed run of
+the pre-v3 reactivity suite; [`../resultsReactive.txt`](../resultsReactive.txt)
+now holds a later run of the same suite (1.6.0-alpha.0, 2016 Intel, Node 22). The current 1.6.0 numbers, with provenance and
+noise bands, are in [`../results-1.6.0/README.md`](../results-1.6.0/README.md).
+At v1.2.x, lite-signal:
 
 - **ahead or even** on the entire `dyn:` family (`dyn: simple` / `dynamic` /
   `large web app` / `wide dense` / `deep`), the whole `S: updateComputations`

@@ -859,22 +859,50 @@ These are the questions you'd ask in a code review, with the answers:
 
 ## Benchmarks
 
-Honest numbers, against the same workload, with anti-DCE sinks and verified effect execution. All measurements: **Node 26.3.1, Apple M4 Pro (darwin/arm64)**, **one engine per cold process**, median across reps, machine-stamped `#STAMP` (engine + harness sha256, live registry config, host, node) on every output. Newer/faster machines shift all libs up proportionally; the relative ordering between libs is what matters -- and on this newer silicon the run-to-run noise floor is lower, so the sub-percent parity band tightens and the honest wins/losses stand out cleanly. Numbers below are the **fresh 1.5.0-beta bench sweep** on the v3 **microscope** (`benchmark.mjs`, six first-party shapes, default `prealloc: "eager"`) vs alien-signals -- the table below uses **median execution time**. 1.5.0's hot paths are byte-identical to 1.4.0 (1.4.0 added three `stats()` counters on existing acquire/dispose/pool-grow edges; 1.5.0 adds the `signalBox` / `computedBox` non-callable handle shape -- cheaper CONSTRUCTION, same pooled-node read/write path -- and `createRoot`, an ownership escape hatch not on the hot path), so steady-state throughput reflects the same engine bytes the 1.4.0 sweep measured; the deltas below are the M4 Pro / Node 26 machine speaking, plus the third-party version bumps since the 1.4.0 sweep (alien-signals 3.1.2 -> 3.2.1, @preact/signals-core 1.14.1 -> 1.14.2, @vue/reactivity 3.5.13 -> 3.5.35, solid-js 1.9.12 -> 1.9.13). Full outputs: [`bench/rb.txt`](bench/rb.txt) (this microscope aggregate across four engines) and [`bench/r.txt`](bench/r.txt) (the mirror sweep -- Andrii's canonical adapter verbatim, 47 rows, lite vs alien on the same M4 Pro host).
+lite-signal's zero-GC claim is **not** proven by the timing tables below. It is gated deterministically: `npm run test:torture` (with lite-leak + lite-gc-profiler), the `node:test` GC-count rows in the behavior suite, and the Tier 2b perf gate (`npm run test:gate`). The tables below are timing only (tier: REPORTED, a measurement, not a law).
 
-| Scenario   | What it stresses                | lite-signal | alien-signals | lite vs alien |
-| ---------- | -------------------------------- | ----------- | ------------- | ------------- |
-| **MUX**    | 256 signals -> 1 sum -> 1 effect (fan-in) | **22.52 ms** | 34.46 ms | **+34.6% faster** |
-| **SELECTIVE DAG** | sqrt-layered, set churn, 2 read/iter | **1994 ms** | 2493 ms | **+20.0% faster** |
-| **DYNAMIC DAG** | sqrt-layered, FAN=6, read flips each iter | **3601 ms** | 4415 ms | **+18.4% faster** |
-| **BROADCAST** | 1 signal -> 1000 effects (fan-out) | 458.04 ms | 452.78 ms | -1.2% (parity) |
-| **KAIROS**    | 1 signal -> 1000 computeds -> 1 effect | 517.75 ms | 447.64 ms | -15.7% |
-| **DEEP CHAIN** | 256-deep computed chain -> 1 effect | 170.89 ms | **96.59 ms** | -76.9% |
+**Provenance.** Signal.js sha256 `a7202c9b`, Apple M4 Pro (12 cores, darwin/arm64), node v26.8.2, 10 reps per engine, 2026-11-23 / 2026-11-24, quiet host on AC power. Engines: alien-signals 3.2.1, reflex-quant 1.2.0, solid-js 1.9.15, @preact/signals-core 1.14.4. Three protocols, never mixed within a table: **microscope** = isolated-per-engine (one cold process per engine per rep, round-robin), 5 engines, 6 first-party shapes, default `prealloc: "eager"`; **mirror** = isolated-per-engine on the shared harness (capture `20261123T221116Z-c3010561`), 47 rows, lite / alien / reflex-quant; **sweep** = isolated-per-row (every engine and row in its own cold process; capture `20261124T001531Z-02a0b456`), the same 47 rows. **Band rule:** spread = (max - min) / median of the 10 per-rep medians; a pair's band = the larger of the two engines' spreads; delta = (other - lite) / other, so + means lite is faster; a delta inside its band is neither a win nor a loss, and a win count below counts only leads outside the band.
 
-*(lower time = faster)*
+**Microscope times** (`benchmark.mjs`, median ms over 10 reps, lower is faster; [`bench/results-1.6.0/microscope-time.txt`](bench/results-1.6.0/microscope-time.txt)):
+
+| Scenario | lite-signal | alien-signals | preact signals | solid-js | reflex-quant |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MUX (256 signals -> 1 sum -> 1 effect) | 20.11 | 33.53 | 35.98 | 206.20 | 20.84 |
+| SELECTIVE DAG (sqrt-layered, set churn) | 2100.64 | 2661.51 | 2818.45 | 3441.49 | 1757.66 |
+| DYNAMIC DAG (sqrt-layered, FAN=6) | 3674.19 | 4617.03 | 2674.09 | 4976.20 | 2436.91 |
+| BROADCAST (1 signal -> 1000 effects) | 285.49 | 395.59 | 544.35 | 1068.22 | 366.07 |
+| KAIROS (1 signal -> 1000 computeds -> 1 effect) | 531.22 | 473.71 | 668.04 | 2082.27 | 437.53 |
+| DEEP CHAIN (256-deep computed chain -> 1 effect) | 172.69 | 87.94 | 149.13 | 550.03 | 82.58 |
+
+**lite vs alien-signals and vs reflex-quant, microscope** (delta, band, verdict per the band rule):
+
+| Scenario | lite vs alien: delta / band | verdict | lite vs reflex-quant: delta / band | verdict |
+| --- | --- | --- | --- | --- |
+| MUX | +40.0% / 7.2% | lite ahead | +3.5% / 6.5% | inside the band |
+| SELECTIVE DAG | +21.1% / 16.9% | lite ahead | -19.5% / 16.9% | reflex-quant ahead |
+| DYNAMIC DAG | +20.4% / 6.9% | lite ahead | -50.8% / 6.2% | reflex-quant ahead |
+| BROADCAST | +27.8% / 18.4% | lite ahead | +22.0% / 9.9% | lite ahead |
+| KAIROS | -12.1% / 17.2% | inside the band | -21.4% / 5.7% | reflex-quant ahead |
+| DEEP CHAIN | -96.4% / 15.8% | alien ahead | -109.1% / 14.6% | reflex-quant ahead |
 
 *Heap column withdrawn: the earlier column read heapUsed after a forced GC before each run and again at the run's end with no closing GC, so past one young generation it showed young-generation fill, not the run's allocation. This release publishes benchmark time only.*
 
-**Reading the table:** the M4 Pro sweep clarifies exactly which of lite-signal's wins are real and which were noise on a slower host. lite's wins are on the dynamic and fan-in shapes: **MUX +34.6%** (fan-in aggregation), **SELECTIVE DAG +20.0%**, and **DYNAMIC DAG +18.4%** -- the wins narrow versus the older Intel sweep but the ordering is intact, and these are the patterns that dominate live UI workloads under input churn: dashboards, scoreboards, HUDs, leaderboards. **BROADCAST is a true tie** on this host (-1.2%). The two losses tell a consistent story: **KAIROS -15.7%** (1000 computeds sharing a single source -- alien's flatter representation prices in the walk cheaper than lite's pooled-link graph on M4-class silicon) and **DEEP CHAIN -76.9%** (a 256-deep computed pipeline, the same architectural weak spot the honest framing has always named: recursive JS-stack computed resolution loses to alien's flatter chain on hot new cores by a wider margin than on old Intel). The mirror-sweep companion ([`bench/r.txt`](bench/r.txt)) reproduces the same picture across Andrii's 47 shapes: lite runs **parity-to-behind alien on throughput**, wins outright on 4 of the 47 (`1000x5 - 25 sources (wide dense)` +12%, both `manySourcesIntoOne*ComputedEffect` fan-ins ~+32%, and `createComputations4to1` +19%) -- and this is not the story to tell.
+**Reading the microscope table** (isolated-per-engine, this capture). Against alien-signals lite leads outside the band on 4 of 6 scenarios (MUX, SELECTIVE DAG, DYNAMIC DAG, BROADCAST), is inside the band on 1 (KAIROS) and trails outside the band on 1 (DEEP CHAIN). Against reflex-quant lite leads outside the band on 1 of 6 (BROADCAST), is inside the band on 1 (MUX) and trails outside the band on 4 (SELECTIVE DAG, DYNAMIC DAG, KAIROS, DEEP CHAIN). By lowest median per scenario, reflex-quant is lowest on 4 of 6 (KAIROS, DEEP CHAIN, DYNAMIC DAG, SELECTIVE DAG) and lite on 2 of 6 (BROADCAST, MUX); none of reflex-quant's 4 leads is outside the band over the runner-up engine, so they are not banded wins. Outside the band lite loses DEEP CHAIN to both engines (a 256-deep computed pipeline: alien 87.94 ms and reflex-quant 82.58 ms against lite's 172.69 ms, bands 15.8% and 14.6%), and loses SELECTIVE DAG, DYNAMIC DAG and KAIROS to reflex-quant only; deep and layered propagation is the weak spot the project has always named.
+
+**The 47-row Andrii mirror shapes, lite vs alien-signals and vs reflex-quant** (counts of rows outside the band; [`bench/results-1.6.0/mirror-bands.txt`](bench/results-1.6.0/mirror-bands.txt) and [`bench/results-1.6.0/sweep-bands.txt`](bench/results-1.6.0/sweep-bands.txt)):
+
+| Protocol | pair | lite ahead outside band | inside band | other engine ahead outside band |
+| --- | --- | ---: | ---: | ---: |
+| mirror (isolated-per-engine, shared harness) | lite vs alien | 3/47 | 6 | 38 |
+| mirror | lite vs reflex-quant | 3/47 | 5 | 39 |
+| sweep (isolated-per-row) | lite vs alien | 3/47 | 7 | 37 |
+| sweep | lite vs reflex-quant | 0/47 | 5 | 42 |
+
+The three rows where lite leads alien outside the band are `manySourcesIntoOneComputedEffectWithDirect`, `manySourcesIntoOneComputedEffect` and `updateComputations1000to1` in both protocols (sweep: +18.8%, +16.3%, +11.4%; mirror: +12.0%, +12.4%, +17.0%). By lowest median per row, sweep: alien-signals 28 of 47 (18 outside the band over the runner-up), reflex-quant 16 (10 outside), lite 1 (0 outside), 2 ties; mirror: alien-signals 33 (27 outside), reflex-quant 10 (7 outside), lite 3 (3 outside), 1 tie. Where lite loses it loses by a wide margin: the creation rows (sweep `createDataSignals` lite 10.60 ms vs alien 1.60 ms, band 18.7%), and the deep / layered / dynamic shapes (`64x6 - 4 sources - dynamic - read 12%`: mirror -38.6% with band 4.4%, sweep -40.5% with band 5.3%). `1000x5 - 25 sources (wide dense)` is inside the band against alien in both protocols (sweep -3.0% with band 3.4%, mirror -1.2% with band 3.1%), and reflex-quant is ahead of lite there in the sweep (-25.9%, band 13.9%).
+
+**The protocols disagree.** Comparing the mirror and the sweep, lite vs alien, the two 47-row protocols differ beyond their noise bands on 24 of 47 rows (|mirror delta - sweep delta| larger than the larger pair band; [`bench/results-1.6.0/cross-protocol.txt`](bench/results-1.6.0/cross-protocol.txt)). Example, `updateComputations1to2`: mirror +2.2% (band 5.7%, inside the band) against sweep -30.0% (band 7.5%, outside it): inside the band in one protocol, outside it in the other. `updateComputations1000to1` is lite ahead in both, but by +17.0% (band 3.2%) in the mirror and +11.4% (band 4.8%) in the sweep. No win count here is protocol-free; each names its protocol.
+
+Full provenance, the band rule, the engine versions and the raw-log hashes: [`bench/results-1.6.0/README.md`](bench/results-1.6.0/README.md). Files: [`microscope-time.txt`](bench/results-1.6.0/microscope-time.txt), [`mirror-report.txt`](bench/results-1.6.0/mirror-report.txt), [`mirror-bands.txt`](bench/results-1.6.0/mirror-bands.txt), [`sweep.txt`](bench/results-1.6.0/sweep.txt), [`sweep-report.txt`](bench/results-1.6.0/sweep-report.txt), [`sweep-bands.txt`](bench/results-1.6.0/sweep-bands.txt), [`cross-protocol.txt`](bench/results-1.6.0/cross-protocol.txt), [`bands.log`](bench/results-1.6.0/bands.log). The older [`bench/rb.txt`](bench/rb.txt) and [`bench/r.txt`](bench/r.txt) are history from earlier releases (their heap figures are withdrawn).
 
 The benchmark harness is in [`bench/benchmark.mjs`](./bench/benchmark.mjs); a full methodology write-up -- including the anti-DCE design, workload diagrams, variance discipline, reproducibility recipe, and a self-validation procedure for the harness itself -- lives in [`bench/README.md`](./bench/README.md). It:
 
@@ -990,7 +1018,7 @@ npm run test:gate
 
 ### Tier 3 -- Performance (comparative benchmark)
 
-`npm run bench` runs the **microscope** -- lite's recommended eager config on six first-party shapes; the aggregate output is [`bench/rb.txt`](bench/rb.txt) (four engines: lite, alien, preact, solid). Cross-framework standing comes from the **mirror** (`node --expose-gc bench/mirror.mjs --self-verify` then `bench/sweep.mjs`), which runs Andrii's canonical adapter verbatim so rows diff 1:1 against his log; the aggregate output is [`bench/r.txt`](bench/r.txt) (lite vs alien, all 47 shapes). Every output carries a machine-generated `#STAMP` (engine + harness sha256, the live registry config, host, node), so a header can never disagree with the code that ran. The pre-v3 five-framework reactivity suite is retained one release as `bench-reactive-legacy` (**deprecated -- removed after 1.5.1**). Full methodology: [`bench/README.md`](./bench/README.md).
+`npm run bench` runs the **microscope** -- lite's recommended eager config on six first-party shapes -- in ONE process with every engine (protocol `shared-process-smoke`, a smoke run, not a published number). The published numbers come from isolated protocols: `bench/run-all-bench.sh` + `bench/aggregate.mjs` (microscope, one cold process per engine per rep) and `bench/run-all-mirror.sh` + `bench/report.mjs` (the mirror), plus `bench/sweep.mjs` (isolated-per-row). The captures of this cycle are in [`bench/results-1.6.0/`](bench/results-1.6.0/README.md). Cross-framework standing comes from the **mirror** (`node --expose-gc bench/mirror.mjs --self-verify`), which runs a port of Andrii's adapter so rows can be compared against his log. Every output carries a machine-generated `#STAMP` (engine + harness sha256, the live registry config, host, node), so a header can never disagree with the code that ran. The pre-v3 five-framework reactivity suite is still available as `npm run bench-reactive`. Full methodology: [`bench/README.md`](./bench/README.md).
 
 ```bash
 npm run bench
@@ -1223,7 +1251,7 @@ Through **v1.1.2**, that came with a mathematical trade-off: while memory alloca
 
 **Andrii Volynets** (author of the phenomenal [Alien Signals](https://github.com/stackblitz/alien-signals)) generously ran `lite-signal` through his advanced topology matrix on the **v1.1.2** engine. Those numbers -- the *pre-rewrite baseline* -- are below, followed by the 1.1.4 result.
 
-**1.5.0-beta on the official [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (15 libraries, 47 tests):** `lite-signal` holds **4th overall by geomean (79.3ms)**, behind only alien-signals (45.2, the field leader at 0.57x), reflex (48.9), and @reactively (59.9), and **ahead of 5th-place Preact Signals (99.8, ~21%)** -- the Preact gap widened this sweep after Preact's own regression on the newer 1.14.2. It finishes **top-3 on 25 of 47 tests** (up from 23 on 1.4.0). Outright-fastest-of-15 wins fluctuate at the top of a very tight leaderboard where alien-signals, reflex, and lite trade sub-percent margins; on this sweep lite is #1 on `createComputations4to1` (7.08ms vs alien's 7.10ms) and on `1000x5 - 25 sources (wide dense)` (the "large web app / wide dense" pattern). Raw log with all 15 x 47 rows: [`bench/AndriiVolynetsReactiveBench.log`](./bench/AndriiVolynetsReactiveBench.log). The stable metric across every published sweep is the geomean rank at 4th of 15 -- and lite remains the only object-pooled, zero-GC engine in the field.
+**1.5.0-beta on the official [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (15 libraries, 47 tests):** `lite-signal` holds **4th overall by geomean (79.3ms)**, behind only alien-signals (45.2, the field leader at 0.57x), reflex (48.9), and @reactively (59.9), and **ahead of 5th-place Preact Signals (99.8, ~21%)** -- the Preact gap widened this sweep after Preact's own regression on the newer 1.14.2. It finishes **top-3 on 25 of 47 tests** (up from 23 on 1.4.0). Outright-fastest-of-15 wins fluctuate at the top of a very tight leaderboard where alien-signals, reflex, and lite trade sub-percent margins; on this sweep lite is #1 on `createComputations4to1` (7.08ms vs alien's 7.10ms) and on `1000x5 - 25 sources (wide dense)` (the "large web app / wide dense" pattern). Raw log with all 15 x 47 rows: [`bench/AndriiVolynetsReactiveBench.log`](./bench/AndriiVolynetsReactiveBench.log). The stable metric across every published sweep is the geomean rank at 4th of 15.
 
 #### 1. Stable Topologies (Fan-in / Fan-out / Broadcast)
 In stable environments (game engines, particle systems, visualizers), `lite-signal` is blisteringly fast and maintains a near-zero allocation profile, keeping frame times perfectly flat -- unchanged through 1.1.4.
@@ -1236,31 +1264,11 @@ In stable environments (game engines, particle systems, visualizers), `lite-sign
 | **1000x5 (25 sources, wide/dense)** | 304ms | 303ms | 1746ms |
 | **64x6 (selective dynamic DAG)** | 181ms | 196ms | 559ms |
 
-*1.5.0-beta (default eager) on the v3 microscope (`bench/rb.txt`, Apple M4 Pro darwin/arm64, Node 26.3.1, one engine per cold process -- compare within-column, lite vs alien):*
-| Scenario | alien-signals | lite-signal (1.5.0-beta) | result |
-| :--- | :--- | :--- | :--- |
-| **MUX** (256 sigs -> sum -> effect)           | 34.46 ms   | 22.52 ms   | **lite +34.6%** |
-| **SELECTIVE DAG** (sqrt-layered, set churn)   | 2493 ms    | 1994 ms    | **lite +20.0%** |
-| **DYNAMIC DAG** (sqrt-layered, FAN=6)         | 4415 ms    | 3601 ms    | **lite +18.4%** |
-| **BROADCAST** (1 -> 1000 effects)             | 452.78 ms  | 458.04 ms  | tie (-1.2%) |
-| **KAIROS** (1 -> 1000 computeds)              | 447.64 ms  | 517.75 ms  | alien +15.7% |
-| **DEEP CHAIN** (256-deep -> effect)           | 96.59 ms   | 170.89 ms  | alien +76.9% |
+Current microscope and mirror/sweep numbers, with protocol, band rule and provenance, are in [Benchmarks](#benchmarks) above and [`bench/results-1.6.0/`](bench/results-1.6.0/README.md); the 1.5.0-beta microscope table that stood here is retired.
 
-> **Honest note (1.5.0-beta on M4 Pro):** measured one-engine-per-process, lite-signal's
-> wins cluster on the dynamic shapes (MUX +34.6%, SELECTIVE DAG
-> +20.0%, DYNAMIC DAG +18.4%). The wins narrow versus the older Intel MacBook sweep
-> but the ordering is intact. BROADCAST is a true tie on this host. Alien ahead on
-> KAIROS -15.7% (1000 shared-source computeds -- alien's flatter representation prices
-> in the walk cheaper on M4-class silicon) and DEEP CHAIN -76.9% (the same architectural
-> weak spot the honest framing has always named). 1.5.0's hot paths are byte-identical
-> to 1.4.0 (1.5.0 adds the `signalBox` / `computedBox` non-callable handle plus
-> `createRoot`, none of which move steady-state throughput), so the deltas here are the
-> M4 Pro / Node 26 host speaking, plus the third-party version bumps -- not engine
-> changes.
+The 1.6.0 mirror and sweep (lite vs alien-signals and reflex-quant across the 47 shapes; protocols, bands and counts in [Benchmarks](#benchmarks)) show lite ahead of alien-signals outside the band on 3 of 47 rows in each protocol and behind it outside the band on 38 (mirror) and 37 (sweep), weakest on the creation, deep and layered-burst families. Every row carries a `#STAMP`. The retracking is verified correct by `retracking.difftest.mjs` -- 20,000 direct + 10,000 batched writes, 0 disagreements against the **published 1.1.5** reference (re-pinned for v1.2).
 
-The mirror sweep ([`bench/r.txt`](bench/r.txt), Andrii's canonical adapter verbatim, isolated-per-row, 10 reps, lite vs alien across all 47 shapes on the same M4 Pro host) reproduces the same picture: lite runs **parity-to-behind alien on throughput**, wins outright on 4/47 (`1000x5 - 25 sources (wide dense)` +12%, both `manySourcesIntoOne*ComputedEffect` fan-ins ~+32%, and `createComputations4to1` +19%), weak on the deep/layered-burst family. Every row carries a `#STAMP` and the counters (`nodesRecomputed` / `edgesTraversed` / `sinkReads`) match Andrii's published suite exactly, so a lite-vs-alien delta here is identical work, not DCE. The retracking is verified correct by `retracking.difftest.mjs` -- 20,000 direct + 10,000 batched writes, 0 disagreements against the **published 1.1.5** reference (re-pinned for v1.2).
-
-**The Takeaway:** as of 1.1.4 you no longer have to choose, and 1.5.0-beta holds the line -- the engine still ranks **4th of 15** on the official js-reactivity-benchmark (the only zero-GC library in the field). `lite-signal` keeps the zero-GC, flat-arena profile for 120fps Canvas/WebGL **and** wins decisively on the high-churn dynamic and fan-in topologies that dominate live UI. On the M4 Pro sweep the win margins narrow on the dynamic shapes (SELECTIVE DAG +20%, DYNAMIC DAG +18%, MUX +34.6%); the ordering is intact. The one shape where alien's flatter representation still leads decisively is the 256-deep computed pipeline (DEEP CHAIN -76.9% on the M4 Pro isolated run -- the gap widened from -14% on the older Intel sweep because recursive JS-stack computed resolution loses to alien's flatter chain on hot new cores by a wider margin than on old Intel).
+**The Takeaway:** as of 1.1.4 you no longer have to choose, and 1.5.0-beta holds the line -- the engine ranked **4th of 15** on the official js-reactivity-benchmark at 1.5.0-beta. `lite-signal` keeps the zero-GC, flat-arena profile for 120fps Canvas/WebGL (gated by the deterministic torture and GC-count tests, not by a timing table). On the 1.6.0 microscope it leads alien-signals outside the band on 4 of 6 scenarios (isolated-per-engine, [Benchmarks](#benchmarks)) and trails it on DEEP CHAIN (172.69 ms vs 87.94 ms), where reflex-quant is also ahead (82.58 ms).
 
 ### Roadmap
 - **1.1.5** -- additions in service of `lite-devtools` (node identity/traversability on the introspection walkers, for full auto-discovered graph rendering). *Shipped.*
@@ -1280,7 +1288,7 @@ The mirror sweep ([`bench/r.txt`](bench/r.txt), Andrii's canonical adapter verba
 
 - **A virtual DOM, JSX runtime, or rendering library.** It's the substrate. Plug it under whatever rendering layer you like.
 - **A general-purpose state container.** No time-travel, no devtools integration, no serialization. (Build those on top if you need them.)
-- **A perfect fit for every workload.** On *256-deep computed pipelines* (DEEP CHAIN) `alien-signals` is still a bit faster -- its flatter representation pays off when the propagation path is long rather than wide. (Through 1.1.2 this caveat also covered chaotic, high-fan-in read order; 1.1.4's retracking rewrite closed that -- those shapes are now parity-or-ahead.) `lite-signal` is at its best on the fan-in / fan-out / wide-memo and dynamic-churn patterns that dominate animation loops, HUDs, and dashboards.
+- **A perfect fit for every workload.** On *256-deep computed pipelines* (DEEP CHAIN) `alien-signals` and `reflex-quant` are about 2x faster (DEEP CHAIN microscope, isolated-per-engine, 10 reps: lite 172.69 ms, alien-signals 87.94 ms, reflex-quant 82.58 ms) -- a flatter representation pays off when the propagation path is long rather than wide. (Through 1.1.2 this caveat also covered chaotic, high-fan-in read order; 1.1.4's retracking rewrite changed that path.) On the same microscope lite leads alien-signals outside the band on MUX (fan-in), SELECTIVE DAG, DYNAMIC DAG and BROADCAST (fan-out); reflex-quant is ahead of lite outside the band on SELECTIVE DAG and DYNAMIC DAG (see [Benchmarks](#benchmarks)).
 - **A library for the server.** It works in Node, but there's no SSR story. Use it on the client.
 
 ---
@@ -1439,8 +1447,7 @@ more useful to library users than a green checkmark.
   Angular, Reatom, the TC39 polyfill, and tansu. The `===` camp returns
   incorrect results on NaN flows.
 - **Single-pass propagation** through computed chains on inner writes --
-  matches alien-signals and Vue; faster than preact, solid, reatom, mobx,
-  and most others by one re-evaluation per write.
+  matches alien-signals and Vue.
 - **Auto-unsubscribe** on first-run effect throws -- matches preact, reatom,
   solid. Half the field leaks the subscription.
 - **Observer-lifecycle introspection** (`hasObservers` / `observeObservers`,
@@ -1518,7 +1525,7 @@ Yes, if your computeFn reads its deps in the same order each invocation. The `cu
 ```bash
 npm test          # behavior suite
 npm run test:gc   # whole test/*.test.mjs suite under --expose-gc
-npm run bench     # microscope + mirror comparative benches (rb.txt / r.txt), ~5min
+npm run bench     # microscope, one process with every engine (smoke; published captures: bench/results-1.6.0/)
 npm run torture          # full torture suite, all 25 scenarios (24 semantic + 1 opt-in soak)
 npm run torture:semantic # correctness scenarios only, ~10s
 npm run torture:soak     # opt-in wraparound soak (0 passed, 1 skipped by default)

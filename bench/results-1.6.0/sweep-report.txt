@@ -1,0 +1,215 @@
+==============================================================================================
+ @zakkster/lite-signal -- REACTIVITY MIRROR (cross-framework)
+==============================================================================================
+
+Protocol : isolated-per-row   reps: alien-signals=10 lite-signal=10 reflex-quant=10
+Host     : Apple M4 Pro  darwin/arm64  node v26.8.2
+Engine   : sha256 a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+Adapter  : {"maxNodes":262144,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"throw"}  teardown=destroy
+Generated: 2026-11-24T00:25:48.986Z
+VALIDATED: 47 rows, 141 of 141 engine cells (3 engines), 30 rep files, capture 20261124T001531Z-02a0b456 (bench/lib/rowcheck.mjs)
+
+Protocol isolated-per-row: every (engine, row) was measured in its OWN cold process,
+so no row inherits JIT state or heap from another row.
+This file checks no counters against Andrii's log, and neither mirror.mjs --self-verify
+nor bench/vs-andrii.mjs runs as part of a capture: run them separately.
+
+----------------------------------------------------------------------------------------------
+EXECUTION TIME (median across reps, ms; lower is better)
+----------------------------------------------------------------------------------------------
+test                                                            lite     alien   lite vs alien
+64x6 - 4 sources - dynamic - read 12% (dashboard selecti      190.73    135.80   -40.5%  alien
+24x8 - 3 sources - dynamic - read 40% (editor derived st      270.90    200.75   -34.9%  alien
+120x7 - 5 sources - dynamic - read 18% (kanban board)         155.37    113.81   -36.5%  alien
+40x10 - 4 sources - dynamic - read 60% (entity detail pa      345.21    247.02   -39.7%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources (layered       40.45     27.09   -49.3%  alien
+256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 3       38.77     27.37   -41.7%  alien
+256->512x32 - fanIn 8 - layered-dag - 8 sources - burst       506.45    273.95   -84.9%  alien
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm         4.95      3.68   -34.5%  alien
+32x8 - 4 sources - pull (pure pull)                             1.09      0.54   -103.7%  alien
+8x64 - 1 sources - pull (linear chain - 1 source - pull         1.07      0.61   -74.0%  alien
+64x4 - 8 sources - pull (wide tree - 8 sources - pull (b        1.11      0.48   -128.9%  alien
+32x8 - 4 sources - push (pure push)                            85.11     51.90   -64.0%  alien
+10x5 - 2 sources - read 20% (simple component)                140.85     95.01   -48.2%  alien
+10x10 - 6 sources - dynamic - read 20% (dynamic componen      105.80     88.34   -19.8%  alien
+1000x12 - 4 sources - dynamic (large web app)                 253.33    175.43   -44.4%  alien
+1000x5 - 25 sources (wide dense)                              301.85    292.97   -3.0%  alien
+5x500 - 3 sources (deep)                                       92.72     71.96   -28.9%  alien
+avoidablePropagation                                          101.78     63.11   -61.3%  alien
+broadPropagation                                              198.57    123.45   -60.9%  alien
+deepPropagation                                                70.57     38.17   -84.9%  alien
+diamond                                                       111.36     79.18   -40.6%  alien
+mux                                                           185.34    145.73   -27.2%  alien
+repeatedObservers                                              27.33     23.43   -16.7%  alien
+triangle                                                       42.33     26.82   -57.8%  alien
+unstable                                                       40.59     33.95   -19.5%  alien
+manyEffectsFromOneSource                                      115.09     96.66   -19.1%  alien
+manySourcesIntoOneComputedEffectWithDirect                     49.66     61.13   +18.8%  lite
+manySourcesIntoOneComputedEffect                               48.02     57.36   +16.3%  lite
+manySourcesIntoOneDirectEffect                                  7.08      4.90   -44.4%  alien
+molBench                                                      169.60    163.00   -4.0%  alien
+createDataSignals                                              10.60      1.60   -560.4%  alien
+createComputations0to1                                         13.38      3.15   -325.4%  alien
+createComputations1to1                                         20.93      4.44   -371.3%  alien
+createComputations2to1                                          9.10      2.94   -209.5%  alien
+createComputations4to1                                          7.26      2.40   -202.5%  alien
+createComputations1000to1                                       3.94      1.75   -125.1%  alien
+createComputations1to2                                         20.11      4.42   -354.5%  alien
+createComputations1to4                                         19.51      4.60   -324.5%  alien
+createComputations1to8                                         19.16      4.39   -336.1%  alien
+createComputations1to1000                                      17.52      5.17   -238.9%  alien
+updateComputations1to1                                         12.38      9.42   -31.4%  alien
+updateComputations2to1                                          7.47      7.63   +2.1%  lite
+updateComputations4to1                                          5.10      5.75   +11.3%  lite
+updateComputations1000to1                                       6.88      7.78   +11.4%  lite
+updateComputations1to2                                         12.08      9.29   -30.0%  alien
+updateComputations1to4                                         11.25      8.41   -33.8%  alien
+updateComputations1to1000                                      13.85      9.95   -39.2%  alien
+----------------------------------------------------------------------------------------------
+lite faster than alien on 5/47 shapes.
+
+----------------------------------------------------------------------------------------------
+EXECUTION TIME -- ALL ENGINES (median across reps, ms; lower is better)
+----------------------------------------------------------------------------------------------
+test                                                            lite     alien  reflex-quant
+64x6 - 4 sources - dynamic - read 12% (dashboard selecti      190.73    135.80        163.07
+24x8 - 3 sources - dynamic - read 40% (editor derived st      270.90    200.75        242.13
+120x7 - 5 sources - dynamic - read 18% (kanban board)         155.37    113.81        130.83
+40x10 - 4 sources - dynamic - read 60% (entity detail pa      345.21    247.02        287.14
+256->512x32 - fanIn 4 - layered-dag - 4 sources (layered       40.45     27.09         29.63
+256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 3       38.77     27.37         26.48
+256->512x32 - fanIn 8 - layered-dag - 8 sources - burst       506.45    273.95        252.02
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm         4.95      3.68          3.68
+32x8 - 4 sources - pull (pure pull)                             1.09      0.54          0.58
+8x64 - 1 sources - pull (linear chain - 1 source - pull         1.07      0.61          0.61
+64x4 - 8 sources - pull (wide tree - 8 sources - pull (b        1.11      0.48          0.57
+32x8 - 4 sources - push (pure push)                            85.11     51.90         68.47
+10x5 - 2 sources - read 20% (simple component)                140.85     95.01        113.05
+10x10 - 6 sources - dynamic - read 20% (dynamic componen      105.80     88.34         96.10
+1000x12 - 4 sources - dynamic (large web app)                 253.33    175.43        182.05
+1000x5 - 25 sources (wide dense)                              301.85    292.97        239.80
+5x500 - 3 sources (deep)                                       92.72     71.96         80.71
+avoidablePropagation                                          101.78     63.11         60.66
+broadPropagation                                              198.57    123.45        145.64
+deepPropagation                                                70.57     38.17         53.36
+diamond                                                       111.36     79.18         80.38
+mux                                                           185.34    145.73        154.32
+repeatedObservers                                              27.33     23.43         14.04
+triangle                                                       42.33     26.82         29.34
+unstable                                                       40.59     33.95         30.80
+manyEffectsFromOneSource                                      115.09     96.66        106.22
+manySourcesIntoOneComputedEffectWithDirect                     49.66     61.13         44.53
+manySourcesIntoOneComputedEffect                               48.02     57.36         42.11
+manySourcesIntoOneDirectEffect                                  7.08      4.90          3.99
+molBench                                                      169.60    163.00        162.88
+createDataSignals                                              10.60      1.60          2.34
+createComputations0to1                                         13.38      3.15          3.67
+createComputations1to1                                         20.93      4.44          5.23
+createComputations2to1                                          9.10      2.94          3.48
+createComputations4to1                                          7.26      2.40          3.70
+createComputations1000to1                                       3.94      1.75          2.05
+createComputations1to2                                         20.11      4.42          5.28
+createComputations1to4                                         19.51      4.60          5.06
+createComputations1to8                                         19.16      4.39          5.08
+createComputations1to1000                                      17.52      5.17         10.35
+updateComputations1to1                                         12.38      9.42          8.13
+updateComputations2to1                                          7.47      7.63          5.51
+updateComputations4to1                                          5.10      5.75          4.46
+updateComputations1000to1                                       6.88      7.78          7.12
+updateComputations1to2                                         12.08      9.29          7.38
+updateComputations1to4                                         11.25      8.41          7.00
+updateComputations1to1000                                      13.85      9.95          8.36
+----------------------------------------------------------------------------------------------
+
+----------------------------------------------------------------------------------------------
+EXECUTION TIME -- lite vs reflex-quant (median across reps, ms; lower is better)
+----------------------------------------------------------------------------------------------
+test                                                            lite  reflex-quant   lite vs reflex-quant
+64x6 - 4 sources - dynamic - read 12% (dashboard selecti      190.73        163.07   -17.0%  reflex-quant
+24x8 - 3 sources - dynamic - read 40% (editor derived st      270.90        242.13   -11.9%  reflex-quant
+120x7 - 5 sources - dynamic - read 18% (kanban board)         155.37        130.83   -18.8%  reflex-quant
+40x10 - 4 sources - dynamic - read 60% (entity detail pa      345.21        287.14   -20.2%  reflex-quant
+256->512x32 - fanIn 4 - layered-dag - 4 sources (layered       40.45         29.63   -36.5%  reflex-quant
+256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 3       38.77         26.48   -46.4%  reflex-quant
+256->512x32 - fanIn 8 - layered-dag - 8 sources - burst       506.45        252.02   -101.0%  reflex-quant
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm         4.95          3.68   -34.5%  reflex-quant
+32x8 - 4 sources - pull (pure pull)                             1.09          0.58   -87.9%  reflex-quant
+8x64 - 1 sources - pull (linear chain - 1 source - pull         1.07          0.61   -75.4%  reflex-quant
+64x4 - 8 sources - pull (wide tree - 8 sources - pull (b        1.11          0.57   -93.0%  reflex-quant
+32x8 - 4 sources - push (pure push)                            85.11         68.47   -24.3%  reflex-quant
+10x5 - 2 sources - read 20% (simple component)                140.85        113.05   -24.6%  reflex-quant
+10x10 - 6 sources - dynamic - read 20% (dynamic componen      105.80         96.10   -10.1%  reflex-quant
+1000x12 - 4 sources - dynamic (large web app)                 253.33        182.05   -39.2%  reflex-quant
+1000x5 - 25 sources (wide dense)                              301.85        239.80   -25.9%  reflex-quant
+5x500 - 3 sources (deep)                                       92.72         80.71   -14.9%  reflex-quant
+avoidablePropagation                                          101.78         60.66   -67.8%  reflex-quant
+broadPropagation                                              198.57        145.64   -36.3%  reflex-quant
+deepPropagation                                                70.57         53.36   -32.3%  reflex-quant
+diamond                                                       111.36         80.38   -38.5%  reflex-quant
+mux                                                           185.34        154.32   -20.1%  reflex-quant
+repeatedObservers                                              27.33         14.04   -94.7%  reflex-quant
+triangle                                                       42.33         29.34   -44.3%  reflex-quant
+unstable                                                       40.59         30.80   -31.7%  reflex-quant
+manyEffectsFromOneSource                                      115.09        106.22   -8.3%  reflex-quant
+manySourcesIntoOneComputedEffectWithDirect                     49.66         44.53   -11.5%  reflex-quant
+manySourcesIntoOneComputedEffect                               48.02         42.11   -14.0%  reflex-quant
+manySourcesIntoOneDirectEffect                                  7.08          3.99   -77.8%  reflex-quant
+molBench                                                      169.60        162.88   -4.1%  reflex-quant
+createDataSignals                                              10.60          2.34   -352.0%  reflex-quant
+createComputations0to1                                         13.38          3.67   -265.1%  reflex-quant
+createComputations1to1                                         20.93          5.23   -300.1%  reflex-quant
+createComputations2to1                                          9.10          3.48   -161.9%  reflex-quant
+createComputations4to1                                          7.26          3.70   -96.5%  reflex-quant
+createComputations1000to1                                       3.94          2.05   -92.2%  reflex-quant
+createComputations1to2                                         20.11          5.28   -280.9%  reflex-quant
+createComputations1to4                                         19.51          5.06   -285.1%  reflex-quant
+createComputations1to8                                         19.16          5.08   -277.6%  reflex-quant
+createComputations1to1000                                      17.52         10.35   -69.3%  reflex-quant
+updateComputations1to1                                         12.38          8.13   -52.4%  reflex-quant
+updateComputations2to1                                          7.47          5.51   -35.7%  reflex-quant
+updateComputations4to1                                          5.10          4.46   -14.2%  reflex-quant
+updateComputations1000to1                                       6.88          7.12   +3.3%  lite
+updateComputations1to2                                         12.08          7.38   -63.6%  reflex-quant
+updateComputations1to4                                         11.25          7.00   -60.6%  reflex-quant
+updateComputations1to1000                                      13.85          8.36   -65.6%  reflex-quant
+----------------------------------------------------------------------------------------------
+lite faster than reflex-quant on 1/47 shapes.
+
+HONEST FRAMING (the claim that reproduces):
+  On these shapes lite runs at parity-to-behind alien on throughput (weak on deep/
+  layered propagation -- the DEEP CHAIN / burst family). This report measures time
+  only; for what the bench/benchmark.mjs microscope columns do and do not measure,
+  see bench/README.md "Reading the output". The headline is not 'fastest
+  dynamic-graph engine'.
+
+STANDING RULES (enforced by the harness, not by prose):
+  1. Built only from a dir with the COMPLETE marker sweep.mjs writes on a clean exit 0:
+     every child returned a stamp and a row within SWEEP_TIMEOUT_MS, exited 0 and printed no
+     #GUARD line, each engine's stamps agree (engine sha, protocol, host) over REPS
+     files, the rows passed lib/rowcheck.mjs, and the sentinel re-measure stayed within
+     DRIFT_TOL. The mirror's in-process counter / checksum guards compare engines inside
+     ONE process, so with one engine per child they check nothing; rowcheck compares the
+     rep files across engines instead.
+     report.mjs itself checked: the marker (protocol, reps, engines vs the files), one
+     engine sha / protocol / host per engine, equal rep counts across engines, and every
+     row in every rep file. lib/rowcheck.mjs checked: every counter equal across each
+     engine's reps; edgesTraversed, sum and checksum equal across engines; no required
+     token missing and no zero sum / checksum; every row on >= 2 engines; one host, node,
+     harness sha, engine sha, protocol, config and adapter across all stamps; quick=false
+     and the COMPLETE marker's captureId in every stamp.
+  2. The mirror is a port of Andrii's suite, not a copy; a counter divergence for
+     identical engine bytes is a harness bug (run mirror.mjs --self-verify). Shape
+     edits only by re-porting.
+  3. One shape name = one definition, repo-wide. Approximations deleted, not renamed.
+  4. lite's config is fixed per file and echoed by the stamp. sab is a production
+     feature, not a benchmark knob.
+  5. Cross-protocol / cross-host comparisons cite (stamp, protocol) or are not made.
+
+----------------------------------------------------------------------------------------------
+ANDRII JOIN (vs bench/AndriiVolynetsReactiveBench.log)
+----------------------------------------------------------------------------------------------
+(join validity is asserted by mirror.mjs --self-verify + vs-andrii.mjs; this section is informational.)
+his lite-signal rows available: 45
+
+Raw per-rep files: bench/sweep-runs/<engine>-rep<N>.txt
+Re-derive this file (no re-benching): node bench/report.mjs bench/sweep-runs

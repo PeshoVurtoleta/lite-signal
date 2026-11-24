@@ -1,0 +1,187 @@
+quiet-lock: host QUIET (load1 1.46, baseline 2.21, 12 cores)
+sweep: 3 engine(s) x 47 scenario(s) x 10 rep(s) = 1410 cold processes
+protocol: isolated-per-row, scenario-major Williams, sentinel drift @ 5%, child timeout 120000 ms
+capture: 20261124T001531Z-02a0b456
+output: /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/sweep-runs
+
+sentinel: lite-signal/dashboard selective reads  baseline=median(10)=190.73ms  last=189.15ms  ratio=0.992x  (stable)
+
+aggregated: protocol=isolated-per-row  reps=10  engineSha=a7202c9bb9af
+
+test                                                     lite    alien  lite vs alien  spread
+----------------------------------------------------------------------------------------------------
+64x6 - 4 sources - dynamic - read 12% (dashboard s     190.73   135.80   -40.5% alien    5%
+24x8 - 3 sources - dynamic - read 40% (editor deri     270.90   200.75   -34.9% alien    6%
+120x7 - 5 sources - dynamic - read 18% (kanban boa     155.37   113.81   -36.5% alien    4%
+40x10 - 4 sources - dynamic - read 60% (entity det     345.21   247.02   -39.7% alien    7%
+256->512x32 - fanIn 4 - layered-dag - 4 sources (l      40.45    27.09   -49.3% alien    15% !!
+256->512x32 - fanIn 4 - layered-dag - 4 sources -       38.77    27.37   -41.7% alien    23% !!
+256->512x32 - fanIn 8 - layered-dag - 8 sources -      506.45   273.95   -84.9% alien    16% !!
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources -       4.95     3.68   -34.5% alien    8% !!
+32x8 - 4 sources - pull (pure pull)                      1.09     0.54   -103.7% alien   13% !!
+8x64 - 1 sources - pull (linear chain - 1 source -       1.07     0.61   -74.0% alien    16% !!
+64x4 - 8 sources - pull (wide tree - 8 sources - p       1.11     0.48   -128.9% alien   21% !!
+32x8 - 4 sources - push (pure push)                     85.11    51.90   -64.0% alien    5%
+10x5 - 2 sources - read 20% (simple component)         140.85    95.01   -48.2% alien    4%
+10x10 - 6 sources - dynamic - read 20% (dynamic co     105.80    88.34   -19.8% alien    5%
+1000x12 - 4 sources - dynamic (large web app)          253.33   175.43   -44.4% alien    2%
+1000x5 - 25 sources (wide dense)                       301.85   292.97   -3.0% alien     3%
+5x500 - 3 sources (deep)                                92.72    71.96   -28.9% alien    4%
+avoidablePropagation                                   101.78    63.11   -61.3% alien    2%
+broadPropagation                                       198.57   123.45   -60.9% alien    4%
+deepPropagation                                         70.57    38.17   -84.9% alien    6%
+diamond                                                111.36    79.18   -40.6% alien    7%
+mux                                                    185.34   145.73   -27.2% alien    42% !!
+repeatedObservers                                       27.33    23.43   -16.7% alien    31% !!
+triangle                                                42.33    26.82   -57.8% alien    70% !!
+unstable                                                40.59    33.95   -19.5% alien    5%
+manyEffectsFromOneSource                               115.09    96.66   -19.1% alien    5%
+manySourcesIntoOneComputedEffectWithDirect              49.66    61.13   +18.8% lite     3%
+manySourcesIntoOneComputedEffect                        48.02    57.36   +16.3% lite     8%
+manySourcesIntoOneDirectEffect                           7.08     4.90   -44.4% alien    8%
+molBench                                               169.60   163.00   -4.0% alien     10% !!
+createDataSignals                                       10.60     1.60   -560.4% alien   19% !!
+createComputations0to1                                  13.38     3.15   -325.4% alien   6%
+createComputations1to1                                  20.93     4.44   -371.3% alien   7%
+createComputations2to1                                   9.10     2.94   -209.5% alien   6%
+createComputations4to1                                   7.26     2.40   -202.5% alien   20% !!
+createComputations1000to1                                3.94     1.75   -125.1% alien   5%
+createComputations1to2                                  20.11     4.42   -354.5% alien   16% !!
+createComputations1to4                                  19.51     4.60   -324.5% alien   11% !!
+createComputations1to8                                  19.16     4.39   -336.1% alien   15% !!
+createComputations1to1000                               17.52     5.17   -238.9% alien   70% !!
+updateComputations1to1                                  12.38     9.42   -31.4% alien    6%
+updateComputations2to1                                   7.47     7.63   +2.1% lite      6%
+updateComputations4to1                                   5.10     5.75   +11.3% lite     13% !!
+updateComputations1000to1                                6.88     7.78   +11.4% lite     5%
+updateComputations1to2                                  12.08     9.29   -30.0% alien    8%
+updateComputations1to4                                  11.25     8.41   -33.8% alien    5%
+updateComputations1to1000                               13.85     9.95   -39.2% alien    7%
+----------------------------------------------------------------------------------------------------
+
+18 row(s) exceed 8% run-to-run spread -- treat as a band, not a point, or add reps:
+  createComputations1to1000                                70%
+  triangle                                                 70%
+  mux                                                      42%
+  repeatedObservers                                        31%
+  256->512x32 - fanIn 4 - layered-dag - 4 sources - warm   23%
+  64x4 - 8 sources - pull (wide tree - 8 sources - pull    21%
+  createComputations4to1                                   20%
+  createDataSignals                                        19%
+  8x64 - 1 sources - pull (linear chain - 1 source - pul   16%
+  256->512x32 - fanIn 8 - layered-dag - 8 sources - burs   16%
+  createComputations1to2                                   16%
+  createComputations1to8                                   15%
+  256->512x32 - fanIn 4 - layered-dag - 4 sources (layer   15%
+  updateComputations4to1                                   13%
+  32x8 - 4 sources - pull (pure pull)                      13%
+  createComputations1to4                                   11%
+  molBench                                                 10%
+  256->512x32 - fanIn 8 - diamond-mesh - 8 sources - war   8%
+(the sentinel guards ONE shape; these rows have their own per-shape variance.)
+
+all engines (median ms; lower is better):
+test                                                     lite    alien  reflex-quant  spread
+----------------------------------------------------------------------------------------------------
+64x6 - 4 sources - dynamic - read 12% (dashboard s     190.73   135.80        163.07  5%
+24x8 - 3 sources - dynamic - read 40% (editor deri     270.90   200.75        242.13  6%
+120x7 - 5 sources - dynamic - read 18% (kanban boa     155.37   113.81        130.83  4%
+40x10 - 4 sources - dynamic - read 60% (entity det     345.21   247.02        287.14  8% !!
+256->512x32 - fanIn 4 - layered-dag - 4 sources (l      40.45    27.09         29.63  15% !!
+256->512x32 - fanIn 4 - layered-dag - 4 sources -       38.77    27.37         26.48  23% !!
+256->512x32 - fanIn 8 - layered-dag - 8 sources -      506.45   273.95        252.02  16% !!
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources -       4.95     3.68          3.68  8% !!
+32x8 - 4 sources - pull (pure pull)                      1.09     0.54          0.58  14% !!
+8x64 - 1 sources - pull (linear chain - 1 source -       1.07     0.61          0.61  23% !!
+64x4 - 8 sources - pull (wide tree - 8 sources - p       1.11     0.48          0.57  21% !!
+32x8 - 4 sources - push (pure push)                     85.11    51.90         68.47  7%
+10x5 - 2 sources - read 20% (simple component)         140.85    95.01        113.05  4%
+10x10 - 6 sources - dynamic - read 20% (dynamic co     105.80    88.34         96.10  7%
+1000x12 - 4 sources - dynamic (large web app)          253.33   175.43        182.05  3%
+1000x5 - 25 sources (wide dense)                       301.85   292.97        239.80  14% !!
+5x500 - 3 sources (deep)                                92.72    71.96         80.71  5%
+avoidablePropagation                                   101.78    63.11         60.66  7%
+broadPropagation                                       198.57   123.45        145.64  7%
+deepPropagation                                         70.57    38.17         53.36  6%
+diamond                                                111.36    79.18         80.38  7%
+mux                                                    185.34   145.73        154.32  62% !!
+repeatedObservers                                       27.33    23.43         14.04  43% !!
+triangle                                                42.33    26.82         29.34  114% !!
+unstable                                                40.59    33.95         30.80  5%
+manyEffectsFromOneSource                               115.09    96.66        106.22  5%
+manySourcesIntoOneComputedEffectWithDirect              49.66    61.13         44.53  3%
+manySourcesIntoOneComputedEffect                        48.02    57.36         42.11  8%
+manySourcesIntoOneDirectEffect                           7.08     4.90          3.99  12% !!
+molBench                                               169.60   163.00        162.88  10% !!
+createDataSignals                                       10.60     1.60          2.34  19% !!
+createComputations0to1                                  13.38     3.15          3.67  21% !!
+createComputations1to1                                  20.93     4.44          5.23  9% !!
+createComputations2to1                                   9.10     2.94          3.48  7%
+createComputations4to1                                   7.26     2.40          3.70  20% !!
+createComputations1000to1                                3.94     1.75          2.05  10% !!
+createComputations1to2                                  20.11     4.42          5.28  16% !!
+createComputations1to4                                  19.51     4.60          5.06  11% !!
+createComputations1to8                                  19.16     4.39          5.08  15% !!
+createComputations1to1000                               17.52     5.17         10.35  70% !!
+updateComputations1to1                                  12.38     9.42          8.13  8%
+updateComputations2to1                                   7.47     7.63          5.51  6%
+updateComputations4to1                                   5.10     5.75          4.46  16% !!
+updateComputations1000to1                                6.88     7.78          7.12  5%
+updateComputations1to2                                  12.08     9.29          7.38  8%
+updateComputations1to4                                  11.25     8.41          7.00  5%
+updateComputations1to1000                               13.85     9.95          8.36  8%
+----------------------------------------------------------------------------------------------------
+
+lite vs reflex-quant:
+test                                                     lite  reflex-quant  lite vs reflex-quant   spread
+----------------------------------------------------------------------------------------------------
+64x6 - 4 sources - dynamic - read 12% (dashboard s     190.73        163.07   -17.0% reflex-quant     3%
+24x8 - 3 sources - dynamic - read 40% (editor deri     270.90        242.13   -11.9% reflex-quant     6%
+120x7 - 5 sources - dynamic - read 18% (kanban boa     155.37        130.83   -18.8% reflex-quant     4%
+40x10 - 4 sources - dynamic - read 60% (entity det     345.21        287.14   -20.2% reflex-quant     8% !!
+256->512x32 - fanIn 4 - layered-dag - 4 sources (l      40.45         29.63   -36.5% reflex-quant     15% !!
+256->512x32 - fanIn 4 - layered-dag - 4 sources -       38.77         26.48   -46.4% reflex-quant     23% !!
+256->512x32 - fanIn 8 - layered-dag - 8 sources -      506.45        252.02   -101.0% reflex-quant    14% !!
+256->512x32 - fanIn 8 - diamond-mesh - 8 sources -       4.95          3.68   -34.5% reflex-quant     8% !!
+32x8 - 4 sources - pull (pure pull)                      1.09          0.58   -87.9% reflex-quant     14% !!
+8x64 - 1 sources - pull (linear chain - 1 source -       1.07          0.61   -75.4% reflex-quant     23% !!
+64x4 - 8 sources - pull (wide tree - 8 sources - p       1.11          0.57   -93.0% reflex-quant     17% !!
+32x8 - 4 sources - push (pure push)                     85.11         68.47   -24.3% reflex-quant     7%
+10x5 - 2 sources - read 20% (simple component)         140.85        113.05   -24.6% reflex-quant     4%
+10x10 - 6 sources - dynamic - read 20% (dynamic co     105.80         96.10   -10.1% reflex-quant     7%
+1000x12 - 4 sources - dynamic (large web app)          253.33        182.05   -39.2% reflex-quant     3%
+1000x5 - 25 sources (wide dense)                       301.85        239.80   -25.9% reflex-quant     14% !!
+5x500 - 3 sources (deep)                                92.72         80.71   -14.9% reflex-quant     5%
+avoidablePropagation                                   101.78         60.66   -67.8% reflex-quant     7%
+broadPropagation                                       198.57        145.64   -36.3% reflex-quant     7%
+deepPropagation                                         70.57         53.36   -32.3% reflex-quant     4%
+diamond                                                111.36         80.38   -38.5% reflex-quant     7%
+mux                                                    185.34        154.32   -20.1% reflex-quant     62% !!
+repeatedObservers                                       27.33         14.04   -94.7% reflex-quant     43% !!
+triangle                                                42.33         29.34   -44.3% reflex-quant     114% !!
+unstable                                                40.59         30.80   -31.7% reflex-quant     5%
+manyEffectsFromOneSource                               115.09        106.22   -8.3% reflex-quant      5%
+manySourcesIntoOneComputedEffectWithDirect              49.66         44.53   -11.5% reflex-quant     3%
+manySourcesIntoOneComputedEffect                        48.02         42.11   -14.0% reflex-quant     6%
+manySourcesIntoOneDirectEffect                           7.08          3.99   -77.8% reflex-quant     12% !!
+molBench                                               169.60        162.88   -4.1% reflex-quant      10% !!
+createDataSignals                                       10.60          2.34   -352.0% reflex-quant    11% !!
+createComputations0to1                                  13.38          3.67   -265.1% reflex-quant    21% !!
+createComputations1to1                                  20.93          5.23   -300.1% reflex-quant    9% !!
+createComputations2to1                                   9.10          3.48   -161.9% reflex-quant    7%
+createComputations4to1                                   7.26          3.70   -96.5% reflex-quant     16% !!
+createComputations1000to1                                3.94          2.05   -92.2% reflex-quant     10% !!
+createComputations1to2                                  20.11          5.28   -280.9% reflex-quant    16% !!
+createComputations1to4                                  19.51          5.06   -285.1% reflex-quant    6%
+createComputations1to8                                  19.16          5.08   -277.6% reflex-quant    7%
+createComputations1to1000                               17.52         10.35   -69.3% reflex-quant     29% !!
+updateComputations1to1                                  12.38          8.13   -52.4% reflex-quant     8%
+updateComputations2to1                                   7.47          5.51   -35.7% reflex-quant     6%
+updateComputations4to1                                   5.10          4.46   -14.2% reflex-quant     16% !!
+updateComputations1000to1                                6.88          7.12   +3.3% lite              4%
+updateComputations1to2                                  12.08          7.38   -63.6% reflex-quant     3%
+updateComputations1to4                                  11.25          7.00   -60.6% reflex-quant     3%
+updateComputations1to1000                               13.85          8.36   -65.6% reflex-quant     8%
+----------------------------------------------------------------------------------------------------
+
+sweep OK -- stamp-consistent, rep count verified, rows validated across engines, sentinel stable. Numbers are publishable.

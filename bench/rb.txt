@@ -1,3 +1,4 @@
+HISTORY: pasted terminal output from commit fc1f826; not a current measurement; heap figures withdrawn (C1); current numbers: results-1.6.0/README.md
 zakkster@MacBook-Pro bench % node aggregate.mjs
 microscope aggregate  (reps on disk; 4 engine(s))
 

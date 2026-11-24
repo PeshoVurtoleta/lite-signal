@@ -1,0 +1,50 @@
+# bands.mjs table: micro
+# input dir: /Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/bench-runs
+# loader: bench/lib/collect.mjs collectEngine (reused unchanged)
+# captureId: (none stamped)
+# engineSha(lite stamp): a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+# reps: 10 per engine (lite, alien, preact, solid, reflex-quant)
+# protocol: isolated-per-engine | isolated-per-engine (round-robin, one cold process per engine per rep)
+# host: Apple M4 Pro node v26.8.2
+# script sha256: 411ece0fe197371b694aecd118cb069403bd0cce5aa53e6c7e22e0d9d644a8c1
+# date: 2026-11-24
+# spread = (max-min)/median of the 10 per-rep medians; band = larger of the two engines' spreads; delta = (other-lite)/other, + = lite faster; |delta| <= band = inside band
+
+== lite vs alien (micro) ==
+KAIROS lite=531.22 sp=2.7% alien=473.71 sp=17.2% delta=-12.1% band=17.2% verdict=inside band
+BROADCAST lite=285.49 sp=7.6% alien=395.59 sp=18.4% delta=+27.8% band=18.4% verdict=lite ahead
+DEEP CHAIN lite=172.69 sp=7.1% alien=87.94 sp=15.8% delta=-96.4% band=15.8% verdict=alien ahead
+MUX lite=20.11 sp=6.5% alien=33.53 sp=7.2% delta=+40.0% band=7.2% verdict=lite ahead
+DYNAMIC DAG lite=3674.19 sp=6.2% alien=4617.03 sp=6.9% delta=+20.4% band=6.9% verdict=lite ahead
+SELECTIVE DAG lite=2100.64 sp=16.9% alien=2661.51 sp=6.7% delta=+21.1% band=16.9% verdict=lite ahead
+
+== lite vs preact (micro) ==
+KAIROS lite=531.22 sp=2.7% preact=668.04 sp=13.8% delta=+20.5% band=13.8% verdict=lite ahead
+BROADCAST lite=285.49 sp=7.6% preact=544.35 sp=34.3% delta=+47.6% band=34.3% verdict=lite ahead
+DEEP CHAIN lite=172.69 sp=7.1% preact=149.13 sp=14.5% delta=-15.8% band=14.5% verdict=preact ahead
+MUX lite=20.11 sp=6.5% preact=35.98 sp=2.9% delta=+44.1% band=6.5% verdict=lite ahead
+DYNAMIC DAG lite=3674.19 sp=6.2% preact=2674.09 sp=10.8% delta=-37.4% band=10.8% verdict=preact ahead
+SELECTIVE DAG lite=2100.64 sp=16.9% preact=2818.45 sp=9.7% delta=+25.5% band=16.9% verdict=lite ahead
+
+== lite vs solid (micro) ==
+KAIROS lite=531.22 sp=2.7% solid=2082.27 sp=6.9% delta=+74.5% band=6.9% verdict=lite ahead
+BROADCAST lite=285.49 sp=7.6% solid=1068.22 sp=10.3% delta=+73.3% band=10.3% verdict=lite ahead
+DEEP CHAIN lite=172.69 sp=7.1% solid=550.03 sp=12.0% delta=+68.6% band=12.0% verdict=lite ahead
+MUX lite=20.11 sp=6.5% solid=206.20 sp=5.8% delta=+90.2% band=6.5% verdict=lite ahead
+DYNAMIC DAG lite=3674.19 sp=6.2% solid=4976.20 sp=2.8% delta=+26.2% band=6.2% verdict=lite ahead
+SELECTIVE DAG lite=2100.64 sp=16.9% solid=3441.49 sp=8.5% delta=+39.0% band=16.9% verdict=lite ahead
+
+== lite vs reflex-quant (micro) ==
+KAIROS lite=531.22 sp=2.7% reflex-quant=437.53 sp=5.7% delta=-21.4% band=5.7% verdict=reflex-quant ahead
+BROADCAST lite=285.49 sp=7.6% reflex-quant=366.07 sp=9.9% delta=+22.0% band=9.9% verdict=lite ahead
+DEEP CHAIN lite=172.69 sp=7.1% reflex-quant=82.58 sp=14.6% delta=-109.1% band=14.6% verdict=reflex-quant ahead
+MUX lite=20.11 sp=6.5% reflex-quant=20.84 sp=4.8% delta=+3.5% band=6.5% verdict=inside band
+DYNAMIC DAG lite=3674.19 sp=6.2% reflex-quant=2436.91 sp=5.4% delta=-50.8% band=6.2% verdict=reflex-quant ahead
+SELECTIVE DAG lite=2100.64 sp=16.9% reflex-quant=1757.66 sp=3.7% delta=-19.5% band=16.9% verdict=reflex-quant ahead
+
+lite vs alien: lite-ahead-outside-band 4/6, inside-band 1, alien-ahead-outside-band 1
+lite vs preact: lite-ahead-outside-band 4/6, inside-band 0, preact-ahead-outside-band 2
+lite vs solid: lite-ahead-outside-band 6/6, inside-band 0, solid-ahead-outside-band 0
+lite vs reflex-quant: lite-ahead-outside-band 1/6, inside-band 1, reflex-quant-ahead-outside-band 4
+lowest median per row (ties at 2 decimals counted apart): lite 2, alien 0, preact 0, solid 0, reflex-quant 4, ties 0; total 6
+  of those leads, outside the band (lead over the runner-up engine > larger of the two spreads): lite 1/2, alien 0/0, preact 0/0, solid 0/0, reflex-quant 0/4

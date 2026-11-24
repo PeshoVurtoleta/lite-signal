@@ -1,0 +1,11 @@
+bands.mjs controls | script sha256 411ece0fe197371b694aecd118cb069403bd0cce5aa53e6c7e22e0d9d644a8c1 | loader: bench/lib/collect.mjs collectEngine (reused unchanged)
+control (a) sweep spreads vs sweep.log (pair table + 3-engine table, toFixed(0)): 94/94 PASS
+control (a2, extra) sweep lite/reflex-quant pair spreads vs sweep.log third table: 47/47 PASS
+control (b) microscope medians vs microscope-aggregate.log (toFixed(2)): 30/30 PASS
+control (c) mirror medians vs mirror-report.txt all-engines table (47 rows x 3 engines): 141/141 PASS
+control (c2, extra) mirror pair-table lite/alien medians: 94/94 PASS
+control (d-missing-rep): exit 1, output file absent, REFUSED (PASS); reason: REFUSING: lite-signal: 9 rep file(s) on disk, need exactly 10
+control (d2-missing-rep-micro): exit 1, output file absent, REFUSED (PASS); reason: REFUSING: solid: 9 rep file(s) on disk, need exactly 10
+control (d3-mixed-engineSha): exit 1, output file absent, REFUSED (PASS); reason: REFUSING: alien-signals: mixed engine hashes across rep files (2 distinct) -- these are different engines, refusing to merge
+control (d4-bad-time): exit 1, output file absent, REFUSED (PASS); reason: REFUSING: non-finite or <= 0 time in row "64x6 - 4 sources - dynamic - read 12% (dashboard selective reads)": 0.00
+CONTROLS: ALL PASS

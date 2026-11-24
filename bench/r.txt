@@ -1,3 +1,4 @@
+HISTORY: pasted terminal output from commit fc1f826; not a current measurement; current numbers: results-1.6.0/README.md
 zakkster@MacBook-Pro bench % node report.mjs
 ==============================================================================================
  @zakkster/lite-signal -- REACTIVITY MIRROR (cross-framework, Andrii's canonical adapter)
