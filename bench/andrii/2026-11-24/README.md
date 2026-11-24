@@ -2,7 +2,7 @@
 
 This folder holds this cycle's two Andrii js-reactivity-benchmark legs on lite-signal 1.6.0's final engine (node 26 and node 24), upstream's own published table, and a labelled projection of where 1.6.0 would land in it. Tier REPORTED: it gates nothing and every number is a measurement under the stated protocol, host, Node and run count.
 
-Files: `summary.md` / `summary.json` (andrii-analyze output), `node26/HEADER.txt`, `node24/HEADER.txt` (leg headers), `clone-local.patch` (one copy: the two legs' patches are byte-equal, sha256 b7b8a129...; 5 untracked clone-local files).
+Files: `summary.md` / `summary.json` (andrii-analyze output), `node26/HEADER.txt`, `node24/HEADER.txt` (leg headers), `clone-local.patch` (one copy: the two legs' patches are byte-equal, sha256 b7b8a129...; it edits 2 tracked clone files, src/config.ts and src/frameworkCatalog.json, and adds 5 clone-local files).
 
 ## Provenance
 
@@ -70,7 +70,7 @@ sourceCommit f0d456c, rendered 2026-11-16, node v24.15.0 linux/x64, 24 machine s
 
 ## Who is fastest in upstream's table
 
-Lowest median per test:
+Lowest median per test (this repo's count over upstream's samples):
 
 - All 51 tests: reflex-quant 27, reflex 12, @vue/reactivity 3.6 RC 5, alien-signals 4, dalien-signals 2, s-js 1.
 - 34 core tests: reflex-quant 21, reflex 10, alien-signals 1, dalien-signals 1, @vue/reactivity 3.6 RC 1.
