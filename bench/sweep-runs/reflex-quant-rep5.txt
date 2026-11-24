@@ -1,0 +1,49 @@
+#STAMP {"kind":"bench-stamp/v1","date":"2026-11-24T00:19:28.206Z","protocol":"isolated-per-row","reps":3,"node":"v26.8.2","arch":"arm64","platform":"darwin","cpu":"Apple M4 Pro","gcExposed":true,"enginePath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/Signal.js","engineSha256":"a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89","harnessPath":"/Users/zakkster/Work/Portfolio/LiteLibrariesSuite/LiteSignal/bench/mirror.mjs","harnessSha256":"c5006fcba8586e90e94e7bc0a9f6fccceb9a497fb022fa90ab8f251e2c8abc98","config":{"maxNodes":262144,"maxLinks":1048576,"prealloc":"lazy","onCapacityExceeded":"throw"},"extra":{"ceiling_ms":1500,"quick":false,"adapter":"destroy","scenario":"broadPropagation","captureId":"20261124T001531Z-02a0b456","refLibs":{"reflex-quant":"1.2.0"},"load1":1.9482421875}}
+framework , test , time , metrics
+reflex-quant           , broadPropagation                                             , 145.31   , checksum=99
+reflex-quant           , deepPropagation                                              , 53.90    , checksum=99
+reflex-quant           , diamond                                                      , 80.31    , checksum=2500
+reflex-quant           , mux                                                          , 150.67   , checksum=190
+reflex-quant           , repeatedObservers                                            , 14.08    , checksum=2970
+reflex-quant           , triangle                                                     , 29.33    , checksum=1035
+reflex-quant           , unstable                                                     , 30.84    , checksum=3960
+reflex-quant           , manyEffectsFromOneSource                                     , 108.93   , checksum=180075672000
+reflex-quant           , manySourcesIntoOneComputedEffectWithDirect                   , 44.84    , checksum=1372929289844
+reflex-quant           , manySourcesIntoOneComputedEffect                             , 41.73    , checksum=1331323690944
+reflex-quant           , manySourcesIntoOneDirectEffect                               , 3.97     , checksum=41605598900
+reflex-quant           , molBench                                                     , 165.22   , checksum=9616
+reflex-quant           , createDataSignals                                            , 2.30     , 
+reflex-quant           , createComputations0to1                                       , 3.90     , 
+reflex-quant           , createComputations1to1                                       , 5.22     , 
+reflex-quant           , createComputations2to1                                       , 3.63     , 
+reflex-quant           , createComputations4to1                                       , 3.76     , 
+reflex-quant           , createComputations1000to1                                    , 2.04     , 
+reflex-quant           , createComputations1to2                                       , 5.24     , 
+reflex-quant           , createComputations1to4                                       , 5.24     , 
+reflex-quant           , createComputations1to8                                       , 5.03     , 
+reflex-quant           , createComputations1to1000                                    , 8.82     , 
+reflex-quant           , updateComputations1to1                                       , 8.25     , 
+reflex-quant           , updateComputations2to1                                       , 5.58     , 
+reflex-quant           , updateComputations4to1                                       , 3.95     , 
+reflex-quant           , updateComputations1000to1                                    , 7.33     , 
+reflex-quant           , updateComputations1to2                                       , 7.47     , 
+reflex-quant           , updateComputations1to4                                       , 6.97     , 
+reflex-quant           , updateComputations1to1000                                    , 8.43     , 
+reflex-quant           , 64x6 - 4 sources - dynamic - read 12% (dashboard selective reads) , 165.39   , nodesRecomputed=2642029 nodesVisited=2642029 edgesTraversed=10568081 sinkReads=960008 sum=982883328
+reflex-quant           , 24x8 - 3 sources - dynamic - read 40% (editor derived state) , 243.72   , nodesRecomputed=4736332 nodesVisited=4736332 edgesTraversed=14208887 sinkReads=900010 sum=1968220290
+reflex-quant           , 120x7 - 5 sources - dynamic - read 18% (kanban board)        , 134.35   , nodesRecomputed=1765496 nodesVisited=1765496 edgesTraversed=8827231 sinkReads=660022 sum=10309364930
+reflex-quant           , 40x10 - 4 sources - dynamic - read 60% (entity detail page)  , 296.74   , nodesRecomputed=3984210 nodesVisited=3984210 edgesTraversed=15936789 sinkReads=720024 sum=188726387776
+reflex-quant           , 256->512x32 - fanIn 4 - layered-dag - 4 sources (layered full-drain cold) , 29.56    , nodesRecomputed=249624 nodesVisited=249624 edgesTraversed=998496 sinkReads=61952 sum=1.4676229585043317e+24
+reflex-quant           , 256->512x32 - fanIn 4 - layered-dag - 4 sources - warm 320 (layered full-drain warm) , 26.33    , nodesRecomputed=235200 nodesVisited=235200 edgesTraversed=940800 sinkReads=61952 sum=4.1462377719595485e+24
+reflex-quant           , 256->512x32 - fanIn 8 - layered-dag - 8 sources - burst 16 - warm 256 - per-batch (layered burst flush warm) , 252.58   , nodesRecomputed=1529088 nodesVisited=1529088 edgesTraversed=12232704 sinkReads=49664 sum=2.284204969563251e+35
+reflex-quant           , 256->512x32 - fanIn 8 - diamond-mesh - 8 sources - warm 256 (stable diamond mesh warm) , 3.68     , nodesRecomputed=24576 nodesVisited=24576 edgesTraversed=196608 sinkReads=49664 sum=1.4238251541763473e+34
+reflex-quant           , 32x8 - 4 sources - pull (pure pull)                          , 0.58     , nodesRecomputed=224 nodesVisited=224 edgesTraversed=896 sinkReads=32 sum=5242355712
+reflex-quant           , 8x64 - 1 sources - pull (linear chain - 1 source - pull (linear pull)) , 0.67     , nodesRecomputed=504 nodesVisited=504 edgesTraversed=504 sinkReads=8 sum=79992
+reflex-quant           , 64x4 - 8 sources - pull (wide tree - 8 sources - pull (branchy pull)) , 0.55     , nodesRecomputed=192 nodesVisited=192 edgesTraversed=1536 sinkReads=64 sum=327647232
+reflex-quant           , 32x8 - 4 sources - push (pure push)                          , 69.94    , nodesRecomputed=910133 nodesVisited=910133 edgesTraversed=3640532 sinkReads=220010 sum=5242355712
+reflex-quant           , 10x5 - 2 sources - read 20% (simple component)               , 113.13   , nodesRecomputed=3180010 nodesVisited=3180010 edgesTraversed=6360020 sinkReads=1200002 sum=19200092
+reflex-quant           , 10x10 - 6 sources - dynamic - read 20% (dynamic component)   , 96.04    , nodesRecomputed=1140004 nodesVisited=1140004 edgesTraversed=6839936 sinkReads=30002 sum=302310877104
+reflex-quant           , 1000x12 - 4 sources - dynamic (large web app)                , 181.27   , nodesRecomputed=1473786 nodesVisited=1473786 edgesTraversed=5891713 sinkReads=7001000 sum=29355933696000
+reflex-quant           , 1000x5 - 25 sources (wide dense)                             , 239.23   , nodesRecomputed=735756 nodesVisited=735756 edgesTraversed=18393900 sinkReads=3001000 sum=1171484375000
+reflex-quant           , 5x500 - 3 sources (deep)                                     , 79.01    , nodesRecomputed=1246502 nodesVisited=1246502 edgesTraversed=3739506 sinkReads=2505 sum=3.0239642676898464e+241
+reflex-quant           , avoidablePropagation                                         , 61.74    , checksum=6

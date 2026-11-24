@@ -1,0 +1,1 @@
+{"kind":"bench-capture-complete/v1","writer":"sweep.mjs","protocol":"isolated-per-row","reps":10,"engines":["lite-signal","alien-signals","reflex-quant"],"captureId":"20261124T001531Z-02a0b456"}
