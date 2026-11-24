@@ -44,6 +44,15 @@ Dev-only (`bench/`; not in `files[]`). No engine change.
 - **Timed work changed.** The alien adapter now hands the harness `{read, write}` handles as upstream 12f169b does (`mirror.mjs`), and the fan shapes draw from a schedule precomputed outside the timed run (`lib/micro-suites.mjs`; `FAN_VERBATIM=1` restores the previous per-step draw). Both alter the timed work, so held b246 alien / fan times are NOT comparable with new captures. `MOL_D=upstream|fresh` (D-b249-1) selects mol's D derivation.
 - Tests: `test/135-g2-schedule.test.mjs`, `test/136-g2-capture-check.test.mjs`, `test/137-g2-mirror-shapes.test.mjs`. `bench/README.md` follows the code.
 
+### Fixed -- bench: sweep sentinel baseline = median of the first combo's reps (D-b254-1; dev-only, not shipped)
+
+Dev-only (`bench/`; not in `files[]`). No engine change; the schedule and the child sequence are byte-identical (no warm-up child).
+
+- **What changed.** The sentinel compared the re-measured first combo with rep 1 of that combo, the sweep's first cold process. The baseline is now the median of the first combo's `REPS` first-pass reps (`sentinelBaseline` in `lib/schedule.mjs`, `lib/stats.mjs` `median`). All `REPS` times must be present, finite and > 0, else "drift unmeasured" (exit 1, no `COMPLETE`, no `sentinel:` line). The line reads `baseline=median(N)=X.XXms  last=Y.YYms  ratio=R.RRRx`.
+- **Why (b253 measurements, 9ccc286, Signal.js a7202c9b, quiet host).** Two clean captures were flagged: r1 -5.2% (rep 1 198.20 ms vs reps 2-10 185.74..191.44, re-measure 187.85), r2 +9.9% (rep 1 173.84 vs reps 2-10 187.37..192.71, re-measure 191.08). In r2 the whole first block ran fast (rep 1 vs median: lite -7.6%, alien -8.5%, reflex -6.8%), so one discarded warm-up child would not have fixed it. Replayed against the median: r1 0.997x, r2 1.016x.
+- **Cost.** A linear drift D shows as ~D/2 against the median at `REPS` = 10 (0.49 D on the 47-row schedule; 0.62 D at `REPS` = 2, 0.43 D at 3). At `REPS` = 2 the median is the mean of two reps; one outlier is absorbed only from `REPS` >= 3. No sweep timing from this fix has been run yet.
+- Tests: `test/135-g2-schedule.test.mjs` (`sentinelBaseline` rows: median incl. [1,2,10], refusals, b253 replays) and `test/136-g2-capture-check.test.mjs` (sweep a+ / a- planted drift still fails; b+ / b- / b3 planted outlier absorbed; c1-c4 fail-closed refusals). On the frozen 6d464bd `sweep.mjs` exactly b+, b-, b3, c1, c2, c3, c4 fail.
+
 ### Known residual -- int32 counters on pointer-compressed V8 (LEDGER #34, open)
 
 The zero-GC claims in this file, `README.md` and `llms.txt` carry one known residual. On pointer-compressed V8

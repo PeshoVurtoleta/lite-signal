@@ -266,11 +266,15 @@ test("collect.collectEngine refuses a row present in fewer reps than files (reac
 // A tmp copy of bench/ (sweep.mjs + lib/) with a STUB mirror.mjs that prints a valid stamp and
 // one row, so the sweep's per-child stamp guard runs without any engine. 3 engines x 4 cheap
 // scenarios x 2 reps = 24 children + 1 sentinel. The stub's time is constant, so the sentinel is stable.
+// G2_SWEEP_SRC=<path> runs another sweep.mjs (e.g. a frozen before-copy for a revert check)
+// against the live lib/; a set but missing path is refused.
+const SWEEP_SRC = process.env.G2_SWEEP_SRC === undefined ? join(BENCH, "sweep.mjs") : process.env.G2_SWEEP_SRC;
 function sweepRun(stubEnv) {
+    assert.ok(existsSync(SWEEP_SRC), "G2_SWEEP_SRC: no such file " + JSON.stringify(SWEEP_SRC));
     const d = mk("g2-sweep-");
     mkdirSync(join(d, "bench"));
     cpSync(join(BENCH, "lib"), join(d, "bench", "lib"), { recursive: true });
-    cpSync(join(BENCH, "sweep.mjs"), join(d, "bench", "sweep.mjs"));
+    cpSync(SWEEP_SRC, join(d, "bench", "sweep.mjs"));
     cpSync(join(here, "fixtures", "g2", "sweep-stub-mirror.mjs"), join(d, "bench", "mirror.mjs"));
     const out = join(d, "out");
     const r = node(["--expose-gc", join(d, "bench", "sweep.mjs")], { SWEEP_DIR: out, SUBSET: "cheap", REPS: "2", QUICK: "", SWEEP_TIMEOUT_MS: "60000", ...stubEnv }, { timeout: 300000 });
@@ -302,6 +306,119 @@ test("sweep: a sentinel child printing no stamp exits 1 with the exact reason", 
     assert.equal(r.status, 1, text.slice(-600));
     assert.equal(readFileSync(cnt, "utf8").length, 25);
     assert.match(text, /stamp check: the sentinel child printed no stamp/);
+    assert.equal(existsSync(join(out, "COMPLETE")), false);
+});
+// b254 SENTINEL-FIX (D-b254-1): the sentinel (last call) is compared with the median of the first
+// combo's REPS reps. Call 1 is the first combo's rep 1 (schedule step 0).
+const cheapSweep = (stubEnv) => {
+    const cnt = join(mk("g2-cnt-"), "n");
+    const res = sweepRun({ STUB_COUNT_FILE: cnt, ...stubEnv });
+    return { ...res, calls: readFileSync(cnt, "utf8").length };
+};
+test("sweep a+: a sentinel 6.0% above the median baseline exits 1 (SENTINEL DRIFT)", () => {
+    const { r, out, text, calls } = cheapSweep({ STUB_TIME_AT: "25:5.30" });
+    assert.equal(r.status, 1, text.slice(-600));
+    assert.equal(calls, 25);
+    assert.match(text, /ratio=1\.060x/);
+    assert.ok(text.includes("SENTINEL DRIFT: host moved 6.0% mid-sweep (> 5% tol)"), text.slice(-600));
+    assert.equal(existsSync(join(out, "COMPLETE")), false);
+});
+test("sweep a-: a sentinel 6.0% below the median baseline exits 1 (SENTINEL DRIFT)", () => {
+    const { r, out, text, calls } = cheapSweep({ STUB_TIME_AT: "25:4.70" });
+    assert.equal(r.status, 1, text.slice(-600));
+    assert.equal(calls, 25);
+    assert.match(text, /ratio=0\.940x/);
+    assert.ok(text.includes("SENTINEL DRIFT: host moved -6.0% mid-sweep (> 5% tol)"), text.slice(-600));
+    assert.equal(existsSync(join(out, "COMPLETE")), false);
+});
+for (const [tag, t] of [["b+", "5.50"], ["b-", "4.50"]]) {
+    test(`sweep ${tag}: REPS=3, first-combo rep 1 at ${t} is absorbed by the median -> stable, exit 0`, () => {
+        const { r, out, text, calls } = cheapSweep({ REPS: "3", STUB_TIME_AT: "1:" + t });
+        assert.equal(r.status, 0, text.slice(-800));
+        assert.equal(calls, 37);
+        assert.ok(text.includes("baseline=median(3)=5.00ms  last=5.00ms  ratio=1.000x  (stable)"), text.slice(-800));
+        assert.equal(existsSync(join(out, "COMPLETE")), true);
+        const rep1 = readFileSync(join(out, "lite-signal-rep1.txt"), "utf8") + readFileSync(join(out, "alien-signals-rep1.txt"), "utf8") + readFileSync(join(out, "reflex-quant-rep1.txt"), "utf8");
+        assert.ok(rep1.includes(" , " + t + "     , "), "rep1 files carry the skewed time " + t);
+    });
+}
+// D-b254-2: the first combo's 1-based call numbers come from the STUB_LOG_FILE call log of a clean
+// REFERENCE run (same REPS, STUB_LOG_FILE only): every call whose FW|SCENARIO equals call 1's,
+// minus the final sentinel call -- never from a copied scenario / engine list. One reference run
+// per REPS value, shared by the rows below.
+const refRuns = new Map();
+const firstComboCalls = (reps) => {
+    if (refRuns.has(reps)) return refRuns.get(reps);
+    const log = join(mk("g2-ref-"), "log");
+    const { r, text, calls } = cheapSweep({ REPS: String(reps), STUB_LOG_FILE: log });
+    assert.equal(r.status, 0, "reference run: " + text.slice(-800));
+    const lines = readFileSync(log, "utf8").trimEnd().split("\n");
+    assert.equal(lines.length, calls);
+    lines.forEach((l, i) => assert.ok(l.startsWith((i + 1) + "|"), "reference log line " + (i + 1) + ": " + l));
+    const key = (l) => l.slice(l.indexOf("|") + 1);   // "FW|SCENARIO"
+    const all = lines.flatMap((l, i) => (key(l) === key(lines[0]) ? [i + 1] : []));
+    assert.equal(all.length, reps + 1, "reference run: first-combo calls " + all.join(","));
+    assert.equal(all[all.length - 1], calls, "reference run: the final call is the first combo (sentinel)");
+    const fs0 = key(lines[0]), sep = fs0.indexOf("|");
+    const ref = { f: { engine: fs0.slice(0, sep), scenario: fs0.slice(sep + 1) }, K: all.slice(0, -1) };
+    refRuns.set(reps, ref);
+    return ref;
+};
+const assertCallsAre = (log, f, K) => {
+    const lines = readFileSync(log, "utf8").trimEnd().split("\n");
+    for (const k of K) assert.equal(lines[k - 1], `${k}|${f.engine}|${f.scenario}`);
+};
+test("sweep c1: a missing first-combo rep 2 row -> drift unmeasured with the count reason, no sentinel line", () => {
+    const { f, K } = firstComboCalls(2);
+    assert.equal(K.length, 2);
+    const log = join(mk("g2-log-"), "log");
+    const { r, out, text, calls } = cheapSweep({ STUB_NOROW_AT: String(K[1]), STUB_LOG_FILE: log });
+    assert.equal(r.status, 1, text.slice(-600));
+    assert.equal(calls, 25);
+    assert.equal(readFileSync(log, "utf8").trimEnd().split("\n").length, 25);
+    assertCallsAre(log, f, [...K, 25]);
+    assert.ok(text.includes(`sentinel ${f.engine}/${f.scenario}: drift unmeasured -- baseline needs 2 of 2 first-combo reps, got 1`), text.slice(-800));
+    assert.doesNotMatch(r.stdout, /^sentinel: /m);
+    assert.equal(existsSync(join(out, "COMPLETE")), false);
+});
+test("sweep b3: REPS=3, first-combo rep 1 at 6.00 and rep 3 at 4.00 -> median 5.00, stable, exit 0", () => {
+    const { f, K } = firstComboCalls(3);
+    assert.equal(K.length, 3);
+    const log = join(mk("g2-log-"), "log");
+    const { r, out, text, calls } = cheapSweep({ REPS: "3", STUB_TIME_AT: "1:6.00," + K[2] + ":4.00", STUB_LOG_FILE: log });
+    assert.equal(r.status, 0, text.slice(-800));
+    assert.equal(calls, 37);
+    assertCallsAre(log, f, [...K, 37]);
+    assert.ok(text.includes("baseline=median(3)=5.00ms  last=5.00ms  ratio=1.000x  (stable)"), text.slice(-800));
+    assert.equal(existsSync(join(out, "COMPLETE")), true);
+});
+test("sweep c3: a 0 first-combo rep 1 time (rowcheck accepts it) -> exit 1, drift unmeasured is the only failure", () => {
+    const { r, out, text, calls } = cheapSweep({ STUB_TIME_AT: "1:0" });
+    assert.equal(r.status, 1, text.slice(-600));
+    assert.equal(calls, 25);
+    assert.ok(text.includes("INVALID RUN -- 1 guard failure(s)"), text.slice(-800));
+    assert.ok(text.includes("drift unmeasured -- first-combo rep 1 time 0 is not a finite positive number"), text.slice(-800));
+    assert.doesNotMatch(r.stdout, /^sentinel: /m);
+    assert.equal(existsSync(join(out, "COMPLETE")), false);
+});
+test("sweep c4: a stamp-discarded first-combo rep 2 row is not in the baseline -> drift unmeasured, no sentinel line", () => {
+    const { f, K } = firstComboCalls(2);
+    const log = join(mk("g2-log-"), "log");
+    const { r, out, text, calls } = cheapSweep({ STUB_NODE_AT: String(K[1]), STUB_LOG_FILE: log });
+    assert.equal(r.status, 1, text.slice(-600));
+    assert.equal(calls, 25);
+    assertCallsAre(log, f, [...K, 25]);
+    assert.match(text, /stamp check: stamp node differs across the capture: /);
+    assert.ok(text.includes("drift unmeasured -- baseline needs 2 of 2 first-combo reps, got 1"), text.slice(-800));
+    assert.doesNotMatch(r.stdout, /^sentinel: /m);
+    assert.equal(existsSync(join(out, "COMPLETE")), false);
+});
+test("sweep c2: a NaN first-combo rep 1 time -> drift unmeasured with the finite reason", () => {
+    const { r, out, text, calls } = cheapSweep({ STUB_TIME_AT: "1:NaN" });
+    assert.equal(r.status, 1, text.slice(-600));
+    assert.equal(calls, 25);
+    assert.ok(text.includes("drift unmeasured -- first-combo rep 1 time NaN is not a finite positive number"), text.slice(-800));
+    assert.doesNotMatch(r.stdout, /^sentinel: /m);
     assert.equal(existsSync(join(out, "COMPLETE")), false);
 });
 test("sweep: the same stub with consistent stamps exits 0 and COMPLETE carries the sweep's captureId", () => {

@@ -13,9 +13,16 @@
 //     every ordered engine pair equally often), so a drifting host never biases one whole
 //     engine. Scenario order rotates between waves. (schedule.mjs buildScenarioMajor.)
 //
-//  3. SENTINEL DRIFT. The first-scheduled combo is re-measured dead last. If its time
-//     disagrees with its first measurement by more than DRIFT_TOL, the host drifted
-//     mid-sweep and the WHOLE sweep is marked suspect -- loudly, per toe-to-toe.
+//  3. SENTINEL DRIFT. The first-scheduled combo is re-measured dead last and compared with
+//     the MEDIAN of its REPS first-pass reps (D-b254-1; schedule.mjs sentinelBaseline) --
+//     the statistic the sweep publishes, not its rep-1 time alone (b253: one fast or slow
+//     first process flagged two clean captures). If the re-measure disagrees with that
+//     median by more than DRIFT_TOL, the host drifted mid-sweep and the WHOLE sweep is
+//     marked suspect -- loudly, per toe-to-toe. All REPS first-combo times must be present,
+//     finite and > 0, else drift is unmeasured (a guard failure). The child sequence is
+//     unchanged (no warm-up child). Cost: a linear drift D across the sweep shows as ~D/2
+//     against the median at REPS=10 (b254 review, full 47 rows: 0.49D at REPS 10, 0.62D at
+//     REPS 2, 0.43D at REPS 3); at REPS=2 the median is the mean of the two reps.
 //
 //  4. STAMP-CONSISTENT AGGREGATION (F2). Rows are grouped into <engine>-rep<N>.txt
 //     files; collect.mjs refuses to merge them unless stamps agree (one engine hash,
@@ -132,7 +139,7 @@ async function main() {
         process.exitCode = 2;
         return;
     }
-    const { DRIFT_TOL, sentinelDrift, buildScenarioMajor } = S;
+    const { DRIFT_TOL, sentinelDrift, sentinelBaseline, buildScenarioMajor } = S;
     // scenario-major Williams schedule (M8); buildScenarioMajor refuses bad REPS / names
     let steps;
     try { steps = buildScenarioMajor(ENGINES, scenarioNames, REPS); } catch (e) {
@@ -170,7 +177,8 @@ async function main() {
     const childStamp = makeChildStampGuard(CAPTURE_ID, { quick: QUICK });
     const stampByFile = new Map();   // engine-rep -> stamp (written once)
     const firstCombo = steps[0];
-    let firstTime = null, sentinelTime = null;
+    const firstTimes = [];   // every first-combo rep time, in schedule order (sentinel baseline)
+    let sentinelTime = null;
 
     // helper to append a row to <engine>-rep<N>.txt, writing the stamp header once
     const writeRow = (engine, rep, stamp, row) => {
@@ -204,9 +212,9 @@ async function main() {
         if (code !== 0) { verdict.ok = false; verdict.failures.push(`${step.engine}/${step.scenario} rep${step.rep}: child exited ${code} after printing its row (its guards may not have run). stderr: ${(err || "").split("\n")[0]}`); }
         for (const g of guards) { verdict.ok = false; verdict.failures.push(`${step.engine}/${step.scenario}: ${g}`); }
         writeRow(step.engine, step.rep, stamp, row);
-        // capture first-combo baseline for the sentinel
-        if (step.rep === 1 && step.engine === firstCombo.engine && step.scenario === firstCombo.scenario && firstTime === null) {
-            firstTime = timeOf(row);
+        // every first-combo rep time feeds the sentinel baseline (median of REPS)
+        if (step.engine === firstCombo.engine && step.scenario === firstCombo.scenario) {
+            firstTimes.push(timeOf(row));
         }
         process.stdout.write(`\r  ${done}/${steps.length} rows measured`);
     }
@@ -222,13 +230,21 @@ async function main() {
     if (sent.timedOut) {
         verdict.ok = false;
         verdict.failures.push(`sentinel ${firstCombo.engine}/${firstCombo.scenario}: TIMEOUT -- child killed (SIGKILL) after ${CHILD_TIMEOUT_MS} ms`);
-    } else if (sp.row && sent.code === 0 && Number.isFinite(firstTime) && Number.isFinite(timeOf(sp.row))) {
-        sentinelTime = timeOf(sp.row);
-        const d = sentinelDrift(firstTime, sentinelTime);
-        console.log(`sentinel: ${firstCombo.engine}/${firstCombo.scenario}  first=${firstTime?.toFixed(2)}ms  last=${sentinelTime.toFixed(2)}ms  ratio=${d.ratio.toFixed(3)}x  ${d.drifted ? "<-- DRIFTED, sweep suspect" : "(stable)"}`);
-        if (d.drifted) { verdict.ok = false; verdict.failures.push(`SENTINEL DRIFT: host moved ${((d.ratio - 1) * 100).toFixed(1)}% mid-sweep (> ${(DRIFT_TOL * 100).toFixed(0)}% tol); the whole sweep is thermally suspect`); }
+    } else if (sp.row && sent.code === 0 && Number.isFinite(timeOf(sp.row))) {
+        // baseline = median of the first combo's REPS reps; a missing / non-finite / <= 0
+        // rep time refuses it (drift unmeasured, no "sentinel:" line)
+        const base = sentinelBaseline(firstTimes, REPS);
+        if (!base.ok) {
+            verdict.ok = false;
+            verdict.failures.push(`sentinel ${firstCombo.engine}/${firstCombo.scenario}: drift unmeasured -- ${base.reason}`);
+        } else {
+            sentinelTime = timeOf(sp.row);
+            const d = sentinelDrift(base.median, sentinelTime);
+            console.log(`sentinel: ${firstCombo.engine}/${firstCombo.scenario}  baseline=median(${base.n})=${base.median.toFixed(2)}ms  last=${sentinelTime.toFixed(2)}ms  ratio=${d.ratio.toFixed(3)}x  ${d.drifted ? "<-- DRIFTED, sweep suspect" : "(stable)"}`);
+            if (d.drifted) { verdict.ok = false; verdict.failures.push(`SENTINEL DRIFT: host moved ${((d.ratio - 1) * 100).toFixed(1)}% mid-sweep (> ${(DRIFT_TOL * 100).toFixed(0)}% tol); the whole sweep is thermally suspect`); }
+        }
     }
-    else { verdict.ok = false; verdict.failures.push(`sentinel ${firstCombo.engine}/${firstCombo.scenario}: drift unmeasured (exit ${sent.code}, first=${firstTime})`); }
+    else { verdict.ok = false; verdict.failures.push(`sentinel ${firstCombo.engine}/${firstCombo.scenario}: drift unmeasured (exit ${sent.code}, first-combo reps=${firstTimes.length})`); }
 
     // --- aggregate with stamp + rep-count guards, then emit the table ---
     console.log("");

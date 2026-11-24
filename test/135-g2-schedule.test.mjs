@@ -20,7 +20,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SCHED_URL = pathToFileURL(join(here, "..", "bench", "lib", "schedule.mjs")).href;
 delete process.env.DRIFT_TOL;
 const SM = await import(SCHED_URL);
-const { buildScenarioMajor, williamsRows, buildSchedule, scheduleLines, withSentinel, sentinelDrift, DRIFT_TOL } = SM;
+const { buildScenarioMajor, williamsRows, buildSchedule, scheduleLines, withSentinel, sentinelDrift, sentinelBaseline, DRIFT_TOL } = SM;
 
 const ENG = ["alien", "lite", "reflex"];
 const names = (p, n) => Array.from({ length: n }, (_, i) => p + i);
@@ -208,6 +208,51 @@ test("buildSchedule / scheduleLines / withSentinel / sentinelDrift", () => {
     assert.equal(sentinelDrift(100, 96).drifted, false);
     assert.equal(sentinelDrift(100, 94).drifted, true);
     assert.equal(sentinelDrift(100, 104).ratio, 1.04);
+});
+
+// b254 SENTINEL-FIX (D-b254-1): baseline = median of the first combo's REPS reps.
+test("sentinelBaseline: median of all REPS reps (odd, even, and a mean-killing skew)", () => {
+    assert.deepEqual(sentinelBaseline([3, 1, 2], 3), { ok: true, median: 2, n: 3 });
+    // even n averages the two middles (2 and 3): kills a single-middle mutant
+    assert.deepEqual(sentinelBaseline([4, 1, 3, 2], 4), { ok: true, median: 2.5, n: 4 });
+    // median 2, mean 13/3: kills a mean mutant
+    assert.deepEqual(sentinelBaseline([1, 2, 10], 3), { ok: true, median: 2, n: 3 });
+    assert.deepEqual(sentinelBaseline([5], 1), { ok: true, median: 5, n: 1 });
+});
+test("sentinelBaseline: refuses a wrong count, a non-array, bad reps, and every non-finite / <= 0 time", () => {
+    assert.deepEqual(sentinelBaseline([1, 2], 3), { ok: false, reason: "baseline needs 3 of 3 first-combo reps, got 2" });
+    assert.deepEqual(sentinelBaseline([1, 2, 3, 4], 3), { ok: false, reason: "baseline needs 3 of 3 first-combo reps, got 4" });
+    assert.deepEqual(sentinelBaseline([], 2), { ok: false, reason: "baseline needs 2 of 2 first-combo reps, got 0" });
+    assert.deepEqual(sentinelBaseline("5,5", 2), { ok: false, reason: "baseline needs an array of first-combo rep times" });
+    assert.deepEqual(sentinelBaseline(null, 2), { ok: false, reason: "baseline needs an array of first-combo rep times" });
+    for (const [bad, txt] of [[0, "0"], [1.5, "1.5"], [-1, "-1"], ["2", "\"2\""], [NaN, "null"], [undefined, "undefined"]]) {
+        assert.deepEqual(sentinelBaseline([5, 5], bad), { ok: false, reason: `baseline reps must be an integer >= 1 (got ${txt})` });
+    }
+    for (const [v, txt] of [[NaN, "NaN"], [Infinity, "Infinity"], [0, "0"], [-1, "-1"], [-Infinity, "-Infinity"], ["5", "5"], [null, "null"]]) {
+        assert.deepEqual(sentinelBaseline([5, v], 2), { ok: false, reason: `first-combo rep 2 time ${txt} is not a finite positive number` });
+        assert.deepEqual(sentinelBaseline([v, 5, 5], 3), { ok: false, reason: `first-combo rep 1 time ${txt} is not a finite positive number` });
+    }
+});
+test("sentinelBaseline: b253 replays are stable against the median; the old rep-1 guard flagged both", () => {
+    const r1 = sentinelBaseline([198.20, 187.36, 188.03, 190.52, 188.78, 186.19, 189.64, 187.86, 191.44, 185.74], 10);
+    assert.equal(r1.ok, true);
+    assert.ok(Math.abs(r1.median - 188.405) < 1e-9, String(r1.median));
+    const d1 = sentinelDrift(r1.median, 187.85);
+    assert.equal(d1.ratio.toFixed(3), "0.997");
+    assert.equal(d1.drifted, false);
+    assert.equal(sentinelDrift(198.20, 187.85).drifted, true);   // the old trap, pinned
+    const r2 = sentinelBaseline([173.84, 187.63, 192.50, 192.71, 190.52, 187.37, 188.64, 187.61, 188.82, 187.51], 10);
+    assert.equal(r2.ok, true);
+    assert.ok(Math.abs(r2.median - 188.135) < 1e-9, String(r2.median));
+    const d2 = sentinelDrift(r2.median, 191.08);
+    assert.equal(d2.ratio.toFixed(3), "1.016");
+    assert.equal(d2.drifted, false);
+    assert.equal(sentinelDrift(173.84, 191.08).drifted, true);   // the old trap, pinned
+    // boundary: median 100 (mean is 100 too); DRIFT_TOL 0.05
+    const b = sentinelBaseline([100, 90, 110], 3);
+    assert.equal(b.median, 100);
+    assert.equal(sentinelDrift(b.median, 105.1).drifted, true);
+    assert.equal(sentinelDrift(b.median, 104.9).drifted, false);
 });
 
 // DRIFT_TOL is validated at import: child processes, killed on timeout.

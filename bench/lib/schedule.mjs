@@ -13,6 +13,8 @@
 // last one. buildSchedule returns a flat list of {engine, rep, wave} steps in the
 // order they should execute.
 
+import { median } from "./stats.mjs";
+
 // engines: string[]  reps: number  -> [{engine, rep, wave, index}]
 export function buildSchedule(engines, reps) {
     const n = engines.length;
@@ -35,9 +37,9 @@ export function scheduleLines(engines, reps) {
 }
 
 // For the sentinel drift check (ported from toe-to-toe): the FIRST-scheduled combo is
-// re-measured as an extra trailing step. Caller compares its time to the same combo's
-// earlier measurement; a delta beyond DRIFT_TOL means the host drifted mid-sweep and
-// the whole sweep is thermally suspect.
+// re-measured as an extra trailing step. Caller compares its time with the MEDIAN of the
+// same combo's REPS earlier reps (sentinelBaseline, D-b254-1); a delta beyond DRIFT_TOL
+// means the host drifted mid-sweep and the whole sweep is thermally suspect.
 // Sentinel drift tolerance. Host-calibratable: VersionMatrix's README is explicit that
 // tolerances should be set from measured self-noise ("calibrate before tightening").
 // A quiet host at full scale wants ~5%; a noisy shared box or sub-10ms measurements
@@ -62,6 +64,28 @@ export function withSentinel(steps) {
 export function sentinelDrift(baselineTime, sentinelTime) {
     const ratio = sentinelTime / baselineTime;
     return { ratio, drifted: Math.abs(ratio - 1) > DRIFT_TOL };
+}
+
+// The sentinel's baseline (D-b254-1): the median of the first combo's first-pass rep
+// times -- the statistic the sweep publishes, not one sample (b253: a fast or slow rep-1
+// process alone flagged two clean captures). Fail closed: all `reps` times must be
+// present, finite and > 0, else the baseline is refused and drift is unmeasured.
+// times: number[]  reps: integer >= 1 -> {ok: true, median, n} | {ok: false, reason}
+export function sentinelBaseline(times, reps) {
+    if (!Array.isArray(times)) return { ok: false, reason: "baseline needs an array of first-combo rep times" };
+    if (!Number.isInteger(reps) || reps < 1) {
+        return { ok: false, reason: `baseline reps must be an integer >= 1 (got ${JSON.stringify(reps)})` };
+    }
+    if (times.length !== reps) {
+        return { ok: false, reason: `baseline needs ${reps} of ${reps} first-combo reps, got ${times.length}` };
+    }
+    for (let i = 0; i < times.length; i++) {
+        const v = times[i];
+        if (!(Number.isFinite(v) && v > 0)) {
+            return { ok: false, reason: `first-combo rep ${i + 1} time ${String(v)} is not a finite positive number` };
+        }
+    }
+    return { ok: true, median: median(times), n: times.length };
 }
 
 // --- scenario-major Williams schedule (M8, b251; per-scenario cycling D-b251-2) --------
