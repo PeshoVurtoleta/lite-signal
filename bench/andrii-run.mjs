@@ -24,13 +24,17 @@
 //      - C/src/frameworks/liteSignal.ts byte-identical to C HEAD (upstream adapter)
 //      - each of the 7 names has exactly one C/src/frameworkCatalog.json entry
 //      - <bin> runs; --expect-node equals `<bin> -v`
+//      - the step-3 build command resolves (resolveBuildCmd, D-b256-1 / D-b256-4): C/package.json
+//        scripts.build is exactly "node scripts/build.mjs"; anything else is refused (no download)
 //      - --out is outside the clone and (real run) holds no samples.json / run.log yet
 //   2. HEADER.txt (date, host, CPU, load1 + busy node pids, node -v, V8, NODE_OPTIONS, clone
 //      HEAD, git status --porcelain, lite shas, the identity rows, IDENTITY.txt) and
 //      clone-local.patch (git diff HEAD plus every untracked, non-ignored file as a
 //      /dev/null diff; the ignored nested lite160/node_modules package is covered by the
 //      sha lines instead). git calls use --no-optional-locks (no index refresh in C).
-//   3. `pnpm build` in C (pnpm on PATH, else npx -y pnpm@<packageManager pin>), then the
+//   3. C scripts.build ("node scripts/build.mjs", exact) run in C with the wrapper's own node
+//      (`<process.execPath> scripts/build.mjs`), never pnpm / npx; any other script is refused
+//      in step 1; HEADER records the exact command; nothing is ever downloaded. Then the
 //      worker manifests dist/workers/<id>.packages.json are checked (1.5.2 for lite /
 //      lite-eager, the candidate version for the 4 lite160 adapters, alien-signals present
 //      and no lite-signal in the alien worker).
@@ -43,23 +47,25 @@
 //      unknown name; it throws only when NOTHING matches), no FAILED row, samples.node ==
 //      `<bin> -v`, per-worker package versions as in step 3, exactly --expect-rows records
 //      per adapter, rounds 3 / profile quick, sourceCommit, C/bench-results unchanged, the
-//      child process group empty, L and nested Signal.js / Watch.js still the frozen sha.
+//      child process group empty, L and nested Signal.js / Watch.js / Signal.d.ts still the
+//      frozen sha.
 //      Appended to HEADER.txt.
 //
-// Child processes (pnpm build and the bench): spawned detached, i.e. leader of their own
+// Child processes (the build and the bench): spawned detached, i.e. leader of their own
 // process group; on timeout, on every exit path and on SIGINT / SIGTERM to this wrapper the
 // whole group gets SIGKILL (process.kill(-pgid)), so no forked worker outlives the leg; the
 // post-check asserts `ps -o pid= -g <pgid>` is empty.
 //
 // --dry-run: steps 1, 2 and the step-3 manifest check against the CURRENT dist (no build,
-// no bench); writes HEADER.txt + clone-local.patch so the wrapper can be exercised untimed.
+// no bench); writes HEADER.txt (with "build command (would run): ...") + clone-local.patch
+// so the wrapper can be exercised untimed.
 //
 // Worker execPath: C/src/util/benchmark.ts:593-611 runs each row via child_process.fork()
 // with an options object that has NO execPath key, so Node uses process.execPath (the <bin>
 // this wrapper launched); execArgv is the parent's process.execArgv (--expose-gc) minus any
 // --max-old-space-size, plus --max-old-space-size=WORKER_HEAP_MB (benchmark.ts:604-609).
 //
-// Exports (for probes; importing runs nothing): spawnGroup, groupAlive.
+// Exports (for probes; importing runs nothing): spawnGroup, groupAlive, resolveBuildCmd.
 // Zero deps, node: builtins only. Never writes C/bench-results.
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -361,6 +367,25 @@ function manifestChecks(list, where, getPkgs, candidateVersion) {
   }
 }
 
+const BUILD_SCRIPT = 'node scripts/build.mjs';
+
+// Step-3 build command (D-b256-1 / D-b256-4: no download). cpkg: parsed C/package.json or
+// null; execPath: the wrapper's process.execPath. -> {cmd, args, label} or {refuse: message}.
+// Pure.
+export function resolveBuildCmd(cpkg, execPath) {
+  const scripts = cpkg && typeof cpkg === 'object' ? cpkg.scripts : undefined;
+  const b = scripts && typeof scripts === 'object' ? scripts.build : undefined;
+  if (typeof b === 'string' && b === BUILD_SCRIPT) {
+    return { cmd: execPath, args: ['scripts/build.mjs'],
+      label: 'C scripts.build "' + BUILD_SCRIPT + '"; D-b256-1 / D-b256-4' };
+  }
+  const got = !cpkg || typeof cpkg !== 'object' ? 'C/package.json unreadable / not an object'
+    : 'C/package.json scripts.build is ' + (typeof b === 'string' ? JSON.stringify(b)
+      : b === undefined ? 'undefined' : 'a non-string (' + typeof b + ') ' + JSON.stringify(b));
+  return { refuse: got + ', not exactly ' + JSON.stringify(BUILD_SCRIPT) +
+    '; refused: no download (D-b256-1 / D-b256-4)' };
+}
+
 async function main() {
   const o = parseArgs(process.argv.slice(2));
   const C = o.clone;
@@ -427,6 +452,9 @@ async function main() {
   check(id, '--node runs', nodeParts && nodeParts.length === 3, nodeParts ? nv.stdout.trim() : (nv.error || nv.stderr.trim()));
   if (o.expectNode) check(id, '--expect-node ' + o.expectNode, binVersion === o.expectNode, binVersion);
   check(id, '--out outside the clone', !isInside(o.out, C), o.out);
+  const build = resolveBuildCmd(readJsonOrNull(path.join(C, 'package.json')), process.execPath);
+  const buildLine = build.refuse ? null : build.cmd + ' ' + build.args.join(' ') + ' (cwd ' + C + '; ' + build.label + ')';
+  check(id, 'build command resolves (D-b256-1)', !build.refuse, build.refuse || buildLine);
   if (!o.dryRun) {
     check(id, '--out has no samples.json / run.log yet',
       !existsSync(path.join(o.out, 'samples.json')) && !existsSync(path.join(o.out, 'run.log')), o.out);
@@ -459,6 +487,7 @@ async function main() {
     'clone HEAD: ' + cHead,
     'L HEAD: ' + lHead,
     'build: ' + o.build + ' candidate version ' + candidateVersion,
+    'build command' + (o.dryRun ? ' (would run): ' : ': ') + buildLine,
     'expect: node ' + (o.expectNode || '(dry-run: none)') + ', rows per adapter ' +
       (o.expectRows === null ? '(dry-run: none)' : o.expectRows),
     ...FROZEN_FILES.flatMap((f) => ['sha256 frozen ' + f + ': ' + frozen[f], 'sha256 L/' + f + ': ' + live[f],
@@ -484,17 +513,13 @@ async function main() {
   const snapBefore = snapshotDir(benchResults);
   let buildCmd = 'none (dry-run: current dist)';
   if (!o.dryRun) {
-    const onPath = run('sh', ['-c', 'command -v pnpm']).stdout.trim();
-    const cpkg = readJsonOrNull(path.join(C, 'package.json'));
-    const pin = cpkg && typeof cpkg.packageManager === 'string' ? cpkg.packageManager.replace(/^pnpm@/, '') : '10.22.0';
-    const cmd = onPath ? [onPath, ['build']] : ['npx', ['-y', 'pnpm@' + pin, 'build']];
-    buildCmd = cmd[0] + ' ' + cmd[1].join(' ');
-    const b = await spawnGroup(cmd[0], cmd[1], { cwd: C, capture: true, timeoutMs: 600000 });
+    buildCmd = build.cmd + ' ' + build.args.join(' ');
+    const b = await spawnGroup(build.cmd, build.args, { cwd: C, capture: true, timeoutMs: 600000 });
     const left = b.pgid ? await waitGroupGone(b.pgid) : [];
-    appendFileSync(HEADER, 'pnpm build: ' + buildCmd + ' exit ' + b.status + (b.signal ? ' signal ' + b.signal : '') +
+    appendFileSync(HEADER, 'build command run: ' + buildLine + ' exit ' + b.status + (b.signal ? ' signal ' + b.signal : '') +
       (b.timedOut ? ' TIMED OUT' : '') + (b.error ? ' error ' + b.error.message : '') +
       ' group left ' + JSON.stringify(left) + '\n' + b.output.trim().split('\n').map((l) => '  ' + l).join('\n') + '\n');
-    if (b.status !== 0 || left.length) die('pnpm build failed (exit ' + b.status + ', group left ' + left.length + '); see ' + HEADER);
+    if (b.status !== 0 || left.length) die('build failed (exit ' + b.status + ', group left ' + left.length + '); see ' + HEADER);
   }
   const pre = [];
   manifestChecks(pre, 'dist/workers', (n) => readJsonOrNull(path.join(C, 'dist/workers', idOf.get(n) + '.packages.json')),
@@ -556,7 +581,7 @@ async function main() {
     appendFileSync(HEADER, 'bundleSha256: ' + s.bundleSha256 + '\nsamples node: ' + s.node + ' v8 ' + s.v8 + '\n');
   }
   check(post, 'C/bench-results unchanged', snapshotDir(benchResults) === snapBefore, benchResults);
-  for (const f of ['Signal.js', 'Watch.js']) {
+  for (const f of FROZEN_FILES) {
     const lAfter = sha256OrNull(path.join(L, f));
     const nAfter = sha256OrNull(path.join(nestedDir, f));
     check(post, 'L/' + f + ' still == frozen', lAfter === frozen[f], lAfter);
