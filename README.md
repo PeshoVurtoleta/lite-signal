@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@zakkster/lite-signal.svg?style=for-the-badge&color=latest)](https://www.npmjs.com/package/@zakkster/lite-signal)
 [![sponsor](https://img.shields.io/badge/sponsor-PeshoVurtoleta-ea4aaa.svg?logo=github)](https://github.com/sponsors/PeshoVurtoleta)
 ![Zero-GC](https://img.shields.io/badge/Zero--GC-Engine-00C853?style=for-the-badge&logo=leaf&logoColor=white)
-![Benchmark](https://img.shields.io/badge/js--reactivity--benchmark-4th%20of%2015-00C853?style=for-the-badge)
+[![Benchmark](https://img.shields.io/badge/js--reactivity--benchmark-8th%20of%2029%20%28v1.5.2%29-00C853?style=for-the-badge)](https://github.com/volynetstyle/js-reactivity-benchmark)
 [![npm bundle size](https://img.shields.io/bundlephobia/minzip/@zakkster/lite-signal?style=for-the-badge)](https://bundlephobia.com/result?p=@zakkster/lite-signal)
 [![npm downloads](https://img.shields.io/npm/dm/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-signal?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-signal)
@@ -15,23 +15,35 @@
 ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 [![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
 
-## 4th of 15 on the community reactivity benchmark -- and the only zero-GC engine in the field
+## 8th of 29 on the community reactivity benchmark (lite 1.5.2, upstream table of 2026-11-16)
 
-On the independent [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (Andrii Volynets' fork; 15 reactive libraries, 47 tests), `lite-signal` places **4th overall by geomean (79.3ms)** -- ahead of 5th-place Preact Signals (99.8) by ~21%, behind only three push-eager engines: alien-signals (45.2), reflex (48.9), and @reactively (59.9). Raw log: [`bench/AndriiVolynetsReactiveBench.log`](./bench/AndriiVolynetsReactiveBench.log) (all 15 x 47 rows, checked in for audit).
+On the upstream-published table of Andrii Volynets' [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (results at sourceCommit f0d456c, rendered 2026-11-16, node v24.15.0 linux/x64, 24 cloud machine shards, 3 machine rounds; 30 participants, 29 ranked), `lite-signal` 1.5.2 (the npm release upstream installs) ranks **8th** with a family-balanced score of **1.91** (range 1.88-1.92 over the 3 machine sets; score = geomean of time / per-test best over 34 shared core scenarios, lower is better). reflex-quant is 1st (1.03), alien-signals 2nd (1.20). It was 4th among 15 libraries at 1.5.0-beta (Andrii's host, 47 tests, plain geomean in ms). What changed: the field grew from 15 to 30 participants; reflex-quant, @vue/reactivity 3.6 RC and anod are new (absent from [`bench/AndriiVolynetsReactiveBench.log`](./bench/AndriiVolynetsReactiveBench.log)) and rank ahead; Preact Signals was behind lite (99.8 vs 79.3 ms) and is now ahead (1.63); the scorer changed (plain ms geomean over 47 tests -> family-balanced relative score over 34 core scenarios, median of 3 machine sets) and so did the hosts.
 
-It is the **only object-pooled, zero-GC engine in the entire field**, and it gets that result without giving up glitch-freedom or lazy evaluation. Against the mainstream reactivity libraries it leads decisively:
+| # | library | score | range (3 machine sets) |
+| ---: | --- | ---: | --- |
+| 1 | reflex-quant | 1.03 | 1.03-1.06 |
+| 2 | alien-signals | 1.20 | 1.18-1.21 |
+| 3 | reflex | 1.25 | 1.24-1.25 |
+| 4 | @reactively | 1.63 | 1.60-1.65 |
+| 5 | Preact Signals | 1.63 | 1.62-1.67 |
+| 6 | @vue/reactivity 3.6 RC | 1.65 | 1.64-1.68 |
+| 7 | anod | 1.83 | 1.82-1.85 |
+| 8 | **lite-signal (1.5.2)** | **1.91** | **1.88-1.92** |
+| 9 | rescript-signals | 1.92 | 1.89-1.92 |
+| 10 | @maverick-js/signals | 2.05 | 2.01-2.05 |
+| 11 | @vue/reactivity 3.5 | 2.28 | 2.19-2.33 |
+| 21 | MobX | 3.97 | 3.82-4.04 |
+| 23 | SolidJS | 10.48 | 10.38-10.66 |
 
-| vs                     | lite-signal is |
-| ---------------------- | -------------- |
-| **@vue/reactivity**    | **1.5x faster** |
-| **Signia**             | **1.7x faster** |
-| **MobX**               | **2.2x faster** |
-| **@solidjs/signals**   | **3.2x faster** |
-| **SolidJS**            | **4.6x faster** |
-| Preact Signals         | **1.26x faster** (~21% ahead) |
-| alien-signals          | 0.57x (the field leader) |
+Upstream's table, sourceCommit f0d456c, node v24.15.0 linux/x64, 24 shards; lite-signal entered as npm 1.5.2. Score = family-balanced geomean of time / per-test best (lower is better). Measured by upstream, not by this repo.
 
-`lite-signal` finishes **top-3 on 25 of the 47 tests** (up from 23 on the 1.4.0 sweep) and, on this specific run, is **outright fastest of all 15** on two shapes -- `createComputations4to1` (a computed-creation micro where lite narrowly edges alien 7.08ms vs 7.10ms) and the `1000x5 - 25 sources (wide dense)` rectangular DAG (the "wide dense" web-app shape). It comes second on nine more shapes -- `broadPropagation`, `diamond`, `repeatedObservers`, `unstable` propagation, `manySourcesIntoOneComputedEffect` (fan-in), `manySourcesIntoOneDirectEffect`, `molBench` (mixed app graph), the `32x8 - 4 sources - pull` DAG, and the `10x5 - 2 sources - read 20%` simple-component shape. The outright-win count fluctuates between runs at the top of a very tight leaderboard (reflex and alien-signals swept several wide-aggregation shapes on this run that lite held on the 1.4.0 sweep); the stable metric is the geomean rank, which has held at 4th of 15 across every published sweep. `lite-signal`'s own zero-allocation claim is gated deterministically by `npm run test:torture` (lite-leak + lite-gc-profiler). (Note: this suite measures reactivity *libraries* -- Vue's reactivity core, MobX, Solid, Preact Signals, etc. -- not full UI frameworks like React or Angular.)
+Who is fastest: in that table reflex-quant has 16 decisive wins by upstream's paired-range rule (upstream's published figure) and the lowest median on 27 of 51 tests (21 of the 34 core; this repo's count over upstream's samples); lite-signal has 0 lowest medians and 0 decisive wins.
+
+**1.6.0.** The two numbers below are the node 26 / node 24 legs of this cycle's local run (Apple M4 Pro, run count 1 per leg, 2026-11-24); formulas and inputs are in [bench/andrii/2026-11-24/README.md](./bench/andrii/2026-11-24/README.md). PROJECTED, cross-host: 1.907 / 1.903 -> 8th, inside 1.5.2's own range 1.88-1.92: no measurable change. The alien-normalised M1 (D-b169-1 Q4a) gives 1.825 / 1.650 (7th / 6th) but misses the known 1.5.2 point by -4.3% / -13.3%; no rank claim rests on it.
+
+Local legs (Andrii's harness at clone 12f169b, 7 adapters, Apple M4 Pro, node v26.8.2 / v24.15.0, run count 1 per leg, geomean of time / alien over 51 rows): 1.6 vs 1.5.2 lazy is 0.983 / 0.979 (flat). Eager 1.6 is SLOWER than eager 1.5.2: 1.034 / 1.076, a regression on this protocol. alien-signals has the lowest time on 44 / 42 of 51 rows. 1.6.0's `registry.reset()` keeps the warmed pool where upstream's adapter destroys and rebuilds per test (bench/README.md calls destroy + rebuild the fair setup); on the same legs reset vs destroy is 0.832 / 0.889 (lazy) and 0.890 / 0.823 (eager). These rows are an adapter choice and are not ranked against upstream's table.
+
+`lite-signal` is an object-pooled engine whose steady-state zero-GC is gated by `npm run test:torture` (lite-leak + lite-gc-profiler) and the `node:test` GC-count tests, not by any timing table. This cycle's local microscope, mirror and sweep results are in [Benchmarks](#benchmarks). (This suite measures reactivity *libraries*, not full UI frameworks like React or Angular.)
 
 ```bash
 npm install @zakkster/lite-signal
@@ -1243,7 +1255,7 @@ The setup script pins specific package versions via tarball install so the harne
 ## Performance Trade-offs & Topology Scaling
 
 <details>
-<summary>Stable vs dynamic topologies; Andrii Volynets' matrix, the 1.1.4 result, the 1.5.0 ranking, and the roadmap.</summary>
+<summary>Stable vs dynamic topologies; Andrii Volynets' matrix, the 1.1.4 result, the 1.5.0-beta ranking (superseded), and the roadmap.</summary>
 
 `lite-signal` was built with a strict mandate: **absolute zero garbage collection**. By packing the dependency graph into a flat, pre-allocated memory arena, we eliminate the Scavenger GC pauses that plague 120fps Canvas/WebGL loops.
 
@@ -1251,7 +1263,7 @@ Through **v1.1.2**, that came with a mathematical trade-off: while memory alloca
 
 **Andrii Volynets** (author of the phenomenal [Alien Signals](https://github.com/stackblitz/alien-signals)) generously ran `lite-signal` through his advanced topology matrix on the **v1.1.2** engine. Those numbers -- the *pre-rewrite baseline* -- are below, followed by the 1.1.4 result.
 
-**1.5.0-beta on the official [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark) (15 libraries, 47 tests):** `lite-signal` holds **4th overall by geomean (79.3ms)**, behind only alien-signals (45.2, the field leader at 0.57x), reflex (48.9), and @reactively (59.9), and **ahead of 5th-place Preact Signals (99.8, ~21%)** -- the Preact gap widened this sweep after Preact's own regression on the newer 1.14.2. It finishes **top-3 on 25 of 47 tests** (up from 23 on 1.4.0). Outright-fastest-of-15 wins fluctuate at the top of a very tight leaderboard where alien-signals, reflex, and lite trade sub-percent margins; on this sweep lite is #1 on `createComputations4to1` (7.08ms vs alien's 7.10ms) and on `1000x5 - 25 sources (wide dense)` (the "large web app / wide dense" pattern). Raw log with all 15 x 47 rows: [`bench/AndriiVolynetsReactiveBench.log`](./bench/AndriiVolynetsReactiveBench.log). The stable metric across every published sweep is the geomean rank at 4th of 15.
+**History (1.5.0-beta, Andrii's host, 15 libraries; superseded -- see the top section):** on the js-reactivity-benchmark of that time (15 libraries, 47 tests) `lite-signal` was 4th of 15 by plain geomean (79.3ms), behind alien-signals (45.2), reflex (48.9) and @reactively (59.9), ahead of Preact Signals (99.8). That ranking is not current; the field, scorer and hosts have changed. Raw log: [`bench/AndriiVolynetsReactiveBench.log`](./bench/AndriiVolynetsReactiveBench.log).
 
 #### 1. Stable Topologies (Fan-in / Fan-out / Broadcast)
 In stable environments (game engines, particle systems, visualizers), `lite-signal` is blisteringly fast and maintains a near-zero allocation profile, keeping frame times perfectly flat -- unchanged through 1.1.4.
@@ -1268,7 +1280,7 @@ Current microscope and mirror/sweep numbers, with protocol, band rule and proven
 
 The 1.6.0 mirror and sweep (lite vs alien-signals and reflex-quant across the 47 shapes; protocols, bands and counts in [Benchmarks](#benchmarks)) show lite ahead of alien-signals outside the band on 3 of 47 rows in each protocol and behind it outside the band on 38 (mirror) and 37 (sweep), weakest on the creation, deep and layered-burst families. Every row carries a `#STAMP`. The retracking is verified correct by `retracking.difftest.mjs` -- 20,000 direct + 10,000 batched writes, 0 disagreements against the **published 1.1.5** reference (re-pinned for v1.2).
 
-**The Takeaway:** as of 1.1.4 you no longer have to choose, and 1.5.0-beta holds the line -- the engine ranked **4th of 15** on the official js-reactivity-benchmark at 1.5.0-beta. `lite-signal` keeps the zero-GC, flat-arena profile for 120fps Canvas/WebGL (gated by the deterministic torture and GC-count tests, not by a timing table). On the 1.6.0 microscope it leads alien-signals outside the band on 4 of 6 scenarios (isolated-per-engine, [Benchmarks](#benchmarks)) and trails it on DEEP CHAIN (172.69 ms vs 87.94 ms), where reflex-quant is also ahead (82.58 ms).
+**The Takeaway:** as of 1.1.4 you no longer have to choose, and the 1.5.0-beta ranking is history (see the top section for upstream's current table, where 1.5.2 is 8th of 29). `lite-signal` keeps the zero-GC, flat-arena profile for 120fps Canvas/WebGL (gated by the deterministic torture and GC-count tests, not by a timing table). On the 1.6.0 microscope it leads alien-signals outside the band on 4 of 6 scenarios (isolated-per-engine, [Benchmarks](#benchmarks)) and trails it on DEEP CHAIN (172.69 ms vs 87.94 ms), where reflex-quant is also ahead (82.58 ms).
 
 ### Roadmap
 - **1.1.5** -- additions in service of `lite-devtools` (node identity/traversability on the introspection walkers, for full auto-discovered graph rendering). *Shipped.*

@@ -1,0 +1,352 @@
+diff --git a/src/config.ts b/src/config.ts
+index ca05ccf..12defa8 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -21,6 +21,11 @@ import { reflexFramework } from "./frameworks/reflex";
+ import { reflexQuantFramework } from "./frameworks/reflexQuant";
+ import { solidSignalsFramework } from "./frameworks/solid-signals";
+ import { liteSignalFramework } from "./frameworks/liteSignal";
++import { liteSignalFrameworkEager } from "./frameworks/liteSignalEager";
++import { liteSignal160Framework } from "./frameworks/lite160/liteSignal160";
++import { liteSignalEager160Framework } from "./frameworks/lite160/liteSignalEager160";
++import { liteSignalResetFramework } from "./frameworks/lite160/liteSignalReset";
++import { liteSignalEagerResetFramework } from "./frameworks/lite160/liteSignalEagerReset";
+ import { solidSignals2Framework } from "./frameworks/solidSignals2";
+ import { solid2Framework } from "./frameworks/solidJs2";
+ import { vueReactivity36Framework } from "./frameworks/vueReactivity36";
+@@ -38,6 +43,11 @@ export const frameworkInfo: FrameworkInfo[] = [
+   { framework: alienFramework, testPullCounts: true },
+   { framework: reactiveEngineFramework, testPullCounts: true },
+   { framework: liteSignalFramework, testPullCounts: true },
++  { framework: liteSignalFrameworkEager, testPullCounts: true },
++  { framework: liteSignal160Framework, testPullCounts: true },
++  { framework: liteSignalEager160Framework, testPullCounts: true },
++  { framework: liteSignalResetFramework, testPullCounts: true },
++  { framework: liteSignalEagerResetFramework, testPullCounts: true },
+   { framework: solidSignalsFramework },
+   { framework: preactSignalFramework, testPullCounts: true },
+   { framework: reactivelyFramework, testPullCounts: true },
+diff --git a/src/frameworkCatalog.json b/src/frameworkCatalog.json
+index ed07e1d..33b0ef0 100644
+--- a/src/frameworkCatalog.json
++++ b/src/frameworkCatalog.json
+@@ -34,6 +34,41 @@
+     "export": "liteSignalFramework",
+     "pullCounts": true
+   },
++  {
++    "id": "lite-eager",
++    "name": "lite-signal-eager",
++    "module": "liteSignalEager",
++    "export": "liteSignalFrameworkEager",
++    "pullCounts": true
++  },
++  {
++    "id": "lite-160",
++    "name": "lite-signal-1.6",
++    "module": "lite160/liteSignal160",
++    "export": "liteSignal160Framework",
++    "pullCounts": true
++  },
++  {
++    "id": "lite-eager-160",
++    "name": "lite-signal-eager-1.6",
++    "module": "lite160/liteSignalEager160",
++    "export": "liteSignalEager160Framework",
++    "pullCounts": true
++  },
++  {
++    "id": "lite-reset",
++    "name": "lite-signal-reset",
++    "module": "lite160/liteSignalReset",
++    "export": "liteSignalResetFramework",
++    "pullCounts": true
++  },
++  {
++    "id": "lite-eager-reset",
++    "name": "lite-signal-eager-reset",
++    "module": "lite160/liteSignalEagerReset",
++    "export": "liteSignalEagerResetFramework",
++    "pullCounts": true
++  },
+   {
+     "id": "solid-signals",
+     "name": "@solidjs/signals",
+diff --git a/src/frameworks/lite160/liteSignal160.ts b/src/frameworks/lite160/liteSignal160.ts
+new file mode 100644
+index 0000000..57de5ba
+--- /dev/null
++++ b/src/frameworks/lite160/liteSignal160.ts
+@@ -0,0 +1,50 @@
++import { createRegistry, Registry } from "@zakkster/lite-signal";
++import { ReactiveFramework } from "../../util/reactiveFramework";
++
++function createBenchmarkRegistry(): Registry {
++  return createRegistry({
++    // The largest creation fixture contains 100k sources + 100k computeds.
++    // Lazy allocation still charges first construction to the creation rows.
++    maxNodes: 262_144,
++    maxLinks: 1_048_576,
++    prealloc: "lazy",
++    // Fail if future scenarios outgrow the declared budget; never silently
++    // benchmark capacity growth as part of an ordinary creation/update row.
++    onCapacityExceeded: "throw",
++  });
++}
++
++let registry = createBenchmarkRegistry();
++
++export const liteSignal160Framework: ReactiveFramework = {
++  name: "lite-signal-1.6",
++  signal(initialValue) {
++    const value = registry.signal(initialValue);
++    return {
++      read: value,
++      write: value.set,
++    };
++  },
++  computed(fn) {
++    const value = registry.computed(fn);
++    return { read: value };
++  },
++  effect(fn) {
++    return registry.effect(fn);
++  },
++  withBatch(fn) {
++    registry.batch(fn);
++  },
++  withBuild: (fn) => fn(),
++  createScope(fn) {
++    let value!: ReturnType<typeof fn>;
++    const dispose = registry.effect(() => {
++      value = registry.untrack(fn);
++    });
++    return { value, dispose };
++  },
++  resetBenchmark() {
++    registry.destroy();
++    registry = createBenchmarkRegistry();
++  },
++};
+diff --git a/src/frameworks/lite160/liteSignalEager160.ts b/src/frameworks/lite160/liteSignalEager160.ts
+new file mode 100644
+index 0000000..67c7505
+--- /dev/null
++++ b/src/frameworks/lite160/liteSignalEager160.ts
+@@ -0,0 +1,50 @@
++import { createRegistry, Registry } from "@zakkster/lite-signal";
++import { ReactiveFramework } from "../../util/reactiveFramework";
++
++function createBenchmarkRegistry(): Registry {
++  return createRegistry({
++    // The largest creation fixture contains 100k sources + 100k computeds.
++    // Eager allocation builds the whole pool when the registry is created (setup, outside the timed window).
++    maxNodes: 262_144,
++    maxLinks: 1_048_576,
++    prealloc: "eager",
++    // Fail if future scenarios outgrow the declared budget; never silently
++    // benchmark capacity growth as part of an ordinary creation/update row.
++    onCapacityExceeded: "throw",
++  });
++}
++
++let registry = createBenchmarkRegistry();
++
++export const liteSignalEager160Framework: ReactiveFramework = {
++  name: "lite-signal-eager-1.6",
++  signal(initialValue) {
++    const value = registry.signal(initialValue);
++    return {
++      read: value,
++      write: value.set,
++    };
++  },
++  computed(fn) {
++    const value = registry.computed(fn);
++    return { read: value };
++  },
++  effect(fn) {
++    return registry.effect(fn);
++  },
++  withBatch(fn) {
++    registry.batch(fn);
++  },
++  withBuild: (fn) => fn(),
++  createScope(fn) {
++    let value!: ReturnType<typeof fn>;
++    const dispose = registry.effect(() => {
++      value = registry.untrack(fn);
++    });
++    return { value, dispose };
++  },
++  resetBenchmark() {
++    registry.destroy();
++    registry = createBenchmarkRegistry();
++  },
++};
+diff --git a/src/frameworks/lite160/liteSignalEagerReset.ts b/src/frameworks/lite160/liteSignalEagerReset.ts
+new file mode 100644
+index 0000000..8d95c18
+--- /dev/null
++++ b/src/frameworks/lite160/liteSignalEagerReset.ts
+@@ -0,0 +1,49 @@
++import { createRegistry, Registry } from "@zakkster/lite-signal";
++import { ReactiveFramework } from "../../util/reactiveFramework";
++
++function createBenchmarkRegistry(): Registry {
++  return createRegistry({
++    // The largest creation fixture contains 100k sources + 100k computeds.
++    // Eager allocation builds the whole pool when the registry is created (setup, outside the timed window).
++    maxNodes: 262_144,
++    maxLinks: 1_048_576,
++    prealloc: "eager",
++    // Fail if future scenarios outgrow the declared budget; never silently
++    // benchmark capacity growth as part of an ordinary creation/update row.
++    onCapacityExceeded: "throw",
++  });
++}
++
++let registry = createBenchmarkRegistry();
++
++export const liteSignalEagerResetFramework: ReactiveFramework = {
++  name: "lite-signal-eager-reset",
++  signal(initialValue) {
++    const value = registry.signal(initialValue);
++    return {
++      read: value,
++      write: value.set,
++    };
++  },
++  computed(fn) {
++    const value = registry.computed(fn);
++    return { read: value };
++  },
++  effect(fn) {
++    return registry.effect(fn);
++  },
++  withBatch(fn) {
++    registry.batch(fn);
++  },
++  withBuild: (fn) => fn(),
++  createScope(fn) {
++    let value!: ReturnType<typeof fn>;
++    const dispose = registry.effect(() => {
++      value = registry.untrack(fn);
++    });
++    return { value, dispose };
++  },
++  resetBenchmark() {
++    registry.reset();
++  },
++};
+diff --git a/src/frameworks/lite160/liteSignalReset.ts b/src/frameworks/lite160/liteSignalReset.ts
+new file mode 100644
+index 0000000..23b5437
+--- /dev/null
++++ b/src/frameworks/lite160/liteSignalReset.ts
+@@ -0,0 +1,49 @@
++import { createRegistry, Registry } from "@zakkster/lite-signal";
++import { ReactiveFramework } from "../../util/reactiveFramework";
++
++function createBenchmarkRegistry(): Registry {
++  return createRegistry({
++    // The largest creation fixture contains 100k sources + 100k computeds.
++    // Lazy allocation still charges first construction to the creation rows.
++    maxNodes: 262_144,
++    maxLinks: 1_048_576,
++    prealloc: "lazy",
++    // Fail if future scenarios outgrow the declared budget; never silently
++    // benchmark capacity growth as part of an ordinary creation/update row.
++    onCapacityExceeded: "throw",
++  });
++}
++
++let registry = createBenchmarkRegistry();
++
++export const liteSignalResetFramework: ReactiveFramework = {
++  name: "lite-signal-reset",
++  signal(initialValue) {
++    const value = registry.signal(initialValue);
++    return {
++      read: value,
++      write: value.set,
++    };
++  },
++  computed(fn) {
++    const value = registry.computed(fn);
++    return { read: value };
++  },
++  effect(fn) {
++    return registry.effect(fn);
++  },
++  withBatch(fn) {
++    registry.batch(fn);
++  },
++  withBuild: (fn) => fn(),
++  createScope(fn) {
++    let value!: ReturnType<typeof fn>;
++    const dispose = registry.effect(() => {
++      value = registry.untrack(fn);
++    });
++    return { value, dispose };
++  },
++  resetBenchmark() {
++    registry.reset();
++  },
++};
+diff --git a/src/frameworks/liteSignalEager.ts b/src/frameworks/liteSignalEager.ts
+new file mode 100644
+index 0000000..0568e8b
+--- /dev/null
++++ b/src/frameworks/liteSignalEager.ts
+@@ -0,0 +1,50 @@
++import { createRegistry, Registry } from "@zakkster/lite-signal";
++import { ReactiveFramework } from "../util/reactiveFramework";
++
++function createBenchmarkRegistry(): Registry {
++  return createRegistry({
++    // The largest creation fixture contains 100k sources + 100k computeds.
++    // Eager allocation builds the whole pool when the registry is created (setup, outside the timed window).
++    maxNodes: 262_144,
++    maxLinks: 1_048_576,
++    prealloc: "eager",
++    // Fail if future scenarios outgrow the declared budget; never silently
++    // benchmark capacity growth as part of an ordinary creation/update row.
++    onCapacityExceeded: "throw",
++  });
++}
++
++let registry = createBenchmarkRegistry();
++
++export const liteSignalFrameworkEager: ReactiveFramework = {
++  name: "lite-signal-eager",
++  signal(initialValue) {
++    const value = registry.signal(initialValue);
++    return {
++      read: value,
++      write: value.set,
++    };
++  },
++  computed(fn) {
++    const value = registry.computed(fn);
++    return { read: value };
++  },
++  effect(fn) {
++    return registry.effect(fn);
++  },
++  withBatch(fn) {
++    registry.batch(fn);
++  },
++  withBuild: (fn) => fn(),
++  createScope(fn) {
++    let value!: ReturnType<typeof fn>;
++    const dispose = registry.effect(() => {
++      value = registry.untrack(fn);
++    });
++    return { value, dispose };
++  },
++  resetBenchmark() {
++    registry.destroy();
++    registry = createBenchmarkRegistry();
++  },
++};

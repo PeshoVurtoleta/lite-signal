@@ -1,0 +1,139 @@
+andrii-run leg header
+date: 2026-11-24T02:21:11.429Z
+host: Mac Darwin 27.2.0 darwin/arm64
+cpu: Apple M4 Pro x12
+node: v26.8.2
+v8: 14.6.202.34-node.28
+node bin: /opt/homebrew/bin/node (execPath /opt/homebrew/Cellar/node/26.8.2/bin/node)
+wrapper node: v26.8.2 /opt/homebrew/Cellar/node/26.8.2/bin/node
+NODE_OPTIONS: (unset)
+clone: ~/Work/js-reactivity-benchmark/js-reactivity-benchmark
+clone HEAD: 12f169b0f7d25de343433e3199c27d0472136185
+L HEAD: ef466144b22ee2e7741c797d534610a91b119dd9
+build: 6bcaaf1-a7202c9b candidate version 1.6.0-candidate+6bcaaf1.a7202c9b
+build command: /opt/homebrew/Cellar/node/26.8.2/bin/node scripts/build.mjs (cwd ~/Work/js-reactivity-benchmark/js-reactivity-benchmark; C scripts.build "node scripts/build.mjs"; D-b256-1 / D-b256-4)
+expect: node v26.8.2, rows per adapter 51
+sha256 frozen Signal.js: a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+sha256 L/Signal.js: a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+sha256 nested lite160 Signal.js: a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+sha256 frozen Watch.js: e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509
+sha256 L/Watch.js: e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509
+sha256 nested lite160 Watch.js: e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509
+sha256 frozen Signal.d.ts: 0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e
+sha256 L/Signal.d.ts: 0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e
+sha256 nested lite160 Signal.d.ts: 0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e
+sha256 C/node_modules 1.5.2 Signal.js: f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81
+sha256 C/src/frameworks/liteSignal.ts: e9dff418a9b12043aa5563da09fe8f95eb9f1b5b762166d51dafc9cf8352aae7
+sha256 clone-local.patch: b7b8a12923070ac92fec8582e626014d4c2914693f4a3f1a96fb60c46bb7618e (5 untracked files)
+adapters: lite-signal,lite-signal-eager,lite-signal-1.6,lite-signal-eager-1.6,lite-signal-reset,lite-signal-eager-reset,alien-signals
+catalog ids: lite-signal=lite lite-signal-eager=lite-eager lite-signal-1.6=lite-160 lite-signal-eager-1.6=lite-eager-160 lite-signal-reset=lite-reset lite-signal-eager-reset=lite-eager-reset alien-signals=alien
+env: BENCH_FRAMEWORK=<adapters> BENCH_ROUNDS=3 BENCH_PROFILE=quick BENCH_SAMPLES_FILE=~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b256/leg-node26/samples.json BENCH_SOURCE_COMMIT=12f169b0f7d25de343433e3199c27d0472136185 (other BENCH_* removed)
+identity checks:
+  ok   frozen Signal.js present -- ~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b169-evidence/andrii/builds/6bcaaf1-a7202c9b/Signal.js
+  ok   git -C L show 6bcaaf1:Signal.js == frozen -- a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+  ok   L/Signal.js == frozen -- a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+  ok   nested lite160 Signal.js == frozen -- a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+  ok   frozen Watch.js present -- ~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b169-evidence/andrii/builds/6bcaaf1-a7202c9b/Watch.js
+  ok   git -C L show 6bcaaf1:Watch.js == frozen -- e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509
+  ok   L/Watch.js == frozen -- e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509
+  ok   nested lite160 Watch.js == frozen -- e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509
+  ok   frozen Signal.d.ts present -- ~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b169-evidence/andrii/builds/6bcaaf1-a7202c9b/Signal.d.ts
+  ok   git -C L show 6bcaaf1:Signal.d.ts == frozen -- 0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e
+  ok   L/Signal.d.ts == frozen -- 0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e
+  ok   nested lite160 Signal.d.ts == frozen -- 0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e
+  ok   frozen Signal.js sha256 starts with a7202c9b -- a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+  ok   nested package.json name @zakkster/lite-signal -- @zakkster/lite-signal
+  ok   nested package.json version 1.6.0-candidate+6bcaaf1.a7202c9b -- 1.6.0-candidate+6bcaaf1.a7202c9b
+  ok   C/node_modules @zakkster/lite-signal version 1.5.2 -- 1.5.2
+  ok   IDENTITY.txt present -- ~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b169-evidence/andrii/builds/6bcaaf1-a7202c9b/IDENTITY.txt
+  ok   IDENTITY.txt names the frozen Signal.js sha256 -- a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+  ok   IDENTITY.txt names the frozen Watch.js sha256 -- e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509
+  ok   IDENTITY.txt names the C/node_modules 1.5.2 Signal.js sha256 -- f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81
+  ok   C/src/frameworks/liteSignal.ts == C HEAD -- e9dff418a9b12043aa5563da09fe8f95eb9f1b5b762166d51dafc9cf8352aae7 vs HEAD e9dff418a9b12043aa5563da09fe8f95eb9f1b5b762166d51dafc9cf8352aae7
+  ok   frameworkCatalog.json readable
+  ok   catalog entry for lite-signal -- id lite
+  ok   catalog entry for lite-signal-eager -- id lite-eager
+  ok   catalog entry for lite-signal-1.6 -- id lite-160
+  ok   catalog entry for lite-signal-eager-1.6 -- id lite-eager-160
+  ok   catalog entry for lite-signal-reset -- id lite-reset
+  ok   catalog entry for lite-signal-eager-reset -- id lite-eager-reset
+  ok   catalog entry for alien-signals -- id alien
+  ok   --node runs -- v26.8.2 14.6.202.34-node.28 /opt/homebrew/Cellar/node/26.8.2/bin/node
+  ok   --expect-node v26.8.2 -- v26.8.2
+  ok   --out outside the clone -- ~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b256/leg-node26
+  ok   build command resolves (D-b256-1) -- /opt/homebrew/Cellar/node/26.8.2/bin/node scripts/build.mjs (cwd ~/Work/js-reactivity-benchmark/js-reactivity-benchmark; C scripts.build "node scripts/build.mjs"; D-b256-1 / D-b256-4)
+  ok   --out has no samples.json / run.log yet -- ~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b256/leg-node26
+before load1: 1.15 (load5 1.58, load15 2.13)
+before node processes (BUSY = >= 10% CPU, wrapper excluded):
+  idle pid 48655 9.2% node ~/.claude/hooks/quiet-lock.mjs run --strict lite-signal andrii b256 node26 -- caffeinate -i -s node bench/andrii-run.mjs --node /opt/homebrew
+before quiet-lock status (exit 75): quiet-lock: held by "lite-signal andrii b256 node26" (pid 48655, since 2026-11-24T02:21:11.282Z, caffeinate -i -s node bench/andrii-run.mjs --node /opt/homebrew/bin/node --out ~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b256/leg-node26 --build 6bcaaf1-a7202c9b --expect-node v26.8.2 --expect-rows 51) | host QUIET (load1 1.15, baseline 2.21, 12 cores)
+git status --porcelain (clone):
+   M src/config.ts
+   M src/frameworkCatalog.json
+  ?? src/frameworks/lite160/
+  ?? src/frameworks/liteSignalEager.ts
+IDENTITY.txt:
+  # IDENTITY -- b256 T1, frozen 2026-11-24T01:57:07Z
+  build 6bcaaf1-a7202c9b (L HEAD ef466144b22ee2e7741c797d534610a91b119dd9; engine commit 6bcaaf1; b256)
+  sha256 frozen Signal.js            a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+  sha256 frozen Signal.d.ts          0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e
+  sha256 L/Signal.js (working copy)  a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+  sha256 L/Signal.d.ts (working)     0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e
+  sha256 C/node_modules/@zakkster/lite-signal/Signal.js (1.5.2)  f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81
+  sha256 L/node_modules/@zakkster/lite-signal/Signal.js (1.5.2)  f8dd50f8c09e134b9369b1ce42cedada05e423d2064501e46d05a3cacfe57a81
+  sha256 C HEAD src/frameworks/liteSignal.ts (12f169b)  e9dff418a9b12043aa5563da09fe8f95eb9f1b5b762166d51dafc9cf8352aae7
+  sha256 C working src/frameworks/liteSignal.ts        e9dff418a9b12043aa5563da09fe8f95eb9f1b5b762166d51dafc9cf8352aae7
+  sha256 C working src/frameworks/liteSignalEager.ts   1705bb20636b5249bd4ba6b815da843d0ef728abbfd5834c692a27681ba74414
+  sha256 frozen Watch.js             e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509  (Signal.js:4278 re-exports ./Watch.js; working copy e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509; last change d46b4dd)
+build command run: /opt/homebrew/Cellar/node/26.8.2/bin/node scripts/build.mjs (cwd ~/Work/js-reactivity-benchmark/js-reactivity-benchmark; C scripts.build "node scripts/build.mjs"; D-b256-1 / D-b256-4) exit 0 group left []
+  Built production runner and 35 isolated framework workers.
+worker manifests (/opt/homebrew/Cellar/node/26.8.2/bin/node scripts/build.mjs):
+  ok   dist/workers lite-signal @zakkster/lite-signal == 1.5.2 -- got "1.5.2"
+  ok   dist/workers lite-signal-eager @zakkster/lite-signal == 1.5.2 -- got "1.5.2"
+  ok   dist/workers lite-signal-1.6 @zakkster/lite-signal == 1.6.0-candidate+6bcaaf1.a7202c9b -- got "1.6.0-candidate+6bcaaf1.a7202c9b"
+  ok   dist/workers lite-signal-eager-1.6 @zakkster/lite-signal == 1.6.0-candidate+6bcaaf1.a7202c9b -- got "1.6.0-candidate+6bcaaf1.a7202c9b"
+  ok   dist/workers lite-signal-reset @zakkster/lite-signal == 1.6.0-candidate+6bcaaf1.a7202c9b -- got "1.6.0-candidate+6bcaaf1.a7202c9b"
+  ok   dist/workers lite-signal-eager-reset @zakkster/lite-signal == 1.6.0-candidate+6bcaaf1.a7202c9b -- got "1.6.0-candidate+6bcaaf1.a7202c9b"
+  ok   dist/workers alien-signals bundles alien-signals -- {"alien-signals":"3.2.1"}
+  ok   dist/workers alien-signals bundles no @zakkster/lite-signal -- {"alien-signals":"3.2.1"}
+  ok   dist/index.js present -- 067ccdd634efa8a40d992af1f9d7f7563fc69586269b7af19cf9e11af59fcffa
+bundleSha256: 0ab7cb36431b6d87885680ee10cfbc7f5a18af630c7c3e05e206892ab4cea647
+samples node: v26.8.2 v8 14.6.202.34-node.28
+wall: 1736459 ms
+after load1: 1.98 (load5 1.85, load15 1.98)
+after node processes (BUSY = >= 10% CPU, wrapper excluded):
+  idle pid 48655 0.0% node ~/.claude/hooks/quiet-lock.mjs run --strict lite-signal andrii b256 node26 -- caffeinate -i -s node bench/andrii-run.mjs --node /opt/homebrew
+after quiet-lock status (exit 75): quiet-lock: held by "lite-signal andrii b256 node26" (pid 48655, since 2026-11-24T02:21:11.282Z, caffeinate -i -s node bench/andrii-run.mjs --node /opt/homebrew/bin/node --out ~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b256/leg-node26 --build 6bcaaf1-a7202c9b --expect-node v26.8.2 --expect-rows 51) | host QUIET (load1 1.98, baseline 2.21, 12 cores)
+post-check:
+  ok   bench exit 0 -- status 0 wall 28.9 min
+  ok   child process group 48717 empty -- []
+  ok   samples.json readable -- ~/Work/Portfolio/LiteLibrariesSuite/LiteSignal/.handoff/b256/leg-node26/samples.json
+  ok   samples.packages names == the 7 -- alien-signals,lite-signal,lite-signal-1.6,lite-signal-eager,lite-signal-eager-1.6,lite-signal-eager-reset,lite-signal-reset
+  ok   row frameworks == the 7 -- alien-signals,lite-signal,lite-signal-1.6,lite-signal-eager,lite-signal-eager-1.6,lite-signal-eager-reset,lite-signal-reset
+  ok   no FAILED row -- 0
+  ok   samples.node == v26.8.2 -- v26.8.2
+  ok   policy.rounds 3 -- 3
+  ok   profile quick -- quick
+  ok   sourceCommit == clone HEAD -- 12f169b0f7d25de343433e3199c27d0472136185
+  ok   lite-signal records == --expect-rows 51 -- 51
+  ok   lite-signal-eager records == --expect-rows 51 -- 51
+  ok   lite-signal-1.6 records == --expect-rows 51 -- 51
+  ok   lite-signal-eager-1.6 records == --expect-rows 51 -- 51
+  ok   lite-signal-reset records == --expect-rows 51 -- 51
+  ok   lite-signal-eager-reset records == --expect-rows 51 -- 51
+  ok   alien-signals records == --expect-rows 51 -- 51
+  ok   samples.packages lite-signal @zakkster/lite-signal == 1.5.2 -- got "1.5.2"
+  ok   samples.packages lite-signal-eager @zakkster/lite-signal == 1.5.2 -- got "1.5.2"
+  ok   samples.packages lite-signal-1.6 @zakkster/lite-signal == 1.6.0-candidate+6bcaaf1.a7202c9b -- got "1.6.0-candidate+6bcaaf1.a7202c9b"
+  ok   samples.packages lite-signal-eager-1.6 @zakkster/lite-signal == 1.6.0-candidate+6bcaaf1.a7202c9b -- got "1.6.0-candidate+6bcaaf1.a7202c9b"
+  ok   samples.packages lite-signal-reset @zakkster/lite-signal == 1.6.0-candidate+6bcaaf1.a7202c9b -- got "1.6.0-candidate+6bcaaf1.a7202c9b"
+  ok   samples.packages lite-signal-eager-reset @zakkster/lite-signal == 1.6.0-candidate+6bcaaf1.a7202c9b -- got "1.6.0-candidate+6bcaaf1.a7202c9b"
+  ok   samples.packages alien-signals bundles alien-signals -- {"alien-signals":"3.2.1"}
+  ok   samples.packages alien-signals bundles no @zakkster/lite-signal -- {"alien-signals":"3.2.1"}
+  ok   C/bench-results unchanged -- ~/Work/js-reactivity-benchmark/js-reactivity-benchmark/bench-results
+  ok   L/Signal.js still == frozen -- a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+  ok   nested lite160 Signal.js still == frozen -- a7202c9bb9af63007a76662330aa43b40e40442c80493347a3711dd23789bf89
+  ok   L/Watch.js still == frozen -- e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509
+  ok   nested lite160 Watch.js still == frozen -- e0cf8a8d6166debd685500cb7de0489fe0aebfaa22263bf240787f795a991509
+  ok   L/Signal.d.ts still == frozen -- 0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e
+  ok   nested lite160 Signal.d.ts still == frozen -- 0ec0367cc50ac7c45d77ff7a82453e7a71e7c95c46b6159ab042d4e5d9b7f47e

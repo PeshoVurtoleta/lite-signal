@@ -255,14 +255,13 @@ Known residual for the zero-GC claim (LEDGER #34, open): on pointer-compressed V
   workloads mapping to public bench claims -- carries forward from 1.4.0. Run by
   hand (`npm run gate`); not wired into a publish hook.
   **Bench harness (protocol v3):** rebuilt around three fixed-config instruments -- microscope (`benchmark.mjs`, recommended eager config, six first-party shapes), mirror (`mirror.mjs` + `sweep.mjs`, Andrii's canonical adapter verbatim, rows diff 1:1 against his log), version-economics (`harness/toe-to-toe`) -- each output carrying a machine-generated `#STAMP` (engine + harness sha256, live registry config, host, node). Pre-v3 five-framework suite retained one release as `bench-reactive-legacy` (deprecated; removed after 1.5.1). Methodology in `bench/README.md`.
-  **Bench position** (third-party
+  **Bench position (1.5.0-beta history, Andrii's host; superseded by the current position in "Benchmark snapshot" below)** (third-party
   [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark),
   15 frameworks, 47 tests; fresh 1.5.0-beta run, raw log
   `bench/AndriiVolynetsReactiveBench.log`): #4 by geomean (79.3) at 1.75x behind
   alien-signals (1.00x, 45.2), reflex (1.08x, 48.9), @reactively (1.33x, 59.9);
   ahead of 5th-place Preact Signals (99.8, lite ~21% ahead -- the gap widened
-  after Preact's own regression on the newer 1.14.2 in this sweep). The only
-  object-pooled zero-GC engine in the field. Ahead of @vue/reactivity (1.5x),
+  after Preact's own regression on the newer 1.14.2 in this sweep). Ahead of @vue/reactivity (1.5x),
   Signia (1.7x), MobX (2.2x), @solidjs/signals (3.2x), SolidJS (4.6x). Top-3 on
   25/47 tests (up from 23 on 1.4.0). Outright winners this sweep (rank 1 of all
   15) on TWO shapes: `createComputations4to1` (a computed-creation micro; lite
@@ -387,12 +386,11 @@ Known residual for the zero-GC claim (LEDGER #34, open): on pointer-compressed V
   Version lineage:
   this is the engine previously labeled `1.2.3` in dev -- renumbered to
   `1.2.2` because the deletion is small, isolated, and intentionally
-  non-behavioral. Drop-in over 1.2.1. **Bench position** (third-party
+  non-behavioral. Drop-in over 1.2.1. **Bench position (1.2.2-era history, Andrii's host; superseded by the current position in "Benchmark snapshot" below)** (third-party
   [js-reactivity-benchmark](https://github.com/volynetstyle/js-reactivity-benchmark),
   15 frameworks, 47 tests): #4 by geomean (75.5) at 1.77x behind alien-signals
   (1.00x), reflex (1.15x), @reactively (1.39x); now ahead of 5th-place Preact
-  Signals (79.2, lite ~5% ahead -- the gap widened from 1.2.x). The only
-  object-pooled zero-GC engine in the field. Ahead of @vue/reactivity (1.5x),
+  Signals (79.2, lite ~5% ahead -- the gap widened from 1.2.x). Ahead of @vue/reactivity (1.5x),
   Signia (1.7x), MobX (2.3x), @solidjs/signals (2.7x), SolidJS (4.2x). Top-3 on
   21/47 tests; outright winner on `manyEffectsFromOneSource`,
   `manySourcesIntoOneComputedEffect`, and
@@ -702,6 +700,8 @@ The deliberate engineering for `watch`'s "0 per fire" is the hoisted `untrackedF
 ## Benchmark snapshot (1.6.0 dev, Signal.js a7202c9b, node v26.8.2, Apple M4 Pro, 10 reps)
 
 Tier REPORTED: measurements, not a law; they gate nothing. Time only: no heap figure is published (see the withdrawal below). Zero-GC for lite-signal is gated by deterministic checks, not by these tables: `npm run test:torture` (lite-leak + lite-gc-profiler), the `node:test` GC-count rows, and the Tier 2b perf gate. Host: 2026-11-23 / 2026-11-24, quiet host on AC power, 10 reps per engine; medians in ms, lower is better. Engines: alien-signals 3.2.1, reflex-quant 1.2.0, @preact/signals-core 1.14.4, solid-js 1.9.15. Every table below is cut from `bench/results-1.6.0/` (provenance in its `README.md`).
+
+Andrii js-reactivity-benchmark position (current). Upstream's own table of Andrii Volynets' js-reactivity-benchmark (sourceCommit f0d456c, rendered 2026-11-16, node v24.15.0 linux/x64, 24 machine shards, 3 machine rounds, 30 participants, 29 ranked; score = family-balanced geomean of time / per-test best over the 34 shared core scenarios) places lite-signal 1.5.2 8th of 29 at 1.91 (3-machine-set range 1.88-1.92). reflex-quant is 1st at 1.03, alien-signals 2nd at 1.20, reflex 3rd at 1.25, @reactively 1.63, Preact Signals 1.63, @vue/reactivity 3.6 RC 1.65, anod 1.83; rescript-signals is 9th at 1.92. reflex-quant has the lowest median on 27 of 51 tests (21 of 34 core) (this repo's count over upstream's samples) and 16 decisive wins (upstream's paired-range rule); lite-signal has 0 lowest-median tests and 0 decisive wins. The earlier "4th of 15" was the 1.5.0-beta result on Andrii's host (47 tests, plain geomean of ms); the field is now 30 participants with different scoring and hosts. 1.6.0 PROJECTED, cross-host: 1.907 / 1.903 -> 8th, inside 1.5.2's own range 1.88-1.92: no measurable change. The alien-normalised M1 (D-b169-1 Q4a) gives 1.825 / 1.650 (7th / 6th) but misses the known 1.5.2 point by -4.3% / -13.3%; no rank claim rests on it. Local legs (Andrii's harness, clone 12f169b, 7 adapters, Apple M4 Pro, node v26.8.2 / v24.15.0, 2026-11-24, run count 1 per leg; geomean time / alien-signals over 51 rows): 1.6.0 / 1.5.2 lazy 0.983 / 0.979 (flat); eager-1.6 / eager 1.5.2 1.034 / 1.076 (1.6.0 eager is SLOWER); alien-signals lowest median on 44 / 42 of 51 rows. The reset adapter (reset() keeps the warmed pool where upstream destroys and rebuilds; lazy 0.832 / 0.889, eager 0.890 / 0.823 vs the 1.6.0 destroy adapters) is an adapter choice and is never ranked against upstream's table. Tier REPORTED. Provenance and formulas: `bench/andrii/2026-11-24/README.md`.
 
 Band rule: spread = (max - min) / median of the 10 per-rep medians; the pair band is the larger of the two engines' spreads; delta = (other - lite) / other, so + means lite faster. A |delta| at or under the band is "inside the band", never a win or a loss. A win count counts only leads outside the band.
 

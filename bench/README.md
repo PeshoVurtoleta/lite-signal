@@ -154,6 +154,8 @@ Under the **mirror** (Andrii's lazy cross-framework adapter, a stricter neutral 
 
 > Note on adapters: a reused, warmed **singleton** registry across a micro-benchmark suite skips pool-growth and teardown that fresh-per-test instances pay. Andrii's committed adapter resets (`destroy()` + fresh registry) between benches, which is the fair setup. The mirror's `reset()` does the same (`mirror.mjs`: `reg.destroy()`, then `createRegistry(LITE_CONFIG)`); the microscope pre-sizes per scenario. Neither reuses a warmed pool across unrelated shapes to flatter a comparison.
 
+> Andrii js-reactivity-benchmark legs on the 1.6.0 engine, upstream's own table and the projected placement: [`andrii/2026-11-24/README.md`](./andrii/2026-11-24/README.md).
+
 ---
 
 ## Structure probes (`lib/structure-probe.mjs`)
