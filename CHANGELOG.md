@@ -4,7 +4,7 @@ All notable changes to `@zakkster/lite-signal` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.6.0] -- 2026-11-25
 
 One engine simplification (LEDGER #30, "observer-fold") plus dev-only work: the gate gaps
 closed after the link-SoA fork (LEDGER #27) passed the gates while costing +10-39% on four
@@ -17,6 +17,23 @@ API, no behavior change), the F29 version-counter fix ("### Fixed" below), the F
 user callbacks run with `this === undefined` (#48) and a stale signal handle's `update(fn)` returns without calling `fn` (#51); see their "### Fixed" entries below. Nothing else in the
 published `files[]` changes except `README.md`, `llms.txt`, the 1.6.0 `reset()` / true-shutdown `destroy()` (C-RESET, below) and the 1.6.0 `snapshot()` / `restore()` API plus the FLAG_BOX change to box nodes' `onGraphMutation` op 1 / op 2 flags (now 160 / 129; "### Added -- `snapshot()` / `restore()` and FLAG_BOX (bit 7)" below; `Signal.js` and `Signal.d.ts`).
 The "### Fixed -- engine" entries below also cover L-1 (stack-overflow recovery), ARG-E1, ARG-E2, UCE-H (forged cleanup-error wrapper, int32 far floor), AUD-F G1 / G2 (Fable 5.2 F1-F5: the 460 B inline cap, the stuck frame, a throwing flush entry) F-b224-1 (a node disposed while running releases its slot at its own exit; the second "### Fixed -- engine" entry below) and XA1 (the cursor-repair log bound, D-b240-1 / -5; the first "### Fixed -- engine" entry below), the broadcast fan-out fix (b215; shape A + shape G; the third "### Fixed -- engine" entry below) and its T5 residual ("### Known residual -- broadcast-fanout vs 1.5.2 (T5, STATISTICAL; LEDGER #83 / #87)" below); names and pointers only, each entry states its own change. It also covers `createScope` ("### Added -- `createScope`" below).
+
+### Changed -- release: version banner and pins (b260)
+
+- **The shipped engine.** The shipped 1.6.0 `Signal.js` is the measured engine a7202c9b (sha256/8) with only line 2 changed
+  (` * @zakkster/lite-signal v1.5.2` -> `v1.6.0`, same byte length 232869 B). New sha256/8 29ce87f7
+  (full 29ce87f7743ae6304b4cfb0abc940d4dfcc7c9d713d3ec405c5dc91271be0533). Maintainer ruling D-b259-1 (2026-11-24): ship `Signal.js`
+  with "v1.6.0" (new sha).
+- **Measurements.** No measurement ran on 29ce87f7. The figures this release attributes to its engine (bench/results-1.6.0, T5
+  b246, test/128 26 / 26, verify b259) were taken on a7202c9b; figures from earlier builds (T5 b234 / b237 on 29731ff9, bytecode
+  costs on 84068786 / ca84b0a) keep their named build. The banner line is a comment outside every function body; test/118 and test/128 pass unchanged on 29ce87f7.
+- **Re-pinned to 29ce87f7 (b260).** `bench/soak/parity.json`, `bench/soak/calibration/soak-calibration.json` (untimed
+  `--import-throughput` recut: deterministic counts unchanged, throughput carried over), test/45 `ROWS_BASE8` + 22 kernel shas,
+  test/89 frozen-tree + thunkgen sha, test/100 A0 kernel copies.
+- **Nightly retarget (D-b259-2 / -3, D-b260-1 / -2).** `soak-nightly.yml`'s three schedule-keyed checkouts now use
+  `ref: ${{ github.event_name == 'schedule' && '1.6.1-dev' || '' }}`; test/47 `NIGHTLY_BRANCH` '1.6.1-dev', `NIGHTLY_CEIL` [1, 6, 1].
+  Push triggers: soak-nightly.yml [1.6.0-dev, 1.6.1-dev]; ci.yml [main, 1.6.0-dev, 1.6.1-dev]. Main receives the whole `.github/`
+  folder by a fast-forward to the release commit (maintainer step). The schedule has not run yet.
 
 ### Fixed -- docs: microscope heap figures withdrawn
 
@@ -123,7 +140,7 @@ post-1.6.0 unit. Wording: D-b247-4.
 ### Known residual -- broadcast-fanout vs 1.5.2 (T5, STATISTICAL; LEDGER #83 / #87)
 
 - **What was measured.** Tier STATISTICAL, one run per release; a measurement, not a gate verdict of `npm test` and not a law. Harness: the b210 VersionMatrix `broadcast-fanout` A/B (one source -> 900 computeds -> one aggregating effect), A = npm 1.5.2 (ec36ab8 / Signal.js f8dd50f8), K = 32 interleaved rounds (Williams square), exact sign-test CI on the median of the paired per-round ratios (order statistics 10 and 23, coverage 0.97994), must-fail control and an A/A twin. R = 1.6.0 frame time / npm 1.5.2 frame time (B / A); R > 1 means 1.6.0 is slower. Verdicts: CONFIRMED (exit 10) iff R.lo > 1.00 and R.median >= 1.02; CLEAN (exit 0) iff not CONFIRMED and R.hi < 1.05.
-- **The release engine (a7202c9b), b246, 2026-11-23T01:20:59Z, darwin arm64 Apple M4 Pro, node v26.8.2, quiet-lock --strict QUIET (load1 2.14 at start, baseline 2.21).** R = 1.0310 [1.0076, 1.0414] (CI width 0.0338), verdict CONFIRMED (exit 10), TOL (R vs 1.05) WITHIN. The CLEAN bar was NOT met. Column medians (frame.avg ms): 1.5.2 1.0788, a7202c9b 1.1081. A/A twin 0.9955 [0.9770, 1.0143] (width 0.0373); sabotage control C / B 1.1097 [1.0922, 1.1187]. Provenance caveat: another node process became busy during the rounds (load1 after rounds 1.2910 .. 4.9233), noisy rounds 2 of 32. In plain terms: in this one run the release engine is about 3% slower than 1.5.2 on this workload.
+- **The release engine (a7202c9b) (the shipped 1.6.0 Signal.js is a7202c9b plus the version banner, sha256/8 29ce87f7), b246, 2026-11-23T01:20:59Z, darwin arm64 Apple M4 Pro, node v26.8.2, quiet-lock --strict QUIET (load1 2.14 at start, baseline 2.21).** R = 1.0310 [1.0076, 1.0414] (CI width 0.0338), verdict CONFIRMED (exit 10), TOL (R vs 1.05) WITHIN. The CLEAN bar was NOT met. Column medians (frame.avg ms): 1.5.2 1.0788, a7202c9b 1.1081. A/A twin 0.9955 [0.9770, 1.0143] (width 0.0373); sabotage control C / B 1.1097 [1.0922, 1.1187]. Provenance caveat: another node process became busy during the rounds (load1 after rounds 1.2910 .. 4.9233), noisy rounds 2 of 32. In plain terms: in this one run the release engine is about 3% slower than 1.5.2 on this workload.
 - **Beside it (build 29731ff9, the same harness, never only a CLEAN run).** b234, 2026-11-20T22:13Z: R = 1.0298 [1.0194, 1.0556], CONFIRMED, TOL STRADDLES (A/A width 0.0493). b237, 2026-11-21T00:32Z: R = 1.0197 [1.0009, 1.0480], CLEAN only because the median is below the 1.02 CONFIRMED floor (A/A width 0.0427, TOL WITHIN). A/A widths across b234 / b237 / b246: 0.0373 .. 0.0493.
 - **Reading the numbers.** The harness's A/A null spread on this host is the size of the roughly 2% effect it flags, so one run is a measurement, not an attributed regression; a difference between two cross-run ratios is not a measurement of one build against the other (LEDGER #83). Two same-run A/B runs of 29731ff9 against b5289277 (b236) ended NO VERDICT because the A/A interval was wider than 0.05.
 - **Ruling.** D-b246-1: accepted without an engine fix; 1.6.0 ships with T5 stated STATISTICAL, one run, CI given, beside the b234 and b237 runs. The instrument-noise rung is post-1.6.0.
@@ -297,7 +314,13 @@ Dual audit 2026-11-06 follow-ups. Harness and workflow files only; `Signal.js` a
   main's copy and the checked-out dev file differ; on push / dispatch it is a no-op. The cron starts only after the
   maintainer copies the file to main (`.handoff/aud-n/MAIN-STEPS.md`); until then nothing here claims a scheduled run.
   test/47 ties the literal branch to the package version: at a strict-semver version >= 1.6.0 (pre-release below) or a
-  malformed one the check retires the literal `ref`, so `/release 1.6.0` must drop or retarget it.
+  malformed one the check retires the literal `ref`, so `/release 1.6.0` must drop or retarget it. Retargeted at 1.6.0 (b260, D-b259-2 / -3, D-b260-1 / -2): the three schedule-keyed checkouts now use
+  `ref: ${{ github.event_name == 'schedule' && '1.6.1-dev' || '' }}`; test/47 `NIGHTLY_BRANCH` is '1.6.1-dev' and `NIGHTLY_CEIL` [1, 6, 1]
+  (the literal retires again at `/release 1.6.1`; 1.6.0 and 1.6.1-rc.1 keep it live). Push triggers: soak-nightly.yml
+  [1.6.0-dev, 1.6.1-dev]; ci.yml [main, 1.6.0-dev, 1.6.1-dev]. Main receives the whole `.github/` folder by a fast-forward of
+  main to the release commit (maintainer step), which supersedes the copy runbook (`.handoff/aud-n/MAIN-STEPS.md`) and the
+  "fails closed" clause above: once main is fast-forwarded, a dispatch on main runs main's (release) tree, not 1.6.1-dev. The
+  workflow-sync step is unchanged. The schedule has not run yet; no scheduled run is claimed.
 
 ### Changed -- soak: TIMED calibration recut on engine e26168ce (b180)
 

@@ -238,11 +238,12 @@ const FALLBACK_CYCLES = "${{ inputs.cycles || '33' }}";
 const FALLBACK_OPS = "${{ inputs.ops || '200000' }}";
 // AUD-H1 B3: the burn-in seed is per run (github.run_number) unless the dispatch input overrides it; never a literal.
 const SEED_PIN = '${{ inputs.seed || github.run_number }}';
-// AUD-N (D-AUD-6, Q-N1 ruled schedule-keyed): soak-nightly.yml is byte-identical on main and 1.6.0-dev; only `schedule`
+// AUD-N (D-AUD-6, Q-N1 ruled schedule-keyed): soak-nightly.yml is byte-identical on main and NIGHTLY_BRANCH; only `schedule`
 // checks out NIGHTLY_BRANCH, push / dispatch keep the action default (the event's commit). The literal branch is tied to the
 // package.json version (C18): once the version reaches NIGHTLY_CEIL the ref is stale and must be dropped or retargeted.
-const NIGHTLY_BRANCH = '1.6.0-dev';
-const NIGHTLY_CEIL = [1, 6, 0];
+// D-b259-2/-3: retargeted 1.6.0-dev -> 1.6.1-dev with NIGHTLY_CEIL 1.6.1 (the ref retires again at /release 1.6.1).
+const NIGHTLY_BRANCH = '1.6.1-dev';
+const NIGHTLY_CEIL = [1, 6, 1];
 const NIGHTLY_REF = "${{ github.event_name == 'schedule' && '" + NIGHTLY_BRANCH + "' || '' }}";
 // The sync step after every nightly checkout: main's copy (the scheduled run's workflow sha) vs the checked-out file.
 const WFSYNC = 'git diff --exit-code "$GITHUB_WORKFLOW_SHA" HEAD -- .github/workflows/soak-nightly.yml';
@@ -286,8 +287,8 @@ const WARN_RE = /^echo "::warning::[^"$`\\\n]*"$/;
 // sha256 of the two real workflow files (11e). Any workflow edit turns the real-files test red until a REVIEWED test/47 edit
 // re-pins these (same policy as SCRIPT_PINS); the semantic checks C1-C18 then judge the new content.
 const WORKFLOW_PINS = {
-    'ci.yml': 'e8718dd5cfd40040ed27ad46f59b49cb3412b3bf25c7e9774661954011fe6a58',
-    'soak-nightly.yml': '803ce2175955f86aeb86b98566ac0b5349295ddfdc416950ccf3de957efbc4af',
+    'ci.yml': '60caac7e7bffe97b9ee9e5afeee72e300c9e88b4fe8630e89576d6ef67685733',
+    'soak-nightly.yml': '899d4af6a81bbd31aec41c0d143978db35c03408ff78b0a421722e5a2796c8fe',
 };
 const sha256 = (t) => createHash('sha256').update(t, 'utf8').digest('hex');
 const SOAK_OUT_PIN = { 'ci.yml': '${{ runner.temp }}/soak-out/smoke.jsonl', 'soak-nightly.yml': '${{ runner.temp }}/soak-out/burn-in.jsonl' };
@@ -659,14 +660,14 @@ export function workflowProblems(files, opts = {}) {
         if (!isObj(on)) tag('C13', 'on: must be a mapping');
         else if (n === 'ci.yml') {
             const br = isObj(on.push) ? asList(on.push.branches).map(String).sort() : [];
-            if (br.join(',') !== '1.6.0-dev,main') tag('C13', 'push.branches [' + br + '] != [1.6.0-dev,main]');
+            if (br.join(',') !== '1.6.0-dev,1.6.1-dev,main') tag('C13', 'push.branches [' + br + '] != [1.6.0-dev,1.6.1-dev,main]');
             if (!('pull_request' in on)) tag('C13', 'missing pull_request');
             if (!('workflow_dispatch' in on)) tag('C13', 'missing workflow_dispatch');
         } else {
             if (!asList(on.schedule).some((x) => isObj(x) && x.cron === '0 4 * * *')) tag('C13', "missing schedule cron '0 4 * * *'");
             if (!('workflow_dispatch' in on)) tag('C13', 'missing workflow_dispatch');
             const br = isObj(on.push) ? asList(on.push.branches).map(String) : [];
-            if (br.join(',') !== '1.6.0-dev') tag('C13', 'push.branches [' + br + '] != [1.6.0-dev]');
+            if (br.join(',') !== '1.6.0-dev,1.6.1-dev') tag('C13', 'push.branches [' + br + '] != [1.6.0-dev,1.6.1-dev]');
         }
 
         // C2 extension: the soak step itself must exist (ci gates smoke, burn-in soak)
@@ -932,7 +933,7 @@ const CHECKOUT = `      - uses: actions/checkout@v7
           persist-credentials: false
 `;
 // AUD-N: the nightly checkout (schedule-keyed ref) + the workflow sync step, written out literally (not from the constants).
-const NREF_LINE = "          ref: ${{ github.event_name == 'schedule' && '1.6.0-dev' || '' }}\n";
+const NREF_LINE = "          ref: ${{ github.event_name == 'schedule' && '1.6.1-dev' || '' }}\n";
 const NSYNC_RUN = '        run: git diff --exit-code "$GITHUB_WORKFLOW_SHA" HEAD -- .github/workflows/soak-nightly.yml\n';
 const NSYNC_STEP = '      - name: workflow sync\n' + NSYNC_RUN;
 const NT_CHECKOUT = CHECKOUT + NREF_LINE + NSYNC_STEP;
@@ -960,6 +961,7 @@ on:
     branches:
       - main
       - 1.6.0-dev
+      - 1.6.1-dev
   pull_request:
   workflow_dispatch:
 permissions:
@@ -1052,6 +1054,7 @@ on:
   push:
     branches:
       - 1.6.0-dev
+      - 1.6.1-dev
 permissions:
   contents: read
 defaults:
@@ -1218,7 +1221,12 @@ const CASES = [
     ['C13', 'ci pull_request_target', (f) => withFile(f, CI, (t) => rep(t, '  pull_request:\n', '  pull_request:\n  pull_request_target:\n'))],
     ['C13', 'ci workflow_dispatch removed', (f) => withFile(f, CI, (t) => rep(t, '  workflow_dispatch:\n', ''))],
     ['C13', 'nightly cron changed', (f) => withFile(f, NT, (t) => rep(t, "'0 4 * * *'", "'5 4 * * *'"))],
-    ['C13', 'nightly push trigger removed', (f) => withFile(f, NT, (t) => rep(t, '  push:\n    branches:\n      - 1.6.0-dev\n', ''))],
+    ['C13', 'nightly push trigger removed', (f) => withFile(f, NT, (t) => rep(t, '  push:\n    branches:\n      - 1.6.0-dev\n      - 1.6.1-dev\n', ''))],
+    ['C13', 'ci push branch 1.6.0-dev dropped (D-b260-1)', (f) => withFile(f, CI, (t) => rep(t, '      - 1.6.0-dev\n      - 1.6.1-dev\n  pull_request:\n', '      - 1.6.1-dev\n  pull_request:\n'))],
+    ['C13', 'ci push branch 1.6.1-dev dropped (D-b260-1)', (f) => withFile(f, CI, (t) => rep(t, '      - 1.6.1-dev\n  pull_request:\n', '  pull_request:\n'))],
+    ['C13', 'nightly push branch 1.6.0-dev dropped (D-b260-2)', (f) => withFile(f, NT, (t) => rep(t, '    branches:\n      - 1.6.0-dev\n      - 1.6.1-dev\n', '    branches:\n      - 1.6.1-dev\n'))],
+    ['C13', 'nightly push branch 1.6.1-dev dropped (D-b260-2)', (f) => withFile(f, NT, (t) => rep(t, '    branches:\n      - 1.6.0-dev\n      - 1.6.1-dev\n', '    branches:\n      - 1.6.0-dev\n'))],
+    ['C13', 'nightly push branches reordered (exact order)', (f) => withFile(f, NT, (t) => rep(t, '    branches:\n      - 1.6.0-dev\n      - 1.6.1-dev\n', '    branches:\n      - 1.6.1-dev\n      - 1.6.0-dev\n'))],
     ['C14', 'burn-in parity removed', (f) => withFile(f, NT, (t) => rep(t, '        timeout-minutes: 10\n      - run: npm run soak:parity\n      - id: ptree', '        timeout-minutes: 10\n      - id: ptree'))],
     ['C14', 'gates parity moved after the smoke step', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm run soak:parity\n', '') + '      - run: npm run soak:parity\n')],
     ['C2', 'ci smoke step deleted', (f) => withFile(f, CI, (t) => rep(t, "      - id: smoke\n        continue-on-error: ${{ steps.ptree.outputs.gap == 'true' }}\n        env:\n          SOAK_SMOKE: '1'\n        run: npm run soak\n", ''))],
@@ -1261,12 +1269,12 @@ const CASES = [
     ['C15', 'workflow env NODE_OPTIONS', (f) => withFile(f, CI, (t) => rep(t, "env:\n  PIN_NODE: '26.8.2'\n", "env:\n  PIN_NODE: '26.8.2'\n  NODE_OPTIONS: '--test-skip-pattern=.'\n"))],
     ['C15', 'step env npm_config_script_shell on npm test', (f) => withFile(f, CI, (t) => rep(t, '      - run: npm test\n', '      - env:\n          npm_config_script_shell: /usr/bin/true\n        run: npm test\n'))],
     ['C15', 'job env NODE_TEST_CONTEXT', (f) => withFile(f, CI, (t) => rep(t, '      SOAK_OUT: ${{ runner.temp }}/soak-out/smoke.jsonl\n', '      SOAK_OUT: ${{ runner.temp }}/soak-out/smoke.jsonl\n      NODE_TEST_CONTEXT: child\n'))],
-    ['C13', 'push.paths block list', (f) => withFile(f, CI, (t) => rep(t, '      - 1.6.0-dev\n  pull_request:\n', "      - 1.6.0-dev\n    paths:\n      - 'docs/**'\n  pull_request:\n"))],
-    ['C13', 'push.tags', (f) => withFile(f, CI, (t) => rep(t, '      - 1.6.0-dev\n  pull_request:\n', '      - 1.6.0-dev\n    tags:\n      - v1\n  pull_request:\n'))],
+    ['C13', 'push.paths block list', (f) => withFile(f, CI, (t) => rep(t, '      - 1.6.1-dev\n  pull_request:\n', "      - 1.6.1-dev\n    paths:\n      - 'docs/**'\n  pull_request:\n"))],
+    ['C13', 'push.tags', (f) => withFile(f, CI, (t) => rep(t, '      - 1.6.1-dev\n  pull_request:\n', '      - 1.6.1-dev\n    tags:\n      - v1\n  pull_request:\n'))],
     ['C13', 'pull_request paths-ignore', (f) => withFile(f, CI, (t) => rep(t, '  pull_request:\n', '  pull_request:\n    paths-ignore:\n      - docs\n'))],
     ['C13', 'pull_request branches-ignore', (f) => withFile(f, CI, (t) => rep(t, '  pull_request:\n', '  pull_request:\n    branches-ignore:\n      - main\n'))],
     ['C13', 'pull_request tags', (f) => withFile(f, CI, (t) => rep(t, '  pull_request:\n', '  pull_request:\n    tags:\n      - v1\n'))],
-    ['C13', 'nightly push.paths', (f) => withFile(f, NT, (t) => rep(t, '  push:\n    branches:\n      - 1.6.0-dev\n', '  push:\n    branches:\n      - 1.6.0-dev\n    paths:\n      - docs\n'))],
+    ['C13', 'nightly push.paths', (f) => withFile(f, NT, (t) => rep(t, '  push:\n    branches:\n      - 1.6.0-dev\n      - 1.6.1-dev\n', '  push:\n    branches:\n      - 1.6.0-dev\n      - 1.6.1-dev\n    paths:\n      - docs\n'))],
     ['C13', 'nightly schedule extra key', (f) => withFile(f, NT, (t) => rep(t, "    - cron: '0 4 * * *'\n", "    - cron: '0 4 * * *'\n      timezone: UTC\n"))],
     ['C13', 'nightly extra dispatch input', (f) => withFile(f, NT, (t) => rep(t, '      ops:\n', '      extra:\n        default: x\n      ops:\n'))],
     ['C18', 'job-level defaults shell bash {0} on teeth', (f) => withFile(f, NT, (t) => inJob(t, 'teeth', 'teeth-long', '    timeout-minutes: 60\n', '    timeout-minutes: 60\n    defaults:\n      run:\n        shell: bash {0}\n'))],
@@ -1406,16 +1414,16 @@ for (const [label, file, mutate, want, msg] of REAL_B3_CASES) {
     });
 }
 
-// AUD-N (D-AUD-6): the nightly ref is tied to package.json `version` (C18): live while strict semver below 1.6.0 (a
-// pre-release of 1.6.0 is below it, numeric compare); 1.6.0 and later, or a malformed version, retire it.
-const VERSION_ROWS = [['1.5.2', true], ['1.6.0-rc.1', true], ['1.6.0', false], ['1.6.1', false], ['1.10.0', false], ['2.0.0', false], ['x', false], ['1.6', false], ['v1.5.2', false], ['1.5.2.1', false]];
+// AUD-N (D-AUD-6): the nightly ref is tied to package.json `version` (C18): live while strict semver below 1.6.1 (a
+// pre-release of 1.6.1 is below it, numeric compare); 1.6.1 and later, or a malformed version, retire it (D-b259-3).
+const VERSION_ROWS = [['1.5.2', true], ['1.6.0-rc.1', true], ['1.6.0', true], ['1.6.1-rc.1', true], ['1.6.1', false], ['1.7.0', false], ['1.10.0', false], ['2.0.0', false], ['x', false], ['1.6', false], ['v1.5.2', false], ['1.5.2.1', false]];
 for (const [v, live] of VERSION_ROWS) {
     test('C18 version tie (AUD-N): package.json ' + v + (live ? ' keeps' : ' retires') + ' the nightly ref', () => {
         const p = workflowProblems(fixture(), { version: v });
         if (live) assert.deepEqual(p, []);
         else {
             assert.equal(p.length, 1, JSON.stringify(p));
-            assert.match(p[0], /^C18: soak-nightly\.yml: nightly ref 1\.6\.0-dev is stale or unverifiable: package\.json "/);
+            assert.match(p[0], /^C18: soak-nightly\.yml: nightly ref 1\.6\.1-dev is stale or unverifiable: package\.json "/);
             assert.ok(p[0].includes(JSON.stringify(v)), p[0]);
         }
     });

@@ -444,6 +444,14 @@ gV rewrite"; its spec is not keyed on known= / sig=, so a DIV-F29 entry leaves i
   copies the file to main (.handoff/aud-n/MAIN-STEPS.md); this amendment does not record a scheduled run. test/47 pins the
   `ref` literal and the sync step, and retires the literal branch at a package version >= 1.6.0, so `/release 1.6.0` must
   drop or retarget it.
+- Amendment 2026-11-25 (b260, D-b259-2 / -3, D-b260-1 / -2): the 2026-11-08 amendment above stays as the record. The three
+  schedule-keyed checkouts now set `ref: ${{ github.event_name == 'schedule' && '1.6.1-dev' || '' }}`; test/47 `NIGHTLY_BRANCH`
+  is '1.6.1-dev' and `NIGHTLY_CEIL` [1, 6, 1] (the literal retires again at `/release 1.6.1`; 1.6.0 and 1.6.1-rc.1 keep it live).
+  Push triggers: soak-nightly.yml [1.6.0-dev, 1.6.1-dev]; ci.yml [main, 1.6.0-dev, 1.6.1-dev]. Main receives the whole `.github/`
+  folder by a fast-forward of main to the release commit (maintainer step); that supersedes the copy runbook
+  (.handoff/aud-n/MAIN-STEPS.md) and the "fails closed" clause above: after the fast-forward a dispatch on main runs main's
+  (release) tree, not 1.6.1-dev. The workflow-sync step is unchanged (a scheduled run fails when main's copy and the checked-out
+  1.6.1-dev file differ). The schedule has not run yet; this amendment records no scheduled run.
 
 ### 14. Amendment 2026-10-25 (b109): DIV-F5 fixed, soak closure
 
@@ -690,7 +698,7 @@ ROSTER[12], laneSpan 13; SNAPSHOT joined last in R8, 14 lanes, section 20). Wher
   stripped. parity 59 files; golden scripts-1000 gains the BOX digest, the 12 old digests are identical.
 - Tests and gates: `test/96-soak-box` (31 rows), `test/97-soak-twin` (63), `test/98-soak-box-roster` (14), fixture
   `test/fixtures/r7-b0-applicability.json`; the closing `npm test` 2940 tests / 2927 pass / 0 fail / 12 skip / 1 todo,
-  torture 0 B/op (Node v26.8.2). Detail: CHANGELOG [Unreleased] and SPEC-B Addendum 17.
+  torture 0 B/op (Node v26.8.2). Detail: CHANGELOG [1.6.0] and SPEC-B Addendum 17.
 
 - lite-box main run in the teeth battery (2026-11-03, b158; F144 acb9c5b, D-b156-1). Every `SOAK_ENGINE=lite-box` main
   run had crashed
@@ -746,7 +754,7 @@ Where this text and the code differ, the code is the record.
   BOX).
 - Tests: `test/99-soak-snapshot-roster` (16 rows), `test/100-soak-os` (61), `test/101-soak-snapshot-adapter` (22),
   `test/102-soak-snapshot-lane` (13), `test/43-soak-model` +14 (restoreCopy); SCENARIOS 79 -> 86. Detail: CHANGELOG
-  [Unreleased] and SPEC-B Addendum 18.
+  [1.6.0] and SPEC-B Addendum 18.
 
 Amendment 2026-11-17 (b200, D-b199-2; harness only, Signal.js 4b740bdb unchanged): controls.json now pins SIX controls (rev152, headpatched, preb33, preb33g2, prefixr, prea5; + preb33g2, a frozen kernel = preb33 plus the one AUD-F G2 catch-arm line, because a soakPatch'd control has no controls.json identity and its fixed divergences stop explaining) and PARITY_FILES is 62 (60 + controls/preb33g2/Signal.js and Watch.js; commit f3a3153).
 
